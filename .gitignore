@@ -1,0 +1,24 @@
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Traigent run artifacts
+optimization_results/
+results/
+*.results.json
+candidate_config.json
+run-plan.*.md
+!templates/run-plan.md
+
+# Local
+*.log
+.DS_Store
