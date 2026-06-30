@@ -82,12 +82,21 @@ Prefer a project virtualenv (standard practice; also avoids PEP 668
 "externally-managed-environment" on modern Linux):
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install "traigent[recommended]"
+python3.13 -m venv .venv && source .venv/bin/activate   # Windows: py -3.13 -m venv .venv
+pip install "traigent[recommended]>=0.18"
 ```
 
-- If the project already has a venv, install into it. If there are several venvs, ask
-  which one. If the user wants a global install, install into the interpreter they use.
+- **Pin the interpreter** (`python3.13`, not a bare `python`) so the venv honors Step 1's
+  "default to 3.13" rather than whatever `python` happens to resolve to.
+- If the project already has a venv, install into it — **unless it is built on an
+  unsupported Python** (< 3.11). Re-running `python -m venv` over an existing directory is a
+  **silent no-op** (it does *not* swap the interpreter): recreate it cleanly with
+  `python3.13 -m venv --clear .venv` (or `rm -rf .venv` first). Several venvs → ask which.
+- **Pin a version floor and verify after install.** Use `"traigent[recommended]>=0.18"` — on
+  a too-old interpreter pip can otherwise silently resolve to an ancient **`traigent 0.0.1`**
+  placeholder (it declares `>=3.8`), exit 0, and leave you with *no real SDK*. Confirm with
+  `traigent --version` (expect ≥ 0.18); if the command is missing you got the stub —
+  recreate the venv on Python 3.11–3.13.
 - `traigent[recommended]` pulls the common integrations. (`pip install traigent` alone
   also works — `litellm` is a core dependency, so the keyless mock path runs either way.)
 
@@ -98,6 +107,12 @@ traigent quickstart        # bundled mock-mode demo (keyless, no provider spend)
 # or:  python -m traigent.examples.quickstart
 traigent info              # version, Python, integrations, defaults
 ```
+
+> The SDK also ships `traigent onboard` (an interactive device-login that can write
+> credentials to `.env` via `--write-env`) and `traigent first-prompt` (points at a separate
+> `traigent.ai/agent.md` funnel). Those are **different entry points** — **this** repo's
+> `GUIDE.md` is the flow to follow; don't run `onboard --write-env`, or it will fight Step 3's
+> careful "`.env`, never in chat" setup.
 
 If install/verify fails, diagnose (→ `traigent-debugging`), try the
 next option (different venv / global), and only escalate to the user if still stuck.
@@ -131,6 +146,11 @@ dev backend instead.
 - **More than one** present → ask which to use for this run (it drives cost + model list).
 - **None** present → ask which they want and add it.
 
+> **"Present" means a real, non-empty key value.** Ignore blank assignments (`OPENAI_API_KEY=`)
+> **and** any leftover `# ...` hint text after the `=` — treat those as *absent*. (A value-side
+> comment is read verbatim by `python-dotenv` as the key, so a placeholder line would
+> otherwise look like a configured vendor and skew this count.)
+
 | Vendor | `.env` variable | Notes |
 |---|---|---|
 | **OpenRouter (recommended)** | `OPENROUTER_API_KEY` | One key, many low-cost/open-source models. Get a key: <https://openrouter.ai/keys> · add credits: <https://openrouter.ai/credits>. Model id via LiteLLM: `openrouter/<vendor>/<model>`. **Fund it** (a few $) — a free-tier key returns HTTP 402 and silently fails trials. |
@@ -145,10 +165,20 @@ dev backend instead.
 **d) Cost cap.** `TRAIGENT_RUN_COST_LIMIT=5.00` is set in the template. Leave
 `TRAIGENT_COST_APPROVED` commented out — you'll approve interactively at Step 9.
 
-After the user pastes and saves: confirm `.env` is git-ignored, and load the keys into the
-environment when you run — the SDK reads `os.environ` and does **not** auto-load a project
-`.env`. Prefer `python-dotenv` (`load_dotenv()`); it keeps keys out of shell history and
-other processes. Fall back to `export` only if needed.
+After the user pastes and saves: confirm `.env` is git-ignored — and **if the project has no
+`.gitignore`, create one** covering `.env`, `.venv/`, and `__pycache__/`, so a later
+`git init` can't commit secrets.
+
+Load the keys into the environment when you run. Be aware that **`litellm` (a core
+dependency) calls `load_dotenv()` on import** in its default DEV mode — so once any
+LiteLLM-backed call runs, a project/CWD `.env` is auto-loaded into `os.environ`, *including*
+run-control variables (`TRAIGENT_RUN_COST_LIMIT`, `TRAIGENT_COST_APPROVED`,
+`TRAIGENT_OFFLINE_MODE`). Those then take effect **even for "keyless" commands** like
+`traigent quickstart` (e.g. a stray low `TRAIGENT_RUN_COST_LIMIT` in `.env` will cancel its
+trials). Importing `traigent` alone is lazy and does *not* auto-load, and the auto-load walks
+from the CWD — so still prefer an explicit `python-dotenv` `load_dotenv()` as the robust path
+(deterministic, covers a venv not nested in the project, keeps keys out of shell history).
+Fall back to `export` only if needed.
 
 ---
 
@@ -161,7 +191,16 @@ retry wrapper, or generic provider client).
 - Exactly one candidate → use it.
 - Several LLM-calling functions → list them and ask which one. Optimize one per run.
 - None found → ask the user to point you to it (or offer to create a tiny example agent
-  so they can see the flow).
+  so they can see the flow — a small **Python** LiteLLM function, e.g. the quickstart's
+  `python -m traigent.examples.quickstart`, makes the dry-run free and mockable).
+- **Found, but it's not Python** (a C++/Go/Rust binary, a shell script, an HTTP service in
+  another language) → **stop and say so**: `@traigent.optimize` only wraps **Python
+  callables** (this guide is Python-only). Offer the options explicitly: (a) a thin Python
+  **wrapper** that calls the agent as a subprocess/HTTP — ⚠️ but the binary's *own* LLM calls
+  go straight to the provider and are **not** mocked, so any dry-run on it **bills for real**
+  (see Step 8); (b) reimplement just the **LLM-calling path** in Python; or (c) a clearly
+  **labeled Python demo** that will **not** optimize their real agent. Never silently fall
+  through to the "tiny example" and let the user think their actual agent was optimized.
 
 → `traigent-boost-agent` (Step 1, ANALYZE) has grep patterns and
 agent-"shape" markers (single call, cheap-vs-expensive, chain, router, tool loop, …)
@@ -178,8 +217,9 @@ output), and an **evaluation method**. Resolve the dataset first:
 - **Has logs/traces but no dataset** → build a JSONL dataset from them and ask the user
   to verify it.
 - **Has nothing** → ask the user for 3–5 example input/output pairs; synthesize up to
-  ~20+ from them, ensure **at least one-third are hard cases**, and ask the user to
-  verify/rank. (< ~10 examples is too few to be meaningful.)
+  ~20+ from them, ensure **at least one-third are hard cases** (ambiguous phrasings, inputs
+  that fit more than one label, or short/low-signal inputs), and ask the user to verify/rank.
+  (< ~10 examples is too few to be meaningful.)
 
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
@@ -214,11 +254,19 @@ from traigent.api.decorators import InjectionOptions
     configuration_space={...},               # filled in Step 7
 )
 def my_agent(query: str) -> str:
-    ...                                      # untouched: Traigent rewrites the LLM call's args
+    model = "gpt-4o-mini"                     # a NAMED local matching a config key — seamless rewrites this
+    ...                                       # Traigent rewrites the matched assignment's value per trial
 ```
 
-- **Seamless** (recommended) injects tuned values into the LLM call automatically — no
-  edits to the function body.
+- **Seamless** (recommended) injects tuned values automatically — but only where it can
+  *find* them: each config key must appear as a **named local assignment**
+  (`model = "..."`, `temperature = 0`) or a **function parameter** whose name matches the
+  key. ⚠️ **Seamless cannot inject a value that isn't a matching name** — a literal written
+  directly in the call (`litellm.completion(model="gpt-4o-mini", temperature=0)`), a value
+  read via `os.environ.get(...)`, or any kwarg built dynamically at the call site. For those
+  it logs `Seamless provider found no injectable targets … ran with original values` and
+  runs **every trial with the original config — a silent no-op** (no error, no failed trial).
+  So when wiring seamless, make each tunable a named local/param; otherwise use context mode.
 - If seamless can't apply to this code, fall back to **context** mode and read the
   config inside the function: `cfg = traigent.get_config()`, then pass `cfg["model"]`,
   `cfg["temperature"]`, etc. into the call. ⚠️ In context mode, any tuned knob that
@@ -283,34 +331,44 @@ several required flags (`--task-description --dataset-size --objective --max-tri
 
 ## Step 8 — Dry-run first (mock, free, offline)
 
-Always validate the whole pipeline at zero cost before spending anything:
+Always validate the whole pipeline at zero cost before spending anything.
+
+> **FIRST — Mock ≠ universal interception — this is the one that can cost money.** Mock only
+> intercepts LLM calls made via **LiteLLM or LangChain**. A raw
+> `openai.chat.completions.create(...)` / `anthropic.messages.create(...)` call inside the
+> user's untouched agent is **not** mocked and **bills the provider for real**, even in this
+> "free" dry-run. **Check the call path before you run the block below.** If the call goes
+> through LiteLLM/LangChain (or `injection_mode="seamless"`, which intercepts the LiteLLM
+> path), the dry-run is free. If it calls a provider SDK directly, route it through LiteLLM
+> for the dry-run, **or** set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as a backstop and
+> treat it as a paid run under the cost gate.
 
 ```python
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # no backend egress
 from traigent.testing import enable_mock_mode_for_quickstart
-enable_mock_mode_for_quickstart()              # mocks LiteLLM/LangChain calls (see caveat below)
+enable_mock_mode_for_quickstart()              # mocks LiteLLM/LangChain calls (see caveat above)
 results = my_agent.optimize_sync(max_trials=4, algorithm="random")
 ```
 
 Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
-`stop_reason` is `max_trials_reached`/`optimizer` (not `error`). Note: with a
-deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
-returns a constant string); you're checking *plumbing*, not scores.
+`stop_reason` is `max_trials_reached`/`optimizer` (not `error`).
+
+- **Also confirm the tuning actually took effect.** With a *seamless* decorator, watch the
+  run output for `Seamless provider found no injectable targets … ran with original values`.
+  If it appears, **injection silently no-opped** — every trial ran the *same* config, so the
+  optimization is meaningless even though the criteria above still pass. This warning is the
+  only signal (don't try to infer it from score/config variation — the optimizer varies the
+  *proposed* configs regardless, and mock scores are constant). Treat its presence as a
+  **fail**: fix the agent per Step 6 (named local/param, or context mode) **before** any paid
+  run.
+- With a deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
+  returns a constant string); you're checking *plumbing*, not scores. A benign
+  `minimal_logging is only effective for offline local runs …` line also prints on every run.
 
 > **Mock ≠ offline.** Mock stops LLM cost; it does **not** stop backend egress. For a
 > truly local free dry-run, also set `TRAIGENT_OFFLINE_MODE=true` (above) — otherwise a
 > "mock" run with a key set still hits the portal and counts against quota.
-
-> **Mock ≠ universal interception — this is the one that can cost money.** Mock only
-> intercepts LLM calls made via **LiteLLM or LangChain**. A raw
-> `openai.chat.completions.create(...)` / `anthropic.messages.create(...)` call inside the
-> user's untouched agent is **not** mocked and **bills the provider for real**, even in this
-> "free" dry-run. Before treating the dry-run as free, confirm the agent's LLM call goes
-> through LiteLLM/LangChain (or `injection_mode="seamless"`, which intercepts the LiteLLM
-> path). If it calls a provider SDK directly, route it through LiteLLM for the dry-run, or
-> set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as a backstop and treat it as a paid
-> run under the cost gate.
 
 **Evaluator sanity gate** (free, catches the most expensive silent failure): assert your
 metric rewards a known-good output (≥ 0.9) and penalizes a known-bad one (≤ 0.1) before
@@ -344,11 +402,17 @@ It still makes real LLM calls (a real measurement), so the cost gate/cap apply. 
 single-config baseline, restrict the space to the agent's current values for this pass (see
 the `traigent-run-optimization` skill).
 
-Because you run Python **non-interactively**, the cost gate can't show a prompt — it
-**fails closed** (raises `CostLimitExceeded` / `UnknownModelError`) instead of asking. After
-the user's explicit "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap
-still binds); for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect
-a clean abort.
+Because you run Python **non-interactively**, the cost gate can't show a prompt — and its
+pre-run **hard stop is conditional**, so don't over-rely on it. It aborts (raises, e.g.
+`OptimizationError` / `UnknownModelError`) only when the estimate **exceeds**
+`TRAIGENT_RUN_COST_LIMIT` or the model is **unpriced**. A priced run whose estimate is
+**under** the cap **proceeds into real paid calls** with only an informational cost *warning*,
+and **without** requiring `TRAIGENT_COST_APPROVED`. So **you** must enforce approval: get the
+user's explicit "yes" before any paid run (below) rather than trusting the SDK to block. (A cap
+set *below* the per-trial estimate instead returns `results` with `stop_reason=="cost_limit"`
+and **0 trials** — no exception — so check `results.stop_reason`, not only exceptions.) After
+the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap still binds);
+for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect a clean abort.
 
 **Enhanced (portal).** This is the run the user will see online:
 ```python
