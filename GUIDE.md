@@ -143,10 +143,10 @@ Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
 sign in → **API Keys** → **+ Create API Key** → choose **Full access**. It begins with
 `uk_` or `tg_`. Paste into `TRAIGENT_API_KEY=`.
 
-**b) Backend URL.** Keep `TRAIGENT_BACKEND_URL=https://portal.traigent.ai` (already in
-the template). The SDK already defaults to the cloud, so this **pins** it explicitly —
-which avoids surprises if stored CLI dev credentials or an old env var point at a local
-dev backend instead.
+**b) Backend URL — usually nothing to do.** The SDK already talks to the production cloud,
+so a first-run user does **not** set `TRAIGENT_BACKEND_URL` (it's commented out in the
+template). Only uncomment it to **pin** a specific backend — e.g. if stored CLI dev
+credentials or an old env var might point the SDK at a local/dev backend.
 
 **c) One LLM vendor key.** First read the existing `.env`; then:
 - **Exactly one** vendor key present → use that vendor; tell the user which you picked.
