@@ -52,6 +52,25 @@ re-run of the free mock dry-run with the folder's own interpreter). Note: a **gl
 `traigent 0.18.1.dev4`** editable build exists on the machine's system Python — distinct from
 the in-folder `0.18.0` and **never used**, confirming isolation held.
 
+## Limitations — what this run did NOT exercise (honest scope)
+
+To keep the matrix **$0 and non-interactive**, each scenario used placeholder keys and the
+agents were told to *record* the human-handoff moments rather than perform them. So this run
+rigorously covered the **mechanical path** (install, venv, decorator, dry-run, fail-closed) plus
+**money-safety and isolation** — but it did **not** exercise the guide's **interactive Step 3
+handoff** end to end:
+
+- No agent actually **popped open the `.env`** in an editor (GUIDE Step 3's *"open `.env` in a
+  standalone editor window … print its absolute path"*). They ran `cp .env.example .env` and
+  *inspected* the file, then recorded the "which vendor / paste your key" moment as a question.
+- No agent pasted a **real key** or ran a **paid** optimization (by design).
+
+These live handoffs are covered separately by a **real guided run with a human in the loop** —
+the captain following the guide *to the word* with the owner (popping open the `.env`, a small
+approved OpenRouter run). The test harness was also updated so future agents **perform the
+assistant's half** of interactive steps (run the `.env` opener + print the path) rather than
+only recording them.
+
 ---
 
 ## Findings → fixes in this PR
