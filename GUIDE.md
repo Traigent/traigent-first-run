@@ -17,6 +17,12 @@ Use your most capable model with high effort. This guide is **Python-only**.
 
 ## Operating rules (read once, apply throughout)
 
+- **Keep it easy and human — your user may not be a programmer.** Speak plainly, warmly, and
+  briefly: no jargon, no internal file paths or scaffolding, no walls of caveats or scary
+  technical choices. Do the technical work quietly and report progress in a sentence. When you
+  must involve them, ask **one** simple question and reassure them — e.g. *"I'll do a free
+  practice run first, then check with you before we ever spend a cent."* They should feel
+  guided and safe, never tested.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
   when the choice is genuinely theirs or a hard gate requires it.
