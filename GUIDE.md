@@ -67,8 +67,15 @@ Then proceed. Don't wait for the keys yet — you'll set them up at Step 3.
 ## Step 1 — Confirm the environment
 
 - **Python 3.11–3.13.** Detect what's installed (`python --version`, check for venvs,
-  global, pyenv). If it's missing or too old, install/select a supported version —
-  default to **3.13** for a clean slate. Don't make the user do this.
+  global, pyenv). If it's missing or too old, get to a supported version — default to **3.13**
+  for a clean slate. Changing a project's interpreter can break its existing packages, so this
+  is a genuine user choice: **ask**, and offer the two safe options —
+  1. **Upgrade in place** to 3.11 / 3.12 / 3.13, but **validate first that nothing conflicts**
+     (their current dependencies still resolve on the new version), then pin the venv to it
+     (Step 2); **or**
+  2. **Sandbox a copy** — copy the agent and the files it needs into a separate folder and
+     install the supported Python *there*, just to prove the first run works, leaving their
+     working environment untouched.
 - The user does **not** need Node.js or any JavaScript runtime for this guide.
 
 If the user has no project open yet, ask for the path to the project that contains
@@ -144,7 +151,9 @@ dev backend instead.
 **c) One LLM vendor key.** First read the existing `.env`; then:
 - **Exactly one** vendor key present → use that vendor; tell the user which you picked.
 - **More than one** present → ask which to use for this run (it drives cost + model list).
-- **None** present → ask which they want and add it.
+- **None** present → **show the user the full list of vendors Traigent supports** (the table
+  below) and let them pick one to add; recommend **OpenRouter** (one key, many low-cost
+  models) as the default. Then open `.env` for them to paste it — never take a key in chat.
 
 > **"Present" means a real, non-empty key value.** Ignore blank assignments (`OPENAI_API_KEY=`)
 > **and** any leftover `# ...` hint text after the `=` — treat those as *absent*. (A value-side
@@ -190,17 +199,22 @@ retry wrapper, or generic provider client).
 
 - Exactly one candidate → use it.
 - Several LLM-calling functions → list them and ask which one. Optimize one per run.
-- None found → ask the user to point you to it (or offer to create a tiny example agent
-  so they can see the flow — a small **Python** LiteLLM function, e.g. the quickstart's
-  `python -m traigent.examples.quickstart`, makes the dry-run free and mockable).
+- None found → ask the user to point you to it, **or** offer to create a tiny example agent so
+  they can see the flow — a small **Python** LiteLLM function (e.g. a note **summarizer** or a
+  classifier). **Ask the user what it should do** and whether they can give a few real
+  examples: their input makes the run realistic; otherwise you can generate the whole thing,
+  but **say so** (auto-generated agents/data are quick but may be unrealistically simple). The
+  quickstart (`python -m traigent.examples.quickstart`) is a free, mockable shape to copy.
 - **Found, but it's not Python** (a C++/Go/Rust binary, a shell script, an HTTP service in
-  another language) → **stop and say so**: `@traigent.optimize` only wraps **Python
-  callables** (this guide is Python-only). Offer the options explicitly: (a) a thin Python
-  **wrapper** that calls the agent as a subprocess/HTTP — ⚠️ but the binary's *own* LLM calls
-  go straight to the provider and are **not** mocked, so any dry-run on it **bills for real**
-  (see Step 8); (b) reimplement just the **LLM-calling path** in Python; or (c) a clearly
-  **labeled Python demo** that will **not** optimize their real agent. Never silently fall
-  through to the "tiny example" and let the user think their actual agent was optimized.
+  another language) → **stop and tell the user plainly: Traigent currently supports Python
+  only** (`@traigent.optimize` wraps Python callables). Then **ask** how they'd like to
+  proceed — e.g. *"Want me to show you a prepared Python agent script instead, so you can see
+  the optimization flow now?"* — offering: (a) a clearly **labeled Python demo/sample** that
+  shows the flow but does **not** optimize their real agent; (b) a thin Python **wrapper** that
+  calls their binary as a subprocess/HTTP — ⚠️ the binary's *own* LLM calls go straight to the
+  provider and are **not** mocked, so a dry-run on it **bills for real** (see Step 8); or (c)
+  reimplement just the **LLM-calling path** in Python. Never silently fall through to the
+  "tiny example" and let the user think their real agent was optimized.
 
 → `traigent-boost-agent` (Step 1, ANALYZE) has grep patterns and
 agent-"shape" markers (single call, cheap-vs-expensive, chain, router, tool loop, …)
@@ -219,7 +233,10 @@ output), and an **evaluation method**. Resolve the dataset first:
 - **Has nothing** → ask the user for 3–5 example input/output pairs; synthesize up to
   ~20+ from them, ensure **at least one-third are hard cases** (ambiguous phrasings, inputs
   that fit more than one label, or short/low-signal inputs), and ask the user to verify/rank.
-  (< ~10 examples is too few to be meaningful.)
+  (< ~10 examples is too few to be meaningful.) You *can* generate the whole dataset yourself,
+  but **be explicit about the trade-off**: a few real examples from the user make it much more
+  realistic; a fully auto-generated set is quick but easy to over-fit and may not match their
+  real inputs.
 
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
@@ -240,8 +257,12 @@ Dataset format is JSONL, one example per line with `input` and `output`:
 
 ## Step 6 — Wire the `@traigent.optimize` decorator
 
-Wrap the chosen function. **Default to zero-code-change injection** so you don't have
-to rewrite the user's agent:
+Wrap the chosen function. The `injection_mode` decides how each trial's chosen model/knobs
+reach the LLM call. **Default to context mode** — it is explicit and **cannot silently do
+nothing**, which is what you want for a first run whose whole payoff is the cloud run (Step 9)
+actually *varying* the knobs. (Seamless's "zero code change" is appealing, but it silently
+no-ops on the most common agent shapes — see below — so prefer context mode's few explicit
+lines unless the agent is already structured for seamless.)
 
 ```python
 import traigent
@@ -250,28 +271,31 @@ from traigent.api.decorators import InjectionOptions
 @traigent.optimize(
     eval_dataset="eval.jsonl",
     objectives=["accuracy"],                 # add "cost"/"latency" only to trade accuracy away
-    injection=InjectionOptions(injection_mode="seamless"),  # zero code change
+    injection=InjectionOptions(injection_mode="context"),
     configuration_space={...},               # filled in Step 7
 )
 def my_agent(query: str) -> str:
-    model = "gpt-4o-mini"                     # a NAMED local matching a config key — seamless rewrites this
-    ...                                       # Traigent rewrites the matched assignment's value per trial
+    cfg = traigent.get_config()              # the trial's chosen values
+    return litellm.completion(
+        model=cfg["model"], temperature=cfg["temperature"],
+        messages=[{"role": "user", "content": query}],
+    )["choices"][0]["message"]["content"]
 ```
 
-- **Seamless** (recommended) injects tuned values automatically — but only where it can
-  *find* them: each config key must appear as a **named local assignment**
-  (`model = "..."`, `temperature = 0`) or a **function parameter** whose name matches the
-  key. ⚠️ **Seamless cannot inject a value that isn't a matching name** — a literal written
-  directly in the call (`litellm.completion(model="gpt-4o-mini", temperature=0)`), a value
-  read via `os.environ.get(...)`, or any kwarg built dynamically at the call site. For those
-  it logs `Seamless provider found no injectable targets … ran with original values` and
-  runs **every trial with the original config — a silent no-op** (no error, no failed trial).
-  So when wiring seamless, make each tunable a named local/param; otherwise use context mode.
-- If seamless can't apply to this code, fall back to **context** mode and read the
-  config inside the function: `cfg = traigent.get_config()`, then pass `cfg["model"]`,
-  `cfg["temperature"]`, etc. into the call. ⚠️ In context mode, any tuned knob that
-  shadows a function parameter **silently stays at its default unless you read it via
-  `get_config()`** — otherwise tuning is a no-op.
+- **Context (recommended default).** Read `cfg = traigent.get_config()` and pass
+  `cfg["model"]`, `cfg["temperature"]`, etc. into the call. A few lines change, but tuning
+  **provably takes effect every trial**. ⚠️ Read *every* tuned knob from `cfg` — a knob you
+  forget (especially one that shadows a function parameter) silently stays at its default and
+  that part of the tuning is a no-op.
+- **Seamless (opt-in, zero code change).** `injection_mode="seamless"` rewrites the call's
+  args for you — **but only where it can find them**: each config key must appear as a
+  **named local assignment** (`model = "..."`) or a **parameter** whose name matches the key.
+  ⚠️ It **cannot** inject a literal written directly in the call
+  (`litellm.completion(model="gpt-4o-mini")`), a value read via `os.environ.get(...)`, or a
+  dynamically-built kwarg — for those it logs `Seamless provider found no injectable targets …
+  ran with original values` and runs **every trial with the original config (a silent no-op,
+  no error)**. Choose seamless only when the agent is already structured with matching named
+  locals/params, and **verify** that warning never appears (Step 8).
 - Do **not** add `expected` to the function signature — it's a scoring label, not an
   input; including it fails every trial.
 
@@ -354,14 +378,14 @@ results = my_agent.optimize_sync(max_trials=4, algorithm="random")
 Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 `stop_reason` is `max_trials_reached`/`optimizer` (not `error`).
 
-- **Also confirm the tuning actually took effect.** With a *seamless* decorator, watch the
-  run output for `Seamless provider found no injectable targets … ran with original values`.
-  If it appears, **injection silently no-opped** — every trial ran the *same* config, so the
-  optimization is meaningless even though the criteria above still pass. This warning is the
-  only signal (don't try to infer it from score/config variation — the optimizer varies the
-  *proposed* configs regardless, and mock scores are constant). Treat its presence as a
-  **fail**: fix the agent per Step 6 (named local/param, or context mode) **before** any paid
-  run.
+- **Also confirm the tuning actually took effect.** If you used **context** mode (the
+  default), make sure the function reads *every* tuned knob from `traigent.get_config()` — a
+  knob you don't read is silently never applied. If you used **seamless**, watch the run output
+  for `Seamless provider found no injectable targets … ran with original values`: if it
+  appears, injection silently no-opped (every trial ran the *same* config) even though the
+  criteria above still pass. This warning is the only signal (don't infer it from score/config
+  variation — the optimizer varies the *proposed* configs regardless, and mock scores are
+  constant). Treat either case as a **fail** and fix it per Step 6 **before** any paid run.
 - With a deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
   returns a constant string); you're checking *plumbing*, not scores. A benign
   `minimal_logging is only effective for offline local runs …` line also prints on every run.

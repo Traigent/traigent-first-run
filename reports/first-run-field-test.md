@@ -79,11 +79,15 @@ Severity reflects impact on a real first run. "Test-induced" items are called ou
    config** — no error, no failed trial. Step 8's pass criteria all still pass → a **false green**
    before a paid run that tests one configuration. Instrumented proof: across a 3-model × 2-temp
    space, the value reaching `litellm.completion` was the original on **all** trials.
-   **Fix:** Step 6 now states the named-target requirement and the no-op warning; Step 8 adds a
-   pass criterion that keys on the warning. *Judgment call — pro/con:* **pro** it catches a
-   money-wasting no-op; **con** the check must key on the *warning*, **not** on config/score
-   variation (the optimizer varies *proposed* configs regardless, and mock scores are constant) —
-   the wording reflects that.
+   **Fix (per owner review):** Step 6 now **defaults to context mode** — explicit and unable to
+   silently no-op — with **seamless demoted to an opt-in** for agents already structured with
+   matching named locals/params (and its named-target requirement spelled out); Step 8 adds a
+   pass criterion (read every knob from `get_config()` in context mode; for seamless, fail on the
+   no-op warning). *Rationale:* a first run's whole payoff is the cloud run *varying* the knobs, so
+   the default must be a mode that provably applies them. *Pro/con of the Step 8 check:* **pro** it
+   catches a money-wasting no-op; **con** the seamless check must key on the *warning*, **not** on
+   config/score variation (the optimizer varies *proposed* configs regardless, and mock scores are
+   constant) — the wording reflects that.
 
 3. **Step 3 wrongly says the SDK doesn't auto-load `.env` (docs, high-impact).** `litellm`
    (a core dep) calls `load_dotenv()` on import in its default DEV mode, so a project/CWD `.env`
