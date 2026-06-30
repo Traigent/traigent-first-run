@@ -11,20 +11,23 @@ try next.
 
 ---
 
-## How to use this repo
+## How to use it — one step
 
-1. **Clone it** somewhere on your machine:
-   ```bash
-   git clone https://github.com/Traigent/traigent-first-run.git
-   ```
-2. **Tell your coding assistant** (in its chat, with the repo open):
+Paste this to your coding assistant (Claude Code, Cursor, Codex, Gemini CLI, …):
 
-   > Follow the guide in this repo — read **GUIDE.md** and walk me through it step
-   > by step. Use your most capable model.
+```text
+Help me run my first Traigent optimization on my agent.
+Clone https://github.com/Traigent/traigent-first-run and follow its GUIDE.md
+step by step. Use your most capable model.
+```
 
-That's it. The assistant does the technical work and asks you only the few things
-it genuinely needs. (Most assistants also auto-read `AGENTS.md` / `CLAUDE.md`, which
-point at the same guide.)
+That's it. The assistant clones this repo, reads the guide, and walks you through the
+rest — asking you only the few things it genuinely needs. You won't have to run
+terminal commands yourself, and you never paste a secret into the chat.
+
+**Already have the repo open in your assistant?** Just say: *"Follow GUIDE.md in this
+repo, step by step."* (Assistants that auto-read `AGENTS.md` / `CLAUDE.md` pick it up
+on their own.)
 
 ---
 

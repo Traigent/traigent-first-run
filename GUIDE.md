@@ -41,9 +41,14 @@ Use your most capable model with high effort. This guide is **Python-only**.
 
 ---
 
-## Step 0 — Greet the user
+## Step 0 — Make sure you have the repo, then greet the user
 
-Show the user this message (verbatim is fine):
+If you were handed this guide as a link (not an already-cloned repo), clone it first so
+you have `.env.example` and `templates/` on hand:
+`git clone https://github.com/Traigent/traigent-first-run` (then `cd` into it, or copy
+those two files into the user's project as you go).
+
+Then show the user this message (verbatim is fine):
 
 > Your coding assistant does the technical work for you. It tells you what to do only
 > when it needs you. Your job is small: get a couple of things ready, answer a few
