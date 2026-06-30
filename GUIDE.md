@@ -178,16 +178,12 @@ After the user pastes and saves: confirm `.env` is git-ignored — and **if the 
 `.gitignore`, create one** covering `.env`, `.venv/`, and `__pycache__/`, so a later
 `git init` can't commit secrets.
 
-Load the keys into the environment when you run. Be aware that **`litellm` (a core
-dependency) calls `load_dotenv()` on import** in its default DEV mode — so once any
-LiteLLM-backed call runs, a project/CWD `.env` is auto-loaded into `os.environ`, *including*
-run-control variables (`TRAIGENT_RUN_COST_LIMIT`, `TRAIGENT_COST_APPROVED`,
-`TRAIGENT_OFFLINE_MODE`). Those then take effect **even for "keyless" commands** like
-`traigent quickstart` (e.g. a stray low `TRAIGENT_RUN_COST_LIMIT` in `.env` will cancel its
-trials). Importing `traigent` alone is lazy and does *not* auto-load, and the auto-load walks
-from the CWD — so still prefer an explicit `python-dotenv` `load_dotenv()` as the robust path
-(deterministic, covers a venv not nested in the project, keeps keys out of shell history).
-Fall back to `export` only if needed.
+Load keys with `python-dotenv`'s `load_dotenv()` — deterministic, works when the venv isn't
+nested in the project, and keeps keys out of shell history; fall back to `export` only if
+needed. *(Why explicit: importing `traigent` alone is lazy and does **not** auto-load `.env`,
+but once a LiteLLM-backed call runs, litellm auto-loads a CWD `.env` into `os.environ` —
+including run-control vars, so a stray low `TRAIGENT_RUN_COST_LIMIT` there can silently cancel
+even keyless commands like `traigent quickstart`.)*
 
 ---
 

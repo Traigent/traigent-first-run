@@ -188,7 +188,8 @@ output of the test:
 
 1. **Wiring (scenarios 1, 2, 5):** "Your agent reads the model from `os.environ.get(...)` and
    hardcodes `temperature=0`, so seamless injection tunes nothing. Switch to context mode
-   (`cfg = traigent.get_config()`), or restructure so model/temperature are named locals?"
+   (`cfg = traigent.get_config()`), or restructure so model/temperature are named locals to use
+   the seamless SDK mode (see `traigent-decorator-setup`)?"
 2. **Non-Python agent (scenario 3):** "Your agent is C++ and `@traigent.optimize` only wraps
    Python. Wrap it as a subprocess (note: its own LLM calls aren't mocked and bill real money),
    rewrite the LLM path in Python, or run a labeled demo that won't optimize your real agent?"
