@@ -45,10 +45,12 @@ trap is real **and** that the placeholder safety net works.
 
 ## Interpreter / library isolation (audited)
 
-Every scenario used **only its own in-folder `.venv`** (`python3.13`, `traigent 0.18.0`): no
-global, `--user`, or `--break-system-packages` installs; no cross-scenario venv reuse. This was
-verified independently per scenario (in-folder `sys.executable` + `traigent.__file__`, and a
-re-run of the free mock dry-run with the folder's own interpreter). Note: a **global
+Every scenario used **only its own in-folder environment** (typically `python3.13` /
+`traigent 0.18.0`; scenario 2 is deliberately on Python 3.10 — where it gets the `0.0.1` stub
+per finding #6 — and scenarios 5–6 start with no venv and create their own): no global,
+`--user`, or `--break-system-packages` installs; no cross-scenario venv reuse. This was verified
+independently per scenario (in-folder `sys.executable` + `traigent.__file__`, and a re-run of
+the free mock dry-run with the folder's own interpreter where one applies). Note: a **global
 `traigent 0.18.1.dev4`** editable build exists on the machine's system Python — distinct from
 the in-folder `0.18.0` and **never used**, confirming isolation held.
 

@@ -265,6 +265,7 @@ no-ops on the most common agent shapes — see below — so prefer context mode'
 lines unless the agent is already structured for seamless.)
 
 ```python
+import litellm
 import traigent
 from traigent.api.decorators import InjectionOptions
 
