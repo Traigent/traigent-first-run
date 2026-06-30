@@ -112,9 +112,10 @@ Copy the template and open it for the user to paste into:
 cp .env.example .env        # this repo ships .env.example; or create one next to the agent
 ```
 
-Open `.env` in a **standalone editor window** for them, and **always print its
-absolute path** as the fallback (→ the `.env` procedure in `traigent-quickstart`
-has OS-specific launchers and pitfalls). Then guide them:
+Open `.env` in a **standalone editor window** for them and **always print its absolute
+path** as the fallback. Quick opener by OS — macOS `open -t .env`, Windows `notepad .env`,
+Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
+`traigent-quickstart` skill's `.env` procedure. Then guide them:
 
 **a) Traigent platform key (required).** From <https://portal.traigent.ai/register> →
 sign in → **API Keys** → **+ Create API Key** → choose **Full access**. It begins with
@@ -132,7 +133,7 @@ dev backend instead.
 
 | Vendor | `.env` variable | Notes |
 |---|---|---|
-| **OpenRouter (recommended)** | `OPENROUTER_API_KEY` | One key, many low-cost/open-source models. Model id via LiteLLM: `openrouter/<vendor>/<model>`. **Fund it** (a few $) — a free-tier key returns HTTP 402 and silently fails trials. |
+| **OpenRouter (recommended)** | `OPENROUTER_API_KEY` | One key, many low-cost/open-source models. Get a key: <https://openrouter.ai/keys> · add credits: <https://openrouter.ai/credits>. Model id via LiteLLM: `openrouter/<vendor>/<model>`. **Fund it** (a few $) — a free-tier key returns HTTP 402 and silently fails trials. |
 | OpenAI | `OPENAI_API_KEY` | `gpt-*`; key validated before the run |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-*`; validated before the run |
 | Google (Gemini) | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-*`; validated before the run |
@@ -144,9 +145,10 @@ dev backend instead.
 **d) Cost cap.** `TRAIGENT_RUN_COST_LIMIT=5.00` is set in the template. Leave
 `TRAIGENT_COST_APPROVED` commented out — you'll approve interactively at Step 9.
 
-After the user pastes and saves: confirm `.env` is git-ignored, and that the keys are
-loaded into the environment when you run (the SDK reads `os.environ`; load `.env` via
-`python-dotenv`, or `export` the vars — putting them in `.env` is not enough on its own).
+After the user pastes and saves: confirm `.env` is git-ignored, and load the keys into the
+environment when you run — the SDK reads `os.environ` and does **not** auto-load a project
+`.env`. Prefer `python-dotenv` (`load_dotenv()`); it keeps keys out of shell history and
+other processes. Fall back to `export` only if needed.
 
 ---
 
@@ -252,6 +254,11 @@ Then build the space from: the recommendations **+ the agent's real knobs** (pro
 /style variants, temperature, sample count) **+ model variety across vendors and price
 tiers** (one premium + a couple of mid/low-cost models is the single biggest cost lever).
 
+> **Keep prompt text out of the config space.** Encode prompt/style variants as short
+> **labels** (e.g. `prompt: ["v1", "v2"]`) and map each label to the real text *inside* the
+> function — do **not** put raw prompt text as config-space values. Config choices are synced
+> to Traigent's optimizer; labels keep your actual prompts on the machine.
+
 **Adapt the knobs to the chosen models — don't assume a knob exists everywhere.**
 Some knobs (e.g. reasoning *effort* / high-med-low) exist only on certain models
 (o-series, gpt-5-class), not on all. For any model-specific knob:
@@ -282,7 +289,7 @@ Always validate the whole pipeline at zero cost before spending anything:
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # no backend egress
 from traigent.testing import enable_mock_mode_for_quickstart
-enable_mock_mode_for_quickstart()              # LLM calls return canned text — free
+enable_mock_mode_for_quickstart()              # mocks LiteLLM/LangChain calls (see caveat below)
 results = my_agent.optimize_sync(max_trials=4, algorithm="random")
 ```
 
@@ -294,6 +301,16 @@ returns a constant string); you're checking *plumbing*, not scores.
 > **Mock ≠ offline.** Mock stops LLM cost; it does **not** stop backend egress. For a
 > truly local free dry-run, also set `TRAIGENT_OFFLINE_MODE=true` (above) — otherwise a
 > "mock" run with a key set still hits the portal and counts against quota.
+
+> **Mock ≠ universal interception — this is the one that can cost money.** Mock only
+> intercepts LLM calls made via **LiteLLM or LangChain**. A raw
+> `openai.chat.completions.create(...)` / `anthropic.messages.create(...)` call inside the
+> user's untouched agent is **not** mocked and **bills the provider for real**, even in this
+> "free" dry-run. Before treating the dry-run as free, confirm the agent's LLM call goes
+> through LiteLLM/LangChain (or `injection_mode="seamless"`, which intercepts the LiteLLM
+> path). If it calls a provider SDK directly, route it through LiteLLM for the dry-run, or
+> set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as a backstop and treat it as a paid
+> run under the cost gate.
 
 **Evaluator sanity gate** (free, catches the most expensive silent failure): assert your
 metric rewards a known-good output (≥ 0.9) and penalizes a known-bad one (≤ 0.1) before
@@ -323,15 +340,20 @@ results_baseline = my_agent.optimize_sync(max_trials=1)   # one point = a quick 
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced run
 ```
 
-It still makes real LLM calls (a real measurement), so the cost gate/cap apply. For a
-true single-config baseline, restrict the space to the agent's current values for this
-pass (see the `traigent-run-optimization` skill).
+It still makes real LLM calls (a real measurement), so the cost gate/cap apply. For a true
+single-config baseline, restrict the space to the agent's current values for this pass (see
+the `traigent-run-optimization` skill).
+
+Because you run Python **non-interactively**, the cost gate can't show a prompt — it
+**fails closed** (raises `CostLimitExceeded` / `UnknownModelError`) instead of asking. After
+the user's explicit "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap
+still binds); for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect
+a clean abort.
 
 **Enhanced (portal).** This is the run the user will see online:
 ```python
-import os
-os.environ["TRAIGENT_RUN_COST_LIMIT"] = "5.00"   # hard cap (or set in .env)
-# real run → requires TRAIGENT_API_KEY + TRAIGENT_BACKEND_URL set, and cost approval
+# .env already provides TRAIGENT_API_KEY, TRAIGENT_BACKEND_URL, and the $5 cap
+# (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
 results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cloud smart, syncs to portal
 ```
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
@@ -352,11 +374,11 @@ parallel trials, quota sizing) and `traigent` (the full dry-run → approve
 
 ## Step 10 — Show the result in the portal
 
-Give the user the direct link to their run on <https://portal.traigent.ai/> so they can
-watch the trials and the **Pareto frontier** appear. A results table also prints locally
-during the run, so they see it regardless of the portal; otherwise inspect
-`results.best_config` / `results.best_score` / `results.trials` (or call
-`print_results_table` from `traigent.utils.results_table`).
+Give the user the direct link to their run — it's `results.cloud_url` (also
+`results.experiment_id` / `results.run_label`; `cloud_url` is `None` for an offline run, so
+don't fabricate a URL). A results table also prints locally during the run, so they see it
+regardless of the portal; otherwise inspect `results.best_config` / `results.best_score` /
+`results.trials`.
 
 → `traigent-analyze-results` (read `best_config` / `best_score` / the
 quality-vs-cost trade-off) and `show-significant-tuned-variables` (which

@@ -27,7 +27,8 @@ terminal commands yourself, and you never paste a secret into the chat.
 
 **Already have the repo open in your assistant?** Just say: *"Follow GUIDE.md in this
 repo, step by step."* (Assistants that auto-read `AGENTS.md` / `CLAUDE.md` pick it up
-on their own.)
+on their own.) **Can't run `git`?** Paste your assistant the GUIDE.md link (or its
+contents) and say "follow it step by step."
 
 ---
 
@@ -37,8 +38,9 @@ on their own.)
 - **A Traigent key** — sign up at <https://portal.traigent.ai/register>, create an
   API key with **Full access** (it begins with `uk_` or `tg_`).
 - **One LLM key with a few dollars on it** — **OpenRouter is recommended** (one key,
-  many low-cost/open-source models). OpenAI / Anthropic / Gemini / Mistral / Cohere
-  / Bedrock keys work too. Spend is **capped at $5 per run** (the value this repo's
+  many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
+  few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
+  Mistral / Cohere / Bedrock keys work too. Spend is **capped at $5 per run** (the value this repo's
   `.env` sets — the SDK's own default is $2), and the assistant always does a **free
   dry-run first** and asks before any paid run.
 
@@ -47,8 +49,9 @@ You'll paste your keys into a `.env` file (template: [`.env.example`](.env.examp
 
 ## Your privacy
 
-Only **configuration choices and numeric scores** ever reach Traigent — never your
-data, prompts, outputs, code, or keys. Everything sensitive stays on your machine.
+Only **configuration choices and numeric scores** ever reach Traigent — your data,
+prompts, outputs, code, and keys stay on your machine. (Your assistant encodes any prompt
+variations as short labels, so your actual prompt text isn't part of what's synced.)
 
 ---
 

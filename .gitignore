@@ -16,7 +16,7 @@ optimization_results/
 results/
 *.results.json
 candidate_config.json
-run-plan.*.md
+run-plan*.md
 !templates/run-plan.md
 
 # Local
