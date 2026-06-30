@@ -19,7 +19,7 @@ you are not staring at blank fields; confirm or adjust each with the user.
 | Option | Default starting point | Service value | User decision |
 |---|---|---|---|
 | Objectives | `["accuracy"]` (add `"cost"`/`"latency"` only to trade accuracy away) |  |  |
-| Models | 1 premium + 2 mid + 2 low-cost across vendors |  |  |
+| Models | 1 premium + a couple of mid/low-cost across vendors |  |  |
 | Knobs | from `traigent recommend` / `recommend_configuration_space()` |  |  |
 | Algorithm | `auto` (cloud smart; converges without a full grid) |  |  |
 | max_trials | bounded so `max_trials × dataset_size` fits budget & quota |  |  |

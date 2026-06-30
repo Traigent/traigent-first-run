@@ -100,15 +100,14 @@ Severity reflects impact on a real first run. "Test-induced" items are called ou
    config** — no error, no failed trial. Step 8's pass criteria all still pass → a **false green**
    before a paid run that tests one configuration. Instrumented proof: across a 3-model × 2-temp
    space, the value reaching `litellm.completion` was the original on **all** trials.
-   **Fix (per owner review):** Step 6 now **defaults to context mode** — explicit and unable to
-   silently no-op — with **seamless demoted to an opt-in** for agents already structured with
-   matching named locals/params (and its named-target requirement spelled out); Step 8 adds a
-   pass criterion (read every knob from `get_config()` in context mode; for seamless, fail on the
-   no-op warning). *Rationale:* a first run's whole payoff is the cloud run *varying* the knobs, so
-   the default must be a mode that provably applies them. *Pro/con of the Step 8 check:* **pro** it
-   catches a money-wasting no-op; **con** the seamless check must key on the *warning*, **not** on
-   config/score variation (the optimizer varies *proposed* configs regardless, and mock scores are
-   constant) — the wording reflects that.
+   **Fix (per owner review):** Step 6 now uses a **single injection mode — context** (read every
+   tuned knob from `traigent.get_config()`), which is explicit and cannot silently no-op.
+   **Seamless was removed from the first-run path** — for a first-run guide it's overwhelming
+   detail with a silent-no-op footgun — and survives only as a one-line pointer to
+   `traigent-decorator-setup` (it's still a valid SDK mode for agents already structured for it).
+   Step 8 keeps a simple "confirm you read every tuned knob from `get_config()`" check. *Rationale:*
+   a first run's whole payoff is the cloud run *varying* the knobs, so the path must be a mode that
+   provably applies them — and the guide should present one obvious way, not a footgun to avoid.
 
 3. **Step 3 wrongly says the SDK doesn't auto-load `.env` (docs, high-impact).** `litellm`
    (a core dep) calls `load_dotenv()` on import in its default DEV mode, so a project/CWD `.env`
@@ -189,7 +188,8 @@ output of the test:
 
 1. **Wiring (scenarios 1, 2, 5):** "Your agent reads the model from `os.environ.get(...)` and
    hardcodes `temperature=0`, so seamless injection tunes nothing. Switch to context mode
-   (`cfg = traigent.get_config()`), or restructure so model/temperature are named locals?"
+   (`cfg = traigent.get_config()`), or restructure so model/temperature are named locals to use
+   the seamless SDK mode (see `traigent-decorator-setup`)?"
 2. **Non-Python agent (scenario 3):** "Your agent is C++ and `@traigent.optimize` only wraps
    Python. Wrap it as a subprocess (note: its own LLM calls aren't mocked and bill real money),
    rewrite the LLM path in Python, or run a labeled demo that won't optimize your real agent?"

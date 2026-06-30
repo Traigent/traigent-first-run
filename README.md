@@ -40,7 +40,8 @@ contents) and say "follow it step by step."
 - **One LLM key with a few dollars on it** — **OpenRouter is recommended** (one key,
   many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
   few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
-  Mistral / Cohere / Bedrock keys work too. Spend is **capped at $5 per run** (the value this repo's
+  Mistral / Cohere / Bedrock keys work too (plus others like HuggingFace — see GUIDE.md for the
+  full vendor list). Spend is **capped at $5 per run** (the value this repo's
   `.env` sets — the SDK's own default is $2), and the assistant always does a **free
   dry-run first** and asks before any paid run.
 
