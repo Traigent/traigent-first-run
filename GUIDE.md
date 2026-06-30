@@ -17,6 +17,12 @@ Use your most capable model with high effort. This guide is **Python-only**.
 
 ## Operating rules (read once, apply throughout)
 
+- **Keep it easy and human — your user may not be a programmer.** Speak plainly, warmly, and
+  briefly: no jargon, no internal file paths or scaffolding, no walls of caveats or scary
+  technical choices. Do the technical work quietly and report progress in a sentence. When you
+  must involve them, ask **one** simple question and reassure them — e.g. *"I'll do a free
+  practice run first, then check with you before we ever spend a cent."* They should feel
+  guided and safe, never tested.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
   when the choice is genuinely theirs or a hard gate requires it.
@@ -143,10 +149,10 @@ Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
 sign in → **API Keys** → **+ Create API Key** → choose **Full access**. It begins with
 `uk_` or `tg_`. Paste into `TRAIGENT_API_KEY=`.
 
-**b) Backend URL.** Keep `TRAIGENT_BACKEND_URL=https://portal.traigent.ai` (already in
-the template). The SDK already defaults to the cloud, so this **pins** it explicitly —
-which avoids surprises if stored CLI dev credentials or an old env var point at a local
-dev backend instead.
+**b) Backend URL — usually nothing to do.** The SDK already talks to the production cloud,
+so a first-run user does **not** set `TRAIGENT_BACKEND_URL` (it's commented out in the
+template). Only uncomment it to **pin** a specific backend — e.g. if stored CLI dev
+credentials or an old env var might point the SDK at a local/dev backend.
 
 **c) One LLM vendor key.** First read the existing `.env`; then:
 - **Exactly one** vendor key present → use that vendor; tell the user which you picked.
