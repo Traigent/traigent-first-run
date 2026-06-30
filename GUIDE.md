@@ -257,12 +257,8 @@ Dataset format is JSONL, one example per line with `input` and `output`:
 
 ## Step 6 — Wire the `@traigent.optimize` decorator
 
-Wrap the chosen function. The `injection_mode` decides how each trial's chosen model/knobs
-reach the LLM call. **Default to context mode** — it is explicit and **cannot silently do
-nothing**, which is what you want for a first run whose whole payoff is the cloud run (Step 9)
-actually *varying* the knobs. (Seamless's "zero code change" is appealing, but it silently
-no-ops on the most common agent shapes — see below — so prefer context mode's few explicit
-lines unless the agent is already structured for seamless.)
+Wrap the chosen function and read each trial's chosen values from `traigent.get_config()`
+(**context mode**), so the tuning provably takes effect every trial:
 
 ```python
 import litellm
@@ -283,25 +279,14 @@ def my_agent(query: str) -> str:
     )["choices"][0]["message"]["content"]
 ```
 
-- **Context (recommended default).** Read `cfg = traigent.get_config()` and pass
-  `cfg["model"]`, `cfg["temperature"]`, etc. into the call. A few lines change, but tuning
-  **provably takes effect every trial**. ⚠️ Read *every* tuned knob from `cfg` — a knob you
-  forget (especially one that shadows a function parameter) silently stays at its default and
-  that part of the tuning is a no-op.
-- **Seamless (opt-in, zero code change).** `injection_mode="seamless"` rewrites the call's
-  args for you — **but only where it can find them**: each config key must appear as a
-  **named local assignment** (`model = "..."`) or a **parameter** whose name matches the key.
-  ⚠️ It **cannot** inject a literal written directly in the call
-  (`litellm.completion(model="gpt-4o-mini")`), a value read via `os.environ.get(...)`, or a
-  dynamically-built kwarg — for those it logs `Seamless provider found no injectable targets …
-  ran with original values` and runs **every trial with the original config (a silent no-op,
-  no error)**. Choose seamless only when the agent is already structured with matching named
-  locals/params, and **verify** that warning never appears (Step 8).
-- Do **not** add `expected` to the function signature — it's a scoring label, not an
-  input; including it fails every trial.
+- Read **every** tuned knob from `cfg` — a knob you forget stays at its default, so that part
+  of the tuning silently does nothing.
+- Do **not** add `expected` to the function signature — it's a scoring label, not an input;
+  including it fails every trial.
 
-→ `traigent-decorator-setup` (injection modes, objectives, evaluation,
-`experiment_name` labeling).
+→ `traigent-decorator-setup` for the rest: the other injection modes (including the
+zero-code-change `seamless` mode, for agents already structured for it), objectives,
+evaluation, and `experiment_name` labeling.
 
 ---
 
@@ -363,10 +348,9 @@ Always validate the whole pipeline at zero cost before spending anything.
 > `openai.chat.completions.create(...)` / `anthropic.messages.create(...)` call inside the
 > user's untouched agent is **not** mocked and **bills the provider for real**, even in this
 > "free" dry-run. **Check the call path before you run the block below.** If the call goes
-> through LiteLLM/LangChain (or `injection_mode="seamless"`, which intercepts the LiteLLM
-> path), the dry-run is free. If it calls a provider SDK directly, route it through LiteLLM
-> for the dry-run, **or** set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as a backstop and
-> treat it as a paid run under the cost gate.
+> through LiteLLM/LangChain, the dry-run is free. If it calls a provider SDK directly, route it
+> through LiteLLM for the dry-run, **or** set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as
+> a backstop and treat it as a paid run under the cost gate.
 
 ```python
 import os
@@ -379,14 +363,10 @@ results = my_agent.optimize_sync(max_trials=4, algorithm="random")
 Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 `stop_reason` is `max_trials_reached`/`optimizer` (not `error`).
 
-- **Also confirm the tuning actually took effect.** If you used **context** mode (the
-  default), make sure the function reads *every* tuned knob from `traigent.get_config()` — a
-  knob you don't read is silently never applied. If you used **seamless**, watch the run output
-  for `Seamless provider found no injectable targets … ran with original values`: if it
-  appears, injection silently no-opped (every trial ran the *same* config) even though the
-  criteria above still pass. This warning is the only signal (don't infer it from score/config
-  variation — the optimizer varies the *proposed* configs regardless, and mock scores are
-  constant). Treat either case as a **fail** and fix it per Step 6 **before** any paid run.
+- **Also confirm the tuning actually took effect.** Make sure the function reads *every* tuned
+  knob from `traigent.get_config()` — a knob you don't read is silently never applied, so the
+  trials all run the same config even though the criteria above still pass. Fix any unread knob
+  per Step 6 **before** any paid run.
 - With a deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
   returns a constant string); you're checking *plumbing*, not scores. A benign
   `minimal_logging is only effective for offline local runs …` line also prints on every run.
