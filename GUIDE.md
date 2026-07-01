@@ -386,18 +386,22 @@ tiers** (one premium + a couple of mid/low-cost models is the single biggest cos
 >   exploration is precisely what *does the optimizing* — `algorithm="auto"` (Step 9) homes in on
 >   the best of that large space in **≤10 smart trials, without a full grid**, which is how a
 >   genuinely better config gets found under the $5 cap.
+>
 > Same dataset for both. What's on show is *normal manual effort* vs *Traigent's larger, smarter
 > search that finds the optimum* — so keep the baseline genuinely reasonable, never weakened.
-> **Wiring:** put the **enhanced (large)** space in the Step 6 decorator; the baseline supplies
-> the small space as a call-time `configuration_space=` override (Step 9), and the enhanced run
-> passes no override so it uses the decorator's space.
+>
+> **Wiring:** the Step 6 decorator holds the **enhanced (large)** space. **Both** baseline
+> branches pass a call-time `configuration_space=` override (branch A = the user's own config;
+> branch B = the small testing-the-waters space); only the **enhanced** run passes **no** override,
+> so it alone uses the decorator's space.
 
 > **Make the enhanced space rich enough to be worth optimizing.** A run with only
 > 2–3 configurations is something the user could try by hand, and it can't produce a real
 > accuracy-vs-cost (Pareto) frontier. Combine **model tiers × temperature ×
 > prompt variants × sample count** with at least one **composite knob** matched to the agent's
 > shape (self-consistency / best-of-n for a single call; a cheap→expert **cascade**; a
-> **verification gate**; a **router**) — so the search spans **~10–15+ configurations** with a
+> **verification gate**; a **router**) — so the search spans **dozens of combinations (30–100+
+> once composite knobs multiply) — well more than 10 trials could grid**, with a
 > real accuracy-vs-cost spread and genuine room to improve. Then let **`algorithm="auto"`**
 > (Step 9) converge over that large space without a full grid — searching a space too big to try
 > by hand is the useful part, and where a genuine improvement has room to show up (if there's one
@@ -511,8 +515,12 @@ keyword on `optimize_sync()`, where it is silently ignored:
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # local only — results NOT synced to the portal
 
-# A) The user configured the agent themselves → measure it EXACTLY as-is, no override:
-# results_baseline = my_agent.optimize_sync(algorithm="grid", max_trials=10)
+# A) The user configured the agent themselves → measure it EXACTLY as-is. Pin THEIR own values
+#    explicitly — a bare call would run the decorator's enhanced (large) space, not their config:
+# user_space = { ... the user's own models / knobs, exactly as they defined them ... }
+# results_baseline = my_agent.optimize_sync(
+#     configuration_space=user_space, algorithm="grid", max_trials=10,
+# )
 
 # B) YOU chose the setup → run the small "testing-the-waters" space (Step 7): a few credible
 #    models, a few temperatures, standard knobs only — composite knobs pinned to their OFF value.
@@ -527,6 +535,10 @@ results_baseline = my_agent.optimize_sync(
 )
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced run
 ```
+
+**Pin every knob the enhanced function reads** in the baseline space — each composite knob to its
+OFF value, each variant knob (prompt, sample count) to one default. A knob the function branches
+on but the baseline space omits runs undefined.
 
 It still makes real LLM calls (a real measurement — ~4–8 configs × your dataset when you build a
 baseline space, or a single pass when running the user's own config; either way small and cheap),
