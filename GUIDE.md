@@ -75,7 +75,8 @@ Then proceed. Don't wait for the keys yet — you'll set them up at Step 3.
 - **Python 3.11–3.13.** Detect what's installed (`python --version`, check for venvs,
   global, pyenv). If it's missing or too old, get to a supported version — default to **3.13**
   for a clean slate. Changing a project's interpreter can break its existing packages, so this
-  is a genuine user choice: **ask**, and offer the two safe options —
+  is a genuine user choice: **ask the user how to proceed — never silently skip it or declare
+  it impossible** — and offer the two safe options —
   1. **Upgrade in place** to 3.11 / 3.12 / 3.13, but **validate first that nothing conflicts**
      (their current dependencies still resolve on the new version), then pin the venv to it
      (Step 2); **or**
@@ -240,6 +241,11 @@ output), and an **evaluation method**. Resolve the dataset first:
   realistic; a fully auto-generated set is quick but easy to over-fit and may not match their
   real inputs.
 
+**Make the dataset hard enough to *differentiate* configs.** If every model/knob scores the same
+(or ~100%), the dataset is too easy and the run can't tell the best config from the rest — the
+whole exercise needs a spread. **If you're creating the dataset, err on the side of harder** so
+different models/prompts actually separate; that's what lets Step 10–11 point to a real winner.
+
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
 {"input": "I was charged twice for my subscription", "output": "billing"}
@@ -372,6 +378,10 @@ Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 - With a deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
   returns a constant string); you're checking *plumbing*, not scores. A benign
   `minimal_logging is only effective for offline local runs …` line also prints on every run.
+- **Mock numbers are NOT results — never show them to the user as accuracy or in a comparison.**
+  A mock run only proves the wiring connects without paying. If you mention it at all, say plainly
+  it is a **mocked run (no cost — just checking everything's connected)**; never let a $0 / 0.0%
+  mock number look like a real outcome.
 
 > **Mock ≠ offline.** Mock stops LLM cost; it does **not** stop backend egress. For a
 > truly local free dry-run, also set `TRAIGENT_OFFLINE_MODE=true` (above) — otherwise a
@@ -434,6 +444,21 @@ results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cl
   LLM calls — show the user the estimate and the $5 cap, and only proceed on their
   explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass `cost_limit=` /
   handle `OptimizationError` if the estimate exceeds the cap).
+- **Unpriced (or dead) model → handle it *for* the user; don't make them configure anything.**
+  As part of "verify model IDs are live" above, check each chosen model pre-run for BOTH: (1)
+  it's a **live, valid id** for that vendor (a `traigent models --check` / real call doesn't
+  404), and (2) its **cost is tracked** (`litellm.cost_per_token(model=...)` doesn't raise —
+  many `openrouter/*` ids have no local price). If a model fails either check, act by *who chose
+  it*:
+  - **You chose the model** (the user had no agent, or left the choice to you) → **swap it** for
+    a working, priced equivalent and continue. The user does nothing and never sees this.
+  - **The user chose it** → tell them plainly and let them decide: *"`<model>` didn't work / has
+    no cost data, so I can't price it accurately — your real spend is metered on your OpenRouter
+    credit. Run it anyway (you'll still get the accuracy), or swap it for one that's priced?"*
+  Offer to flag it to **Traigent support (`support@traigent.ai`)** so the model/pricing gets
+  added — **don't ask a hands-off user to hand-write a pricing file.** Keep `TRAIGENT_RUN_COST_LIMIT`
+  small as a backstop; OpenRouter's funded credit is the true spend limit. (The live cost is
+  often still captured from the provider response, but don't rely on it.)
 - Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
   `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
 
@@ -457,20 +482,26 @@ knobs actually mattered).
 
 ---
 
-## Step 11 — Decide on a second run (deterministic, not "maybe")
+## Step 11 — Run a second, enhanced pass (show the improvement)
 
-Apply this rule — don't hand the user a vague "you could try…":
+A first run's whole value is *seeing improvement* — so **run a second, enhanced pass**; don't
+stop at one:
 
-- **IF** best accuracy is below the user's target **AND** budget/quota remain →
-  run a **second** run focused on the examples that failed in run 1, plus similar ones
-  pulled in to refill the subset (~30–50). Then either (a) route easy inputs to run 1's
-  optimum and hard inputs to run 2's optimum, or (b) adopt run 2's optimum if it's
-  better overall.
-- **ELSE** (target met, or budget/quota exhausted) → **stop** and report.
-
-Drop knobs that showed no effect; add ones you now suspect matter (Step 7's service
-recommendations + importance from Step 10). → `traigent-next-run` and
-`traigent-iterate` choose the next single hypothesis from server signals.
+- **Enhance it.** Add knobs (more models across price tiers, prompt/style variants, sample
+  count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
+  the examples that failed. Run it and let the user **watch the new frontier appear on the
+  portal — baseline vs enhanced, side by side.**
+- **The comparison must be real-vs-real.** Baseline = the agent's *actual* current config, run
+  for real (the Step 9 baseline). Enhanced = the real optimized run. **Never** compare against a
+  mock, and **never** degrade the baseline on purpose (a weaker prompt/model) to manufacture a
+  gap. If the honest delta is ~zero, say so plainly — and check the dataset isn't too easy (below).
+- **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
+  is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
+  dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually
+  separate — then re-run. (Size it hard enough from the start so you never land here.)
+- Then either route easy inputs to run 1's optimum and hard inputs to run 2's optimum, or adopt
+  run 2's optimum if it's better overall. Budget/quota permitting, keep iterating. →
+  `traigent-next-run` and `traigent-iterate` pick the next single hypothesis from server signals.
 
 ---
 
@@ -480,6 +511,17 @@ Tell the user, plainly:
 - what they learned (baseline vs best config — the accuracy/cost/latency delta),
 - where their agent stands, and the Pareto frontier they can choose from,
 - the single best next step (one hypothesis, not a bundle).
+
+**Explain what it *means*, truthfully, to someone who may know nothing — and say only what is
+objectively true.** Never imply an improvement that didn't happen or a conclusion you haven't
+evidenced. In particular:
+- **If *you* generated the dataset, tell them** — and that a small or easy dataset can't tell a
+  good config from a bad one. So "no improvement" usually means the test was too easy, **not**
+  that the agent can't be improved.
+- **If a run showed no real gain, explain why in plain words** and give the honest next step —
+  e.g. *"Your model already got all 12 examples right, so there was nothing to tune. To actually
+  find a better setup we'd need a bigger, harder set of examples — want to build one?"* — rather
+  than dressing up a zero delta as a win.
 
 **Before shipping a winning config to production:** export it as a *candidate*, check it
 on a held-out slice, and apply only after the gate passes and the user approves —
