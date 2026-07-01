@@ -428,15 +428,15 @@ results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cl
   LLM calls — show the user the estimate and the $5 cap, and only proceed on their
   explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass `cost_limit=` /
   handle `OptimizationError` if the estimate exceeds the cap).
-- **Watch for *unpriced* models — they read as $0 and quietly defeat the gate.** The estimate
-  and the cost gate use litellm's static price table, and **many `openrouter/*` ids are not in
-  it** (e.g. `openrouter/openai/gpt-4o-mini` and `openrouter/meta-llama/llama-3.1-8b-instruct`
-  return no price). An unpriced model is estimated at **$0**, so the cap never triggers for it
-  and the estimate under-counts the run. Because OpenRouter is the recommended vendor this is
-  easy to hit: rely on **OpenRouter's own funded credit** as the real backstop, keep
-  `TRAIGENT_RUN_COST_LIMIT` small, and/or set `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` for the ids
-  you use so the estimate is honest. (Check an id with `litellm.cost_per_token(model=...)` — if
-  it raises, that id is unpriced.)
+- **Don't trust the SDK's local cost numbers for OpenRouter.** litellm's static price table has
+  no entry for many `openrouter/*` ids (e.g. `openrouter/openai/gpt-4o-mini` and
+  `openrouter/meta-llama/llama-3.1-8b-instruct`), so the **pre-run estimate reads $0** for them —
+  it under-counts, and the pre-run cap check can't see them. The *live* cost is sometimes still
+  captured from the provider response (a real run recorded ≈`$0.00008`) but sometimes logs $0
+  too. Because OpenRouter is the recommended vendor this is easy to hit: treat **OpenRouter's own
+  funded credit** as the real spend limit, keep `TRAIGENT_RUN_COST_LIMIT` small, and/or set
+  `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` for the ids you use so the estimate is honest. (Check an id
+  with `litellm.cost_per_token(model=...)` — if it raises, the static price is missing.)
 - Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
   `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
 
