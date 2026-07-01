@@ -554,7 +554,7 @@ knobs actually mattered).
 
 ---
 
-## Step 11 — Run a second, enhanced pass (show the improvement)
+## Step 11 — Run a second, enhanced pass (measure the change, honestly)
 
 A first run's value is *seeing whether — and where — it can improve* — so **run a second,
 enhanced pass**; don't stop at one:
