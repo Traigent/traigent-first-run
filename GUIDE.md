@@ -69,7 +69,8 @@ Then proceed. Don't wait for the keys yet — you'll set them up at Step 3.
 - **Python 3.11–3.13.** Detect what's installed (`python --version`, check for venvs,
   global, pyenv). If it's missing or too old, get to a supported version — default to **3.13**
   for a clean slate. Changing a project's interpreter can break its existing packages, so this
-  is a genuine user choice: **ask**, and offer the two safe options —
+  is a genuine user choice: **ask the user how to proceed — never silently skip it or declare
+  it impossible** — and offer the two safe options —
   1. **Upgrade in place** to 3.11 / 3.12 / 3.13, but **validate first that nothing conflicts**
      (their current dependencies still resolve on the new version), then pin the venv to it
      (Step 2); **or**
@@ -371,6 +372,10 @@ Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 - With a deterministic scorer, mock scores are uniformly 0.0 — that's **expected** (the mock
   returns a constant string); you're checking *plumbing*, not scores. A benign
   `minimal_logging is only effective for offline local runs …` line also prints on every run.
+- **Mock numbers are NOT results — never show them to the user as accuracy or in a comparison.**
+  A mock run only proves the wiring connects without paying. If you mention it at all, say plainly
+  it is a **mocked run (no cost — just checking everything's connected)**; never let a $0 / 0.0%
+  mock number look like a real outcome.
 
 > **Mock ≠ offline.** Mock stops LLM cost; it does **not** stop backend egress. For a
 > truly local free dry-run, also set `TRAIGENT_OFFLINE_MODE=true` (above) — otherwise a
@@ -480,6 +485,10 @@ stop at one:
   count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
   the examples that failed. Run it and let the user **watch the new frontier appear on the
   portal — baseline vs enhanced, side by side.**
+- **The comparison must be real-vs-real.** Baseline = the agent's *actual* current config, run
+  for real (the Step 9 baseline). Enhanced = the real optimized run. **Never** compare against a
+  mock, and **never** degrade the baseline on purpose (a weaker prompt/model) to manufacture a
+  gap. If the honest delta is ~zero, say so plainly — and check the dataset isn't too easy (below).
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually
