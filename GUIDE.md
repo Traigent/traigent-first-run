@@ -499,7 +499,9 @@ for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect 
 a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),
 **now is the moment**: pop `.env` open yourself and walk them through the ≈1-min free signup
 (<https://portal.traigent.ai/register> → **API Keys** → **+ Create API Key** → **Full access** →
-paste `TRAIGENT_API_KEY=`). Then:
+paste `TRAIGENT_API_KEY=`). Reassure them in plain words why this is safe: the key lives only
+in their git-ignored `.env` (never in the chat), is used only to sync configuration choices and
+scores, and they can revoke it anytime from the portal. Then:
 ```python
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
