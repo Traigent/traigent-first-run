@@ -146,9 +146,14 @@ path** as the fallback. Quick opener by OS — macOS `open -t .env`, Windows `no
 Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
 `traigent-quickstart` skill's `.env` procedure. Then guide them:
 
-**a) Traigent platform key (required).** From <https://portal.traigent.ai/register> →
-sign in → **API Keys** → **+ Create API Key** → choose **Full access**. It begins with
-`uk_` or `tg_`. Paste into `TRAIGENT_API_KEY=`.
+**a) Traigent platform key — a separate, free signup (don't assume they have one).** A
+first-time user usually has only their **LLM vendor key**, *not* a Traigent key yet — so don't
+ask "did you save your Traigent key?" as if they already have one. If `TRAIGENT_API_KEY` isn't
+set, **walk them through creating it** (≈1 min): <https://portal.traigent.ai/register> → sign in
+→ **API Keys** → **+ Create API Key** → **Full access** (begins `uk_` / `tg_`) → paste into
+`TRAIGENT_API_KEY=`. If they'd rather not sign up this second, **don't block them** — you can
+still run the first optimization **locally/offline** (results print locally; `cloud_url` is
+`None`) and sync to the portal once they have the key.
 
 **b) Backend URL — usually nothing to do.** The SDK already talks to the production cloud,
 so a first-run user does **not** set `TRAIGENT_BACKEND_URL` (it's commented out in the
