@@ -320,6 +320,16 @@ Then build the space from: the recommendations **+ the agent's real knobs** (pro
 /style variants, temperature, sample count) **+ model variety across vendors and price
 tiers** (one premium + a couple of mid/low-cost models is the single biggest cost lever).
 
+> **Make the space rich enough to be worth optimizing — this is the showcase.** A run with only
+> 2–3 configurations is something the user could try by hand; it doesn't show *why* they need
+> Traigent, and it can't produce a real Pareto frontier. Combine **model tiers × temperature ×
+> prompt variants × sample count** with at least one **composite knob** matched to the agent's
+> shape (self-consistency / best-of-n for a single call; a cheap→expert **cascade**; a
+> **verification gate**; a **router**) — so the search spans **~10–15+ configurations** with a
+> real accuracy-vs-cost spread and genuine room to improve. Then let **`algorithm="auto"`**
+> (Step 9) converge over that large space without a full grid — that efficient search over a
+> space too big to try by hand *is* the value the user is here to see.
+
 > **Keep prompt text out of the config space.** Encode prompt/style variants as short
 > **labels** (e.g. `prompt: ["v1", "v2"]`) and map each label to the real text *inside* the
 > function — do **not** put raw prompt text as config-space values. Config choices are synced
@@ -491,10 +501,14 @@ stop at one:
   count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
   the examples that failed. Run it and let the user **watch the new frontier appear on the
   portal — baseline vs enhanced, side by side.**
-- **The comparison must be real-vs-real.** Baseline = the agent's *actual* current config, run
-  for real (the Step 9 baseline). Enhanced = the real optimized run. **Never** compare against a
-  mock, and **never** degrade the baseline on purpose (a weaker prompt/model) to manufacture a
-  gap. If the honest delta is ~zero, say so plainly — and check the dataset isn't too easy (below).
+- **The comparison must be real-vs-real, and the baseline must make sense.** Baseline = the
+  agent's *actual, sensible* current config, run for real (the Step 9 baseline) — a reasonable
+  starting point, **not** a strawman you weakened. Enhanced = the real optimized run over the
+  rich space (Step 7). **Aim for a clearly *bigger* improvement, not a marginal one** — that's the
+  point of a showcase, and a rich knob space on a hard-enough dataset is what makes it possible.
+  **Never** compare against a mock, and **never** degrade the baseline on purpose to manufacture a
+  gap. If the honest delta is ~zero, say so plainly — and check the space wasn't too thin or the
+  dataset too easy (below).
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually
