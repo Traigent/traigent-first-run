@@ -506,6 +506,17 @@ Tell the user, plainly:
 - where their agent stands, and the Pareto frontier they can choose from,
 - the single best next step (one hypothesis, not a bundle).
 
+**Explain what it *means*, truthfully, to someone who may know nothing — and say only what is
+objectively true.** Never imply an improvement that didn't happen or a conclusion you haven't
+evidenced. In particular:
+- **If *you* generated the dataset, tell them** — and that a small or easy dataset can't tell a
+  good config from a bad one. So "no improvement" usually means the test was too easy, **not**
+  that the agent can't be improved.
+- **If a run showed no real gain, explain why in plain words** and give the honest next step —
+  e.g. *"Your model already got all 12 examples right, so there was nothing to tune. To actually
+  find a better setup we'd need a bigger, harder set of examples — want to build one?"* — rather
+  than dressing up a zero delta as a win.
+
 **Before shipping a winning config to production:** export it as a *candidate*, check it
 on a held-out slice, and apply only after the gate passes and the user approves —
 never promote straight from the run. → `traigent-ci-safety-gate`.
