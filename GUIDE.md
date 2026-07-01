@@ -86,8 +86,8 @@ Then show the user this message (verbatim is fine):
 > 2. Get your agent ready: the agent, a small **dataset**, and an **evaluation method** (I'll
 >    build the dataset with you if you don't have one).
 > 3. A **real local baseline** run so you see how your agent does today — needs only your LLM key.
-> 4. You add your free **Traigent key**, and I run the **enhanced** version so you can watch it
->    improve **in the portal**.
+> 4. You add your free **Traigent key**, and I run the **enhanced** version so you can see how it
+>    does **in the portal**.
 >
 > Sound good? Tell me if you'd like to change anything — otherwise I'll get started.
 
@@ -556,8 +556,8 @@ knobs actually mattered).
 
 ## Step 11 — Run a second, enhanced pass (show the improvement)
 
-A first run's whole value is *seeing improvement* — so **run a second, enhanced pass**; don't
-stop at one:
+A first run's value is *seeing whether — and where — it can improve* — so **run a second,
+enhanced pass**; don't stop at one:
 
 - **Enhance it.** Add knobs (more models across price tiers, prompt/style variants, sample
   count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
@@ -570,7 +570,7 @@ stop at one:
   strawman you weakened. Enhanced = the real optimized run over the rich space (Step 7). A rich
   knob space on a hard-enough dataset gives a real improvement room to show up — **but let the
   honest delta be whatever it is.** If the agent was already strong and the gain is small, report
-  that plainly; a small-but-real improvement (or "already near-best") beats a manufactured gap.
+  that plainly; a small-but-real improvement (or "already near-best") beats a fake one.
   **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
   ~zero, say so plainly — the space was probably too thin (widen it, **Step 7**) or the dataset too
