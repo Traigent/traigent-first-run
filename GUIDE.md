@@ -319,7 +319,7 @@ from traigent.api.decorators import InjectionOptions
     eval_dataset="eval.jsonl",
     objectives=["accuracy"],                 # add "cost"/"latency" only to trade accuracy away
     injection=InjectionOptions(injection_mode="context"),
-    configuration_space={...},               # filled in Step 7
+    configuration_space={...},               # the ENHANCED (large) space — filled in Step 7
 )
 def my_agent(query: str) -> str:
     cfg = traigent.get_config()              # the trial's chosen values
@@ -384,6 +384,9 @@ tiers** (one premium + a couple of mid/low-cost models is the single biggest cos
 >   genuinely better config gets found under the $5 cap.
 > Same dataset for both. What's on show is *normal manual effort* vs *Traigent's larger, smarter
 > search that finds the optimum* — so keep the baseline genuinely reasonable, never weakened.
+> **Wiring:** put the **enhanced (large)** space in the Step 6 decorator; the baseline supplies
+> the small space as a call-time `configuration_space=` override (Step 9), and the enhanced run
+> passes no override so it uses the decorator's space.
 
 > **Make the enhanced space rich enough to be worth optimizing.** A run with only
 > 2–3 configurations is something the user could try by hand, and it can't produce a real
@@ -501,13 +504,16 @@ keyword on `optimize_sync()`, where it is silently ignored:
 ```python
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # local only — results NOT synced to the portal
-# If the user configured the agent themselves, run it as-is (their real config = the "before").
-# If YOU chose the setup, run the small "testing-the-waters" space (Step 7): a few credible
-# models, a few temperatures, standard knobs only — composite knobs pinned to their OFF value.
+
+# A) The user configured the agent themselves → measure it EXACTLY as-is, no override:
+# results_baseline = my_agent.optimize_sync(algorithm="grid", max_trials=10)
+
+# B) YOU chose the setup → run the small "testing-the-waters" space (Step 7): a few credible
+#    models, a few temperatures, standard knobs only — composite knobs pinned to their OFF value.
 baseline_space = {
     "model": ["<credible-model-a>", "<credible-model-b>"],  # near-top, sensible — not the worst
     "temperature": [0.0, 0.3, 0.7],
-    "votes": [1],                                           # your composite knob, pinned OFF (single call)
+    "<your-composite-knob>": ["<off-value>"],              # pin it OFF, e.g. "votes": [1] (single call)
 }
 results_baseline = my_agent.optimize_sync(
     configuration_space=baseline_space,   # the small space, NOT the full enhanced one
