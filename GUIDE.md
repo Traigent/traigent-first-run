@@ -428,20 +428,21 @@ results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cl
   LLM calls — show the user the estimate and the $5 cap, and only proceed on their
   explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass `cost_limit=` /
   handle `OptimizationError` if the estimate exceeds the cap).
-- **Unpriced model → handle it *for* the user, don't just warn.** Some models have no local
-  price (`litellm.cost_per_token(model=...)` raises — common for `openrouter/*` ids), so the
-  pre-run cost estimate for them is unreliable (reads $0). **Check each chosen model pre-run**,
-  and if one is unpriced, act by *who chose it*:
-  - **You chose the model** (the user had no agent, or left the model choice to you) → just
-    **swap it for a priced equivalent** and continue. The user does nothing and never sees this.
-  - **The user chose it** → tell them plainly and let them decide: *"I can't get a price for
-    `<model>`, so my cost estimate for it may be off — your real spend is metered on your
-    OpenRouter credit. Want me to (a) run it anyway (you'll still get the accuracy), or (b) swap
-    it for a priced model?"*
-  Either way, offer to flag it to **Traigent support (`support@traigent.ai`)** so pricing gets
-  added. Keep `TRAIGENT_RUN_COST_LIMIT` small and/or set `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` as a
-  backstop. (The *live* cost is often still captured from the provider response — a real run
-  recorded ≈`$0.00008` — but don't rely on it; OpenRouter's funded credit is the true limit.)
+- **Unpriced (or dead) model → handle it *for* the user; don't make them configure anything.**
+  As part of "verify model IDs are live" above, check each chosen model pre-run for BOTH: (1)
+  it's a **live, valid id** for that vendor (a `traigent models --check` / real call doesn't
+  404), and (2) its **cost is tracked** (`litellm.cost_per_token(model=...)` doesn't raise —
+  many `openrouter/*` ids have no local price). If a model fails either check, act by *who chose
+  it*:
+  - **You chose the model** (the user had no agent, or left the choice to you) → **swap it** for
+    a working, priced equivalent and continue. The user does nothing and never sees this.
+  - **The user chose it** → tell them plainly and let them decide: *"`<model>` didn't work / has
+    no cost data, so I can't price it accurately — your real spend is metered on your OpenRouter
+    credit. Run it anyway (you'll still get the accuracy), or swap it for one that's priced?"*
+  Offer to flag it to **Traigent support (`support@traigent.ai`)** so the model/pricing gets
+  added — **don't ask a hands-off user to hand-write a pricing file.** Keep `TRAIGENT_RUN_COST_LIMIT`
+  small as a backstop; OpenRouter's funded credit is the true spend limit. (The live cost is
+  often still captured from the provider response, but don't rely on it.)
 - Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
   `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
 
