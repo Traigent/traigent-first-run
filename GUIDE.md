@@ -25,6 +25,11 @@ Use your most capable model with high effort. This guide is **Python-only**.
   reassure). When you must involve them, ask **one** simple question and reassure them — e.g.
   *"I'll do a free practice run first, then check with you before we ever spend a cent."* They
   should feel guided and safe, never tested.
+- **Before anything that pops an approval, say what you're doing — in one plain sentence.** Any
+  action that will prompt the user (a command-approval popup from their coding tool, a paid run,
+  opening a file) should be preceded by a simple *what* and *why*, in everyday words — e.g.
+  *"I need to read the Traigent key you just saved."* Never let a bare command or an approval box
+  appear with no plain-language reason; the user should always know what they're OK-ing.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
   when the choice is genuinely theirs or a hard gate requires it.
