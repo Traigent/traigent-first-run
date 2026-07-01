@@ -7,13 +7,18 @@ you are not staring at blank fields; confirm or adjust each with the user.
 
 **Run name** (suggested convention): `<agent>__<dataset-subset>__<objectives>__<YYYY-MM-DD-HHMM>`
 
-## Context sent to Traigent
-- Task / what the agent does:
-- Agent entrypoint (file:function):
-- Dataset size / holdout split:
-- Objectives the user cares about:
-- Budget / max spend:
-- Prior run id or portal context:
+## Run context (your own record)
+This is your local record — filling it in sends nothing anywhere. The optimization run
+itself syncs only configuration choices and numeric scores; the **optional** `traigent plan`
+command sends only the short fields you pass it (`--task-description --dataset-size
+--objective --max-trials --cost-limit`) — never your agent's code, prompts, inputs, or
+outputs. The agent entrypoint below is for your notes only and is never transmitted.
+- Task / what the agent does *(a short line; sent only if you run `traigent plan`)*:
+- Agent entrypoint (file:function) *(your notes only — never sent)*:
+- Dataset size / holdout split *(sent only if you run `traigent plan`)*:
+- Objectives the user cares about *(part of the run config)*:
+- Budget / max spend *(sent only if you run `traigent plan`)*:
+- Prior run id or portal context *(your notes only)*:
 
 ## Plan (service-returned + your confirmations)
 | Option | Default starting point | Service value | User decision |
