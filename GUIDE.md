@@ -246,6 +246,15 @@ output), and an **evaluation method**. Resolve the dataset first:
 whole exercise needs a spread. **If you're creating the dataset, err on the side of harder** so
 different models/prompts actually separate; that's what lets Step 10–11 point to a real winner.
 
+When you generate it, **span a difficulty gradient** so the run both shows improvement *and*
+separates the best configs: roughly **a third easy** (most configs get these — the baseline
+floor), **a third medium**, and **a third hard**, including a small tail of **extra-hard /
+almost "expert-only"** items (a world-class expert could still answer them — never *truly*
+unsolvable, since every item needs a correct, scoreable label). Easy items set the floor; the
+hard tail is where better models/knobs pull ahead, so the improvement and the Pareto frontier are
+real. **Use the exact same set (same items, same size) for the baseline and the enhanced run** —
+see Step 11.
+
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
 {"input": "I was charged twice for my subscription", "output": "billing"}
@@ -329,6 +338,13 @@ tiers** (one premium + a couple of mid/low-cost models is the single biggest cos
 > real accuracy-vs-cost spread and genuine room to improve. Then let **`algorithm="auto"`**
 > (Step 9) converge over that large space without a full grid — that efficient search over a
 > space too big to try by hand *is* the value the user is here to see.
+>
+> ⚠️ **A composite knob is not a scalar.** Unlike `temperature` (passed straight through), a
+> composite knob needs the function to actually **branch** on its value — sample N times and
+> vote, route to a second model, add a verify pass. Just *reading* `cfg["..."]` without a distinct
+> code path is a knob that silently does nothing (Step 8 only checks it was read, not that it
+> changed behavior). And because those branches make **multiple** LLM calls per item, they
+> multiply run cost — reflect that in the Step 9 estimate.
 
 > **Keep prompt text out of the config space.** Encode prompt/style variants as short
 > **labels** (e.g. `prompt: ["v1", "v2"]`) and map each label to the real text *inside* the
@@ -450,10 +466,14 @@ results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cl
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
-- **Cost gate (hard stop):** estimate the run first — up to `max_trials × dataset_size`
-  LLM calls — show the user the estimate and the $5 cap, and only proceed on their
-  explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass `cost_limit=` /
-  handle `OptimizationError` if the estimate exceeds the cap).
+- **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
+  **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
+  only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
+  `cost_limit=` / handle `OptimizationError` if the estimate exceeds the cap).
+  ⚠️ **`max_trials × dataset_size` is one call per item — a floor, not the ceiling, once you add
+  composite knobs.** Self-consistency / best-of-n make **N** calls per item; a cascade or
+  verification gate makes 2+. The SDK can't see those calls (they happen inside your function),
+  so multiply the estimate by the max calls-per-item before you show it.
 - **Unpriced (or dead) model → handle it *for* the user; don't make them configure anything.**
   As part of "verify model IDs are live" above, check each chosen model pre-run for BOTH: (1)
   it's a **live, valid id** for that vendor (a `traigent models --check` / real call doesn't
@@ -501,14 +521,16 @@ stop at one:
   count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
   the examples that failed. Run it and let the user **watch the new frontier appear on the
   portal — baseline vs enhanced, side by side.**
-- **The comparison must be real-vs-real, and the baseline must make sense.** Baseline = the
-  agent's *actual, sensible* current config, run for real (the Step 9 baseline) — a reasonable
-  starting point, **not** a strawman you weakened. Enhanced = the real optimized run over the
-  rich space (Step 7). **Aim for a clearly *bigger* improvement, not a marginal one** — that's the
-  point of a showcase, and a rich knob space on a hard-enough dataset is what makes it possible.
-  **Never** compare against a mock, and **never** degrade the baseline on purpose to manufacture a
-  gap. If the honest delta is ~zero, say so plainly — and check the space wasn't too thin or the
-  dataset too easy (below).
+- **The comparison must be real-vs-real, on the same dataset, and the baseline must make sense.**
+  Run the baseline and the enhanced pass on the **same eval set (same items, same size)** —
+  comparing across different datasets is meaningless. Baseline = the agent's *actual, sensible*
+  current config, run for real (the Step 9 baseline) — a reasonable starting point, **not** a
+  strawman you weakened. Enhanced = the real optimized run over the rich space (Step 7). **Aim for
+  a clearly *bigger* improvement, not a marginal one** — that's the point of a showcase, and a rich
+  knob space on a hard-enough dataset is what makes it possible. **Never** compare against a mock,
+  and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
+  ~zero, say so plainly — the space was probably too thin (widen it, **Step 7**) or the dataset too
+  easy (harden it, **Step 5**).
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually
