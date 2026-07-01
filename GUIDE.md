@@ -19,10 +19,12 @@ Use your most capable model with high effort. This guide is **Python-only**.
 
 - **Keep it easy and human — your user may not be a programmer.** Speak plainly, warmly, and
   briefly: no jargon, no internal file paths or scaffolding, no walls of caveats or scary
-  technical choices. Do the technical work quietly and report progress in a sentence. When you
-  must involve them, ask **one** simple question and reassure them — e.g. *"I'll do a free
-  practice run first, then check with you before we ever spend a cent."* They should feel
-  guided and safe, never tested.
+  technical choices. Do the technical work quietly and report progress in **one plain sentence**
+  — never a technical checklist of everything you did (*"SDK installed, quickstart passed, agent
+  wired, dataset built, dry-run passed, evaluator sanity-checked…"* overwhelms; it doesn't
+  reassure). When you must involve them, ask **one** simple question and reassure them — e.g.
+  *"I'll do a free practice run first, then check with you before we ever spend a cent."* They
+  should feel guided and safe, never tested.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
   when the choice is genuinely theirs or a hard gate requires it.
@@ -61,12 +63,24 @@ Then show the user this message (verbatim is fine):
 > simple questions, and watch. By the end you'll have a real optimization run in the
 > Traigent web portal — your best accuracy for the least cost.
 >
-> Before we start, it helps to have ready: (1) a Traigent account + API key, and
-> (2) one LLM key with a few dollars on it (OpenRouter is easiest). I'll show you
-> exactly where to put them. Spend is capped at $5 per run and I always do a free
-> dry-run first and ask before anything paid.
+> Before we start, it helps to have ready: **one LLM key with a few dollars on it** (OpenRouter
+> is easiest — that's all you need to begin). A free Traigent account is only needed later for the
+> online portal; I'll walk you through it then. Spend is capped at $5 per run and I always do a
+> free dry-run first and ask before anything paid.
+>
+> Here's the plan, start to finish:
+> 1. Install Traigent and check it works — free.
+> 2. Get your agent ready: the agent, a small **dataset**, and an **evaluation method** (I'll
+>    build the dataset with you if you don't have one).
+> 3. A **real local baseline** run so you see how your agent does today — needs only your LLM key.
+> 4. You add your free **Traigent key**, and I run the **enhanced** version so you can watch it
+>    improve **in the portal**.
+>
+> Sound good? Tell me if you'd like to change anything — otherwise I'll get started.
 
-Then proceed. Don't wait for the keys yet — you'll set them up at Step 3.
+Get their OK (and accommodate any reasonable change they ask for), then proceed. Don't wait for
+the LLM key yet — you'll set up your **LLM vendor key** at Step 3 (the free Traigent key comes
+later, at the enhanced portal run, Step 9).
 
 ---
 
@@ -141,14 +155,20 @@ Copy the template and open it for the user to paste into:
 cp .env.example .env        # this repo ships .env.example; or create one next to the agent
 ```
 
-Open `.env` in a **standalone editor window** for them and **always print its absolute
-path** as the fallback. Quick opener by OS — macOS `open -t .env`, Windows `notepad .env`,
-Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
-`traigent-quickstart` skill's `.env` procedure. Then guide them:
+**As soon as it's time for keys, YOU open `.env` for them — actually run the opener command
+yourself:** Linux `xdg-open .env` (or `${EDITOR:-nano} .env`), macOS `open -t .env`, Windows
+`notepad .env` — so the editor window pops open. **Do NOT tell the user to "open the file
+yourself" or offer that as an option — that is your job; you pop it open, they only paste.** Try
+the opener *first*; **always print the file's absolute path too**, and fall back to "please open
+this path and paste" *only if the opener genuinely fails* (e.g. no display). For edge cases see
+the `traigent-quickstart` skill's `.env` procedure. Then guide them:
 
-**a) Traigent platform key (required).** From <https://portal.traigent.ai/register> →
-sign in → **API Keys** → **+ Create API Key** → choose **Full access**. It begins with
-`uk_` or `tg_`. Paste into `TRAIGENT_API_KEY=`.
+**a) Traigent platform key — a separate, free signup, needed *later* (leave it for now).** This
+is **not** the LLM vendor key, and you don't need it for anything until the enhanced **portal**
+run (Step 9): the install, the agent, the dataset, and the **real local baseline** all run on
+just the vendor key. So **don't set it up here and don't ask for it now** — leave
+`TRAIGENT_API_KEY=` blank. You'll walk the user through the ≈1-min free signup at **Step 9**,
+right before the portal run, so they see a real result first.
 
 **b) Backend URL — usually nothing to do.** The SDK already talks to the production cloud,
 so a first-run user does **not** set `TRAIGENT_BACKEND_URL` (it's commented out in the
@@ -429,9 +449,12 @@ Ask the user which they want:
 > **Verify model IDs are live first** (`traigent models --provider <p> --check <id>`) —
 > a delisted/renamed id wastes the run on a 404.
 
-**Baseline (local).** Measure the agent at its *current* configuration for a
-before/after comparison. Keep it off the portal with the offline **env var** — offline
-is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
+**Baseline (local) — show it early, before the Traigent key.** Measure the agent at its
+*current, sensible* configuration for a before/after comparison. **This needs only the user's LLM
+vendor key — no Traigent key** (it's local/offline), so run it as soon as the agent is wired and
+show the user their real "before" number *before* asking them to sign up for Traigent — that
+first real result is what earns the signup. Keep it off the portal with the offline **env var** —
+offline is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
 keyword on `optimize_sync()`, where it is silently ignored:
 
 ```python
@@ -457,9 +480,13 @@ and **0 trials** — no exception — so check `results.stop_reason`, not only e
 the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap still binds);
 for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect a clean abort.
 
-**Enhanced (portal).** This is the run the user will see online:
+**Enhanced (portal).** This is the run the user will see online — and the **first time they need
+a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),
+**now is the moment**: pop `.env` open yourself and walk them through the ≈1-min free signup
+(<https://portal.traigent.ai/register> → **API Keys** → **+ Create API Key** → **Full access** →
+paste `TRAIGENT_API_KEY=`). Then:
 ```python
-# .env already provides TRAIGENT_API_KEY, TRAIGENT_BACKEND_URL, and the $5 cap
+# .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
 results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cloud smart, syncs to portal
 ```
