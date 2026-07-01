@@ -30,6 +30,14 @@ Use your most capable model with high effort. This guide is **Python-only**.
   opening a file) should be preceded by a simple *what* and *why*, in everyday words — e.g.
   *"I need to read the Traigent key you just saved."* Never let a bare command or an approval box
   appear with no plain-language reason; the user should always know what they're OK-ing.
+- **Be honest, not a salesperson — and never make the user's agent look bad.** You're showing
+  what tuning *found*, not selling a product. The baseline is **their** agent measured fairly (an
+  honest "before"), and the enhanced run is simply what tuning found — present both plainly and
+  let the result speak. If tuning barely helped, **say so** (their agent was already good). Never
+  imply they *need* Traigent, never dress up the win, and **never narrate the internal machinery**
+  — *"restrict the config space at call-time"*, *"optimize_sync accepts a configuration_space
+  override"*, *"evaluator sanity check"* are jargon that reads like a pushy ad. Do those steps
+  quietly; tell the user, in everyday words, only the milestones that matter to them.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
   when the choice is genuinely theirs or a hard gate requires it.
@@ -354,15 +362,16 @@ Then build the space from: the recommendations **+ the agent's real knobs** (pro
 /style variants, temperature, sample count) **+ model variety across vendors and price
 tiers** (one premium + a couple of mid/low-cost models is the single biggest cost lever).
 
-> **Make the space rich enough to be worth optimizing — this is the showcase.** A run with only
-> 2–3 configurations is something the user could try by hand; it doesn't show *why* they need
-> Traigent, and it can't produce a real Pareto frontier. Combine **model tiers × temperature ×
+> **Make the space rich enough to be worth optimizing.** A run with only
+> 2–3 configurations is something the user could try by hand, and it can't produce a real
+> accuracy-vs-cost (Pareto) frontier. Combine **model tiers × temperature ×
 > prompt variants × sample count** with at least one **composite knob** matched to the agent's
 > shape (self-consistency / best-of-n for a single call; a cheap→expert **cascade**; a
 > **verification gate**; a **router**) — so the search spans **~10–15+ configurations** with a
 > real accuracy-vs-cost spread and genuine room to improve. Then let **`algorithm="auto"`**
-> (Step 9) converge over that large space without a full grid — that efficient search over a
-> space too big to try by hand *is* the value the user is here to see.
+> (Step 9) converge over that large space without a full grid — searching a space too big to try
+> by hand is the useful part, and where a genuine improvement has room to show up (if there's one
+> to find; if the agent is already near-best, an honest "already good" is a fine result too).
 >
 > ⚠️ **A composite knob is not a scalar.** Unlike `temperature` (passed straight through), a
 > composite knob needs the function to actually **branch** on its value — sample N times and
@@ -457,8 +466,8 @@ Ask the user which they want:
 **Baseline (local) — show it early, before the Traigent key.** Measure the agent at its
 *current, sensible* configuration for a before/after comparison. **This needs only the user's LLM
 vendor key — no Traigent key** (it's local/offline), so run it as soon as the agent is wired and
-show the user their real "before" number *before* asking them to sign up for Traigent — that
-first real result is what earns the signup. Keep it off the portal with the offline **env var** —
+show the user their real "before" number *before* asking them to sign up for Traigent, so they
+see a real result from their own agent first. Keep it off the portal with the offline **env var** —
 offline is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
 keyword on `optimize_sync()`, where it is silently ignored:
 
@@ -470,8 +479,9 @@ os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced r
 ```
 
 It still makes real LLM calls (a real measurement), so the cost gate/cap apply. For a true
-single-config baseline, restrict the space to the agent's current values for this pass (see
-the `traigent-run-optimization` skill).
+single-config baseline, pin the space to the agent's current values for this pass (an internal
+detail — do it quietly; don't narrate it to the user in those words; see the
+`traigent-run-optimization` skill).
 
 Because you run Python **non-interactively**, the cost gate can't show a prompt — and its
 pre-run **hard stop is conditional**, so don't over-rely on it. It aborts (raises, e.g.
@@ -557,9 +567,11 @@ stop at one:
   Run the baseline and the enhanced pass on the **same eval set (same items, same size)** —
   comparing across different datasets is meaningless. Baseline = the agent's *actual, sensible*
   current config, run for real (the Step 9 baseline) — a reasonable starting point, **not** a
-  strawman you weakened. Enhanced = the real optimized run over the rich space (Step 7). **Aim for
-  a clearly *bigger* improvement, not a marginal one** — that's the point of a showcase, and a rich
-  knob space on a hard-enough dataset is what makes it possible. **Never** compare against a mock,
+  strawman you weakened. Enhanced = the real optimized run over the rich space (Step 7). A rich
+  knob space on a hard-enough dataset gives a real improvement room to show up — **but let the
+  honest delta be whatever it is.** If the agent was already strong and the gain is small, report
+  that plainly; a small-but-real improvement (or "already near-best") beats a manufactured gap.
+  **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
   ~zero, say so plainly — the space was probably too thin (widen it, **Step 7**) or the dataset too
   easy (harden it, **Step 5**).
