@@ -621,6 +621,32 @@ don't fabricate a URL). A results table also prints locally during the run, so t
 regardless of the portal; otherwise inspect `results.best_config` / `results.best_score` /
 `results.trials`.
 
+> **🚧 DRAFT — proposal, pending research (do not implement yet; this block is a spec, not a
+> step).**
+> **Goal:** once the user has added their Traigent key, put the **baseline on the portal too**,
+> so they can see *baseline vs enhanced side by side on the UI* — which Step 11 already promises,
+> even though today the baseline runs **offline** (`TRAIGENT_OFFLINE_MODE`) and never reaches the
+> portal.
+>
+> **Two candidate approaches:**
+> - **Re-run the baseline online** — drop `TRAIGENT_OFFLINE_MODE` and run the small baseline space
+>   again under the **same `experiment_name`** as the enhanced run, so both land in one experiment
+>   on the portal. Works with today's SDK; costs one extra small baseline run (~4–8 configs ×
+>   dataset — cents), so it goes through the cost gate like any paid run.
+> - **Retro-sync the already-run offline baseline** to the portal — no extra LLM cost, but the SDK
+>   exposes no obvious "push an offline optimization run to the portal" call (the `backfill` that
+>   exists is for *evaluators*, not runs). **Feasibility unconfirmed.**
+>
+> **Open research questions (resolve before shipping):**
+> 1. Is there any SDK/portal path to sync an offline run's results to the portal after the fact
+>    (free), or must the baseline be re-run online?
+> 2. Does re-running under the same `experiment_name` actually group both runs into one comparable
+>    portal view, and does the UI render baseline-vs-enhanced clearly (frontier + both points)?
+> 3. If re-running: keep the "defer signup, baseline before the key" flow intact — the online
+>    baseline is a *second* pass after signup — and honor the cost gate/approval.
+> 4. Until this lands, keep Step 11's "side by side **on the portal**" honest: today the baseline
+>    is local-only, so either this feature ships or that wording is softened.
+
 → `traigent-analyze-results` (read `best_config` / `best_score` / the
 quality-vs-cost trade-off) and `show-significant-tuned-variables` (which
 knobs actually mattered).
