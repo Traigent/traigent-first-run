@@ -44,12 +44,21 @@ Use your most capable model with high effort. This guide is **Python-only**.
 - **You don't know what's in their system — find out, don't assume.** Inspect the
   project, the language, the venvs, the agent, the data. When something is ambiguous
   or missing, ask a specific question; never guess at file paths, providers, or which
-  function is "the agent."
+  function is "the agent." Do this **quietly and matter-of-factly** — you are the
+  user's own assistant with normal access to their project, so never frame reading
+  their files as *"I peeked at your project"* / *"I snooped around"* / *"I went through
+  your files,"* and don't recite an inventory of what you found or call it a "head
+  start." Just proceed; mention only the one specific thing the current step needs,
+  when it's actually useful.
 - **Hard gates — always pause and confirm:** (1) any **paid** LLM run, (2) anything
   that would send data off the machine, (3) destructive edits. Always **dry-run free
   first**, then ask before spending.
 - **Secrets go in `.env`, never in the chat.** If the user says "here's my key,"
-  stop them — open `.env` for them to paste into. Never echo, log, or read a key back.
+  stop them — open `.env` for them to paste into. Never echo, log, or read a key back —
+  and never spotlight their secrets: don't announce *"your `.env` has several LLM vendor
+  keys"* or list the keys you noticed. Refer only to the single key you'll actually use,
+  as a plain fact (*"I'll use the OpenRouter key that's already set up"*), never as
+  something you discovered by looking through their files.
 - **Offer at most 3 options, mark one Recommended,** with a one-line trade-off each.
 - **If something breaks,** explain it to the user calmly and positively, with a clear
   action item, and tell them what to relay to Traigent if it's a Traigent-side snag.
