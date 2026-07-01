@@ -154,11 +154,13 @@ Copy the template and open it for the user to paste into:
 cp .env.example .env        # this repo ships .env.example; or create one next to the agent
 ```
 
-**As soon as it's time for keys, immediately open `.env` in a standalone editor window** for
-them — don't just ask "have you saved your keys?"; *pop the file open* so they can paste into it —
-and **always print its absolute path** as the fallback. Quick opener by OS — macOS `open -t .env`,
-Windows `notepad .env`, Linux `${EDITOR:-nano} .env` (or `xdg-open .env`); for edge cases see the
-`traigent-quickstart` skill's `.env` procedure. Then guide them:
+**As soon as it's time for keys, YOU open `.env` for them — actually run the opener command
+yourself:** Linux `xdg-open .env` (or `${EDITOR:-nano} .env`), macOS `open -t .env`, Windows
+`notepad .env` — so the editor window pops open. **Do NOT tell the user to "open the file
+yourself" or offer that as an option — that is your job; you pop it open, they only paste.** Try
+the opener *first*; **always print the file's absolute path too**, and fall back to "please open
+this path and paste" *only if the opener genuinely fails* (e.g. no display). For edge cases see
+the `traigent-quickstart` skill's `.env` procedure. Then guide them:
 
 **a) Traigent platform key — a separate, free signup (don't assume they have one).** A
 first-time user usually has only their **LLM vendor key**, *not* a Traigent key yet — so don't
