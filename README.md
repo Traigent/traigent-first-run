@@ -40,7 +40,9 @@ contents) and say "follow it step by step."
   API key with **Full access** (it begins with `uk_` or `tg_`). This lets the run create
   your experiment and read its results back. The key lives only in your git-ignored `.env`
   (never in the chat), is used only to sync configuration choices and scores, and you can
-  revoke it anytime from the portal.
+  revoke it anytime from the portal.<br>
+  You can get the key from clicking here as well (Portal top right area):<br> <img width="204" height="130" alt="image" src="https://github.com/user-attachments/assets/c9f63a88-c52a-4610-9949-91d633d68382" />
+
 - **One LLM key with a few dollars on it** — **OpenRouter is recommended** (one key,
   many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
   few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
