@@ -370,12 +370,16 @@ tiers** (one premium + a couple of mid/low-cost models is the single biggest cos
 >   two, and **standard knobs only — composite knobs pinned OFF** (single call, no
 >   cascade/router/gate). Keep it to **~4–8 configurations total** — a quick manual-style sweep,
 >   run **offline/local** at Step 9 as the honest "before."
->   **⚠️ This applies only when *you* are choosing the setup** (the user had no agent, or left the
->   configuration to you). **If the user defined their agent themselves — their models, their
->   knobs, their settings, top to bottom — the baseline IS their agent exactly as they built it:
->   measure it as-is; never swap in "average" models or strip their knobs to fit this mold.**
->   Changing a user's real configuration to manufacture a tidy baseline is fabricating the
->   "before" — don't.
+>   **⚠️ Build this small space only for the pieces the user did *not* define — and never
+>   downgrade a piece they did.** An agent has separate parts: the **config** (models + knobs),
+>   the **dataset**, and the **evaluation method**. **Help with whatever is missing** — build a
+>   dataset if they have none (Step 5), add an eval method, or choose a config *only* if they
+>   didn't provide one. But **never make any part they already built *less* than it was**: if they
+>   defined their models/knobs, the baseline uses *those*, as-is — don't swap in "average" models,
+>   strip knobs, or shrink their space to fit this mold. This small "testing-the-waters" space is
+>   a starting point *only* for a config **you** are choosing — and even then it must be credible,
+>   never a strawman. Downgrading a user's real setup to manufacture a tidy baseline fabricates
+>   the "before" — don't.
 > - **Enhanced space — large, "what Traigent explores that a person wouldn't":** many more models
 >   across price tiers **plus** the composite knobs below — **a much larger space (many possible
 >   combinations, well more than the run's trials will sample)**. This extensive, supreme
@@ -490,14 +494,16 @@ Ask the user which they want:
 > a delisted/renamed id wastes the run on a 404.
 
 **Baseline (local) — show it early, before the Traigent key.** The baseline is the honest
-"before." **If the user built their agent themselves, run it exactly as they configured it** —
-don't swap their models or strip their knobs. **If you're the one choosing the setup**, run the
-small "testing-the-waters" space from Step 7 (a couple of credible models, a few temperatures,
-standard knobs only, composite knobs off — ~4–8 configs) and report its best config as the
-"before": what a normal user gets from a quick manual sweep. Either way it **needs only the
-user's LLM vendor key — no Traigent key** (it's local/offline), so run it as soon as the agent
-is wired and show the user their real "before" number *before* asking them to sign up for
-Traigent, so they see a real result from their own agent first. Keep it off the portal with the offline **env var** —
+"before." **Use whatever the user already defined, as-is — never make their agent *less* than it
+was.** Help with the pieces they're missing (build a dataset, add an eval method, or choose a
+config only if they didn't provide one), but if they defined their models/knobs, the baseline
+runs *those*, unchanged. **Only for a config *you* are choosing** does it become the small
+"testing-the-waters" space from Step 7 (a couple of credible models, a few temperatures, standard
+knobs only, composite knobs off — ~4–8 configs) → its best config is the "before": what a normal
+user gets from a quick manual sweep. Either way it **needs only the user's LLM vendor key — no
+Traigent key** (it's local/offline), so run it as soon as the agent is wired and show the user
+their real "before" number *before* asking them to sign up for Traigent, so they see a real
+result from their own agent first. Keep it off the portal with the offline **env var** —
 offline is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
 keyword on `optimize_sync()`, where it is silently ignored:
 
@@ -616,7 +622,8 @@ enhanced pass**; don't stop at one:
 - **The comparison must be real-vs-real, on the same dataset, and the baseline must make sense.**
   Run the baseline and the enhanced pass on the **same eval set (same items, same size)** —
   comparing across different datasets is meaningless. Baseline = the Step 9 baseline: **the
-  user's own agent as they configured it**, or — if you chose the setup — the small
+  user's own agent with whatever they defined, as-is — never downgraded** (help with missing
+  pieces, but never make it *less* than it was); or, for a config they *didn't* define, the small
   "testing-the-waters" space (a couple of credible models + a few temperatures, standard knobs
   only), i.e. the best a normal user would find by a quick manual sweep. It must be credible (a
   sensible near-top model, **not** the worst) and **not** a strawman you weakened. Enhanced = the
