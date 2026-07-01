@@ -7,7 +7,8 @@ You don't run any technical steps yourself. You point your coding assistant
 installing Traigent, wiring it to *your* agent, and producing a real optimization
 run you can see in the [Traigent portal](https://portal.traigent.ai/) — your best
 accuracy for the least cost (the **Pareto frontier**), plus a suggestion of what to
-try next.
+try next. If it turns out your agent is already near-best, the guide says so honestly
+rather than inventing an improvement.
 
 ---
 
@@ -36,7 +37,10 @@ contents) and say "follow it step by step."
 
 - **Python 3.11–3.13** — the assistant detects or installs it; you don't have to.
 - **A Traigent key** — sign up at <https://portal.traigent.ai/register>, create an
-  API key with **Full access** (it begins with `uk_` or `tg_`).
+  API key with **Full access** (it begins with `uk_` or `tg_`). This lets the run create
+  your experiment and read its results back. The key lives only in your git-ignored `.env`
+  (never in the chat), is used only to sync configuration choices and scores, and you can
+  revoke it anytime from the portal.
 - **One LLM key with a few dollars on it** — **OpenRouter is recommended** (one key,
   many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
   few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
@@ -50,9 +54,11 @@ You'll paste your keys into a `.env` file (template: [`.env.example`](.env.examp
 
 ## Your privacy
 
-Only **configuration choices and numeric scores** ever reach Traigent — your data,
+During a run, only **configuration choices and numeric scores** reach Traigent — your data,
 prompts, outputs, code, and keys stay on your machine. (Your assistant encodes any prompt
-variations as short labels, so your actual prompt text isn't part of what's synced.)
+variations as short labels, so as long as it follows the guide your actual prompt text
+stays on your machine.) The one exception is the *optional* `traigent plan` command, which
+sends only a short task description you write yourself — never your code or data.
 
 ---
 
