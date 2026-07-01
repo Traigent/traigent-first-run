@@ -79,7 +79,8 @@ Then show the user this message (verbatim is fine):
 > Sound good? Tell me if you'd like to change anything — otherwise I'll get started.
 
 Get their OK (and accommodate any reasonable change they ask for), then proceed. Don't wait for
-the keys yet — you'll set them up at Step 3.
+the LLM key yet — you'll set up your **LLM vendor key** at Step 3 (the free Traigent key comes
+later, at the enhanced portal run, Step 9).
 
 ---
 
@@ -162,14 +163,12 @@ the opener *first*; **always print the file's absolute path too**, and fall back
 this path and paste" *only if the opener genuinely fails* (e.g. no display). For edge cases see
 the `traigent-quickstart` skill's `.env` procedure. Then guide them:
 
-**a) Traigent platform key — a separate, free signup (don't assume they have one).** A
-first-time user usually has only their **LLM vendor key**, *not* a Traigent key yet — so don't
-ask "did you save your Traigent key?" as if they already have one. If `TRAIGENT_API_KEY` isn't
-set, **walk them through creating it** (≈1 min): <https://portal.traigent.ai/register> → sign in
-→ **API Keys** → **+ Create API Key** → **Full access** (begins `uk_` / `tg_`) → paste into
-`TRAIGENT_API_KEY=`. If they'd rather not sign up this second, **don't block them** — you can
-still run the first optimization **locally/offline** (results print locally; `cloud_url` is
-`None`) and sync to the portal once they have the key.
+**a) Traigent platform key — a separate, free signup, needed *later* (leave it for now).** This
+is **not** the LLM vendor key, and you don't need it for anything until the enhanced **portal**
+run (Step 9): the install, the agent, the dataset, and the **real local baseline** all run on
+just the vendor key. So **don't set it up here and don't ask for it now** — leave
+`TRAIGENT_API_KEY=` blank. You'll walk the user through the ≈1-min free signup at **Step 9**,
+right before the portal run, so they see a real result first.
 
 **b) Backend URL — usually nothing to do.** The SDK already talks to the production cloud,
 so a first-run user does **not** set `TRAIGENT_BACKEND_URL` (it's commented out in the
@@ -481,9 +480,13 @@ and **0 trials** — no exception — so check `results.stop_reason`, not only e
 the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap still binds);
 for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect a clean abort.
 
-**Enhanced (portal).** This is the run the user will see online:
+**Enhanced (portal).** This is the run the user will see online — and the **first time they need
+a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),
+**now is the moment**: pop `.env` open yourself and walk them through the ≈1-min free signup
+(<https://portal.traigent.ai/register> → **API Keys** → **+ Create API Key** → **Full access** →
+paste `TRAIGENT_API_KEY=`). Then:
 ```python
-# .env already provides TRAIGENT_API_KEY, TRAIGENT_BACKEND_URL, and the $5 cap
+# .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
 results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cloud smart, syncs to portal
 ```
