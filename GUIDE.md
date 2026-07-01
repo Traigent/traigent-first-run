@@ -261,7 +261,9 @@ that you'll reuse when choosing knobs at Step 7.
 ## Step 5 — Get a dataset and an evaluation method
 
 Optimization needs three things: the **agent**, a **dataset** (input + expected
-output), and an **evaluation method**. Resolve the dataset first:
+output), and an **evaluation method**. Most users already have all three — **fill in only what's
+missing, and confirm (don't silently replace) what they already built.** Resolve the dataset
+first:
 
 - **Has a dataset** (input / output / expected) → use it.
 - **Has logs/traces but no dataset** → build a JSONL dataset from them and ask the user
@@ -295,7 +297,10 @@ Dataset format is JSONL, one example per line with `input` and `output`:
 ```
 → `traigent-curate-dataset` owns dataset building, growth, and scoring.
 
-**Evaluation method** — pick by output type:
+**Evaluation method.** If the user already has one, **use it** — confirm the methodology with
+them in plain words (make sure "correct" means what they expect), or **co-design it together** if
+it's complex; only build one from scratch if they have none. When you do pick, choose by output
+type:
 - Crisp/closed answers (labels, yes/no, multiple-choice, exact strings, runnable SQL)
   → a **deterministic** scorer (exact-match / MCQ / execution).
 - Open-ended answers (summaries, explanations, writing) where string-match would score
