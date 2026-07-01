@@ -234,6 +234,11 @@ output), and an **evaluation method**. Resolve the dataset first:
   realistic; a fully auto-generated set is quick but easy to over-fit and may not match their
   real inputs.
 
+**Make the dataset hard enough to *differentiate* configs.** If every model/knob scores the same
+(or ~100%), the dataset is too easy and the run can't tell the best config from the rest — the
+whole exercise needs a spread. **If you're creating the dataset, err on the side of harder** so
+different models/prompts actually separate; that's what lets Step 10–11 point to a real winner.
+
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
 {"input": "I was charged twice for my subscription", "output": "billing"}
@@ -466,20 +471,22 @@ knobs actually mattered).
 
 ---
 
-## Step 11 — Decide on a second run (deterministic, not "maybe")
+## Step 11 — Run a second, enhanced pass (show the improvement)
 
-Apply this rule — don't hand the user a vague "you could try…":
+A first run's whole value is *seeing improvement* — so **run a second, enhanced pass**; don't
+stop at one:
 
-- **IF** best accuracy is below the user's target **AND** budget/quota remain →
-  run a **second** run focused on the examples that failed in run 1, plus similar ones
-  pulled in to refill the subset (~30–50). Then either (a) route easy inputs to run 1's
-  optimum and hard inputs to run 2's optimum, or (b) adopt run 2's optimum if it's
-  better overall.
-- **ELSE** (target met, or budget/quota exhausted) → **stop** and report.
-
-Drop knobs that showed no effect; add ones you now suspect matter (Step 7's service
-recommendations + importance from Step 10). → `traigent-next-run` and
-`traigent-iterate` choose the next single hypothesis from server signals.
+- **Enhance it.** Add knobs (more models across price tiers, prompt/style variants, sample
+  count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
+  the examples that failed. Run it and let the user **watch the new frontier appear on the
+  portal — baseline vs enhanced, side by side.**
+- **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
+  is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
+  dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually
+  separate — then re-run. (Size it hard enough from the start so you never land here.)
+- Then either route easy inputs to run 1's optimum and hard inputs to run 2's optimum, or adopt
+  run 2's optimum if it's better overall. Budget/quota permitting, keep iterating. →
+  `traigent-next-run` and `traigent-iterate` pick the next single hypothesis from server signals.
 
 ---
 
