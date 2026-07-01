@@ -319,7 +319,7 @@ from traigent.api.decorators import InjectionOptions
     eval_dataset="eval.jsonl",
     objectives=["accuracy"],                 # add "cost"/"latency" only to trade accuracy away
     injection=InjectionOptions(injection_mode="context"),
-    configuration_space={...},               # filled in Step 7
+    configuration_space={...},               # the ENHANCED (large) space — filled in Step 7
 )
 def my_agent(query: str) -> str:
     cfg = traigent.get_config()              # the trial's chosen values
@@ -362,7 +362,37 @@ Then build the space from: the recommendations **+ the agent's real knobs** (pro
 /style variants, temperature, sample count) **+ model variety across vendors and price
 tiers** (one premium + a couple of mid/low-cost models is the single biggest cost lever).
 
-> **Make the space rich enough to be worth optimizing.** A run with only
+> **Two spaces, two sizes — the gap between them is the whole comparison (Step 11).** Build a
+> *small* baseline space and a *large* enhanced space:
+> - **Baseline space — small, "what a normal user would try testing the waters":** a couple of
+>   *credible* models (a sensible near-top choice a client would actually reach for — **not** the
+>   cheapest/worst model, and never a strawman), 2–3 temperatures, at most a prompt variant or
+>   two, and **standard knobs only — composite knobs pinned OFF** (single call, no
+>   cascade/router/gate). Keep it to **~4–8 configurations total** — a quick manual-style sweep,
+>   run **offline/local** at Step 9 as the honest "before."
+>   **⚠️ Build this small space only for the pieces the user did *not* define — and never
+>   downgrade a piece they did.** An agent has separate parts: the **config** (models + knobs),
+>   the **dataset**, and the **evaluation method**. **Help with whatever is missing** — build a
+>   dataset if they have none (Step 5), add an eval method, or choose a config *only* if they
+>   didn't provide one. But **never make any part they already built *less* than it was**: if they
+>   defined their models/knobs, the baseline uses *those*, as-is — don't swap in "average" models,
+>   strip knobs, or shrink their space to fit this mold. This small "testing-the-waters" space is
+>   a starting point *only* for a config **you** are choosing — and even then it must be credible,
+>   never a strawman. Downgrading a user's real setup to manufacture a tidy baseline fabricates
+>   the "before" — don't.
+> - **Enhanced space — large, "what Traigent explores that a person wouldn't":** many more models
+>   across price tiers **plus** the composite knobs below — **a much larger space (many possible
+>   combinations, well more than the run's trials will sample)**. This extensive, supreme
+>   exploration is precisely what *does the optimizing* — `algorithm="auto"` (Step 9) homes in on
+>   the best of that large space in **≤10 smart trials, without a full grid**, which is how a
+>   genuinely better config gets found under the $5 cap.
+> Same dataset for both. What's on show is *normal manual effort* vs *Traigent's larger, smarter
+> search that finds the optimum* — so keep the baseline genuinely reasonable, never weakened.
+> **Wiring:** put the **enhanced (large)** space in the Step 6 decorator; the baseline supplies
+> the small space as a call-time `configuration_space=` override (Step 9), and the enhanced run
+> passes no override so it uses the decorator's space.
+
+> **Make the enhanced space rich enough to be worth optimizing.** A run with only
 > 2–3 configurations is something the user could try by hand, and it can't produce a real
 > accuracy-vs-cost (Pareto) frontier. Combine **model tiers × temperature ×
 > prompt variants × sample count** with at least one **composite knob** matched to the agent's
@@ -463,25 +493,46 @@ Ask the user which they want:
 > **Verify model IDs are live first** (`traigent models --provider <p> --check <id>`) —
 > a delisted/renamed id wastes the run on a 404.
 
-**Baseline (local) — show it early, before the Traigent key.** Measure the agent at its
-*current, sensible* configuration for a before/after comparison. **This needs only the user's LLM
-vendor key — no Traigent key** (it's local/offline), so run it as soon as the agent is wired and
-show the user their real "before" number *before* asking them to sign up for Traigent, so they
-see a real result from their own agent first. Keep it off the portal with the offline **env var** —
+**Baseline (local) — show it early, before the Traigent key.** The baseline is the honest
+"before." **Use whatever the user already defined, as-is — never make their agent *less* than it
+was.** Help with the pieces they're missing (build a dataset, add an eval method, or choose a
+config only if they didn't provide one), but if they defined their models/knobs, the baseline
+runs *those*, unchanged. **Only for a config *you* are choosing** does it become the small
+"testing-the-waters" space from Step 7 (a couple of credible models, a few temperatures, standard
+knobs only, composite knobs off — ~4–8 configs) → its best config is the "before": what a normal
+user gets from a quick manual sweep. Either way it **needs only the user's LLM vendor key — no
+Traigent key** (it's local/offline), so run it as soon as the agent is wired and show the user
+their real "before" number *before* asking them to sign up for Traigent, so they see a real
+result from their own agent first. Keep it off the portal with the offline **env var** —
 offline is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
 keyword on `optimize_sync()`, where it is silently ignored:
 
 ```python
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # local only — results NOT synced to the portal
-results_baseline = my_agent.optimize_sync(max_trials=1)   # one point = a quick baseline
+
+# A) The user configured the agent themselves → measure it EXACTLY as-is, no override:
+# results_baseline = my_agent.optimize_sync(algorithm="grid", max_trials=10)
+
+# B) YOU chose the setup → run the small "testing-the-waters" space (Step 7): a few credible
+#    models, a few temperatures, standard knobs only — composite knobs pinned to their OFF value.
+baseline_space = {
+    "model": ["<credible-model-a>", "<credible-model-b>"],  # near-top, sensible — not the worst
+    "temperature": [0.0, 0.3, 0.7],
+    "<your-composite-knob>": ["<off-value>"],              # pin it OFF, e.g. "votes": [1] (single call)
+}
+results_baseline = my_agent.optimize_sync(
+    configuration_space=baseline_space,   # the small space, NOT the full enhanced one
+    algorithm="grid", max_trials=10,      # small grid (~4–8 configs) → runs the lot, ≤10 trials
+)
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced run
 ```
 
-It still makes real LLM calls (a real measurement), so the cost gate/cap apply. For a true
-single-config baseline, pin the space to the agent's current values for this pass (an internal
-detail — do it quietly; don't narrate it to the user in those words; see the
-`traigent-run-optimization` skill).
+It still makes real LLM calls (a real measurement — ~4–8 configs × your dataset when you build a
+baseline space, or a single pass when running the user's own config; either way small and cheap),
+so the cost gate/cap apply. Restricting the run to the small baseline space is an internal detail
+— do it quietly; don't narrate it to the user in jargon (see the `traigent-run-optimization`
+skill).
 
 Because you run Python **non-interactively**, the cost gate can't show a prompt — and its
 pre-run **hard stop is conditional**, so don't over-rely on it. It aborts (raises, e.g.
@@ -505,8 +556,11 @@ scores, and they can revoke it anytime from the portal. Then:
 ```python
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
-results = my_agent.optimize_sync(max_trials=20, algorithm="auto")  # "auto" = cloud smart, syncs to portal
+results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 trials; "auto" = cloud smart (early-stops), syncs to portal
 ```
+- **Cap both runs at `max_trials=10`** (baseline and enhanced) — `auto` may **early-stop with
+  fewer** once it converges. Ten smart trials over the large enhanced space is enough to find a
+  strong config while staying under the $5 cap.
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
@@ -567,11 +621,17 @@ enhanced pass**; don't stop at one:
   portal — baseline vs enhanced, side by side.**
 - **The comparison must be real-vs-real, on the same dataset, and the baseline must make sense.**
   Run the baseline and the enhanced pass on the **same eval set (same items, same size)** —
-  comparing across different datasets is meaningless. Baseline = the agent's *actual, sensible*
-  current config, run for real (the Step 9 baseline) — a reasonable starting point, **not** a
-  strawman you weakened. Enhanced = the real optimized run over the rich space (Step 7). A rich
-  knob space on a hard-enough dataset gives a real improvement room to show up — **but let the
-  honest delta be whatever it is.** If the agent was already strong and the gain is small, report
+  comparing across different datasets is meaningless. Baseline = the Step 9 baseline: **the
+  user's own agent with whatever they defined, as-is — never downgraded** (help with missing
+  pieces, but never make it *less* than it was); or, for a config they *didn't* define, the small
+  "testing-the-waters" space (a couple of credible models + a few temperatures, standard knobs
+  only), i.e. the best a normal user would find by a quick manual sweep. It must be credible (a
+  sensible near-top model, **not** the worst) and **not** a strawman you weakened. Enhanced = the
+  real optimized run over the **much larger** space (Step 7): many more models across tiers
+  **plus** composite knobs — that extensive exploration is what *finds* the better config. The
+  delta on show is *normal manual effort* vs *Traigent's larger, smarter search that finds the
+  optimum* — a bigger, harder space on a hard-enough dataset gives a real improvement room to show
+  up — **but let the honest delta be whatever it is.** If the agent was already strong and the gain is small, report
   that plainly; a small-but-real improvement (or "already near-best") beats a fake one.
   **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
