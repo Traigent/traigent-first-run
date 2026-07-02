@@ -37,7 +37,7 @@ contents) and say "follow it step by step."
 
 - **Python 3.11–3.13** — the assistant detects or installs it; you don't have to.
 - **A Traigent key** — sign up at <https://portal.traigent.ai/register>, create an
-  API key with **Full access** (it begins with `uk_` or `tg_`). This lets the run create
+  API key with **Full access** (it begins with `uk_`). This lets the run create
   your experiment and read its results back. The key lives only in your git-ignored `.env`
   (never in the chat), is used only to sync configuration choices and scores, and you can
   revoke it anytime from the portal.<br>
