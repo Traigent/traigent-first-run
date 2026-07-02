@@ -515,6 +515,8 @@ import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # no backend egress
 from traigent.testing import enable_mock_mode_for_quickstart
 enable_mock_mode_for_quickstart()              # mocks LiteLLM/LangChain calls (see caveat above)
+# This fresh process needs its own import for `my_agent` — re-use the Step 6 decorated agent from
+# wherever it lives in the user's project (e.g. `from agent import my_agent`); don't redefine it.
 results = my_agent.optimize_sync(max_trials=4, algorithm="random")
 ```
 
@@ -574,6 +576,8 @@ keyword on `optimize_sync()`, where it is silently ignored:
 
 ```python
 import os
+# The fresh process this whole step runs in needs its own import for `my_agent` — the same Step 6
+# decorated agent, from wherever it lives in the user's project; don't redefine it.
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # local only — results NOT synced to the portal
 baseline_name = f"baseline_{my_agent.__name__}_optimization_results"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = baseline_name  # read fresh by optimize_sync() below
@@ -643,6 +647,8 @@ in their git-ignored `.env` (never in the chat), is used only to sync configurat
 scores, and they can revoke it anytime from the portal. Then:
 ```python
 import os
+# Re-import `my_agent` here too if the Baseline block above didn't already run in this process
+# (i.e. you're here via "Enhanced only") — harmless to repeat if it did.
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)  # defensive no-op in Step 9's fresh process (above);
@@ -724,11 +730,12 @@ parallel trials, quota sizing) and `traigent` (the full dry-run → approve
 
 ## Step 10 — Show the result in the portal
 
-**Which object holds the real result depends on which Step 9 path you took — `results` from Step 8
-is Step 8's own mock/dry-run object, never a real result; don't fall back to it here.**
+**Which object holds the real result depends on which Step 9 path you took.** Step 9 runs in its
+**own fresh process**, separate from Step 8's (mocked) dry-run — so Step 8's `results` doesn't
+exist here at all; there's nothing to accidentally fall back to.
 - **"Baseline only"** → the real result is `results_baseline` (and `results_baseline_online` if
-  you did the online sync above). There is **no** enhanced `results` from this path — don't touch
-  `results` at all here; it's still Step 8's mocked dry-run object.
+  you did the online sync above). There is **no** `results` variable in this process at all — the
+  Enhanced block, the only thing that ever assigns one, never ran.
 - **"Enhanced only"** → the real result is `results` (from the Enhanced block above).
   `results_baseline`/`results_baseline_online` don't exist on this path.
 - **"Both"** → both exist: `results_baseline` (+ `results_baseline_online` if synced) and
@@ -743,8 +750,8 @@ runs made against the same agent + dataset, so they'll typically surface togethe
 links are the promise you can always keep even if a given view doesn't line them up
 automatically. A results table also prints locally during every real run, so the user sees
 numbers regardless of the portal; otherwise inspect `.best_config` / `.best_score` / `.trials` on
-the *actual* result object for the path taken (`results_baseline` and/or `results`, per above —
-never on Step 8's `results`).
+the *actual* result object that exists for the path taken (`results_baseline` and/or `results`,
+per above).
 
 → `traigent-analyze-results` (read `best_config` / `best_score` / the
 quality-vs-cost trade-off) and `show-significant-tuned-variables` (which
@@ -822,16 +829,17 @@ evidenced. In particular:
 on a held-out slice, and apply only after the gate passes and the user approves —
 never promote straight from the run. → `traigent-ci-safety-gate`.
 
-**Use the real enhanced result, never Step 8's mock object.** `results` only holds a genuine
-enhanced run if Step 9's "Enhanced (portal)" (or Step 11's second pass) actually ran — on a
-"Baseline only" path, `results` is still Step 8's mocked dry-run object; there is nothing to
-promote (a baseline has no "enhanced" config to ship).
+**Only use a real enhanced result — never Step 8's mock object.** `results` only exists here if
+Step 9's "Enhanced (portal)" (or Step 11's second pass) actually ran in this same process — on a
+"Baseline only" path, `results` was never assigned at all in this fresh process (not Step 8's mock
+object — Step 8's process already exited); there is nothing to promote (a baseline has no
+"enhanced" config to ship).
 
 ```python
 my_agent.export_config("candidate_config.json")   # candidate for review/gating; export the LATEST
                                                     # real enhanced results object (Step 9 or 11)
 # after the holdout gate passes AND the user approves:
-my_agent.apply_best_config(results)                # same: the real enhanced results, not Step 8's mock
+my_agent.apply_best_config(results)                # the real enhanced results — never Step 8's mock
 ```
 
 End with: *optimization is not one-and-done* — models, prices, and questions change, so
