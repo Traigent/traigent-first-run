@@ -498,6 +498,18 @@ Always validate the whole pipeline at zero cost before spending anything.
 > through LiteLLM for the dry-run, **or** set a tiny `TRAIGENT_RUN_COST_LIMIT` (e.g. `0.05`) as
 > a backstop and treat it as a paid run under the cost gate.
 
+> **SECOND — run this block as its own, disposable Python process — never in the same process
+> you'll reuse for Step 9.** `enable_mock_mode_for_quickstart()` has **no public "undo"** — once
+> called, it silently mocks every real LLM call for the rest of that process, permanently. If
+> Step 9's baseline/enhanced calls ran in the *same* process as this block, they'd be silently
+> mocked too — including, for the enhanced/portal run, syncing **fabricated** results to the
+> user's real Traigent account and presenting them as genuine. Since Step 6 already wrapped the
+> user's real function in their real project file, a fresh process just re-imports it — it's not
+> a new or different agent, only a new interpreter. Run this exact block via a **separate**
+> `python -c "..."` (or an equivalent one-off script invocation) from whatever you'll use for
+> Step 9, and let that process **exit** when the block finishes — don't keep it open and reuse
+> it.
+
 ```python
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # no backend egress
@@ -532,6 +544,11 @@ any paid run. → `traigent` (Step 3.5).
 ---
 
 ## Step 9 — Run it (baseline and/or enhanced)
+
+**Start a fresh Python process for everything below — never the same process Step 8's dry-run
+used.** Step 8's `enable_mock_mode_for_quickstart()` cannot be turned back off; running any of
+this in that same process would silently mock every "real" call. Re-import the agent from Step 6
+here — that's the same real agent, just a clean interpreter.
 
 Ask the user which they want:
 1. **Baseline only** — their agent as-is, measured.
@@ -625,11 +642,12 @@ paste `TRAIGENT_API_KEY=`). Reassure them in plain words why this is safe: the k
 in their git-ignored `.env` (never in the chat), is used only to sync configuration choices and
 scores, and they can revoke it anytime from the portal. Then:
 ```python
+import os
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
-os.environ.pop("TRAIGENT_OFFLINE_MODE", None)  # clear it here too — Step 8 always sets it, and if
-                                                # you picked "Enhanced only" the Baseline block
-                                                # above (the only other place that clears it) never ran
+os.environ.pop("TRAIGENT_OFFLINE_MODE", None)  # defensive no-op in Step 9's fresh process (above);
+                                                # keeps this correct even if it ends up sharing a
+                                                # process with the Baseline block or Step 8 anyway
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = f"enhanced_{my_agent.__name__}_optimization_results"
 results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 trials; "auto" = cloud smart (early-stops), syncs to portal
 ```
