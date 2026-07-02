@@ -36,7 +36,8 @@ Use your most capable model with high effort. This guide is **Python-only**.
   let the result speak. If tuning barely helped, **say so** (their agent was already good). Never
   imply they *need* Traigent, never dress up the win, and **never narrate the internal machinery**
   — *"restrict the config space at call-time"*, *"optimize_sync accepts a configuration_space
-  override"*, *"evaluator sanity check"* are jargon that reads like a pushy ad. Do those steps
+  override"*, *"evaluator sanity check"*, *"resync the baseline"* are jargon that reads like a
+  pushy ad. Do those steps
   quietly; tell the user, in everyday words, only the milestones that matter to them.
 - **Do the technical work yourself.** The user's job is small: get a couple of keys
   ready, answer a few questions, and watch. Detect and decide; ask the user only
@@ -557,8 +558,13 @@ Ask the user which they want:
 2. **Enhanced only** — Traigent-optimized.
 3. **Both, for comparison** *(recommended for a first run)*.
 
-> **Verify model IDs are live first** (`traigent models --provider <p> --check <id>`) —
-> a delisted/renamed id wastes the run on a 404.
+> **Verify model IDs are live first** — a delisted/renamed id wastes the run on a 404. For
+> direct vendors use `traigent models --provider <p> --check <id>`. The CLI has **no
+> `openrouter` provider**, so for `openrouter/*` ids (the recommended vendor!) check the slug
+> against the public, keyless list at <https://openrouter.ai/api/v1/models> — and confirm
+> LiteLLM prices it (`litellm.cost_per_token(model="openrouter/<vendor>/<model>", ...)`):
+> several common slugs (e.g. `openrouter/openai/gpt-4o-mini`) are live but have **no LiteLLM
+> price entry**, so they'd run with cost reported as $0 (see the unpriced-model bullet below).
 
 **Baseline (local) — show it early, before the Traigent key.** The baseline is the honest
 "before." **Use whatever the user already defined, as-is — never make their agent *less* than it
@@ -570,7 +576,12 @@ knobs only, composite knobs off — ~4–8 configs) → its best config is the "
 user gets from a quick manual sweep. Either way it **needs only the user's LLM vendor key — no
 Traigent key** (it's local/offline), so run it as soon as the agent is wired and show the user
 their real "before" number *before* asking them to sign up for Traigent, so they see a real
-result from their own agent first. Keep it off the portal with the offline **env var** —
+result from their own agent first. **Exception — `TRAIGENT_API_KEY` is already set** (a returning
+user, a pre-filled `.env`): there's no signup left to defer for, so skip offline and run this same
+small grid **online** under `baseline_name` from the start — one run instead of an offline pass
+plus a portal re-run, the portal "before" is the full grid, and the later "Also put the baseline
+on the portal" step has nothing left to do. Otherwise keep it off the portal with the offline
+**env var** —
 offline is set via `TRAIGENT_OFFLINE_MODE` (or the decorator's `offline=` argument), **not** by a
 keyword on `optimize_sync()`, where it is silently ignored:
 
@@ -638,6 +649,14 @@ and **0 trials** — no exception — so check `results.stop_reason`, not only e
 the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap still binds);
 for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect a clean abort.
 
+**Real runs can outlive your command timeout — run them detached.** Ten trials × a ~25-item
+dataset with a multi-call composite knob is easily 5–10+ minutes of sequential LLM latency, and
+a foreground command timeout (many assistant harnesses default to ~5 minutes) that kills
+`optimize_sync` mid-run does **not** roll back its spend — the trials already executed were
+billed and their results are lost. Launch each paid run (baseline and enhanced) as a
+background/detached process writing to a log file, then poll the log; never hold a paid run
+inside a foreground command that can time out.
+
 **Enhanced (portal).** This is the run the user will see online — and the **first time they need
 a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),
 **now is the moment**: pop `.env` open yourself and walk them through the ≈1-min free signup
@@ -689,32 +708,48 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
 - Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
   `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
 
-**Also put the baseline on the portal — one small extra run, not a promise you can't keep.** *(Only
+**Also put the baseline on the portal — a real "before", not a one-row stub.** *(Only
 reachable when the user picked "Both, for comparison" — this needs both `results_baseline` from
 above and the Traigent key the Enhanced section just obtained. "Baseline only" stops before this —
-there's no Traigent key yet to sync anything online. "Enhanced only" has no baseline to resync.)*
+there's no Traigent key yet to put anything online. "Enhanced only" has no baseline to re-run.)*
 Today's offline baseline never reaches the portal, and there's **no free way to sync it
 there after the fact** — the SDK's only backfill path is for evaluators, not optimization runs;
 an offline result is local-only, permanently, unless you re-run it online. So right here, now that
 `TRAIGENT_API_KEY` exists for the enhanced run anyway, also re-run the baseline **online** — fold
-it into the *same* approval you're already asking for (one combined ask, not two interruptions):
-*"I'll also put your baseline online — one more small run, [$estimate] — so you can see before and
-after together. OK to include that with the run above?"* Re-run just the baseline's **winning
-config**, once — a single pass over the dataset, a small fraction of the enhanced run's cost —
-rather than resweeping the whole small space:
+it into the *same* approval you're already asking for (one combined ask, not two interruptions),
+in plain words: *"I'll also run your baseline on the portal — one more small run, [$estimate] — so
+you can see before and after side by side there. OK to include that with the run above?"*
+
+**Re-run the whole small baseline grid — not just the winning config.** A winning-config-only
+re-run puts an experiment with **one configuration row** on the portal ("Configuration Runs (1)")
+— to the user that reads as broken or nearly empty, not as a legit "before", and it gives the
+enhanced frontier nothing to visually stand against. The small space was built to be cheap
+(~4–8 configs — roughly the same cents you already spent on the offline pass), so the default is
+the full grid:
 ```python
 results_baseline_online = None
 if results_baseline.best_config:   # None when the baseline hit stop_reason=="cost_limit" with 0
-                                    # trials (see the cost gate above) — nothing to resync then
+                                    # trials (see the cost gate above) — nothing to re-run then
     os.environ["TRAIGENT_EXPERIMENT_NAME"] = baseline_name   # same name as the offline run above
     results_baseline_online = my_agent.optimize_sync(
-        configuration_space={k: [v] for k, v in results_baseline.best_config.items()},  # winning config only
-        algorithm="grid", max_trials=1,    # one pass — just registers the "before" number on the portal
+        configuration_space=baseline_space,  # branch B: the SAME small grid the user saw locally
+        algorithm="grid", max_trials=10,     # the whole ~4–8-config "before", now on the portal
     )
+    # Branch A (the user's own fixed config): re-run THAT config instead — one row is honest
+    # there, because one config genuinely is their whole baseline.
 ```
+- **If cost or free-tier quota genuinely binds** (the combined estimate approaches the cap, or
+  `max_trials × dataset_size` across both runs would blow the plan's `optimization_samples`),
+  degrade gracefully: the winning config plus 2–3 spread-out configs, or at minimum the winning
+  config alone — and then tell the user plainly that the portal "before" is a summary row, with
+  the full table in the local results.
+- **The online re-run is a fresh measurement, not a copy.** With temperature > 0 its numbers can
+  wobble a little vs the offline table (a config that scored ~89% locally may log ~85% online).
+  That's normal; once the portal baseline exists, quote *it* as the "before" rather than mixing
+  it with the offline numbers.
 - **`results_baseline.best_config` can be `None`** (the 0-trials cost-limit case called out above)
-  — if it is, there's nothing to resync; say so plainly and keep the local baseline table as the
-  "before," same as if the user had declined.
+  — if it is, there's nothing to put online; say so plainly and keep the local baseline table as
+  the "before," same as if the user had declined.
 - If the user declines the extra run, that's fine too — keep the local baseline table as the
   honest "before" and say so plainly; don't claim it's "on the portal" if it isn't.
 - **Give the user both direct links** (`results_baseline_online.cloud_url` and `results.cloud_url`
@@ -738,17 +773,20 @@ exist here at all; there's nothing to accidentally fall back to.
   Enhanced block, the only thing that ever assigns one, never ran.
 - **"Enhanced only"** → the real result is `results` (from the Enhanced block above).
   `results_baseline`/`results_baseline_online` don't exist on this path.
-- **"Both"** → both exist: `results_baseline` (+ `results_baseline_online` if synced) and
+- **"Both"** → both exist: `results_baseline` (+ `results_baseline_online` if re-run online) and
   `results`.
 
 Give the user the direct link to **each real, non-offline** run that exists —
-`results.cloud_url` for the enhanced run, `results_baseline_online.cloud_url` for the synced
-baseline (also `results.experiment_id` / `results.run_label` on either; `cloud_url` is `None` for
-a purely offline run, so don't fabricate a URL for one). Send **both** links when both exist —
-their `experiment_name`s (Step 9) say which is which regardless of order, and the portal groups
-runs made against the same agent + dataset, so they'll typically surface together, but the two
-links are the promise you can always keep even if a given view doesn't line them up
-automatically. A results table also prints locally during every real run, so the user sees
+`results.cloud_url` for the enhanced run, `results_baseline_online.cloud_url` for the baseline
+you re-ran online (also `results.experiment_id` / `results.run_label` on either; `cloud_url` is
+`None` for a purely offline run, so don't fabricate a URL for one). Send **both** links when both
+exist — their `experiment_name`s (Step 9) say which is which regardless of order, and the portal
+groups runs made against the same agent + dataset, so they'll typically surface together, but the
+two links are the promise you can always keep even if a given view doesn't line them up
+automatically. **Label each link in the user's words** — e.g. *"Your agent today (the before):
+<link>"* / *"The Traigent-optimized run (the after): <link>"* — never in internals like
+"(synced)", "resynced", "offline vs online", or a variable name; "synced" means nothing to
+someone who just wants to see their before-and-after. A results table also prints locally during every real run, so the user sees
 numbers regardless of the portal; otherwise inspect `.best_config` / `.best_score` / `.trials` on
 the *actual* result object that exists for the path taken (`results_baseline` and/or `results`,
 per above).
