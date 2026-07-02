@@ -627,6 +627,9 @@ scores, and they can revoke it anytime from the portal. Then:
 ```python
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
+os.environ.pop("TRAIGENT_OFFLINE_MODE", None)  # clear it here too — Step 8 always sets it, and if
+                                                # you picked "Enhanced only" the Baseline block
+                                                # above (the only other place that clears it) never ran
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = f"enhanced_{my_agent.__name__}_optimization_results"
 results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 trials; "auto" = cloud smart (early-stops), syncs to portal
 ```
@@ -703,15 +706,27 @@ parallel trials, quota sizing) and `traigent` (the full dry-run → approve
 
 ## Step 10 — Show the result in the portal
 
-Give the user the direct link to **each** portal run — `results.cloud_url` for the enhanced run
-and, if you did the extra baseline sync above, `results_baseline_online.cloud_url` too (also
-`results.experiment_id` / `results.run_label` on either; `cloud_url` is `None` for a purely
-offline run, so don't fabricate a URL for one). Send **both** links when both exist — their
-`experiment_name`s (Step 9) say which is which regardless of order, and the portal groups runs
-made against the same agent + dataset, so they'll typically surface together, but the two links
-are the promise you can always keep even if a given view doesn't line them up automatically. A
-results table also prints locally during every run, so the user sees numbers regardless of the
-portal; otherwise inspect `results.best_config` / `results.best_score` / `results.trials`.
+**Which object holds the real result depends on which Step 9 path you took — `results` from Step 8
+is Step 8's own mock/dry-run object, never a real result; don't fall back to it here.**
+- **"Baseline only"** → the real result is `results_baseline` (and `results_baseline_online` if
+  you did the online sync above). There is **no** enhanced `results` from this path — don't touch
+  `results` at all here; it's still Step 8's mocked dry-run object.
+- **"Enhanced only"** → the real result is `results` (from the Enhanced block above).
+  `results_baseline`/`results_baseline_online` don't exist on this path.
+- **"Both"** → both exist: `results_baseline` (+ `results_baseline_online` if synced) and
+  `results`.
+
+Give the user the direct link to **each real, non-offline** run that exists —
+`results.cloud_url` for the enhanced run, `results_baseline_online.cloud_url` for the synced
+baseline (also `results.experiment_id` / `results.run_label` on either; `cloud_url` is `None` for
+a purely offline run, so don't fabricate a URL for one). Send **both** links when both exist —
+their `experiment_name`s (Step 9) say which is which regardless of order, and the portal groups
+runs made against the same agent + dataset, so they'll typically surface together, but the two
+links are the promise you can always keep even if a given view doesn't line them up
+automatically. A results table also prints locally during every real run, so the user sees
+numbers regardless of the portal; otherwise inspect `.best_config` / `.best_score` / `.trials` on
+the *actual* result object for the path taken (`results_baseline` and/or `results`, per above —
+never on Step 8's `results`).
 
 → `traigent-analyze-results` (read `best_config` / `best_score` / the
 quality-vs-cost trade-off) and `show-significant-tuned-variables` (which
@@ -720,6 +735,13 @@ knobs actually mattered).
 ---
 
 ## Step 11 — Run a second, enhanced pass (measure the change, honestly)
+
+**This step needs both a baseline and a first enhanced pass to already exist — if Step 9 was
+"Baseline only" or "Enhanced only," get the missing half first, using Step 9's own instructions
+for it** (a "Baseline only" user still needs the Traigent-key signup + first enhanced run from
+Step 9's "Enhanced (portal)" section before there's anything to *re*-run; an "Enhanced only" user
+still needs a real local baseline from Step 9's "Baseline (local)" section — there's nothing
+"honest" to measure a change against otherwise). Only once both exist:
 
 A first run's value is *seeing whether — and where — it can improve* — so **run a second,
 enhanced pass**; don't stop at one:
@@ -782,10 +804,16 @@ evidenced. In particular:
 on a held-out slice, and apply only after the gate passes and the user approves —
 never promote straight from the run. → `traigent-ci-safety-gate`.
 
+**Use the real enhanced result, never Step 8's mock object.** `results` only holds a genuine
+enhanced run if Step 9's "Enhanced (portal)" (or Step 11's second pass) actually ran — on a
+"Baseline only" path, `results` is still Step 8's mocked dry-run object; there is nothing to
+promote (a baseline has no "enhanced" config to ship).
+
 ```python
-my_agent.export_config("candidate_config.json")   # candidate for review/gating
+my_agent.export_config("candidate_config.json")   # candidate for review/gating; export the LATEST
+                                                    # real enhanced results object (Step 9 or 11)
 # after the holdout gate passes AND the user approves:
-my_agent.apply_best_config(results)
+my_agent.apply_best_config(results)                # same: the real enhanced results, not Step 8's mock
 ```
 
 End with: *optimization is not one-and-done* — models, prices, and questions change, so
