@@ -44,12 +44,24 @@ Use your most capable model with high effort. This guide is **Python-only**.
 - **You don't know what's in their system — find out, don't assume.** Inspect the
   project, the language, the venvs, the agent, the data. When something is ambiguous
   or missing, ask a specific question; never guess at file paths, providers, or which
-  function is "the agent."
+  function is "the agent." Do this **quietly and matter-of-factly** — you are the
+  user's own assistant with normal access to their project, so never frame reading
+  their files as *"I peeked at your project"* / *"I snooped around"* / *"I went through
+  your files,"* and don't recite an unsolicited inventory of what you found or call it a
+  "head start." Just proceed; mention only the one specific thing the current step needs,
+  when it's actually useful. (Asking the user to choose between candidates you found —
+  *"which of these functions is the agent to optimize?"* — is a purposeful question, not
+  an inventory boast; that's fine.)
 - **Hard gates — always pause and confirm:** (1) any **paid** LLM run, (2) anything
   that would send data off the machine, (3) destructive edits. Always **dry-run free
   first**, then ask before spending.
 - **Secrets go in `.env`, never in the chat.** If the user says "here's my key,"
-  stop them — open `.env` for them to paste into. Never echo, log, or read a key back.
+  stop them — open `.env` for them to paste into. Never echo, log, or read a key back —
+  and never spotlight their secrets: don't announce *"your `.env` has several LLM vendor
+  keys"* as an unsolicited discovery. When one key is present, refer to just that key as a
+  plain fact (*"I'll use the OpenRouter key that's already set up"*); when several are
+  present, naming those vendors to ask which to use (Step 3c) is a purposeful choice, not
+  a spotlight. Never present it as something you found by rummaging through their files.
 - **Offer at most 3 options, mark one Recommended,** with a one-line trade-off each.
 - **If something breaks,** explain it to the user calmly and positively, with a clear
   action item, and tell them what to relay to Traigent if it's a Traigent-side snag.
@@ -303,10 +315,33 @@ they have none, and if the right way to score is genuinely tricky, work it out *
 question or two, not a wall of them). When you build, choose by output type:
 - Crisp/closed answers (labels, yes/no, multiple-choice, exact strings, runnable SQL)
   → a **deterministic** scorer (exact-match / MCQ / execution).
+- **The output is an action or code and you only care whether the right *end-state* resulted**
+  — e.g. the agent emits code that fills a profile form, and "correct" means the name, details,
+  and password ended up in the right fields, matching the input; the output *text* itself doesn't
+  matter → an **outcome / side-effect scorer**: a `metric_functions` callback that **runs** the
+  output and checks the resulting state. Three things to get right:
+  1. **Ask for the input by name — the *exact* name.** Traigent binds scorer arguments *by
+     parameter name*, and `**kwargs` does **not** receive the input — so declare it:
+     `def scorer(output, input_data, metadata): ...` (`input_data` = the row's `input`;
+     `metadata` = any extra row fields you add, e.g. an `expected_state` spec — every dataset key
+     besides `input`/`output` is routed to `metadata`). Use the exact names `input_data` /
+     `metadata`: a near-miss like `input` isn't recognized and silently binds to the wrong value.
+  2. **Execute safely, then inspect.** The scorer is ordinary in-process Python — run the output
+     in a sandbox / temp dir / throwaway DB / headless page, read back the end-state, compare it
+     to the input (or `expected_state`), and return `1.0` if it landed, else `0.0` (or partial
+     credit). No `async def` (it isn't awaited); there's no built-in sandbox or timeout, so add
+     your own.
+  3. **Don't let a broken harness read as a wrong answer.** Traigent **logs a warning and coerces
+     a scorer that raises into `0.0`** — so in the *scores* a crashed sandbox is indistinguishable
+     from "the agent was wrong" (grep the run logs for `Metric function … failed` to tell them
+     apart). Guard the risky step, keep a harness failure loud and distinct, and run the evaluator
+     sanity gate (Step 8) — a known-good end-state must score ≈1.0 and a known-bad ≈0.0 — before
+     you spend anything.
 - Open-ended answers (summaries, explanations, writing) where string-match would score
   everything 0 → **LLM-as-a-judge**.
 → `traigent-choose-metric` (pick) and `traigent-build-evaluator`
-(build). Audit any LLM judge → `traigent-evaluator-audit`.
+(build — includes input-aware, execution, and custom-evaluator patterns). Audit any LLM judge →
+`traigent-evaluator-audit`.
 
 ---
 
