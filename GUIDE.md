@@ -558,13 +558,14 @@ keyword on `optimize_sync()`, where it is silently ignored:
 ```python
 import os
 os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # local only — results NOT synced to the portal
-baseline_name = f"baseline_{my_agent.__name__}_optimization_results"  # reused by the online sync below
+baseline_name = f"baseline_{my_agent.__name__}_optimization_results"
+os.environ["TRAIGENT_EXPERIMENT_NAME"] = baseline_name  # read fresh by optimize_sync() below
 
 # A) The user configured the agent themselves → measure it EXACTLY as-is. Pin THEIR own values
 #    explicitly — a bare call would run the decorator's enhanced (large) space, not their config:
 # user_space = { ... the user's own models / knobs, exactly as they defined them ... }
 # results_baseline = my_agent.optimize_sync(
-#     configuration_space=user_space, algorithm="grid", max_trials=10, experiment_name=baseline_name,
+#     configuration_space=user_space, algorithm="grid", max_trials=10,
 # )
 
 # B) YOU chose the setup → run the small "testing-the-waters" space (Step 7): a few credible
@@ -577,17 +578,22 @@ baseline_space = {
 results_baseline = my_agent.optimize_sync(
     configuration_space=baseline_space,   # the small space, NOT the full enhanced one
     algorithm="grid", max_trials=10,      # small grid (~4–8 configs) → runs the lot, ≤10 trials
-    experiment_name=baseline_name,        # unmistakably "before", even if links get shown out of order
 )
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced run
 ```
 
-**Name every run — baseline and enhanced must read as a pair, even out of order.** Pass
-`experiment_name` (a plain, documented `optimize_sync`/decorator argument — it's just a display
-label, not a code change) on **every** run so whichever link the user opens first, its name alone
-says which one it is: `baseline_<agent-name>_optimization_results` for every offline/local pass,
-`enhanced_<agent-name>_optimization_results` for the portal run (below). Reuse the exact same
-`<agent-name>` in both so they visibly pair up.
+**Name every run — baseline and enhanced must read as a pair, even out of order.**
+`optimize_sync()` has **no** `experiment_name` keyword of its own — passing one is silently
+absorbed as an unused algorithm kwarg and does **nothing**; don't pass it there. The only way to
+set a *different* portal display name per call from the same decorated agent is the
+`TRAIGENT_EXPERIMENT_NAME` **env var**, which the SDK re-reads fresh on every run. (The
+decorator's own `experiment_name=` argument, Step 6, is a **different, one-time** setting — it
+pins a single fixed name for *every* run from that agent and can't vary call-to-call, so don't set
+it there for this purpose.) Set the env var right before each `optimize_sync()` call — overwriting
+it before the next call is enough, no need to unset in between: `baseline_<agent-name>_optimization_results`
+for every offline/local pass, `enhanced_<agent-name>_optimization_results` for the portal run
+(below). Reuse the exact same `<agent-name>` in both so they visibly pair up regardless of which
+link the user opens first.
 
 **Pin every knob the enhanced function reads** in the baseline space — each composite knob to its
 OFF value, each variant knob (prompt, sample count) to one default. A knob the function branches
@@ -621,10 +627,8 @@ scores, and they can revoke it anytime from the portal. Then:
 ```python
 # .env now provides TRAIGENT_API_KEY (just added), TRAIGENT_BACKEND_URL, and the $5 cap
 # (TRAIGENT_RUN_COST_LIMIT). Approve cost first (see the cost gate below).
-results = my_agent.optimize_sync(
-    max_trials=10, algorithm="auto",      # cap 10 trials; "auto" = cloud smart (early-stops), syncs to portal
-    experiment_name=f"enhanced_{my_agent.__name__}_optimization_results",  # pairs with baseline_name above
-)
+os.environ["TRAIGENT_EXPERIMENT_NAME"] = f"enhanced_{my_agent.__name__}_optimization_results"
+results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 trials; "auto" = cloud smart (early-stops), syncs to portal
 ```
 - **Cap both runs at `max_trials=10`** (baseline and enhanced) — `auto` may **early-stop with
   fewer** once it converges. Ten smart trials over the large enhanced space is enough to find a
@@ -658,8 +662,11 @@ results = my_agent.optimize_sync(
 - Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
   `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
 
-**Also put the baseline on the portal — one small extra run, not a promise you can't keep.**
-Today's offline baseline (above) never reaches the portal, and there's **no free way to sync it
+**Also put the baseline on the portal — one small extra run, not a promise you can't keep.** *(Only
+reachable when the user picked "Both, for comparison" — this needs both `results_baseline` from
+above and the Traigent key the Enhanced section just obtained. "Baseline only" stops before this —
+there's no Traigent key yet to sync anything online. "Enhanced only" has no baseline to resync.)*
+Today's offline baseline never reaches the portal, and there's **no free way to sync it
 there after the fact** — the SDK's only backfill path is for evaluators, not optimization runs;
 an offline result is local-only, permanently, unless you re-run it online. So right here, now that
 `TRAIGENT_API_KEY` exists for the enhanced run anyway, also re-run the baseline **online** — fold
@@ -669,18 +676,24 @@ after together. OK to include that with the run above?"* Re-run just the baselin
 config**, once — a single pass over the dataset, a small fraction of the enhanced run's cost —
 rather than resweeping the whole small space:
 ```python
-results_baseline_online = my_agent.optimize_sync(
-    configuration_space={k: [v] for k, v in results_baseline.best_config.items()},  # winning config only
-    algorithm="grid", max_trials=1,        # one pass — just registers the "before" number on the portal
-    experiment_name=baseline_name,         # same name as the offline run above
-)
+results_baseline_online = None
+if results_baseline.best_config:   # None when the baseline hit stop_reason=="cost_limit" with 0
+                                    # trials (see the cost gate above) — nothing to resync then
+    os.environ["TRAIGENT_EXPERIMENT_NAME"] = baseline_name   # same name as the offline run above
+    results_baseline_online = my_agent.optimize_sync(
+        configuration_space={k: [v] for k, v in results_baseline.best_config.items()},  # winning config only
+        algorithm="grid", max_trials=1,    # one pass — just registers the "before" number on the portal
+    )
 ```
-- If the user declines the extra run, that's fine — keep the local baseline table as the honest
-  "before" and say so plainly; don't claim it's "on the portal" if it isn't.
+- **`results_baseline.best_config` can be `None`** (the 0-trials cost-limit case called out above)
+  — if it is, there's nothing to resync; say so plainly and keep the local baseline table as the
+  "before," same as if the user had declined.
+- If the user declines the extra run, that's fine too — keep the local baseline table as the
+  honest "before" and say so plainly; don't claim it's "on the portal" if it isn't.
 - **Give the user both direct links** (`results_baseline_online.cloud_url` and `results.cloud_url`
-  below) regardless of whether the portal's own grouping lines them up into one view — the two
-  clearly-named, linked runs are what you can actually promise; don't claim a single merged chart
-  you haven't confirmed the UI renders.
+  below) when `results_baseline_online` exists, regardless of whether the portal's own grouping
+  lines them up into one view — the two clearly-named, linked runs are what you can actually
+  promise; don't claim a single merged chart you haven't confirmed the UI renders.
 
 → `traigent-run-optimization` (algorithms, `cost_limit`, `stop_reason`,
 parallel trials, quota sizing) and `traigent` (the full dry-run → approve
@@ -713,10 +726,11 @@ enhanced pass**; don't stop at one:
 
 - **Enhance it.** Add knobs (more models across price tiers, prompt/style variants, sample
   count, a verification/cascade knob), drop knobs that showed no effect in run 1, and focus on
-  the examples that failed. Run it — give this pass its **own** `experiment_name` (e.g. append
-  `_v2`; reusing Step 9's `enhanced_...` name works fine on the portal but stops distinguishing
-  *which* enhanced pass is which once there's more than one) — then hand the user **both portal
-  links from Step 9/10**, baseline and enhanced, so they can see the new frontier next to the
+  the examples that failed. Run it — set `TRAIGENT_EXPERIMENT_NAME` to its **own** value first
+  (Step 9's naming note; e.g. append `_v2` to the enhanced name — reusing Step 9's `enhanced_...`
+  name works fine on the portal but stops distinguishing *which* enhanced pass is which once
+  there's more than one) — then hand the user **both portal links from Step 9/10**, baseline and
+  enhanced, so they can see the new frontier next to the
   "before."
 - **The comparison must be real-vs-real, on the same dataset, and the baseline must make sense.**
   Run the baseline and the enhanced pass on the **same eval set (same items, same size)** —
