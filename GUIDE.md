@@ -734,7 +734,8 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
-  (If the backend is unreachable, `auto` quietly falls back to **local random search** —
+  (If the backend is unreachable, `auto` falls back to **local random search** with a logged
+  warning —
   before promising a portal link, check `results.cloud_url` is not `None`.)
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and

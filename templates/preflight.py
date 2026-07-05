@@ -11,8 +11,8 @@ cost, everything the guide otherwise asks the assistant to derive ad hoc:
                         rule; TRAIGENT_API_KEY format sanity (Step 3)
   C4  model-liveness    each --models id exists: openrouter/* via the keyless
                         public list; openai/anthropic/gemini/mistral via
-                        `traigent models --check`; cohere/HF/bedrock are not
-                        pre-validated by the CLI and are reported SKIP (Step 9)
+                        `traigent models --check`; cohere/HF are not CLI-checkable
+                        and bedrock needs a region+creds, so all report SKIP (Step 9)
   C5  model-pricing     each --models id has a LiteLLM price entry - unpriced
                         models abort the cost gate or report $0 cost (Step 9)
   C6  cost-cap          TRAIGENT_RUN_COST_LIMIT / TRAIGENT_COST_APPROVED /
@@ -311,9 +311,10 @@ def check_liveness(models: list[str], offline: bool) -> None:
             emit(
                 f"liveness:{mid}",
                 SKIP,
-                "not pre-validated by the CLI (cohere/HF/bedrock/azure and "
-                "unrecognized prefixes) - verify the id manually against the "
-                "vendor's docs; the pricing check (C5) still applies.",
+                "not pre-validated here (cohere/HF/azure and unrecognized "
+                "prefixes; bedrock is CLI-checkable but needs a region+AWS "
+                "creds) - verify the id manually against the vendor's docs; "
+                "the pricing check (C5) still applies.",
             )
             continue
         if offline:
@@ -680,17 +681,41 @@ def check_scorer(scorer_spec: str, good, bad, expected, metadata) -> None:
         )
         return
     sig = real_signature(fn)
-    if sig and "input" in sig.parameters:
-        emit(
-            "scorer-sanity",
-            WARN,
-            "a parameter is literally named 'input' - the SDK binds scorer "
-            "arguments by exact name and recognized names include output/"
-            "actual/actual_output/prediction/predicted/result, expected/"
-            "expected_output/ground_truth/reference/target, input_data, "
-            "metadata, config, example, example_index, llm_metrics/metrics; "
-            "'input' receives nothing (use input_data).",
+    # The metric_functions binder (traigent/evaluators/base.py:_build_metric_kwargs)
+    # recognizes ONLY these exact parameter names — nothing else is passed, so a
+    # required param outside this set is called with no value -> TypeError at run
+    # time. DeepEval-style names (actual_output/expected_output/ground_truth/…)
+    # are NOT recognized by this path; do not accept them here or C9 false-passes.
+    RECOGNIZED = {
+        "output", "actual", "expected", "input_data", "metadata",
+        "config", "example", "example_index", "llm_metrics", "dataset",
+    }
+    if sig:
+        has_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
+        unbindable = [
+            n
+            for n, p in sig.parameters.items()
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+            and n not in RECOGNIZED
+            and p.default is inspect.Parameter.empty
+        ]
+        if unbindable and not has_kwargs:
+            emit(
+                "scorer-sanity",
+                FAIL,
+                f"scorer parameter(s) {unbindable} are not recognized by the "
+                "metric_functions binder, so they receive no value and every "
+                "trial raises TypeError. Recognized names are: output (or "
+                "actual), expected, input_data, metadata, config, example, "
+                "example_index, llm_metrics, dataset. DeepEval-style names like "
+                "actual_output/expected_output/ground_truth are NOT bound on "
+                "this path - rename (e.g. actual_output -> output, "
+                "expected_output -> expected).",
+            )
+            return
     if good is None or bad is None or expected is None:
         emit(
             "scorer-sanity",
@@ -701,30 +726,22 @@ def check_scorer(scorer_spec: str, good, bad, expected, metadata) -> None:
         return
 
     def call(output):
+        # Mirror _build_metric_kwargs exactly: only these names get a value.
         kwargs = {}
         if sig:
             for n in sig.parameters:
-                if n in (
-                    "output",
-                    "actual",
-                    "actual_output",
-                    "prediction",
-                    "predicted",
-                    "result",
-                ):
+                if n in ("output", "actual"):
                     kwargs[n] = output
-                elif n in (
-                    "expected",
-                    "expected_output",
-                    "ground_truth",
-                    "reference",
-                    "target",
-                ):
+                elif n == "expected":
                     kwargs[n] = expected
                 elif n == "metadata":
                     kwargs[n] = metadata if metadata is not None else {}
                 elif n == "input_data":
                     kwargs[n] = None
+                elif n == "config":
+                    kwargs[n] = {}
+                elif n == "example_index":
+                    kwargs[n] = 0
         return fn(**kwargs) if kwargs else fn(output, expected)
 
     for label, value, ok in (
