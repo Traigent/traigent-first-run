@@ -155,3 +155,38 @@ Minimal F1/F3 repro is the snippet in F3 plus reading the raw `error_text` in th
   exact-original-structure `8226706b-…`.
 - **SDK refs:** `traigent/cloud/trial_operations.py` `:830`, `:848–857` (0.20.0).
 - **Backend 400 body:** `error_code":"VALIDATION_ERROR"`, generic `message`, precise `details.reason`.
+
+---
+
+## Update — backend-source validation (via dev cluster) + filed issues
+
+Validated against the backend **source** and the **dev** cluster's observability (Kuberly MCP →
+`triagent-dev` Loki/Grafana), with **no full run** (the prod `uk_` key is rejected `unauthorized`
+on the dev backend, so fresh dev sessions would need a dev key; findings were confirmed from code
++ dev logs instead).
+
+- **Owning service:** `traigent-backend` (repo `Traigent/TraigentBackend`), structured JSON logs
+  (`request_id` / `trace_id` / `error_code`).
+- **F3 confirmed at source:** `TraigentBackend/src/services/traigent/interactive_session_service.py`
+  → `_validate_submitted_config` (`:1152`, invoked from the results route `:4018`). Fail-closed
+  anti-smuggling validation: subset-keys (`:1173`); **type-strict** categorical membership
+  (`:1187`, `type(value) is type(choice)` — `True`≠`1`, **int `0`≠float `0.0`**); int/float
+  bounds. Backend docstring confirms the reason message is intended to "reach logs" → **F1** (the
+  SDK should surface it).
+- **F4 mechanisms (now concrete):** (A) type-strictness → numeric-type drift (int `0` vs declared
+  float `0.0`) trips it while `0.2`/`0.4` never can; (B) call-time `configuration_space=` override
+  may desync the create-time declared domain from the optimizer's explored values. Exact original
+  trigger unknown **because F1 discarded `details.reason`**.
+- **Prod observability note:** the `traigent-prod-eks` cluster's downstream observability MCP
+  currently returns `internal server error` via Kuberly, so the exact prod log lines for session
+  `b96e1c29-…` are not pullable right now.
+
+### Filed issues (one per finding, in the owning repo)
+
+| Finding | Issue |
+|---|---|
+| F1 (SDK) | Traigent/Traigent#1782 |
+| F2 (SDK + portal) | Traigent/Traigent#1783 |
+| F3 (SDK + backend) | Traigent/Traigent#1784 |
+| F4 (backend anchor) | Traigent/TraigentBackend#2020 |
+| F5 (docs/skills) | Traigent/traigent-skills#177 |
