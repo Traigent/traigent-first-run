@@ -238,6 +238,12 @@ The earlier "intermittent / categorical-domain" F4 story was an artifact of repr
 probes (one row can't collide). **Fix:** unique `example_id` (db_id + question hash) → the run then
 tracked cleanly to the dev portal (`experiments/view/482d616d-…`, 7 trials, 0 failed, **63.3%**).
 
+**Confirmed on prod (F4 closed):** the original prod anchor session `b96e1c29-1f94-4050-ba3f-f78e191c2f53`
+(trial `trial_47b828673aae47e1`, 12:02:50 UTC) shows the **same** `VALIDATION_ERROR - duplicate
+example_id 'world_1'; …` in prod Loki — not a domain desync. The sibling demo `demo_sql_toy` ships the
+**same** constant-`example_id` bug → **demo_sql_toy#8**. The two real backend desyncs the audit found
+are independent → **TraigentBackend#2021**; the orphan-persistence decision → **TraigentBackend#2023**.
+
 ### New issue: SDK Rust panic
 
 `pydantic-core` (pyo3 0.28.3) `dictionary changed size during iteration` on a worker thread during
