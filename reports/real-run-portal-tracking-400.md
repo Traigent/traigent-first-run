@@ -222,6 +222,12 @@ backend's own log from the dev `traigent-backend` pod:
 A **real** online run on **dev** (full 30-example set + real agent) — the first time the *real*
 failure was reproduced rather than a synthetic probe — supersedes the F4 framing above.
 
+> **Guide philosophy — no workarounds baked in.** This PR does **not** patch `GUIDE.md` to work
+> around F1–F5; those are fixed at the source (the tracked issues). The only guide change is a
+> minimal, fix-surviving one: verify `results.cloud_url is not None` for both runs before claiming
+> a portal link — sound defensive practice regardless of the bugs. Everything else here is an
+> investigation record pointing at the issues that fix the root causes.
+
 ### Real root cause (this session's failure): duplicate `example_id`
 
 The dev backend log (session `7fecb016-…`) shows the true cause:
@@ -263,4 +269,4 @@ parallel evaluation → **Traigent#1785** (client-side; snapshot-before-serializ
 | Traigent#1784 (F3) | **SDK** | ⏳ — add local pre-checks: `default_config ⊆ space`, numeric-type consistency, **`example_id` uniqueness**. |
 | TraigentBackend#2020 (F4) | **Backend** | 🟢 audited → land the two-desync fix + regression test; decide rejected-session persistence (unblocks FE). |
 | traigent-skills#177 (F5) | **Docs** | ⏳ — align recipe metrics + require unique `example_id` + `cloud_url` gate. |
-| traigent-first-run#20 (PR) | **Docs** | review/merge the GUIDE gate. |
+| traigent-first-run#20 (PR) | **Docs** | review/merge — PR = investigation report + a **minimal general** `cloud_url` check only; **no bug-workarounds** (F1–F5 fixed at source). |

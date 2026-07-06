@@ -751,18 +751,9 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
   (If the backend is unreachable, `auto` falls back to **local random search** with a logged
   warning —
-  before promising a portal link, check `results.cloud_url` is not `None`.)
-- **Always gate the "it's on the portal" claim on `results.cloud_url`, for *both* runs.** A
-  backend **unreachable** fallback is not the only way a run ends up local-only: a **permanent
-  `HTTP 400`** on the very first trial submission (e.g. a config value outside the declared
-  space, or a schema/validation mismatch) also degrades to `source='local_fallback'` — and
-  `optimize_sync()` still **returns normally** with a results table, so a valid-key run can look
-  fine while nothing reached the portal. If `results.cloud_url is None`, stop and diagnose before
-  telling the user there's a portal link. Two SDK-0.20.0 gotchas that trip this: (1) every
-  submitted config value — **including `default_config`** — must be inside the declared
-  `configuration_space`, or the trial 400s; (2) the SDK's 400 log paraphrases the cause and can
-  **mis-guess** it ("invalid metric name…") — read the backend's raw `details.reason` for the
-  truth. See `reports/real-run-portal-tracking-400.md`.
+  before promising a portal link, check `results.cloud_url` is not `None`.) Apply that same
+  `results.cloud_url is not None` check to **both** the baseline and enhanced runs before telling
+  the user anything is on the portal — a `None` means the run stayed local-only.
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
   only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
