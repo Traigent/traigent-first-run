@@ -666,8 +666,9 @@ os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced r
 ```
 
 **Name every run — baseline and enhanced must read as a pair, even out of order.**
-`optimize_sync()` has **no** `experiment_name` keyword of its own — passing one is silently
-absorbed as an unused algorithm kwarg and does **nothing**; don't pass it there. The only way to
+`optimize_sync()` has **no** `experiment_name` keyword of its own — on 0.20.0+ passing one
+**raises `TypeError`** (`experiment_name` is a `@traigent.optimize` *decorator* argument, not a
+call kwarg — issue #1683; before 0.20.0 it was silently ignored), so don't pass it there. The only way to
 set a *different* portal display name per call from the same decorated agent is the
 `TRAIGENT_EXPERIMENT_NAME` **env var**, which the SDK re-reads fresh on every run. (The
 decorator's own `experiment_name=` argument, Step 6, is a **different, one-time** setting — it
@@ -703,11 +704,25 @@ for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect 
 **Real runs can outlive your command timeout — run them detached.** Ten trials × a ~25-item
 dataset with a multi-call composite knob is easily 5–10+ minutes of sequential LLM latency, and
 a foreground command timeout (many assistant harnesses default to ~5 minutes) that kills
-`optimize_sync` mid-run does **not** roll back its spend — the trials already executed were
-billed and their results are lost. Launch each paid run (baseline and enhanced) as a
-background/detached process writing to a log file under `traigent-runs/logs/` (e.g.
-`traigent-runs/logs/enhanced_<agent>.log`), then poll the log; never hold a paid run
+`optimize_sync` mid-run does **not** roll back its spend. On 0.20.0 the trials already executed
+are **not** lost, though: each completed trial is written to `~/.traigent/sessions/<id>.json` as
+it finishes, so a killed run keeps its finished trials on disk, and `traigent sync <session_id>`
+uploads that partial session to the portal after the fact. What you actually lose is only the
+**in-flight** trial's spend, the example-level logs still buffered (flushed every 10 trials), and
+listing visibility — a killed session gets no `stop_reason`, so `traigent sync --all`/status
+skip it (pass the explicit `<session_id>` to recover it). Still, launch each paid run (baseline
+and enhanced) as a background/detached process writing to a log file under `traigent-runs/logs/`
+(e.g. `traigent-runs/logs/enhanced_<agent>.log`), then poll the log; never hold a paid run
 inside a foreground command that can time out.
+
+**Re-verify the effective env immediately before each paid launch.** Preflight ran earlier (Steps
+2/3/8/9), but the enhanced flow **edits `.env`** below (you paste `TRAIGENT_API_KEY=`) and launches
+right after — that gap is exactly where a stale editor buffer can re-save an old `.env` between
+validation and launch. Immediately before each paid launch (the baseline and enhanced runs here,
+and the Step 11 holdout) — and after **any** `.env` edit — re-run
+`python templates/preflight.py --env .env` (env-only mode: seconds, free) and confirm the effective
+`TRAIGENT_API_KEY` presence and `TRAIGENT_RUN_COST_LIMIT` match what you validated. Optionally have
+the launch snippet print the masked values it actually loaded, so the log witnesses the real env.
 
 **Enhanced (portal).** This is the run the user will see online — and the **first time they need
 a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),

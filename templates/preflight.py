@@ -25,10 +25,16 @@ cost, everything the guide otherwise asks the assistant to derive ad hoc:
   C9  scorer-sanity     the metric rewards a known-good output (>= 0.9) and
                         penalizes a known-bad one (<= 0.1); signature checks
                         (Step 8's evaluator sanity gate)
+  C10 openrouter-credit when OPENROUTER_API_KEY is set (and not --offline), an
+                        authenticated GET of the account key-info endpoint to
+                        catch the funded-credit / HTTP 402 trap - a valid key
+                        with $0 credit passes C3-C9 then 402s mid-run (Step 9)
 
-Zero paid LLM calls by construction: the only network I/O is a keyless GET of
-the public OpenRouter model list and `traigent models --json` (model listing,
-never a completion). With --offline even those are skipped.
+Zero paid LLM calls by construction: the only network I/O is (1) a keyless GET
+of the public OpenRouter model list, (2) `traigent models --json` (model
+listing, never a completion), and (3) - only when OPENROUTER_API_KEY is present
+- an authenticated GET of OpenRouter's key-info endpoint (account balance, not a
+completion). With --offline all of these are skipped.
 
 Dependencies: stdlib + litellm + python-dotenv - both already in traigent's
 own dependency closure; the script adds nothing new.
@@ -64,6 +70,7 @@ from pathlib import Path
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"  # account balance, not a completion
 
 # Providers actually registered in `traigent models` (SDK 0.20.0); everything
 # else is not pre-validated by the CLI and gets a SKIP with manual guidance.
@@ -776,6 +783,90 @@ def check_scorer(scorer_spec: str, good, bad, expected, metadata) -> None:
 
 
 # ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- C10
+def check_openrouter_credit(env: dict[str, str | None], offline: bool) -> None:
+    """The funded-credit / HTTP 402 trap: C3 checks the key's *shape*, C4 uses the
+    keyless public list, C5 prices locally - nothing verifies the account can
+    actually pay. A syntactically valid key with $0 credit passes every other check
+    and then 402s on the first paid call, *after* TRAIGENT_COST_APPROVED is set and
+    the run has started. This is the only authenticated request the preflight makes,
+    and it is a balance read - never a completion, so still zero LLM cost."""
+    key = env.get("OPENROUTER_API_KEY")
+    if not key_present(key):
+        # No OpenRouter key -> nothing to verify here (the vendor may be OpenAI/etc.,
+        # or the key is deferred). C3 already reports presence.
+        emit("openrouter-credit", SKIP, "no OPENROUTER_API_KEY in .env - skipped.")
+        return
+    if offline:
+        emit("openrouter-credit", SKIP, "--offline: credit check skipped.")
+        return
+    req = urllib.request.Request(
+        OPENROUTER_KEY_URL, headers={"Authorization": f"Bearer {key}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r).get("data", {})
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            emit(
+                "openrouter-credit",
+                FAIL,
+                "OpenRouter rejected the key (HTTP 401) - invalid or revoked; "
+                "the run would fail on the first paid call (GUIDE Step 9).",
+            )
+        elif e.code == 402:
+            emit(
+                "openrouter-credit",
+                FAIL,
+                "OpenRouter reports no funded credit (HTTP 402) - the key is "
+                "valid but the account can't pay; every paid call will 402 "
+                "*after* the run starts. Add credit at openrouter.ai/credits.",
+            )
+        else:
+            emit(
+                "openrouter-credit",
+                WARN,
+                f"key-info endpoint returned HTTP {e.code} - inconclusive, not a "
+                "failure; verify funded credit manually before a paid run.",
+            )
+        return
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        emit(
+            "openrouter-credit",
+            WARN,
+            f"could not reach the OpenRouter key-info endpoint ({e}) - "
+            "inconclusive, not a failure.",
+        )
+        return
+
+    remaining = data.get("limit_remaining")
+    limit = data.get("limit")
+    if remaining is not None and remaining <= 0:
+        emit(
+            "openrouter-credit",
+            FAIL,
+            f"OpenRouter credit exhausted (limit_remaining={remaining}) - a paid "
+            "run will 402 mid-flight. Add credit at openrouter.ai/credits.",
+        )
+        return
+    if remaining is not None:
+        emit(
+            "openrouter-credit",
+            PASS,
+            f"funded: {remaining} credit remaining"
+            + (f" of a {limit} limit" if limit is not None else ""),
+        )
+    else:
+        # limit_remaining null == no preset limit (pay-as-you-go); can't prove a
+        # positive balance from this field alone, so PASS-with-caveat, not FAIL.
+        emit(
+            "openrouter-credit",
+            PASS,
+            "key authenticated; no preset credit limit (pay-as-you-go) - ensure "
+            "the account is funded (openrouter.ai/credits) before a paid run.",
+        )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Traigent first-run preflight (free - no LLM calls)."
@@ -812,6 +903,7 @@ def main() -> int:
     check_sdk()
     check_keys(env)
     check_cost_cap(env)
+    check_openrouter_credit(env, args.offline)
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if models:
