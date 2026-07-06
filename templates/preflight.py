@@ -688,41 +688,88 @@ def check_scorer(scorer_spec: str, good, bad, expected, metadata) -> None:
         )
         return
     sig = real_signature(fn)
-    # The metric_functions binder (traigent/evaluators/base.py:_build_metric_kwargs)
-    # recognizes ONLY these exact parameter names — nothing else is passed, so a
-    # required param outside this set is called with no value -> TypeError at run
-    # time. DeepEval-style names (actual_output/expected_output/ground_truth/…)
-    # are NOT recognized by this path; do not accept them here or C9 false-passes.
-    RECOGNIZED = {
-        "output", "actual", "expected", "input_data", "metadata",
-        "config", "example", "example_index", "llm_metrics", "dataset",
-    }
-    if sig:
-        has_kwargs = any(
-            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    # Model the PRODUCTION metric binder — LocalEvaluator._build_metric_keyword_arguments
+    # / _invoke_metric_function (traigent/evaluators/local.py:630-755) — NOT the legacy
+    # SimpleScoringEvaluator._build_metric_kwargs, which is instantiated nowhere in
+    # production and recognizes a narrower set. Modelling that legacy set here would
+    # false-FAIL a perfectly valid DeepEval-style scorer. The real binder (a) accepts a
+    # BROAD alias set including actual_output/expected_output/ground_truth, and (b) falls
+    # back to POSITIONAL calls (output, expected, llm_payload) / (output, expected) /
+    # (output,), so a scorer fails to bind only when NONE of those call forms fit.
+    _OUTPUT_NAMES = {"actual", "actual_output", "output", "prediction", "predicted", "result"}
+    _EXPECTED_NAMES = {"expected", "expected_output", "ground_truth", "reference", "target"}
+    _LLM_NAMES = {"llm_metrics", "metrics"}
+
+    def _bind_like_production(signature, out, exp):
+        """Return the first (args, kwargs) LocalEvaluator would use to call the scorer,
+        or None if no call form binds (i.e. every trial would raise TypeError)."""
+        params = list(signature.parameters.values())
+        recognized = {
+            "example": None,
+            "input_data": None,
+            "metadata": metadata if metadata is not None else {},
+            "config": {},
+            "example_index": 0,
+        }
+        for n in _OUTPUT_NAMES:
+            recognized[n] = out
+        for n in _EXPECTED_NAMES:
+            recognized[n] = exp
+        for n in _LLM_NAMES:
+            recognized[n] = {}
+        accepts_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params
         )
-        unbindable = [
-            n
-            for n, p in sig.parameters.items()
-            if p.kind
-            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-            and n not in RECOGNIZED
-            and p.default is inspect.Parameter.empty
+        kwargs = {}
+        for p in params:
+            if p.kind in (
+                inspect.Parameter.VAR_KEYWORD,
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            if p.name in recognized:
+                kwargs[p.name] = recognized[p.name]
+        if accepts_kwargs:
+            kwargs.setdefault("output", out)
+            kwargs.setdefault("expected", exp)
+            kwargs.setdefault("llm_metrics", {})
+        positional = (out, exp, {})  # (output, expected, llm_payload)
+        candidates: list[tuple[tuple, dict]] = []
+        if any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params):
+            candidates.append((positional, {}))
+        if kwargs:
+            candidates.append(((), kwargs))
+        candidates += [
+            (positional, {}),
+            (positional[:2], {}),
+            (positional[:1], {}),
+            ((), {}),
         ]
-        if unbindable and not has_kwargs:
-            emit(
-                "scorer-sanity",
-                FAIL,
-                f"scorer parameter(s) {unbindable} are not recognized by the "
-                "metric_functions binder, so they receive no value and every "
-                "trial raises TypeError. Recognized names are: output (or "
-                "actual), expected, input_data, metadata, config, example, "
-                "example_index, llm_metrics, dataset. DeepEval-style names like "
-                "actual_output/expected_output/ground_truth are NOT bound on "
-                "this path - rename (e.g. actual_output -> output, "
-                "expected_output -> expected).",
-            )
-            return
+        for args, kw in candidates:
+            try:
+                signature.bind(*args, **kw)
+            except TypeError:
+                continue
+            return args, kw
+        return None
+
+    if sig is not None and _bind_like_production(sig, "", "") is None:
+        emit(
+            "scorer-sanity",
+            FAIL,
+            "no call form of Traigent's production metric binder "
+            "(traigent/evaluators/local.py) fits this scorer's signature, so every "
+            "trial raises TypeError. It binds recognized keyword names "
+            "(output/actual/actual_output/prediction/predicted/result, "
+            "expected/expected_output/ground_truth/reference/target, "
+            "llm_metrics/metrics, plus example/input_data/metadata/config/"
+            "example_index) and, failing that, tries positional "
+            "(output, expected, llm_metrics). A scorer with >3 required positional "
+            "params, or a required keyword-only param outside those names with no "
+            "**kwargs, can't be called - rename to a recognized name or add **kwargs.",
+        )
+        return
     if good is None or bad is None or expected is None:
         emit(
             "scorer-sanity",
@@ -733,23 +780,12 @@ def check_scorer(scorer_spec: str, good, bad, expected, metadata) -> None:
         return
 
     def call(output):
-        # Mirror _build_metric_kwargs exactly: only these names get a value.
-        kwargs = {}
-        if sig:
-            for n in sig.parameters:
-                if n in ("output", "actual"):
-                    kwargs[n] = output
-                elif n == "expected":
-                    kwargs[n] = expected
-                elif n == "metadata":
-                    kwargs[n] = metadata if metadata is not None else {}
-                elif n == "input_data":
-                    kwargs[n] = None
-                elif n == "config":
-                    kwargs[n] = {}
-                elif n == "example_index":
-                    kwargs[n] = 0
-        return fn(**kwargs) if kwargs else fn(output, expected)
+        # Invoke exactly as LocalEvaluator would: the first binding call form.
+        bound = _bind_like_production(sig, output, expected) if sig else None
+        if bound is None:
+            return fn(output, expected)
+        args, kw = bound
+        return fn(*args, **kw)
 
     for label, value, ok in (
         ("known-good", good, lambda s: s >= 0.9),
