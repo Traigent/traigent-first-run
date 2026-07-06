@@ -1,0 +1,157 @@
+# Real-Run Field Test — portal tracking silently lost to an HTTP 400
+
+**What this is.** A *real* (non-mock) first-run of `GUIDE.md`, driven by a coding assistant
+against a customer agent (`Traigent/demo_sql_spider`, a text2SQL agent) with a funded OpenRouter
+key and a **valid production `TRAIGENT_API_KEY`**. Unlike the `$0` matrix in
+[`first-run-field-test.md`](first-run-field-test.md), this one reached the paid step — and there
+the enhanced/portal run **silently degraded to local-only tracking** on an HTTP `400`, so nothing
+reached the portal even though the key was valid and the session was created. This report is the
+evidence + root-cause dig, written so **backend / SDK / schema / frontend** agents can each pick up
+their slice.
+
+**Spend: ~$0.03.** Only the aborted first baseline trial made real LLM calls (~30, one config ×
+the dataset, before it was killed on the first 400). Every diagnostic probe below used a **no-LLM
+`SELECT 1` agent**, so the entire investigation was free. OpenRouter credit moved `1.973220 →
+1.942723` (−$0.0305). The full paid run was **not** executed (deliberately stopped).
+
+**Environment.** `traigent 0.20.0`, Python 3.13.14, production backend
+`https://portal.traigent.ai` (`TRAIGENT_BACKEND_URL` unset), OpenRouter vendor key (funded),
+account `IsraelTraigent`. Agent: single-call NL→SQL, scored by execution match via a
+`custom_evaluator` emitting `{accuracy, cost, latency}`; weighted `ObjectiveSchema`
+(accuracy 0.80 / cost 0.15 / latency 0.05); enhanced space = 48 combinations
+(4 models × 3 temps × 2 prompt styles × 2 generation paths).
+
+---
+
+## What happened (timeline)
+
+1. Wiring + a free mock dry-run passed (metric sanity, config injection, both generation paths).
+2. The real run launched (baseline first). On the **first trial submission** the backend returned
+   `HTTP 400 — "Invalid request data. Please check your input."` The SDK classified it
+   **PERMANENT**, printed a hint that it was *"commonly an invalid optimization objective/metric
+   name, e.g. 'cost_usd' instead of 'cost'"*, and continued in `source='local_fallback'` — i.e.
+   **no portal run**. Run was killed immediately to avoid paying for untracked trials.
+3. Chasing the SDK's hint wasted effort: removing the one "extra" metric (`exec_accuracy`) did
+   **not** fix it, and three objective/metric shapes (accuracy-only; `["accuracy","cost","latency"]`;
+   weighted `ObjectiveSchema`) **all** still 400'd — *but only because each probe was itself
+   mis-declared* (see F1/F3). The SDK's hint pointed at the wrong thing.
+4. Capturing the **raw** backend body (the SDK only logs a paraphrase) revealed the real reason:
+   `config["model"]` was outside the session's declared categorical domain.
+5. With the space and `default_config` made consistent, **every** shape is accepted and returns a
+   real `cloud_url` — including the exact structure of the original baseline call. So the original
+   permanent-400 was **not reproducible** from the config afterward (see F4).
+
+---
+
+## Findings
+
+### F1 — SDK discards the backend's precise `details.reason` and prints a hardcoded, misleading guess  ·  **owner: SDK**  ·  severity: high (diagnosability)
+
+The backend's 400 body is precise:
+
+```json
+{"details":{"reason":["submitted config[\"model\"] is outside the declared categorical domain (choices declared at session create)"]},
+ "error":"Invalid request data. Please check your input.","error_code":"VALIDATION_ERROR",
+ "message":"Invalid request data. Please check your input.","success":false}
+```
+
+But `traigent/cloud/trial_operations.py` throws that precision away:
+
+- **`:830`** builds the user-facing detail as
+  `detail = parsed.get("error") or parsed.get("message") or detail` — it never reads
+  `parsed["details"]["reason"]`, so the one field that says *what is actually wrong* is dropped.
+- **`:848–857`** then hardcodes a **guess** into the error log: *"commonly an invalid optimization
+  objective/metric name, e.g. 'cost_usd' instead of 'cost'"*. In our case the real cause was a
+  **config domain** mismatch, not a metric name — the guess actively misdirected debugging for
+  a long time.
+
+**Fix (SDK):** surface `parsed.get("details", {}).get("reason")` in the logged message; drop or
+demote the hardcoded example guess. This one change turns a multi-probe investigation into a
+one-line read.
+
+### F2 — A permanent 400 degrades to `local_fallback` silently; the run "succeeds" with no portal URL  ·  **owner: SDK + portal/UX**  ·  severity: high (silent data loss)
+
+After the 400, `optimize_sync()` returns **normally** with `stop_reason` set and
+`results.cloud_url is None`; trials are computed and stored locally. A first-run user with a
+**valid** key sees a normal results table and reasonably believes the run is on the portal — it
+is not. The guide already tells the assistant to check `cloud_url` for the *auto→local* fallback,
+but **not** for this *400→local* path, and the SDK itself does not make the degradation loud.
+
+**Fix:** (a) SDK — make `local_fallback` after a *permanent* rejection prominent (distinct return
+flag / non-zero-ish signal), not just a warning line; (b) `GUIDE.md` Step 9/10 — add an explicit
+post-real-run gate: *assert `results.cloud_url is not None`, else the run is local-only — stop and
+diagnose before claiming a portal link.*
+
+### F3 — `default_config` (or any submitted config value) outside the declared `configuration_space` → 400, with no client-side pre-check  ·  **owner: SDK + backend**  ·  severity: medium (footgun) · **deterministically reproducible**
+
+The backend rejects any trial whose config value isn't in the domain declared at *session create*.
+It is easy to violate without noticing: a `default_config` value not present in
+`configuration_space` is submitted as-is (the "default"/baseline trial) and 400s. Minimal repro:
+
+```python
+# space declares model=[A] but default_config uses model=B  -> first trial 400s
+traigent.optimize(configuration_space={"model": ["openrouter/deepseek/deepseek-chat"], ...},
+                  default_config={"model": "openrouter/openai/gpt-4.1-mini", ...}, ...)
+```
+
+**Fix (SDK):** validate `default_config ⊆ configuration_space` locally and fail fast with a clear
+message *before* any backend call (and before spending on the trial's LLM work). **Backend:** the
+`message` field should carry the reason too, not only `details.reason` (see F1).
+
+### F4 — The original real-run 400 was not reproducible from the config afterward  ·  **owner: backend (needs logs) — the cross-repo research anchor**  ·  severity: unknown
+
+The original failing call was `run_agent.optimize_sync(configuration_space=BASELINE_SPACE,
+algorithm="grid", max_trials=10)` where the decorator declared the (superset) enhanced space and
+`default_config.model` ∈ both spaces. Re-running the **same structure** later (fresh decorate →
+same override → grid → 10 trials, no-LLM agent) **succeeds** and returns a portal URL. So the
+permanent-classified 400 on the very first submission is **not** explained by the static config.
+Candidate causes that need backend/SDK correlation on the session IDs below:
+
+- a per-worker **session-storage race** (the SDK references BE #1194 for a *transient*
+  session-not-found 400) returning a 400 that was **mis-classified as permanent** on first submit;
+- a first-submit **validation state** on session create vs. the enhanced-space-decorator +
+  baseline-override interaction (declared-domain snapshot timing);
+- an evaluator-emitted **value** specific to the real (LLM) path that the no-LLM repro doesn't hit.
+
+This is exactly what warrants schema/backend/SDK eyes together — see the raw session IDs in the
+appendix.
+
+### F5 — Recipe emits a non-objective metric; guide lacks a `cloud_url` gate  ·  **owner: docs / traigent-skills / first-run**  ·  severity: low
+
+`traigent-skills/.../quickstart_text2sql.md` emits `metrics={..., "exec_accuracy": ...}` — an extra
+metric outside the declared objectives. **Tested: the backend accepts it** (a consistent-space
+probe with `exec_accuracy` returned a `cloud_url`), so it is *not* a bug today — but it is a latent
+footgun if the backend ever tightens metric-name validation, and it's what the SDK's misleading F1
+hint blames first. Worth aligning the example to emit exactly the declared objectives. Also fold
+the F2 `cloud_url` gate into `GUIDE.md`.
+
+---
+
+## Cross-repo research pointers
+
+| Repo / agent | Look at |
+|---|---|
+| **backend** | Why session `b96e1c29-1f94-4050-ba3f-f78e191c2f53` rejected its first trial as a *permanent* 400 (F4). Confirm the categorical-domain validation semantics (F3). Put the reason in `message`, not just `details.reason` (F1). Is there a per-worker session-create/first-submit race (BE #1194 relatives)? |
+| **sdk** | `trial_operations.py:830` (surface `details.reason`) and `:848–857` (drop the hardcoded guess) — F1. Local `default_config ⊆ configuration_space` pre-validation — F3. Make post-permanent-400 `local_fallback` loud / return a flag — F2. |
+| **schema** | The config-run submission carries `"schema_version": "1.0"`. Confirm SDK 0.20.0 ↔ production backend schema compatibility for the trial-result payload, and whether the declared-domain contract is versioned/documented. |
+| **frontend / portal** | A valid-key run that degrades to `local_fallback` leaves **no** portal trace. Should rejected/attempted sessions surface anywhere so a user isn't left thinking a run exists? |
+| **docs / traigent-skills / first-run** | F5: align the text2SQL recipe's emitted metrics to the declared objectives; add the `results.cloud_url is not None` gate to `GUIDE.md` Step 9/10. |
+
+## Reproduction (all free — no-LLM `SELECT 1` agent)
+
+The probe scripts live in the agent repo under `traigent-runs/` (`probe_raw.py` captures the raw
+backend body via a one-line monkeypatch of
+`TrialOperations._handle_trial_error_response`; `probe_spaces.py` shows enhanced / separate-baseline
+/ call-time-override all accepted; `probe_repro.py` shows the exact original structure accepted).
+Minimal F1/F3 repro is the snippet in F3 plus reading the raw `error_text` in the SDK handler.
+
+## Appendix — evidence
+
+- **Original failure:** session `b96e1c29-1f94-4050-ba3f-f78e191c2f53` (baseline; enhanced never ran).
+- **Raw-body domain error captured:** session `8b6859c1-8399-4214-a891-32f57cc992ea` →
+  `details.reason = "submitted config[\"model\"] is outside the declared categorical domain"`.
+- **Accepted probes (returned `cloud_url`):** enhanced-no-override `70c8bb71-…`; separate-baseline
+  `51421fad-…`; baseline-override `f4ec1763-…`; extra-metric(`exec_accuracy`) `5a888830-…`;
+  exact-original-structure `8226706b-…`.
+- **SDK refs:** `traigent/cloud/trial_operations.py` `:830`, `:848–857` (0.20.0).
+- **Backend 400 body:** `error_code":"VALIDATION_ERROR"`, generic `message`, precise `details.reason`.
