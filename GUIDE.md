@@ -64,6 +64,13 @@ Use your most capable model with high effort. This guide is **Python-only**.
   present, naming those vendors to ask which to use (Step 3c) is a purposeful choice, not
   a spotlight. Never present it as something you found by rummaging through their files.
 - **Offer at most 3 options, mark one Recommended,** with a one-line trade-off each.
+- **Everything you generate goes in `traigent-runs/` at the project root** — converted
+  datasets, run plans, dry-run scripts, run logs (`traigent-runs/logs/`), exported candidate
+  configs. Create it on first use and add it to `.gitignore` alongside `.env` (Step 3). Two
+  exceptions: the decorated wrapper module lives next to the agent source it imports, and the
+  SDK's own `.traigent/` output directory is left alone — never write into it or tell the user
+  to clear it. **Never drop a generated file beside the user's originals** — their tooling may
+  glob those directories (e.g. `eval/*.jsonl`) and silently ingest your copy.
 - **If something breaks,** explain it to the user calmly and positively, with a clear
   action item, and tell them what to relay to Traigent if it's a Traigent-side snag.
   Even if the portal can't show a run, you can always present results locally.
@@ -168,6 +175,12 @@ traigent info              # version, Python, integrations, defaults
 > `GUIDE.md` is the flow to follow; don't run `onboard --write-env`, or it will fight Step 3's
 > careful "`.env`, never in chat" setup.
 
+Then run the bundled preflight for the version checks — free, no keys, one command:
+
+```bash
+python templates/preflight.py   # Python 3.11–3.13 + traigent >= 0.18 (catches the 0.0.1 stub)
+```
+
 If install/verify fails, diagnose (→ `traigent-debugging`), try the
 next option (different venv / global), and only escalate to the user if still stuck.
 
@@ -228,8 +241,10 @@ credentials or an old env var might point the SDK at a local/dev backend.
 `TRAIGENT_COST_APPROVED` commented out — you'll approve interactively at Step 9.
 
 After the user pastes and saves: confirm `.env` is git-ignored — and **if the project has no
-`.gitignore`, create one** covering `.env`, `.venv/`, and `__pycache__/`, so a later
-`git init` can't commit secrets.
+`.gitignore`, create one** covering `.env`, `.venv/`, `traigent-runs/`, and `__pycache__/`,
+so a later `git init` can't commit secrets. Then re-check the finished file mechanically:
+`python templates/preflight.py --env .env` applies the "present means a real, non-empty key
+value" rule above and sanity-checks the cost cap — no keys are ever printed.
 
 Load keys with `python-dotenv`'s `load_dotenv()` — deterministic, works when the venv isn't
 nested in the project, and keeps keys out of shell history; fall back to `export` only if
@@ -278,7 +293,18 @@ output), and an **evaluation method**. Most users already have all three — **f
 missing, and confirm (don't silently replace) what they already built.** Resolve the dataset
 first:
 
-- **Has a dataset** (input / output / expected) → use it.
+- **Has a dataset** (input / output / expected) → use it. Convert it to Traigent's JSONL
+  shape **into `traigent-runs/`, never alongside the original** — a converted copy dropped
+  into the user's own data directory gets picked up by their tooling (globs like
+  `eval/*.jsonl`) and silently corrupts their pipeline. **Name the file after its source**
+  (`spider_dev.json` → `traigent-runs/spider_dev.jsonl`) so provenance stays obvious. If rows
+  carry extra fields beyond input/output (ids, file paths, difficulty tags), keep each one in
+  **both places**: **inside `input`** — Traigent calls your function as `func(**input)`, so
+  only keys inside `input` reach parameters; a field left at top level leaves its same-named
+  parameter silently at its default on every trial — **and top-level**, because every
+  non-input/output key is routed to the scorer's `metadata` (see the scorer note below). The
+  duplication is deliberate: the two copies feed two different consumers. (The Step 8
+  preflight's `--dataset --agent` check verifies this binding for you.)
 - **Has logs/traces but no dataset** → build a JSONL dataset from them and ask the user
   to verify it.
 - **Has nothing** → ask the user for 3–5 example input/output pairs; synthesize up to
@@ -357,7 +383,7 @@ import traigent
 from traigent.api.decorators import InjectionOptions
 
 @traigent.optimize(
-    eval_dataset="eval.jsonl",
+    eval_dataset="traigent-runs/eval.jsonl",   # generated artifacts live in traigent-runs/
     objectives=["accuracy"],                 # add "cost"/"latency" only to trade accuracy away
     injection=InjectionOptions(injection_mode="context"),
     configuration_space={...},               # the ENHANCED (large) space — filled in Step 7
@@ -402,6 +428,14 @@ rec = recommend_configuration_space("rag")   # or "code_gen"; list_recommendatio
 configuration_space = rec["configuration_space"]
 print(rec["caveat"])                          # always show: recs are starting points, not guarantees
 ```
+
+> **Check for a domain recipe first.** Before assembling knobs yourself, look in
+> <https://github.com/Traigent/traigent-skills> for a recipe matching this agent's domain —
+> e.g. `traigent-recipe-text2sql` for NL→SQL agents. Recipes capture field-tested config
+> spaces and the knobs that actually moved accuracy (the text2SQL recipe took a cheap-model
+> agent from 66.7% to 90% with prompt-structure knobs alone). If one matches, start from its
+> proven knob set and adapt; if none does, build from `traigent recommend` + the agent's real
+> knobs as below.
 
 Then build the space from: the recommendations **+ the agent's real knobs** (prompt
 /style variants, temperature, sample count) **+ model variety across vendors and price
@@ -479,7 +513,7 @@ shape (cascades, routing, self-consistency, verification gates) →
 `traigent-boost-agent` + `traigent-composite-knobs` +
 `traigent-run-recommendations`.
 
-Record the run in `templates/run-plan.md` (copy it per run). For a full service run
+Record the run in `templates/run-plan.md` (copy it per run to `traigent-runs/run-plan.md`). For a full service run
 plan, see the `traigent-run-plan` skill — note `traigent plan` is optional and needs
 several required flags (`--task-description --dataset-size --objective --max-trials
 --cost-limit`) plus a reachable backend, so it's not a zero-arg command.
@@ -489,6 +523,20 @@ several required flags (`--task-description --dataset-size --objective --max-tri
 ## Step 8 — Dry-run first (mock, free, offline)
 
 Always validate the whole pipeline at zero cost before spending anything.
+
+Start with the full preflight — it mechanizes every check below and Step 9's model checks
+(liveness, pricing, dataset shape, dataset↔function binding, scorer sanity) in one free
+command, instead of you re-deriving them ad hoc:
+
+```bash
+python templates/preflight.py --env .env \
+  --models "<model-a>,<model-b>" \
+  --dataset traigent-runs/<name>.jsonl --agent <wrapper>.py:<agent_func> \
+  --scorer <wrapper>.py:<metric_func> \
+  --good "<known-good output>" --bad "<known-bad output>" --expected "<gold>"
+```
+
+Clear every FAIL before anything paid; WARNs are judgment calls to resolve knowingly.
 
 > **FIRST — Mock ≠ universal interception — this is the one that can cost money.** Mock only
 > intercepts LLM calls made via **LiteLLM or LangChain**. A raw
@@ -507,7 +555,9 @@ Always validate the whole pipeline at zero cost before spending anything.
 > user's real Traigent account and presenting them as genuine. Since Step 6 already wrapped the
 > user's real function in their real project file, a fresh process just re-imports it — it's not
 > a new or different agent, only a new interpreter. Run this exact block via a **separate**
-> `python -c "..."` (or an equivalent one-off script invocation) from whatever you'll use for
+> `python -c "..."` (or an equivalent one-off script — save it as `traigent-runs/dryrun.py`; a
+> script under `traigent-runs/` must first prepend the project root to `sys.path` so the
+> wrapper imports) from whatever you'll use for
 > Step 9, and let that process **exit** when the block finishes — don't keep it open and reuse
 > it.
 
@@ -558,13 +608,14 @@ Ask the user which they want:
 2. **Enhanced only** — Traigent-optimized.
 3. **Both, for comparison** *(recommended for a first run)*.
 
-> **Verify model IDs are live first** — a delisted/renamed id wastes the run on a 404. For
-> direct vendors use `traigent models --provider <p> --check <id>`. The CLI has **no
-> `openrouter` provider**, so for `openrouter/*` ids (the recommended vendor!) check the slug
-> against the public, keyless list at <https://openrouter.ai/api/v1/models> — and confirm
-> LiteLLM prices it (`litellm.cost_per_token(model="openrouter/<vendor>/<model>", ...)`):
-> several common slugs (e.g. `openrouter/openai/gpt-4o-mini`) are live but have **no LiteLLM
-> price entry**, so they'd run with cost reported as $0 (see the unpriced-model bullet below).
+> **Verify model IDs are live and priced first** — a delisted/renamed id wastes the run on a
+> 404, and several live slugs (e.g. `openrouter/openai/gpt-4o-mini`) have **no LiteLLM price
+> entry**, so they'd run with cost reported as $0 (see the unpriced-model bullet below).
+> Don't re-derive these checks — run the bundled preflight:
+> `python templates/preflight.py --models "<id>,<id>,..."`. It checks `openrouter/*` slugs
+> against the public keyless list at <https://openrouter.ai/api/v1/models>, direct-vendor ids
+> via `traigent models --check` (whose built-in list can lag the vendor — treat its misses as
+> "double-check the id", not "dead"), and every id for a LiteLLM price entry.
 
 **Baseline (local) — show it early, before the Traigent key.** The baseline is the honest
 "before." **Use whatever the user already defined, as-is — never make their agent *less* than it
@@ -615,8 +666,9 @@ os.environ.pop("TRAIGENT_OFFLINE_MODE", None)   # clear it before the enhanced r
 ```
 
 **Name every run — baseline and enhanced must read as a pair, even out of order.**
-`optimize_sync()` has **no** `experiment_name` keyword of its own — passing one is silently
-absorbed as an unused algorithm kwarg and does **nothing**; don't pass it there. The only way to
+`optimize_sync()` has **no** `experiment_name` keyword of its own — on 0.20.0+ passing one
+**raises `TypeError`** (`experiment_name` is a `@traigent.optimize` *decorator* argument, not a
+call kwarg — issue #1683; before 0.20.0 it was silently ignored), so don't pass it there. The only way to
 set a *different* portal display name per call from the same decorated agent is the
 `TRAIGENT_EXPERIMENT_NAME` **env var**, which the SDK re-reads fresh on every run. (The
 decorator's own `experiment_name=` argument, Step 6, is a **different, one-time** setting — it
@@ -652,10 +704,25 @@ for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect 
 **Real runs can outlive your command timeout — run them detached.** Ten trials × a ~25-item
 dataset with a multi-call composite knob is easily 5–10+ minutes of sequential LLM latency, and
 a foreground command timeout (many assistant harnesses default to ~5 minutes) that kills
-`optimize_sync` mid-run does **not** roll back its spend — the trials already executed were
-billed and their results are lost. Launch each paid run (baseline and enhanced) as a
-background/detached process writing to a log file, then poll the log; never hold a paid run
+`optimize_sync` mid-run does **not** roll back its spend. On 0.20.0 the trials already executed
+are **not** lost, though: each completed trial is written to `~/.traigent/sessions/<id>.json` as
+it finishes, so a killed run keeps its finished trials on disk, and `traigent sync <session_id>`
+uploads that partial session to the portal after the fact. What you actually lose is only the
+**in-flight** trial's spend, the example-level logs still buffered (flushed every 10 trials), and
+listing visibility — a killed session gets no `stop_reason`, so `traigent sync --all`/status
+skip it (pass the explicit `<session_id>` to recover it). Still, launch each paid run (baseline
+and enhanced) as a background/detached process writing to a log file under `traigent-runs/logs/`
+(e.g. `traigent-runs/logs/enhanced_<agent>.log`), then poll the log; never hold a paid run
 inside a foreground command that can time out.
+
+**Re-verify the effective env immediately before each paid launch.** Preflight ran earlier (Steps
+2/3/8/9), but the enhanced flow **edits `.env`** below (you paste `TRAIGENT_API_KEY=`) and launches
+right after — that gap is exactly where a stale editor buffer can re-save an old `.env` between
+validation and launch. Immediately before each paid launch (the baseline and enhanced runs here,
+and the Step 11 holdout) — and after **any** `.env` edit — re-run
+`python templates/preflight.py --env .env` (env-only mode: seconds, free) and confirm the effective
+`TRAIGENT_API_KEY` presence and `TRAIGENT_RUN_COST_LIMIT` match what you validated. Optionally have
+the launch snippet print the masked values it actually loaded, so the log witnesses the real env.
 
 **Enhanced (portal).** This is the run the user will see online — and the **first time they need
 a Traigent key**. If `TRAIGENT_API_KEY` isn't set yet (the default — you deferred it at Step 3),
@@ -682,6 +749,9 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
+  (If the backend is unreachable, `auto` falls back to **local random search** with a logged
+  warning —
+  before promising a portal link, check `results.cloud_url` is not `None`.)
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
   only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
@@ -874,7 +944,7 @@ object — Step 8's process already exited); there is nothing to promote (a base
 "enhanced" config to ship).
 
 ```python
-my_agent.export_config("candidate_config.json")   # candidate for review/gating; export the LATEST
+my_agent.export_config("traigent-runs/candidate_config.json")  # candidate for review/gating; export the LATEST
                                                     # real enhanced results object (Step 9 or 11)
 # after the holdout gate passes AND the user approves:
 my_agent.apply_best_config(results)                # the real enhanced results — never Step 8's mock
