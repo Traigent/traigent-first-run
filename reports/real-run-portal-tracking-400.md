@@ -190,3 +190,26 @@ on the dev backend, so fresh dev sessions would need a dev key; findings were co
 | F3 (SDK + backend) | Traigent/Traigent#1784 |
 | F4 (backend anchor) | Traigent/TraigentBackend#2020 |
 | F5 (docs/skills) | Traigent/traigent-skills#177 |
+
+### Dev Grafana/Loki capture (server-side proof)
+
+Reproduced the domain-400 on **dev** (session `dcd10e3a-2e18-43d0-a9b6-3390493e6310`) and pulled the
+backend's own log from the dev `traigent-backend` pod:
+
+- **ERROR** `src.routes.traigent_session_routes._build_error_response` (`:892`):
+  `TraiGent submit_results failed: VALIDATION_ERROR - submitted config["model"] is outside the declared categorical domain`
+- Traceback: `traigent_session_routes.py:1671 submit_results` → `interactive_session_service.py:3811 submit_results` → `:1098 _validate_submitted_config` → `raise ValueError`.
+- `error_code=VALIDATION_ERROR`, `exception_type=ValueError`, `trial_id=trial_de2be31881f44658`, `trace_id=8cfbcf6ca033e366962a3f59465261aa`.
+- Flow (one `request_id`): `POST …/next-trial` → **200**, then `POST …/results` → **400** — i.e. the backend handed out a config its own submit-validator rejects. Optimizer is **Optuna** (`traigent_interactive_<session_id>` study).
+- Accepted contrast: `portal-dev.traigent.ai/experiments/view/d8ec0ba8-163e-4d19-98a8-44e318b822d6`.
+
+### Next steps — ownership
+
+| Issue | Agent | Next action |
+|---|---|---|
+| Traigent#1782 (F1) | **SDK** | Surface `details.reason` in `trial_operations.py:830`; drop hardcoded guess `:848–857`; unit test. |
+| Traigent#1783 (F2) | **SDK** + **Frontend** | SDK: loud/typed signal on permanent-400 `local_fallback`. Frontend: show rejected sessions in portal. |
+| Traigent#1784 (F3) | **SDK** (+ **Backend**) | SDK: local `default_config ⊆ space` + numeric-type-consistency pre-check. Backend: confirm int/float strictness intent. |
+| TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | Audit `next-trial` / default-trial vs `_validate_submitted_config`'s create-time domain; pull prod logs for `b96e1c29-…`; fix `traigent-prod-eks` observability MCP. |
+| traigent-skills#177 (F5) | **Docs/skills** | Align recipe metrics to declared objectives; mirror the `cloud_url` + type-consistency gate. |
+| traigent-first-run#20 (PR) | **Docs** | Review + merge the GUIDE `cloud_url` gate; link the five issues. |
