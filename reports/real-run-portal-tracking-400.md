@@ -177,9 +177,10 @@ on the dev backend, so fresh dev sessions would need a dev key; findings were co
   float `0.0`) trips it while `0.2`/`0.4` never can; (B) call-time `configuration_space=` override
   may desync the create-time declared domain from the optimizer's explored values. Exact original
   trigger unknown **because F1 discarded `details.reason`**.
-- **Prod observability note:** the `traigent-prod-eks` cluster's downstream observability MCP
-  currently returns `internal server error` via Kuberly, so the exact prod log lines for session
-  `b96e1c29-…` are not pullable right now.
+- **Dev == prod for these findings:** the dev backend runs the same image, so this validation is
+  authoritative for prod too. (Aside, not a finding: the `traigent-prod-eks` observability endpoint
+  was unreachable via Kuberly during this session — an infra/access matter independent of the
+  Traigent API key and orthogonal to the bugs here.)
 
 ### Filed issues (one per finding, in the owning repo)
 
@@ -210,6 +211,6 @@ backend's own log from the dev `traigent-backend` pod:
 | Traigent#1782 (F1) | **SDK** | Surface `details.reason` in `trial_operations.py:830`; drop hardcoded guess `:848–857`; unit test. |
 | Traigent#1783 (F2) | **SDK** + **Frontend** | SDK: loud/typed signal on permanent-400 `local_fallback`. Frontend: show rejected sessions in portal. |
 | Traigent#1784 (F3) | **SDK** (+ **Backend**) | SDK: local `default_config ⊆ space` + numeric-type-consistency pre-check. Backend: confirm int/float strictness intent. |
-| TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | Audit `next-trial` / default-trial vs `_validate_submitted_config`'s create-time domain; pull prod logs for `b96e1c29-…`; fix `traigent-prod-eks` observability MCP. |
+| TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | Audit `next-trial` / default-trial vs `_validate_submitted_config`'s create-time domain (the `next-trial`→200 / `results`→400 desync). Exact original structure passes on **dev and prod** → intermittent; catch it with a real run, or pull the original `b96e1c29-…` server log. |
 | traigent-skills#177 (F5) | **Docs/skills** | Align recipe metrics to declared objectives; mirror the `cloud_url` + type-consistency gate. |
 | traigent-first-run#20 (PR) | **Docs** | Review + merge the GUIDE `cloud_url` gate; link the five issues. |
