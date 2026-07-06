@@ -214,3 +214,53 @@ backend's own log from the dev `traigent-backend` pod:
 | TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | Audit `next-trial` / default-trial vs `_validate_submitted_config`'s create-time domain (the `next-trial`→200 / `results`→400 desync). Exact original structure passes on **dev and prod** → intermittent; catch it with a real run, or pull the original `b96e1c29-…` server log. |
 | traigent-skills#177 (F5) | **Docs/skills** | Align recipe metrics to declared objectives; mirror the `cloud_url` + type-consistency gate. |
 | traigent-first-run#20 (PR) | **Docs** | Review + merge the GUIDE `cloud_url` gate; link the five issues. |
+
+---
+
+## Update 2 — real root cause found (real run on dev) + multi-agent triage
+
+A **real** online run on **dev** (full 30-example set + real agent) — the first time the *real*
+failure was reproduced rather than a synthetic probe — supersedes the F4 framing above.
+
+### Real root cause (this session's failure): duplicate `example_id`
+
+The dev backend log (session `7fecb016-…`) shows the true cause:
+`VALIDATION_ERROR - Example 3: duplicate example_id 'world_1'; …` →
+`traigent_session_routes.py:1166 _validate_submission_measures`. The evaluator emitted
+`example_id = db_id`, which is **non-unique** (30 examples → 10 databases). Deterministic, caller-side.
+The earlier "intermittent / categorical-domain" F4 story was an artifact of reproducing with **1-row**
+probes (one row can't collide). **Fix:** unique `example_id` (db_id + question hash) → the run then
+tracked cleanly to the dev portal (`experiments/view/482d616d-…`, 7 trials, 0 failed, **63.3%**).
+
+### New issue: SDK Rust panic
+
+`pydantic-core` (pyo3 0.28.3) `dictionary changed size during iteration` on a worker thread during
+parallel evaluation → **Traigent#1785** (client-side; snapshot-before-serialize).
+
+### Multi-agent triage (what the team validated)
+
+- **Backend (F4 / TraigentBackend#2020):** confirmed **two real, deterministic** `next-trial`↔`submit`
+  desyncs — (1) `value_map` categoricals validate keys not mapped values; (2) conditional-default
+  type-loose-create / type-strict-submit (genuinely intermittent). Corrected "Mechanism A" (plain
+  categoricals are type-safe backend-side). Filing a separate fix-ready bug + regression test. **So F4
+  surfaced real backend bugs *and* this session's separate duplicate-`example_id` cause; F1 hiding
+  `details.reason` is why they were conflated.**
+- **Frontend (F2 / Traigent#1783):** confirmed the portal has **no session-keyed surface** and zero
+  concept of `cloud_url`/`local_fallback`; a rejected run leaves no trace. Fix is mostly a **backend
+  persistence decision** (persist the rejected session as an experiment → FE already renders it as
+  *Registered*/*Failed*). One contingent FE gap: no field to show the rejection reason.
+- **SDK (F1, F3, #1785):** not yet engaged — the highest-leverage queue (F1 unblocks everyone's
+  diagnosis).
+- **Docs (F5 / traigent-skills#177):** not yet engaged.
+
+### Refreshed ownership / next actions
+
+| Issue | Owner | Status → next action |
+|---|---|---|
+| Traigent#1782 (F1) | **SDK** | ⏳ not started — surface `details.reason` (`:830`), drop the guess (`:848–857`). *Do this first; it unblocks diagnosis everywhere.* |
+| Traigent#1785 (panic) | **SDK** | ⏳ not started — snapshot the dict before pydantic-core serialization on worker threads. |
+| Traigent#1783 (F2) | **SDK** + **FE** | FE ✅ scoped → **Backend** decides rejected-session persistence; then SDK adds the loud `local_fallback` signal. |
+| Traigent#1784 (F3) | **SDK** | ⏳ — add local pre-checks: `default_config ⊆ space`, numeric-type consistency, **`example_id` uniqueness**. |
+| TraigentBackend#2020 (F4) | **Backend** | 🟢 audited → land the two-desync fix + regression test; decide rejected-session persistence (unblocks FE). |
+| traigent-skills#177 (F5) | **Docs** | ⏳ — align recipe metrics + require unique `example_id` + `cloud_url` gate. |
+| traigent-first-run#20 (PR) | **Docs** | review/merge the GUIDE gate. |
