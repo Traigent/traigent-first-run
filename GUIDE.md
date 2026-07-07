@@ -594,6 +594,21 @@ Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 metric rewards a known-good output (≥ 0.9) and penalizes a known-bad one (≤ 0.1) before
 any paid run. → `traigent` (Step 3.5).
 
+**Then probe semantic equivalence — the check that catches an *over-strict* metric.** A scorer that
+returns ≈1.0 on the *exact* gold and ≈0.0 on garbage can still be silently broken: too strict, so a
+**semantically-correct-but-differently-phrased** answer scores 0. That both **caps** the reachable
+accuracy *and* adds **noise** (the same right answer scores 0 or 1 depending on surface form),
+leaving the optimizer **no reliable signal** — the run then reports "no improvement" for a reason
+that has nothing to do with the agent. So before any paid run, feed the scorer a **correct answer
+written differently from the gold** and assert it still scores ≈1.0. Use the equivalence class that
+fits the output type — **SQL / execution-match**: the same rows with the **columns in a different
+order** (plus whitespace / casing / quoting, and a `;` inside a string literal); **labels / text**:
+casing, punctuation, or key-order variants. If any of these scores 0, the metric is over-strict —
+**fix the metric before spending** (a broken ruler turns the whole optimization into noise, and no
+config can beat the artificial ceiling). This is exactly the class of bug — a column-order-sensitive
+execution-match scorer — that silently caps an NL→SQL run and makes "no improvement" look like the
+agent's fault when it is the metric's.
+
 ---
 
 ## Step 9 — Run it (baseline and/or enhanced)
@@ -905,8 +920,14 @@ enhanced pass**; don't stop at one:
   that plainly; a small-but-real improvement (or "already near-best") beats a fake one.
   **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
-  ~zero, say so plainly — the space was probably too thin (widen it, **Step 7**) or the dataset too
-  easy (harden it, **Step 5**).
+  ~zero, say so plainly — but **don't stop at the number: dive into the results and name *which* of
+  three causes it is**, because they have different fixes: (1) the space was too thin (widen it,
+  **Step 7**); (2) the dataset too easy (harden it, **Step 5**); or (3) — the one that masquerades
+  as the other two — **the metric is over-strict or broken**, so it can't separate configs and no
+  config can beat its artificial ceiling. Rule (3) out first: re-run the **Step 8 semantic-equivalence
+  probe**; if a paraphrased-correct answer scores 0, the metric is the bottleneck, not the agent —
+  say so and fix the metric before re-running. Reporting a flat delta without diagnosing the cause
+  leaves the user thinking their agent can't improve when the real problem is the ruler.
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually

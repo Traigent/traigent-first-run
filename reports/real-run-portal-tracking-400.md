@@ -211,7 +211,7 @@ backend's own log from the dev `traigent-backend` pod:
 | Traigent#1782 (F1) | **SDK** | Surface `details.reason` in `trial_operations.py:830`; drop hardcoded guess `:848–857`; unit test. |
 | Traigent#1783 (F2) | **SDK** + **Frontend** | SDK: loud/typed signal on permanent-400 `local_fallback`. Frontend: show rejected sessions in portal. |
 | Traigent#1784 (F3) | **SDK** (+ **Backend**) | SDK: local `default_config ⊆ space` + numeric-type-consistency pre-check. Backend: confirm int/float strictness intent. |
-| TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | Audit `next-trial` / default-trial vs `_validate_submitted_config`'s create-time domain (the `next-trial`→200 / `results`→400 desync). Exact original structure passes on **dev and prod** → intermittent; catch it with a real run, or pull the original `b96e1c29-…` server log. |
+| TraigentBackend#2020 (F4) | **Backend** (+ **SDK**) | ⚠️ *Superseded — see Update 2/3:* the original prod failure was **duplicate `example_id`** (deterministic, prod-confirmed on `b96e1c29`), **not** an intermittent desync. The real `next-trial`↔`submit` desyncs the audit found are separate and tracked in **#2021**. |
 | traigent-skills#177 (F5) | **Docs/skills** | Align recipe metrics to declared objectives; mirror the `cloud_url` + type-consistency gate. |
 | traigent-first-run#20 (PR) | **Docs** | Review + merge the GUIDE `cloud_url` gate; link the five issues. |
 
@@ -303,3 +303,37 @@ only numerics are guarded). The guide still must **not** teach a manual "keep de
 space" workaround — the SDK guard is the right fix; it just isn't complete for categoricals yet. A
 correctly-configured run never hits this (validated: full 30-example run tracks clean on `0.21.0`,
 `experiments/view/e2d8f7be-…`, 0 failed).
+
+---
+
+## Update 3 — the "no improvement" result was the *metric*, not the agent (and the guide gap it exposed)
+
+The real baseline+enhanced run completed cleanly on develop (`0.21.0` → portal-dev): baseline
+**63.3%** (`8ac3349c`), enhanced **60.0%** (`013da818`) — i.e. **no improvement**; the search kept the
+premium `gpt-4o` config and every structural knob / cheaper model scored *worse*.
+
+**Cause: the repo's execution-match scorer is over-strict — and it's the repo's code, not Traigent.**
+`text2sql/execaccuracy.py` imports only stdlib; Traigent runs the scorer and records the number it
+returns (agnostic). The scorer compares result **rows as ordered tuples**, so a semantically-correct
+query with **columns in a different order** scores 0 (verified live: gold-vs-gold = 1.0, reordered-
+columns-vs-gold = **0.0**); `_is_single_select` also rejects a `;` inside a string literal. This
+violates the repo's **own** stated contract (README: "rewards correct results **regardless of SQL
+phrasing**") — so it is broken by its own definition, independent of any Traigent convention. Already
+filed: `demo_sql_spider#2`/`#6` and the byte-identical `demo_sql_toy#5`/`#7` (both scorers are the same file).
+
+**Magnitude (honest bound, not over-claimed):** only **7/30** golds are *exposed* to column order
+(multi-column, no `ORDER BY`) and **0/30** golds contain a quoted `;`, so the scorer clips ~7–13%,
+not the whole 63→85% gap — the vanilla single-call agent is also just a basic baseline (~70%). But
+even a modest over-strict clip is fatal to the *optimization*: it **caps** the ceiling and injects
+**noise** (the same answer scores 0/1 by surface form), so the optimizer has **no reliable signal** and
+correctly finds nothing better. Optimizing on a broken ruler measures noise.
+
+**The guide gap this exposed (fixed in this PR):** the Step 8 evaluator sanity gate only checked
+exact-gold = 1.0 and garbage = 0.0 — which *cannot* catch an over-strict metric — so the broken
+scorer passed the gate and the run spent real money optimizing noise. This PR adds, to `GUIDE.md`:
+(a) **Step 8** now requires a **semantic-equivalence probe** — a correct answer written *differently*
+from the gold (for SQL: reordered columns / whitespace / quoting) must still score ≈1.0, run **before
+any spend**; and (b) **Step 11** now requires the assistant to **diagnose which of three causes** a
+no-improvement result is (thin space / easy dataset / **over-strict metric**) and name it, rather than
+reporting a flat delta that reads as "the agent can't improve." Both are genuine pre-flight/analysis
+checks, not agent-specific workarounds.
