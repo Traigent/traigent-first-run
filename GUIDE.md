@@ -609,6 +609,23 @@ config can beat the artificial ceiling). This is exactly the class of bug — a 
 execution-match scorer — that silently caps an NL→SQL run and makes "no improvement" look like the
 agent's fault when it is the metric's.
 
+**And validate the scorer against the *actual dataset*, not just probe inputs — flag degenerate
+references.** A scorer can be perfectly correct and *still* give you a meaningless number if the
+**dataset's own references are degenerate**. Before any paid run, run every gold/reference through
+the scorer (or just evaluate each one) and look at the **distribution** of what it yields: a
+reference that produces an **empty or constant result**, or against which the scorer scores a right
+and a wrong output identically, is decided by the **reference's quirks, not the agent's output** — an
+empty-vs-empty match scores 1.0 for *any* empty output; a reference with a value/format quirk can
+score a genuinely-correct answer 0. Even authentic benchmark data has these (e.g. Spider dev
+contains gold queries that return empty on their own DB, and case/whitespace-sensitive gold values);
+**a small random slice can land on a cluster of them**, and then the aggregate is unreliable *no
+matter how good the agent or the scorer is*. So: count the degenerate items, tell the user what
+fraction they are, and either exclude/repair them or report accuracy on the reliably-scoreable
+subset — never present the raw aggregate as the agent's accuracy without that caveat. This is
+output-agnostic: it applies to a classification set where every gold label is the same, an
+extraction set where the gold field is blank, a judge set where the rubric can't separate answers,
+and so on.
+
 ---
 
 ## Step 9 — Run it (baseline and/or enhanced)
@@ -921,13 +938,43 @@ enhanced pass**; don't stop at one:
   **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
   ~zero, say so plainly — but **don't stop at the number: dive into the results and name *which* of
-  three causes it is**, because they have different fixes: (1) the space was too thin (widen it,
-  **Step 7**); (2) the dataset too easy (harden it, **Step 5**); or (3) — the one that masquerades
+  four causes it is**, because they have different fixes: (1) the space was too thin (widen it,
+  **Step 7**); (2) the dataset too easy (harden it, **Step 5**); (3) — the one that masquerades
   as the other two — **the metric is over-strict or broken**, so it can't separate configs and no
-  config can beat its artificial ceiling. Rule (3) out first: re-run the **Step 8 semantic-equivalence
+  config can beat its artificial ceiling; or (4) **the knob set was too thin *in implementation***
+  — you searched model / temperature / method (`direct` vs chain-of-thought), but never wired the
+  **high-value structural knobs** that actually break plateaus: **repair** (re-prompt once with the
+  tool/execution error), **self-consistency** (sample N, then vote), and **retrieval** (similarity-
+  selected exemplars, not fixed few-shot). A search over only model+temperature cannot find a gain
+  those knobs are *needed* to produce — the winning config simply isn't in the space you searched;
+  or (5) **the base model isn't capable enough for a genuinely hard task** — structural knobs fix
+  *form* (syntax, consistency, coverage), but some failures are deep reasoning the model just can't
+  do, and there **model capability is itself the lever**: if the user has a capable/SOTA model, keep
+  it in the **enhanced** space too (it was in the baseline — don't drop it just to showcase a cheap
+  model), because on hard data a stronger model can lift accuracy where the knobs plateau. (At the
+  getting-familiar stage a user may not reach for a SOTA model — that's fine; then name "didn't try
+  a stronger model" as a candidate reason the number is capped. One trap when you *do* bring one in:
+  **reasoning models spend hidden tokens thinking**, so a tight `max_tokens` truncates their answer
+  mid-output and tanks the score — give them ample output budget before you judge their capability.)
+  These are first-class, field-tested levers, not exotica: see `traigent-boost-agent`,
+  `traigent-optimize-composite-knobs`, and the domain recipe (e.g. `traigent-recipe-text2sql`, whose
+  cheap-model **90%** winner is `fewshot_selector=similar · generation_path=plan_then_sql · repair`).
+  Rule (3) out first: re-run the **Step 8 semantic-equivalence
   probe**; if a paraphrased-correct answer scores 0, the metric is the bottleneck, not the agent —
-  say so and fix the metric before re-running. Reporting a flat delta without diagnosing the cause
-  leaves the user thinking their agent can't improve when the real problem is the ruler.
+  say so and fix the metric before re-running. Then rule (4) out: if the enhanced space only varied
+  model+temperature+method, widen it to the structural knobs above before concluding "no gain."
+  Then rule (5) out: if a stronger model is available, add it to the enhanced space and re-run.
+  **Only once (1)–(5) are ruled out is a low number the honest ceiling of a genuinely hard
+  dataset** — many tasks saturate well below 100% (hard benchmarks top out around ~85% even for the
+  best systems), so if even a strong model fails the residual items *and the metric is validated*,
+  report that difficulty ceiling plainly rather than implying the agent is broken. Distinguish it
+  from a *quirky* reference (Step 8): a genuinely-hard item has a **correct** reference the model
+  can't match; a quirky item has a **degenerate** reference that no correct answer matches — and on
+  a few of the quirky kind the scorer can even reward the *less* correct query for reproducing the
+  reference's own mistake, so don't "fix" the metric to match those.
+  Reporting a flat delta without diagnosing the cause
+  leaves the user thinking their agent can't improve when the real problem is the ruler — or a knob
+  you never gave the optimizer.
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually

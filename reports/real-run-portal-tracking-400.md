@@ -337,3 +337,63 @@ any spend**; and (b) **Step 11** now requires the assistant to **diagnose which 
 no-improvement result is (thin space / easy dataset / **over-strict metric**) and name it, rather than
 reporting a flat delta that reads as "the agent can't improve." Both are genuine pre-flight/analysis
 checks, not agent-specific workarounds.
+
+---
+
+## Update 4 — reflection: the enhanced run under-implemented the knob set (a 4th no-improvement cause)
+
+After the scorer was fixed and the data validated as authentic Spider, a per-example diagnostic
+(gpt-4o, temp 0, all 30) resolved *why* accuracy sat at ~67–70% and why the enhanced pass didn't move
+it: **17 real correct · 4 free (empty-gold Spider quirks) · 1 penalized (empty-gold) · 8 genuine agent
+errors.** On the reliably-scoreable subset (25 non-empty-gold) the agent is **17/25 = 68%** — a normal
+number for a **basic single-call agent**, and the 8 errors are hard joins/aggregates.
+
+The honest reflection is on the **optimization setup, not the agent**: the enhanced space only varied
+`model × temperature × prompt_style × generation_path`. The knobs that actually break a text2SQL
+plateau — **repair** (re-prompt once with the SQLite error), **self-consistency** (sample N + vote),
+and **retrieval** (`fewshot_selector=similar`) — were **never wired into the agent**, so the search
+literally could not find them. They are all first-class in the skills (`traigent-boost-agent`,
+`traigent-optimize-composite-knobs`) and the domain recipe, whose cheap-model **90%** winner is
+`fewshot_selector=similar · generation_path=plan_then_sql · repair`. (Method — `direct` vs
+chain-of-thought/`plan_then_sql` — *was* already a knob; the three missing ones are repair,
+self-consistency, retrieval. Fine-tuning is out of Traigent's scope: it optimizes configuration, not
+weights.)
+
+So a "no improvement" can mean the **winning config wasn't in the space you searched** — which is why
+Step 11 now names a **fourth** cause (thin knob *implementation*) alongside thin space / easy dataset /
+broken metric. Concrete next step for this agent: implement `repair` + `self-consistency` +
+`fewshot_selector=similar`, then re-run — that is the honest shot at moving past ~68%.
+
+---
+
+## Update 5 — SOTA follow-up: what the 8 "genuine agent errors" actually are (corrects Update 4)
+
+Re-ran the failing items on frontier models (gemini-2.5-pro, gemini-3.1-pro) with the validated
+column-order-insensitive scorer. Two corrections:
+
+1. **A harness bug nearly produced a false "SOTA is worse" result.** The agent capped output at
+   `max_tokens=256`. Reasoning models spend 240–880 tokens on *hidden* reasoning before emitting SQL,
+   so their queries were truncated mid-statement → bare gemini-2.5-pro scored a fake **23%**. Raising
+   the cap to 1536 fixed it (`finish_reason` went `length` → `stop`). Lesson, now in Step 11: give
+   reasoning models output headroom before judging capability. Non-reasoning models were unaffected —
+   the 68% stands.
+
+2. **The 8 are not all "hard joins/aggregates," and not all agent errors.** Verified per-example
+   against the DB:
+   - **4 are un-winnable dataset quirks** (fail even gemini-3.1-pro): a gold with an extra column the
+     question didn't ask for, a 3-column SQLite-idiom gold, loose "predominantly" semantics, and an
+     ambiguous "details" → NULL-column gold. No correct query matches; a stronger model doesn't help.
+   - **1 is a quirk "winnable" only by writing *less* correct SQL** (min-horsepower): the gold sorts a
+     TEXT `horsepower` column lexically → `'amc'`; the true min is `'ford'`. gemini-2.5-pro's
+     numerically-correct `CAST` scored **0**; gemini-3.1-pro's naive un-cast query reproduced the
+     gold's mistake and scored **1**. Execution-match can reward matching the annotator's error.
+   - **3 are genuine model errors a stronger model fixes**: case-matching (`'France'` vs the DB's
+     stored `'france'` — the eval **correctly** scored the capital-F query wrong; the gold returns the
+     right count, 3), an aggregation+tiebreak, and an `EXCEPT`/negation.
+
+**Revised ceiling:** ~4 un-winnable quirks + 1 penalized-empty ≈ **5 unwinnable** → reachable
+accuracy ≈ **25/30 ≈ 83%**, on Spider 1.0's real-world SOTA band (85.3–91.2%; DAIL-SQL+GPT-4 ≈ 86%).
+So ~68% is **partly** the missing structural knobs (Update 4 holds for the *fixable* items) and
+**partly** a genuine difficulty/annotation ceiling no knob or model removes. gemini-3.1-pro was run
+**bare (no knobs)** on the 8 hard and got **4/8** — knobs were not involved in that number. Earlier in
+this session I over-claimed "6 un-winnable, model-independent"; the newest model corrected me to 4.
