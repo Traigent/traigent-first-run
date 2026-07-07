@@ -938,13 +938,25 @@ enhanced pass**; don't stop at one:
   **Never** compare against a mock,
   and **never** degrade the baseline on purpose to manufacture a gap. If the honest delta is
   ~zero, say so plainly — but **don't stop at the number: dive into the results and name *which* of
-  three causes it is**, because they have different fixes: (1) the space was too thin (widen it,
-  **Step 7**); (2) the dataset too easy (harden it, **Step 5**); or (3) — the one that masquerades
+  four causes it is**, because they have different fixes: (1) the space was too thin (widen it,
+  **Step 7**); (2) the dataset too easy (harden it, **Step 5**); (3) — the one that masquerades
   as the other two — **the metric is over-strict or broken**, so it can't separate configs and no
-  config can beat its artificial ceiling. Rule (3) out first: re-run the **Step 8 semantic-equivalence
+  config can beat its artificial ceiling; or (4) **the knob set was too thin *in implementation***
+  — you searched model / temperature / method (`direct` vs chain-of-thought), but never wired the
+  **high-value structural knobs** that actually break plateaus: **repair** (re-prompt once with the
+  tool/execution error), **self-consistency** (sample N, then vote), and **retrieval** (similarity-
+  selected exemplars, not fixed few-shot). A search over only model+temperature cannot find a gain
+  those knobs are *needed* to produce — the winning config simply isn't in the space you searched.
+  These are first-class, field-tested levers, not exotica: see `traigent-boost-agent`,
+  `traigent-optimize-composite-knobs`, and the domain recipe (e.g. `traigent-recipe-text2sql`, whose
+  cheap-model **90%** winner is `fewshot_selector=similar · generation_path=plan_then_sql · repair`).
+  Rule (3) out first: re-run the **Step 8 semantic-equivalence
   probe**; if a paraphrased-correct answer scores 0, the metric is the bottleneck, not the agent —
-  say so and fix the metric before re-running. Reporting a flat delta without diagnosing the cause
-  leaves the user thinking their agent can't improve when the real problem is the ruler.
+  say so and fix the metric before re-running. Then rule (4) out: if the enhanced space only varied
+  model+temperature+method, widen it to the structural knobs above before concluding "no gain."
+  Reporting a flat delta without diagnosing the cause
+  leaves the user thinking their agent can't improve when the real problem is the ruler — or a knob
+  you never gave the optimizer.
 - **If accuracy is suspiciously perfect (≈100%), or every config scores the same,** the dataset
   is too easy to tell configs apart, so the "best config" is meaningless. **If you created the
   dataset, say so plainly and rebuild it harder** (Step 5) so different models/knobs actually

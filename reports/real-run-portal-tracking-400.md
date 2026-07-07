@@ -337,3 +337,29 @@ any spend**; and (b) **Step 11** now requires the assistant to **diagnose which 
 no-improvement result is (thin space / easy dataset / **over-strict metric**) and name it, rather than
 reporting a flat delta that reads as "the agent can't improve." Both are genuine pre-flight/analysis
 checks, not agent-specific workarounds.
+
+---
+
+## Update 4 — reflection: the enhanced run under-implemented the knob set (a 4th no-improvement cause)
+
+After the scorer was fixed and the data validated as authentic Spider, a per-example diagnostic
+(gpt-4o, temp 0, all 30) resolved *why* accuracy sat at ~67–70% and why the enhanced pass didn't move
+it: **17 real correct · 4 free (empty-gold Spider quirks) · 1 penalized (empty-gold) · 8 genuine agent
+errors.** On the reliably-scoreable subset (25 non-empty-gold) the agent is **17/25 = 68%** — a normal
+number for a **basic single-call agent**, and the 8 errors are hard joins/aggregates.
+
+The honest reflection is on the **optimization setup, not the agent**: the enhanced space only varied
+`model × temperature × prompt_style × generation_path`. The knobs that actually break a text2SQL
+plateau — **repair** (re-prompt once with the SQLite error), **self-consistency** (sample N + vote),
+and **retrieval** (`fewshot_selector=similar`) — were **never wired into the agent**, so the search
+literally could not find them. They are all first-class in the skills (`traigent-boost-agent`,
+`traigent-optimize-composite-knobs`) and the domain recipe, whose cheap-model **90%** winner is
+`fewshot_selector=similar · generation_path=plan_then_sql · repair`. (Method — `direct` vs
+chain-of-thought/`plan_then_sql` — *was* already a knob; the three missing ones are repair,
+self-consistency, retrieval. Fine-tuning is out of Traigent's scope: it optimizes configuration, not
+weights.)
+
+So a "no improvement" can mean the **winning config wasn't in the space you searched** — which is why
+Step 11 now names a **fourth** cause (thin knob *implementation*) alongside thin space / easy dataset /
+broken metric. Concrete next step for this agent: implement `repair` + `self-consistency` +
+`fewshot_selector=similar`, then re-run — that is the honest shot at moving past ~68%.
