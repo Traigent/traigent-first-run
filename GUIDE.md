@@ -609,6 +609,23 @@ config can beat the artificial ceiling). This is exactly the class of bug — a 
 execution-match scorer — that silently caps an NL→SQL run and makes "no improvement" look like the
 agent's fault when it is the metric's.
 
+**And validate the scorer against the *actual dataset*, not just probe inputs — flag degenerate
+references.** A scorer can be perfectly correct and *still* give you a meaningless number if the
+**dataset's own references are degenerate**. Before any paid run, run every gold/reference through
+the scorer (or just evaluate each one) and look at the **distribution** of what it yields: a
+reference that produces an **empty or constant result**, or against which the scorer scores a right
+and a wrong output identically, is decided by the **reference's quirks, not the agent's output** — an
+empty-vs-empty match scores 1.0 for *any* empty output; a reference with a value/format quirk can
+score a genuinely-correct answer 0. Even authentic benchmark data has these (e.g. Spider dev
+contains gold queries that return empty on their own DB, and case/whitespace-sensitive gold values);
+**a small random slice can land on a cluster of them**, and then the aggregate is unreliable *no
+matter how good the agent or the scorer is*. So: count the degenerate items, tell the user what
+fraction they are, and either exclude/repair them or report accuracy on the reliably-scoreable
+subset — never present the raw aggregate as the agent's accuracy without that caveat. This is
+output-agnostic: it applies to a classification set where every gold label is the same, an
+extraction set where the gold field is blank, a judge set where the rubric can't separate answers,
+and so on.
+
 ---
 
 ## Step 9 — Run it (baseline and/or enhanced)
