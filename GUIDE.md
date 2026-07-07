@@ -507,6 +507,32 @@ Some knobs (e.g. reasoning *effort* / high-med-low) exist only on certain models
 3. if neither is possible, ask the user to add a model, **or** run a minimal sweep with
    what's available.
 
+**Match each knob to a failure mode — and mind stochastic knobs on exact-match metrics.** A knob
+only helps if it targets *how* the agent is actually failing; wired in blind it adds cost and can
+even *lower* the score. Field-tested mapping:
+- **repair** (re-prompt with the tool/execution error) → only when failures are **malformed/erroring
+  outputs** (invalid SQL/JSON, tool exceptions). Useless if the output runs but is simply wrong.
+- **self-consistency / best-of-n** (sample N, vote) → only when the agent is **unstable** (same input,
+  varying quality). Needs `temperature > 0` to get diverse samples — which is the catch below.
+- **retrieval / similar few-shot** → only when failures are **unseen patterns / missing domain
+  examples**. It **cannot** make a model match a *quirky or wrong reference*: fed the exact quirky
+  exemplar, a capable model still writes the *correct* query, not the quirky one.
+- **chain-of-thought / plan-then-act** → **multi-step reasoning**; overkill (and slower) for lookups.
+
+> ⚠️ **Stochastic knobs vs. frail metrics.** `temperature > 0` and self-consistency **trade
+> determinism for exploration**. On a **frail exact-match metric** — exact string, case-sensitive
+> value, one acceptable form — that exploration can turn a **correct** deterministic answer *wrong*
+> (the `temperature=0` run nailed the one right form; the sampled vote picks a plausible-but-non-
+> matching variant). So **keep `temperature=0` and go easy on best-of-n when the metric is
+> exact/case-sensitive**; only open up temperature + sampling when the scorer tolerates surface
+> variation (a validated semantic/execution-match equivalence class, Step 8). Observed in a field
+> test: adding `temperature=0.4` + 3-sample voting **regressed** a case-sensitive item the
+> `temperature=0` baseline had gotten right.
+
+**Bottom line:** knobs fix *form* (syntax, consistency, coverage, reasoning) — they do **not** fix a
+broken/quirky reference or a genuine difficulty ceiling (Step 11). If the failures aren't one of the
+modes above, a stronger **model** is usually the lever, not another knob.
+
 Config-space syntax (dict lists / tuples, or `Range`/`IntRange`/`Choices`/`LogRange`,
 constraints) → `traigent-configuration-space`. Knob packs by agent
 shape (cascades, routing, self-consistency, verification gates) →
