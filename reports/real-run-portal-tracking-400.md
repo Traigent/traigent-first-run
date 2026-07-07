@@ -363,3 +363,37 @@ So a "no improvement" can mean the **winning config wasn't in the space you sear
 Step 11 now names a **fourth** cause (thin knob *implementation*) alongside thin space / easy dataset /
 broken metric. Concrete next step for this agent: implement `repair` + `self-consistency` +
 `fewshot_selector=similar`, then re-run — that is the honest shot at moving past ~68%.
+
+---
+
+## Update 5 — SOTA follow-up: what the 8 "genuine agent errors" actually are (corrects Update 4)
+
+Re-ran the failing items on frontier models (gemini-2.5-pro, gemini-3.1-pro) with the validated
+column-order-insensitive scorer. Two corrections:
+
+1. **A harness bug nearly produced a false "SOTA is worse" result.** The agent capped output at
+   `max_tokens=256`. Reasoning models spend 240–880 tokens on *hidden* reasoning before emitting SQL,
+   so their queries were truncated mid-statement → bare gemini-2.5-pro scored a fake **23%**. Raising
+   the cap to 1536 fixed it (`finish_reason` went `length` → `stop`). Lesson, now in Step 11: give
+   reasoning models output headroom before judging capability. Non-reasoning models were unaffected —
+   the 68% stands.
+
+2. **The 8 are not all "hard joins/aggregates," and not all agent errors.** Verified per-example
+   against the DB:
+   - **4 are un-winnable dataset quirks** (fail even gemini-3.1-pro): a gold with an extra column the
+     question didn't ask for, a 3-column SQLite-idiom gold, loose "predominantly" semantics, and an
+     ambiguous "details" → NULL-column gold. No correct query matches; a stronger model doesn't help.
+   - **1 is a quirk "winnable" only by writing *less* correct SQL** (min-horsepower): the gold sorts a
+     TEXT `horsepower` column lexically → `'amc'`; the true min is `'ford'`. gemini-2.5-pro's
+     numerically-correct `CAST` scored **0**; gemini-3.1-pro's naive un-cast query reproduced the
+     gold's mistake and scored **1**. Execution-match can reward matching the annotator's error.
+   - **3 are genuine model errors a stronger model fixes**: case-matching (`'France'` vs the DB's
+     stored `'france'` — the eval **correctly** scored the capital-F query wrong; the gold returns the
+     right count, 3), an aggregation+tiebreak, and an `EXCEPT`/negation.
+
+**Revised ceiling:** ~4 un-winnable quirks + 1 penalized-empty ≈ **5 unwinnable** → reachable
+accuracy ≈ **25/30 ≈ 83%**, on Spider 1.0's real-world SOTA band (85.3–91.2%; DAIL-SQL+GPT-4 ≈ 86%).
+So ~68% is **partly** the missing structural knobs (Update 4 holds for the *fixable* items) and
+**partly** a genuine difficulty/annotation ceiling no knob or model removes. gemini-3.1-pro was run
+**bare (no knobs)** on the 8 hard and got **4/8** — knobs were not involved in that number. Earlier in
+this session I over-claimed "6 un-winnable, model-independent"; the newest model corrected me to 4.

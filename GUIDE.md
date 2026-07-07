@@ -946,7 +946,16 @@ enhanced pass**; don't stop at one:
   **high-value structural knobs** that actually break plateaus: **repair** (re-prompt once with the
   tool/execution error), **self-consistency** (sample N, then vote), and **retrieval** (similarity-
   selected exemplars, not fixed few-shot). A search over only model+temperature cannot find a gain
-  those knobs are *needed* to produce — the winning config simply isn't in the space you searched.
+  those knobs are *needed* to produce — the winning config simply isn't in the space you searched;
+  or (5) **the base model isn't capable enough for a genuinely hard task** — structural knobs fix
+  *form* (syntax, consistency, coverage), but some failures are deep reasoning the model just can't
+  do, and there **model capability is itself the lever**: if the user has a capable/SOTA model, keep
+  it in the **enhanced** space too (it was in the baseline — don't drop it just to showcase a cheap
+  model), because on hard data a stronger model can lift accuracy where the knobs plateau. (At the
+  getting-familiar stage a user may not reach for a SOTA model — that's fine; then name "didn't try
+  a stronger model" as a candidate reason the number is capped. One trap when you *do* bring one in:
+  **reasoning models spend hidden tokens thinking**, so a tight `max_tokens` truncates their answer
+  mid-output and tanks the score — give them ample output budget before you judge their capability.)
   These are first-class, field-tested levers, not exotica: see `traigent-boost-agent`,
   `traigent-optimize-composite-knobs`, and the domain recipe (e.g. `traigent-recipe-text2sql`, whose
   cheap-model **90%** winner is `fewshot_selector=similar · generation_path=plan_then_sql · repair`).
@@ -954,6 +963,15 @@ enhanced pass**; don't stop at one:
   probe**; if a paraphrased-correct answer scores 0, the metric is the bottleneck, not the agent —
   say so and fix the metric before re-running. Then rule (4) out: if the enhanced space only varied
   model+temperature+method, widen it to the structural knobs above before concluding "no gain."
+  Then rule (5) out: if a stronger model is available, add it to the enhanced space and re-run.
+  **Only once (1)–(5) are ruled out is a low number the honest ceiling of a genuinely hard
+  dataset** — many tasks saturate well below 100% (hard benchmarks top out around ~85% even for the
+  best systems), so if even a strong model fails the residual items *and the metric is validated*,
+  report that difficulty ceiling plainly rather than implying the agent is broken. Distinguish it
+  from a *quirky* reference (Step 8): a genuinely-hard item has a **correct** reference the model
+  can't match; a quirky item has a **degenerate** reference that no correct answer matches — and on
+  a few of the quirky kind the scorer can even reward the *less* correct query for reproducing the
+  reference's own mistake, so don't "fix" the metric to match those.
   Reporting a flat delta without diagnosing the cause
   leaves the user thinking their agent can't improve when the real problem is the ruler — or a knob
   you never gave the optimizer.
