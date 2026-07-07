@@ -276,3 +276,16 @@ parallel evaluation → **Traigent#1785** (client-side; snapshot-before-serializ
 | TraigentBackend#2020 (F4) | **Backend** | 🟢 audited → land the two-desync fix + regression test; decide rejected-session persistence (unblocks FE). |
 | traigent-skills#177 (F5) | **Docs** | ⏳ — align recipe metrics + require unique `example_id` + `cloud_url` gate. |
 | traigent-first-run#20 (PR) | **Docs** | review/merge — PR = investigation report + a **minimal general** `cloud_url` check only; **no bug-workarounds** (F1–F5 fixed at source). |
+
+### Post-fix validation (dev) — and why the customer should never face the domain-400
+
+After the `example_id` fix, a full 30-example no-LLM run tracked cleanly to portal-dev
+(`experiments/view/ecdecc5f-…`, 0 failed) — the previously-broken duplicate-`example_id` path is
+gone. One 400 did appear first, but it was **self-inflicted by the validation probe**: it declared a
+model space (`[deepseek]`) that **excluded its own `default_config` value** (`gpt-4.1-mini`), so the
+default trial was out-of-domain. That is the **#1784** footgun, not a new bug — and *a customer
+should never face it*. On released `0.20.0` a `default_config ∉ configuration_space` still yields a
+cryptic backend 400 → silent local-only; the **#1784 client-side pre-check (merged to develop)**
+catches it **locally, with a clear message, before any submission**. This is exactly why #1784
+matters — and why the guide must **not** teach a manual "keep default_config in the space"
+workaround: the SDK guard is the fix, and it ships on develop.
