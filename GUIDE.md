@@ -523,11 +523,14 @@ even *lower* the score. Field-tested mapping:
 > determinism for exploration**. On a **frail exact-match metric** — exact string, case-sensitive
 > value, one acceptable form — that exploration can turn a **correct** deterministic answer *wrong*
 > (the `temperature=0` run nailed the one right form; the sampled vote picks a plausible-but-non-
-> matching variant). So **keep `temperature=0` and go easy on best-of-n when the metric is
-> exact/case-sensitive**; only open up temperature + sampling when the scorer tolerates surface
-> variation (a validated semantic/execution-match equivalence class, Step 8). Observed in a field
-> test: adding `temperature=0.4` + 3-sample voting **regressed** a case-sensitive item the
-> `temperature=0` baseline had gotten right.
+> matching variant). So **explicitly pin `temperature=0` and go easy on best-of-n when the metric
+> is exact/case-sensitive** — note the provider **default is ~1.0 (random), *not* 0**, so leaving
+> temperature unset does **not** give you determinism; you have to set it (verify: unset returns
+> different answers across identical calls, `temperature=0` returns the same one). Only open up
+> temperature + sampling when the scorer tolerates surface variation (a validated
+> semantic/execution-match equivalence class, Step 8). Observed in a field test: adding
+> `temperature=0.4` + 3-sample voting **regressed** a case-sensitive item the `temperature=0`
+> baseline had gotten right.
 
 **Bottom line:** knobs fix *form* (syntax, consistency, coverage, reasoning) — they do **not** fix a
 broken/quirky reference or a genuine difficulty ceiling (Step 11). If the failures aren't one of the
