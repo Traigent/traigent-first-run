@@ -283,9 +283,23 @@ After the `example_id` fix, a full 30-example no-LLM run tracked cleanly to port
 (`experiments/view/ecdecc5f-…`, 0 failed) — the previously-broken duplicate-`example_id` path is
 gone. One 400 did appear first, but it was **self-inflicted by the validation probe**: it declared a
 model space (`[deepseek]`) that **excluded its own `default_config` value** (`gpt-4.1-mini`), so the
-default trial was out-of-domain. That is the **#1784** footgun, not a new bug — and *a customer
-should never face it*. On released `0.20.0` a `default_config ∉ configuration_space` still yields a
-cryptic backend 400 → silent local-only; the **#1784 client-side pre-check (merged to develop)**
-catches it **locally, with a clear message, before any submission**. This is exactly why #1784
-matters — and why the guide must **not** teach a manual "keep default_config in the space"
-workaround: the SDK guard is the fix, and it ships on develop.
+default trial was out-of-domain. That is the **#1784** footgun, not a new bug.
+
+**Verified live on develop (`0.21.0`), the corrected picture:** a `default_config` categorical value
+outside the declared space is **still submitted and rejected** by the backend on develop — the #1784
+*local* pre-check currently covers only the numeric int/float trap (#1789), not the categorical
+model-not-in-space case. **But the experience is now much better and diagnosable**, because two
+sibling fixes landed on develop and were observed directly:
+- **F1/#1782 (fixed):** the SDK now surfaces the backend's precise reason inline —
+  `reason: submitted config["model"] is outside the declared categorical domain` — and the
+  misleading *"invalid metric name / cost_usd"* guess is **removed**.
+- **F2/#1783 (fixed):** the local-only fallback is now **loud and explicit** —
+  *"the backend was reachable and rejected the submitted config: … persistence_reason='rejected'"* —
+  no longer a silent success-shaped result.
+
+So on `0.20.0` this was a **cryptic + silent** local-only; on develop it is a **clear, attributed**
+rejection. The residual gap is completing #1784's local pre-check for **categorical** domains (today
+only numerics are guarded). The guide still must **not** teach a manual "keep default_config in the
+space" workaround — the SDK guard is the right fix; it just isn't complete for categoricals yet. A
+correctly-configured run never hits this (validated: full 30-example run tracks clean on `0.21.0`,
+`experiments/view/e2d8f7be-…`, 0 failed).
