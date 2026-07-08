@@ -6,7 +6,7 @@ Run this instead of improvising the checks by hand. It verifies, at zero LLM
 cost, everything the guide otherwise asks the assistant to derive ad hoc:
 
   C1  python-version    Python 3.11-3.13 (GUIDE Step 1)
-  C2  sdk-version       traigent installed, >= 0.18, not the 0.0.1 pip stub (Step 2)
+  C2  sdk-version       traigent installed, >= 0.21, not the 0.0.1 pip stub (Step 2)
   C3  key-presence      vendor keys in .env with the blank-or-comment-means-absent
                         rule; TRAIGENT_API_KEY format sanity (Step 3)
   C4  model-liveness    each --models id exists: openrouter/* via the keyless
@@ -171,15 +171,15 @@ def check_sdk() -> None:
             "sdk-version",
             FAIL,
             f"traigent is not installed in {sys.executable} - "
-            'pip install "traigent[recommended]>=0.18".',
+            'pip install "traigent[recommended]>=0.21".',
         )
         return
     parts = tuple(int(p) for p in re.findall(r"\d+", ver)[:3]) or (0,)
-    if ver == "0.0.1" or parts < (0, 18):
+    if ver == "0.0.1" or parts < (0, 21):
         emit(
             "sdk-version",
             FAIL,
-            f"traigent {ver} is below 0.18"
+            f"traigent {ver} is below 0.21"
             + (
                 " (the ancient 0.0.1 placeholder pip resolves on unsupported "
                 "Pythons)"
@@ -187,7 +187,7 @@ def check_sdk() -> None:
                 else ""
             )
             + ' - recreate the venv on Python 3.11-3.13, then pip install '
-            '"traigent[recommended]>=0.18" (GUIDE Step 2).',
+            '"traigent[recommended]>=0.21" (GUIDE Step 2).',
         )
         return
     emit("sdk-version", PASS, f"traigent {ver}")

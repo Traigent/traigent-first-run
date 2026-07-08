@@ -144,7 +144,7 @@ Prefer a project virtualenv (standard practice; also avoids PEP 668
 
 ```bash
 python3.13 -m venv .venv && source .venv/bin/activate   # Windows: py -3.13 -m venv .venv
-pip install "traigent[recommended]>=0.18"
+pip install "traigent[recommended]>=0.21"
 ```
 
 - **Pin the interpreter** (`python3.13`, not a bare `python`) so the venv honors Step 1's
@@ -153,11 +153,14 @@ pip install "traigent[recommended]>=0.18"
   unsupported Python** (< 3.11). Re-running `python -m venv` over an existing directory is a
   **silent no-op** (it does *not* swap the interpreter): recreate it cleanly with
   `python3.13 -m venv --clear .venv` (or `rm -rf .venv` first). Several venvs → ask which.
-- **Pin a version floor and verify after install.** Use `"traigent[recommended]>=0.18"` — on
+- **Pin a version floor and verify after install.** Use `"traigent[recommended]>=0.21"` — on
   a too-old interpreter pip can otherwise silently resolve to an ancient **`traigent 0.0.1`**
   placeholder (it declares `>=3.8`), exit 0, and leave you with *no real SDK*. Confirm with
-  `traigent --version` (expect ≥ 0.18); if the command is missing you got the stub —
-  recreate the venv on Python 3.11–3.13.
+  `traigent --version` (expect ≥ 0.21); if the command is missing you got the stub —
+  recreate the venv on Python 3.11–3.13. *(Why 0.21 and not lower: 0.21.0 is what
+  `pip install traigent` resolves today, and it's the first release where a portal-sync
+  rejection is loud — it surfaces the backend's rejection reason and warns on the silent
+  local-fallback — failure modes Steps 9–10 depend on catching.)*
 - `traigent[recommended]` pulls the common integrations. (`pip install traigent` alone
   also works — `litellm` is a core dependency, so the keyless mock path runs either way.)
 
@@ -178,7 +181,7 @@ traigent info              # version, Python, integrations, defaults
 Then run the bundled preflight for the version checks — free, no keys, one command:
 
 ```bash
-python templates/preflight.py   # Python 3.11–3.13 + traigent >= 0.18 (catches the 0.0.1 stub)
+python templates/preflight.py   # Python 3.11–3.13 + traigent >= 0.21 (catches the 0.0.1 stub)
 ```
 
 If install/verify fails, diagnose (→ `traigent-debugging`), try the
@@ -328,6 +331,19 @@ unsolvable, since every item needs a correct, scoreable label). Easy items set t
 hard tail is where better models/knobs pull ahead, so the improvement and the Pareto frontier are
 real. **Use the exact same set (same items, same size) for the baseline and the enhanced run** —
 see Step 11.
+
+**Reserve a holdout slice before any run — never tune and validate on the same rows.** Once the
+dataset exists (converted or generated), split it **once, before the first optimization run**:
+a **tuning slice** (what the baseline *and* the enhanced run both use — the "exact same set"
+above) and a **holdout slice** (~20%, at least 5 items) that **no run sees during the search**.
+Record the partition in the run plan (`traigent-runs/run-plan.md`, the *Dataset size / holdout
+split* field) and **keep the same split across iteration rounds** — Step 11's second pass reuses
+the same tuning slice. The holdout exists for exactly one purpose: Step 12's promotion gate
+checks the winning config on it. A best score measured on the rows the search tuned over is
+*search* evidence, not *promotion* evidence — without a reserved slice there is nothing honest
+left to check the candidate against. (If the dataset is so small that a split would starve the
+tuning slice — under ~10 items — say so plainly and treat Step 12's gate as "collect fresh
+examples first," never as a step to skip silently.)
 
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
@@ -506,6 +522,18 @@ Some knobs (e.g. reasoning *effort* / high-med-low) exist only on certain models
    instead, **or**
 3. if neither is possible, ask the user to add a model, **or** run a minimal sweep with
    what's available.
+
+**Give reasoning models output headroom — or the sweep silently crowns the wrong winner.**
+Reasoning models (o-series, gpt-5-class, `gemini-2.5`/`3.x`) spend **hidden reasoning tokens that
+count against `max_tokens` before any answer text appears**. Under a cap sized for a normal model
+(256–1024), they return a truncated answer (`finish_reason == "length"`) and score far below a
+cheaper model — a pure measurement artifact that biases the whole comparison toward the wrong
+config. If any reasoning model is in the space, give it `max_tokens` **≥ 1024–2048** (a
+constraint works, like the model-specific knobs above), and sweep low `max_tokens` values only in
+a space with **no** reasoning models. Field-observed: a `gemini-2.5-pro` trial at
+`max_tokens=256` spent 241 tokens thinking and emitted ~23% of the expected answer; at 1536 it
+completed. (Step 11 lists this same trap as no-improvement cause (5) — catching it here, before
+the run, is cheaper.)
 
 **Match each knob to a failure mode — and mind stochastic knobs on exact-match metrics.** A knob
 only helps if it targets *how* the agent is actually failing; wired in blind it adds cost and can
@@ -780,7 +808,7 @@ inside a foreground command that can time out.
 2/3/8/9), but the enhanced flow **edits `.env`** below (you paste `TRAIGENT_API_KEY=`) and launches
 right after — that gap is exactly where a stale editor buffer can re-save an old `.env` between
 validation and launch. Immediately before each paid launch (the baseline and enhanced runs here,
-and the Step 11 holdout) — and after **any** `.env` edit — re-run
+Step 11's second pass, and the Step 12 holdout check) — and after **any** `.env` edit — re-run
 `python templates/preflight.py --env .env` (env-only mode: seconds, free) and confirm the effective
 `TRAIGENT_API_KEY` presence and `TRAIGENT_RUN_COST_LIMIT` match what you validated. Optionally have
 the launch snippet print the masked values it actually loaded, so the log witnesses the real env.
@@ -808,13 +836,35 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   fewer** once it converges. Ten smart trials over the large enhanced space is enough to find a
   strong config while staying under the $5 cap.
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
-  than a full grid**, which is what keeps a wide search under the $5 cap. Keep offline
+  than a full grid**, which is what keeps a wide search under the $5 cap. On current SDKs
+  (0.20/0.21) only `auto` (or omitting `algorithm`), `grid`, and `random` actually execute —
+  the named smart selectors (`"bayesian"`, `"tpe"`, `"optuna"`, `"cmaes"`, `"nsga2"`) validate
+  as names but **fail before any trial runs**, so never "upgrade" `auto` to one of them. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
   (If the backend is unreachable, `auto` falls back to **local random search** with a logged
   warning —
   before promising a portal link, check `results.cloud_url` is not `None`.) Apply that same
   `results.cloud_url is not None` check to **both** the baseline and enhanced runs before telling
   the user anything is on the portal — a `None` means the run stayed local-only.
+- **After every paid run — prove it was real and complete before reporting anything.** Four
+  cheap checks on the results object, for both the baseline and the enhanced run:
+  1. **`results.total_cost` must be a positive number.** **`None` means *not tracked*, not
+     *local*** — a real paid run, local or portal-synced, should show a positive cost. `None` or
+     ~$0 means the run was secretly mock/offline (Step 8's mode leaking into this process — start
+     a fresh interpreter and make sure `TRAIGENT_MOCK_LLM` / `TRAIGENT_OFFLINE_MODE` are unset)
+     or the model is unpriced (the bullet below). Never present such a run as a measurement.
+  2. **Per-trial outputs must vary** across configs — identical output text on every trial is
+     the mock's constant string, not a measurement.
+  3. **The trial count must match what you budgeted.** Count `results.trials` against the grid:
+     a supplied `default_config` runs as an **extra baseline trial that consumes a `max_trials`
+     slot**, so an N-config grid needs `max_trials ≥ N + 1` or the **last grid point is silently
+     dropped** — the run still finishes "successfully" while the best config may never have been
+     evaluated. (This guide's snippets don't set `default_config` and cap a ~4–8-config grid at
+     10 trials, which leaves that headroom — keep the margin if you grow the grid.)
+  4. **Persistence actually finished** — alongside the `cloud_url` check, read
+     `results.metadata.get("persistence_status")` / `results.persistence_failed`: a run can look
+     complete locally while the portal experiment is stuck `RUNNING`, and a portal link handed
+     over at that moment shows the user a broken "before/after."
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
   only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
@@ -1033,7 +1083,9 @@ evidenced. In particular:
   than dressing up a zero delta as a win.
 
 **Before shipping a winning config to production:** export it as a *candidate*, check it
-on a held-out slice, and apply only after the gate passes and the user approves —
+on **the holdout slice you reserved at Step 5** — rows the search never tuned on; the run's own
+best score is *search* evidence, and **applying the best config is not promotion** — and apply
+only after the gate passes and the user approves —
 never promote straight from the run. → `traigent-ci-safety-gate`.
 
 **Only use a real enhanced result — never Step 8's mock object.** `results` only exists here if
