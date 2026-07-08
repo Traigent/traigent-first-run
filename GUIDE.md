@@ -75,10 +75,11 @@ Use your most capable model with high effort. This guide is **Python-only**.
   action item, and tell them what to relay to Traigent if it's a Traigent-side snag.
   Even if the portal can't show a run, you can always present results locally.
 - **Named skills add depth (optional).** Where a step points at a skill by name —
-  e.g. `traigent-decorator-setup` — that is a Traigent skill in
+  e.g. `traigent-setup-decorator` — that is a Traigent skill in
   <https://github.com/Traigent/traigent-skills>; read it there for full detail. This
   guide inlines what you need for the happy path, so you can proceed without it. The
-  lifecycle spine is the `traigent` skill (dry-run-first / cost-approval).
+  dry-run-first / cost-approval lifecycle spine lives in `traigent-setup-quickstart` +
+  `traigent-optimize-run`.
 
 ---
 
@@ -203,7 +204,7 @@ yourself:** Linux `xdg-open .env` (or `${EDITOR:-nano} .env`), macOS `open -t .e
 yourself" or offer that as an option — that is your job; you pop it open, they only paste.** Try
 the opener *first*; **always print the file's absolute path too**, and fall back to "please open
 this path and paste" *only if the opener genuinely fails* (e.g. no display). For edge cases see
-the `traigent-quickstart` skill's `.env` procedure. Then guide them:
+the `traigent-setup-quickstart` skill's `.env` procedure. Then guide them:
 
 **a) Traigent platform key — a separate, free signup, needed *later* (leave it for now).** This
 is **not** the LLM vendor key, and you don't need it for anything until the enhanced **portal**
@@ -350,7 +351,7 @@ Dataset format is JSONL, one example per line with `input` and `output`:
 {"input": "I was charged twice for my subscription", "output": "billing"}
 {"input": "The API returns a 500 on POST", "output": "technical"}
 ```
-→ `traigent-curate-dataset` owns dataset building, growth, and scoring.
+→ `traigent-dataset-curate` owns dataset building, growth, and scoring.
 
 **Evaluation method.** If the user already has one, **use it** — just confirm in plain words that
 "correct" means what they expect; don't silently replace or redesign it. Only **build** one when
@@ -382,9 +383,9 @@ question or two, not a wall of them). When you build, choose by output type:
      you spend anything.
 - Open-ended answers (summaries, explanations, writing) where string-match would score
   everything 0 → **LLM-as-a-judge**.
-→ `traigent-choose-metric` (pick) and `traigent-build-evaluator`
+→ `traigent-eval-choose-metric` (pick) and `traigent-eval-build`
 (build — includes input-aware, execution, and custom-evaluator patterns). Audit any LLM judge →
-`traigent-evaluator-audit`.
+`traigent-eval-audit`.
 
 ---
 
@@ -417,7 +418,7 @@ def my_agent(query: str) -> str:
 - Do **not** add `expected` to the function signature — it's a scoring label, not an input;
   including it fails every trial.
 
-→ `traigent-decorator-setup` for the rest: the other injection modes, objectives, evaluation, and
+→ `traigent-setup-decorator` for the rest: the other injection modes, objectives, evaluation, and
 `experiment_name` labeling. (Injection modes includes zero-code-change `seamless` — **only** for
 an agent whose function body already assigns a local variable or takes a parameter named exactly
 after a config key; it does not rewrite keyword arguments inside a nested call, e.g. `model=`
@@ -565,13 +566,12 @@ broken/quirky reference or a genuine difficulty ceiling (Step 11). If the failur
 modes above, a stronger **model** is usually the lever, not another knob.
 
 Config-space syntax (dict lists / tuples, or `Range`/`IntRange`/`Choices`/`LogRange`,
-constraints) → `traigent-configuration-space`. Knob packs by agent
+constraints) → `traigent-optimize-config-space`. Knob packs by agent
 shape (cascades, routing, self-consistency, verification gates) →
-`traigent-boost-agent` + `traigent-composite-knobs` +
-`traigent-run-recommendations`.
+`traigent-boost-agent` + `traigent-optimize-composite-knobs`.
 
 Record the run in `templates/run-plan.md` (copy it per run to `traigent-runs/run-plan.md`). For a full service run
-plan, see the `traigent-run-plan` skill — note `traigent plan` is optional and needs
+plan, note `traigent plan` is optional and needs
 several required flags (`--task-description --dataset-size --objective --max-trials
 --cost-limit`) plus a reachable backend, so it's not a zero-arg command.
 
@@ -649,7 +649,7 @@ Pass criteria: `len(results.trials) > 0`, `len(results.failed_trials) == 0`, and
 
 **Evaluator sanity gate** (free, catches the most expensive silent failure): assert your
 metric rewards a known-good output (≥ 0.9) and penalizes a known-bad one (≤ 0.1) before
-any paid run. → `traigent` (Step 3.5).
+any paid run. → `traigent-boost-agent` (Step 3.5: Evaluator Sanity Gate).
 
 **Then probe semantic equivalence — the check that catches an *over-strict* metric.** A scorer that
 returns ≈1.0 on the *exact* gold and ≈0.0 on garbage can still be silently broken: too strict, so a
@@ -775,7 +775,7 @@ on but the baseline space omits runs undefined.
 It still makes real LLM calls (a real measurement — ~4–8 configs × your dataset when you build a
 baseline space, or a single pass when running the user's own config; either way small and cheap),
 so the cost gate/cap apply. Restricting the run to the small baseline space is an internal detail
-— do it quietly; don't narrate it to the user in jargon (see the `traigent-run-optimization`
+— do it quietly; don't narrate it to the user in jargon (see the `traigent-optimize-run`
 skill).
 
 Because you run Python **non-interactively**, the cost gate can't show a prompt — and its
@@ -940,8 +940,8 @@ if results_baseline.best_config:   # None when the baseline hit stop_reason=="co
   lines them up into one view — the two clearly-named, linked runs are what you can actually
   promise; don't claim a single merged chart you haven't confirmed the UI renders.
 
-→ `traigent-run-optimization` (algorithms, `cost_limit`, `stop_reason`,
-parallel trials, quota sizing) and `traigent` (the full dry-run → approve
+→ `traigent-optimize-run` (algorithms, `cost_limit`, `stop_reason`,
+parallel trials, quota sizing) and `traigent-setup-quickstart` (the full dry-run → approve
 → real-run lifecycle).
 
 ---
@@ -975,7 +975,7 @@ the *actual* result object that exists for the path taken (`results_baseline` an
 per above).
 
 → `traigent-analyze-results` (read `best_config` / `best_score` / the
-quality-vs-cost trade-off) and `show-significant-tuned-variables` (which
+quality-vs-cost trade-off) and `traigent-analyze-variable-importance` (which
 knobs actually mattered).
 
 ---
@@ -1060,7 +1060,8 @@ enhanced pass**; don't stop at one:
   separate — then re-run. (Size it hard enough from the start so you never land here.)
 - Then either route easy inputs to run 1's optimum and hard inputs to run 2's optimum, or adopt
   run 2's optimum if it's better overall. Budget/quota permitting, keep iterating. →
-  `traigent-next-run` and `traigent-iterate` pick the next single hypothesis from server signals.
+  `traigent-analyze-guidance` (`traigent next-steps`) picks the next single hypothesis from
+  server signals.
 
 ---
 
