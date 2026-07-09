@@ -856,10 +856,12 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   2. **Per-trial outputs must vary** across configs — identical output text on every trial is
      the mock's constant string, not a measurement.
   3. **The trial count must match what you budgeted.** Count `results.trials` against the grid:
-     a supplied `default_config` runs as an **extra baseline trial that consumes a `max_trials`
+     in **locally-executed** runs (`grid`, `random`, or `auto` that fell back to local), a
+     supplied `default_config` runs as an **extra baseline trial that consumes a `max_trials`
      slot**, so an N-config grid needs `max_trials ≥ N + 1` or the **last grid point is silently
      dropped** — the run still finishes "successfully" while the best config may never have been
-     evaluated. (This guide's snippets don't set `default_config` and cap a ~4–8-config grid at
+     evaluated. (Backend-guided connected `auto` does not run `default_config` as a baseline
+     trial today. This guide's snippets don't set `default_config` and cap a ~4–8-config grid at
      10 trials, which leaves that headroom — keep the margin if you grow the grid.)
   4. **Persistence actually finished** — alongside the `cloud_url` check, read
      `results.metadata.get("persistence_status")` / `results.persistence_failed`: a run can look
