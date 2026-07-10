@@ -1,8 +1,8 @@
 # Traigent Run Plan — record (one per optimization run)
 
 Capture format for a run. The **recommended values come from the Traigent service**
-(`traigent plan` / `traigent recommend`), not from this file — see the
-`traigent-run-plan` skill. The defaults below are only starting points so
+(`traigent plan` / `traigent recommend`), not from this file — `traigent recommend`
+is covered by the `traigent-boost-agent` skill. The defaults below are only starting points so
 you are not staring at blank fields; confirm or adjust each with the user.
 
 **Run name** (suggested convention): `<agent>__<dataset-subset>__<objectives>__<YYYY-MM-DD-HHMM>`
@@ -44,4 +44,5 @@ outputs. The agent entrypoint below is for your notes only and is never transmit
 - Portal link:
 
 ## Carry forward
-After the run, paste the next-step recommendation from the `traigent-next-run` skill.
+After the run, paste the next-step recommendation from `traigent next-steps` (the
+`traigent-analyze-guidance` skill).

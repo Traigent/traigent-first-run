@@ -8,6 +8,6 @@ for you (any coding agent — Claude Code, Cursor, Codex, Gemini CLI, …). Use 
 most capable model with high effort.
 
 The guide is self-contained for the happy path. Where it points at a Traigent skill
-by name (e.g. `traigent-decorator-setup`), that skill lives in
+by name (e.g. `traigent-setup-decorator`), that skill lives in
 <https://github.com/Traigent/traigent-skills> — read it there for more depth.
 Templates are in [`.env.example`](.env.example) and [`templates/`](templates/).
