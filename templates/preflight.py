@@ -6,7 +6,9 @@ Run this instead of improvising the checks by hand. It verifies, at zero LLM
 cost, everything the guide otherwise asks the assistant to derive ad hoc:
 
   C1  python-version    Python 3.11-3.13 (GUIDE Step 1)
-  C2  sdk-version       traigent installed, >= 0.21, not the 0.0.1 pip stub (Step 2)
+  C2  sdk-version       traigent installed, >= 0.21, not the 0.0.1 pip stub (Step 2);
+                        warns if `tenacity` is absent (LiteLLM num_retries dies
+                        without it and the failed call scores 0 - SDK#1824)
   C3  key-presence      vendor keys in .env with the blank-or-comment-means-absent
                         rule; TRAIGENT_API_KEY format sanity (Step 3)
   C4  model-liveness    each --models id exists: openrouter/* via the keyless
@@ -197,6 +199,16 @@ def check_sdk() -> None:
             WARN,
             "the `traigent` console script is not on PATH although the module "
             "imports - activate the venv so CLI checks (C4) can run.",
+        )
+    if importlib.util.find_spec("tenacity") is None:
+        emit(
+            "sdk-retry-dep",
+            WARN,
+            "`tenacity` is not installed - it is not in traigent's dependency "
+            "closure, and agent code that passes num_retries to LiteLLM dies with "
+            "ModuleNotFoundError instead of retrying, so the failed call silently "
+            "scores 0 (Traigent/Traigent#1824). If the user's agent retries via "
+            "LiteLLM: pip install tenacity.",
         )
 
 

@@ -346,6 +346,13 @@ left to check the candidate against. (If the dataset is so small that a split wo
 tuning slice — under ~10 items — say so plainly and treat Step 12's gate as "collect fresh
 examples first," never as a step to skip silently.)
 
+**And know what a small holdout can actually prove.** LLM scores wobble between runs even with
+nothing changed — field-measured at roughly ±5–10 points on a 40-item slice, worse on smaller
+ones (benchmarks-insights, 2026-07). Rule of thumb: a k-item holdout only resolves differences
+much bigger than 100/k points — so a 5-item holdout confirms a night-and-day win (the usual
+first-run case, e.g. 20% → 70%), not a "+6 points" one. Tell the user which case they're in: for
+a modest gain, the honest gate verdict is "promising — needs more holdout items," not a pass.
+
 Dataset format is JSONL, one example per line with `input` and `output`:
 ```jsonl
 {"input": "I was charged twice for my subscription", "output": "billing"}
@@ -529,12 +536,14 @@ Reasoning models (o-series, gpt-5-class, `gemini-2.5`/`3.x`) spend **hidden reas
 count against `max_tokens` before any answer text appears**. Under a cap sized for a normal model
 (256–1024), they return a truncated answer (`finish_reason == "length"`) and score far below a
 cheaper model — a pure measurement artifact that biases the whole comparison toward the wrong
-config. If any reasoning model is in the space, give it `max_tokens` **≥ 1024–2048** (a
-constraint works, like the model-specific knobs above), and sweep low `max_tokens` values only in
-a space with **no** reasoning models. Field-observed: a `gemini-2.5-pro` trial at
-`max_tokens=256` spent 241 tokens thinking and emitted ~23% of the expected answer; at 1536 it
-completed. (Step 11 lists this same trap as no-improvement cause (5) — catching it here, before
-the run, is cheaper.)
+config. If any reasoning model is in the space, give it `max_tokens` **≥ 2048 — and ≥ 4096
+whenever a high reasoning-effort setting is in the space** (a constraint works, like the
+model-specific knobs above), and sweep low `max_tokens` values only in a space with **no**
+reasoning models. Field-observed twice: a `gemini-2.5-pro` trial at `max_tokens=256` spent 241
+tokens thinking and emitted ~23% of the expected answer (completed at 1536); and `gpt-oss-120b`
+at high effort still truncated occasionally at 4,096 and ran to ~3,700 reasoning tokens
+uncapped — every truncated call scored 0 (benchmarks-insights, 2026-07). (Step 11 lists this
+same trap as no-improvement cause (5) — catching it here, before the run, is cheaper.)
 
 **Match each knob to a failure mode — and mind stochastic knobs on exact-match metrics.** A knob
 only helps if it targets *how* the agent is actually failing; wired in blind it adds cost and can
@@ -846,13 +855,16 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   before promising a portal link, check `results.cloud_url` is not `None`.) Apply that same
   `results.cloud_url is not None` check to **both** the baseline and enhanced runs before telling
   the user anything is on the portal — a `None` means the run stayed local-only.
-- **After every paid run — prove it was real and complete before reporting anything.** Four
+- **After every paid run — prove it was real and complete before reporting anything.** Five
   cheap checks on the results object, for both the baseline and the enhanced run:
   1. **`results.total_cost` must be a positive number.** **`None` means *not tracked*, not
      *local*** — a real paid run, local or portal-synced, should show a positive cost. `None` or
      ~$0 means the run was secretly mock/offline (Step 8's mode leaking into this process — start
      a fresh interpreter and make sure `TRAIGENT_MOCK_LLM` / `TRAIGENT_OFFLINE_MODE` are unset)
      or the model is unpriced (the bullet below). Never present such a run as a measurement.
+     (One legitimate $0 case: OpenRouter's `:free`-suffixed model ids really cost $0 — this
+     guide's preflight steers to priced ids, but if the user chose one, judge realness by
+     checks 2 and 5 plus nonzero token usage instead.)
   2. **Per-trial outputs must vary** across configs — identical output text on every trial is
      the mock's constant string, not a measurement.
   3. **The trial count must match what you budgeted.** Count `results.trials` against the grid:
@@ -866,7 +878,16 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   4. **Persistence actually finished** — alongside the `cloud_url` check, read
      `results.metadata.get("persistence_status")` / `results.persistence_failed`: a run can look
      complete locally while the portal experiment is stuck `RUNNING`, and a portal link handed
-     over at that moment shows the user a broken "before/after."
+     over at that moment shows the user a broken "before/after." Read the status precisely:
+     **`degraded` is partial, not broken** — trial results synced and the portal link is valid,
+     only summary aggregates may lag (don't discard the run); **`failed` means the sync was
+     lost** — recover it with `traigent sync <session_id>` rather than re-running (and re-paying).
+  5. **No trial was silently truncated** — scan per-trial responses for
+     `finish_reason == "length"`. A truncated call scores 0 (field-measured: 6 of 6 truncated
+     calls were wrong), so even a few of them can crown the wrong config. Any hits → raise
+     `max_tokens` (Step 7's headroom rule) and re-run only the affected comparison. A question
+     that keeps hitting the cap under *every* config is usually a **broken eval item** (ambiguous
+     or self-contradictory) — flag it to the user as a dataset fix, not a model problem.
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
   only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
