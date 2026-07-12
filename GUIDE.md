@@ -144,12 +144,16 @@ Prefer a project virtualenv (standard practice; also avoids PEP 668
 "externally-managed-environment" on modern Linux):
 
 ```bash
-python3.13 -m venv .venv && source .venv/bin/activate   # Windows: py -3.13 -m venv .venv
+python3.13 -m venv .venv && source .venv/bin/activate   # Windows: py -3.13 -m venv .venv && .venv\Scripts\activate
 pip install "traigent[recommended]>=0.21"
 ```
 
 - **Pin the interpreter** (`python3.13`, not a bare `python`) so the venv honors Step 1's
-  "default to 3.13" rather than whatever `python` happens to resolve to.
+  "default to 3.13" rather than whatever `python` happens to resolve to. **Confirm activation
+  actually took before installing** — `python -c "import sys; print(sys.prefix)"` must point
+  inside `.venv`. (On Windows a blocked PowerShell policy can silently skip `Activate.ps1`, so
+  `pip install` lands in global Python; `Set-ExecutionPolicy -Scope Process RemoteSigned` once, or
+  activate from `cmd` with `.venv\Scripts\activate`, fixes it.)
 - If the project already has a venv, install into it — **unless it is built on an
   unsupported Python** (< 3.11). Re-running `python -m venv` over an existing directory is a
   **silent no-op** (it does *not* swap the interpreter): recreate it cleanly with
@@ -203,7 +207,11 @@ yourself:** Linux `xdg-open .env` (or `${EDITOR:-nano} .env`), macOS `open -t .e
 `notepad .env` — so the editor window pops open. **Do NOT tell the user to "open the file
 yourself" or offer that as an option — that is your job; you pop it open, they only paste.** Try
 the opener *first*; **always print the file's absolute path too**, and fall back to "please open
-this path and paste" *only if the opener genuinely fails* (e.g. no display). For edge cases see
+this path and paste" *only if the opener genuinely fails* (e.g. a headless remote box or cloud IDE
+with no display). Whenever the user pastes by hand, **name the target line by key prefix** so two
+look-alike blank `KEY=` lines can't get swapped: paste the LLM key (e.g. OpenRouter, which starts
+`sk-or-v1-`) after its own vendor line, and leave `TRAIGENT_API_KEY=` (a `uk_…` key) empty for now
+— `preflight.py`'s key-shape check backstops a swap, so run it after they paste. For edge cases see
 the `traigent-setup-quickstart` skill's `.env` procedure. Then guide them:
 
 **a) Traigent platform key — a separate, free signup, needed *later* (leave it for now).** This
@@ -273,6 +281,11 @@ retry wrapper, or generic provider client).
   examples: their input makes the run realistic; otherwise you can generate the whole thing,
   but **say so** (auto-generated agents/data are quick but may be unrealistically simple). The
   quickstart (`python -m traigent.examples.quickstart`) is a free, mockable shape to copy.
+  **When the agent AND the dataset are both things *you* generated, tell the user in one plain
+  sentence *before* the run — not buried at the end — that this first run shows them how Traigent
+  works, not yet a verdict on a real system** (*"bring your own agent or examples when you're ready
+  for that"*): a synthetic-everything Pareto frontier looks identical to a real one, and a
+  beginner can't tell them apart.
 - **Found, but it's not Python** (a C++/Go/Rust binary, a shell script, an HTTP service in
   another language) → **stop and tell the user plainly: Traigent currently supports Python
   only** (`@traigent.optimize` wraps Python callables). Then **ask** how they'd like to
@@ -702,9 +715,13 @@ this in that same process would silently mock every "real" call. Re-import the a
 here — that's the same real agent, just a clean interpreter.
 
 Ask the user which they want:
-1. **Baseline only** — their agent as-is, measured.
+1. **Baseline only** — their agent as-is, measured (local — **nothing reaches the portal**).
 2. **Enhanced only** — Traigent-optimized.
 3. **Both, for comparison** *(recommended for a first run)*.
+
+If the user leans to **"Baseline only"** to keep it cheap, say so plainly first — *"that gives you
+a local before-number but nothing in the portal; the online before/after needs the enhanced run"*
+— so they don't pick the cautious option and then feel the promised portal result never showed up.
 
 > **Verify model IDs are live and priced first** — a delisted/renamed id wastes the run on a
 > 404, and several live slugs (e.g. `openrouter/openai/gpt-4o-mini`) have **no LiteLLM price
@@ -796,8 +813,10 @@ and **without** requiring `TRAIGENT_COST_APPROVED`. So **you** must enforce appr
 user's explicit "yes" before any paid run (below) rather than trusting the SDK to block. (A cap
 set *below* the per-trial estimate instead returns `results` with `stop_reason=="cost_limit"`
 and **0 trials** — no exception — so check `results.stop_reason`, not only exceptions.) After
-the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too (the $5 cap still binds);
-for an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or expect a clean abort.
+the user's "yes," set `TRAIGENT_COST_APPROVED=true` for this run too — **in the process env only,
+never persisted in `.env`** (a stale `.env` `true` disables the money prompt for every later run);
+the $5 cap still binds. For an unpriced baseline model, set `TRAIGENT_CUSTOM_MODEL_PRICING_*` or
+expect a clean abort.
 
 **Real runs can outlive your command timeout — run them detached.** Ten trials × a ~25-item
 dataset with a multi-call composite knob is easily 5–10+ minutes of sequential LLM latency, and
@@ -846,9 +865,11 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   strong config while staying under the $5 cap.
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. On current SDKs
-  (0.20/0.21) only `auto` (or omitting `algorithm`), `grid`, and `random` actually execute —
-  the named smart selectors (`"bayesian"`, `"tpe"`, `"optuna"`, `"cmaes"`, `"nsga2"`) validate
-  as names but **fail before any trial runs**, so never "upgrade" `auto` to one of them. Keep offline
+  (0.20/0.21) `auto` (or omitting `algorithm`), `grid`, and `random` are the reliably-executable
+  choices. The named smart selectors (`"bayesian"`, `"tpe"`, `"optuna"`, `"cmaes"`, `"nsga2"`)
+  behave **inconsistently across builds** — on some they fail before any trial runs; on newer
+  builds `bayesian`/`tpe`/`optuna` just map to the same cloud Optuna TPE that `auto` already runs
+  — so they give **no advantage** over `auto`; never "upgrade" `auto` to one of them. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
   (If the backend is unreachable, `auto` falls back to **local random search** with a logged
   warning —
@@ -861,7 +882,9 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
      *local*** — a real paid run, local or portal-synced, should show a positive cost. `None` or
      ~$0 means the run was secretly mock/offline (Step 8's mode leaking into this process — start
      a fresh interpreter and make sure `TRAIGENT_MOCK_LLM` / `TRAIGENT_OFFLINE_MODE` are unset)
-     or the model is unpriced (the bullet below). Never present such a run as a measurement.
+     or the model is unpriced (the bullet below). **Stop — never show the user these numbers, and
+     if you cannot guarantee a fresh interpreter for the paid run, refuse it rather than risk
+     mocked results reaching the portal.**
      (One legitimate $0 case: OpenRouter's `:free`-suffixed model ids really cost $0 — this
      guide's preflight steers to priced ids, but if the user chose one, judge realness by
      checks 2 and 5 plus nonzero token usage instead.)
@@ -890,8 +913,14 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
      or self-contradictory) — flag it to the user as a dataset fix, not a model problem.
 - **Cost gate (hard stop):** estimate the run first — `max_trials × dataset_size` LLM calls
   **× the calls-per-item your function makes** — show the user the estimate and the $5 cap, and
-  only proceed on their explicit "yes." Then set `TRAIGENT_COST_APPROVED=true` (or pass
-  `cost_limit=` / handle `OptimizationError` if the estimate exceeds the cap).
+  only proceed on their explicit "yes." **The $5 cap is *per run* — and the recommended "Both"
+  path is up to three paid runs (local baseline, enhanced, baseline-on-portal) plus any Step 11
+  pass, each separately capped. Show the user the *combined* worst-case across every run you
+  plan, not just the next one** — a beginner reads a lone "$5" as the whole ceiling and is
+  startled by the total. Then set `TRAIGENT_COST_APPROVED=true` **in the process env
+  (`os.environ`) for this one launch only — never write it into `.env`, where a stale `true`
+  silently disables the money prompt for every later run** (or pass `cost_limit=` / handle
+  `OptimizationError` if the estimate exceeds the cap).
   ⚠️ **`max_trials × dataset_size` is one call per item — a floor, not the ceiling, once you add
   composite knobs.** Self-consistency / best-of-n make **N** calls per item; a cascade or
   verification gate makes 2+. The SDK can't see those calls (they happen inside your function),
@@ -911,8 +940,10 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   added — **don't ask a hands-off user to hand-write a pricing file.** Keep `TRAIGENT_RUN_COST_LIMIT`
   small as a backstop; OpenRouter's funded credit is the true spend limit. (The live cost is
   often still captured from the provider response, but don't rely on it.)
-- Also mind **plan quota**: a run reserves ~`max_trials × dataset_size`
-  `optimization_samples`; on the free tier the ceiling is small. Size the run to fit.
+- Also mind **plan quota**: a run reserves ≈`max_trials × dataset_size` `optimization_samples`,
+  and a brand-new free account's monthly ceiling is small. Before the enhanced launch, tell the
+  user the run reserves that many samples; if it's rejected or stalls with a quota message, that's
+  the cause — shrink `max_trials` or the dataset, don't retry blindly. Size the run to fit.
 
 **Also put the baseline on the portal — a real "before", not a one-row stub.** *(Only
 reachable when the user picked "Both, for comparison" — this needs both `results_baseline` from
@@ -1100,7 +1131,10 @@ objectively true.** Never imply an improvement that didn't happen or a conclusio
 evidenced. In particular:
 - **If *you* generated the dataset, tell them** — and that a small or easy dataset can't tell a
   good config from a bad one. So "no improvement" usually means the test was too easy, **not**
-  that the agent can't be improved.
+  that the agent can't be improved. **With only a handful of examples, say plainly that this run
+  is a smoke test of the setup, not a trustworthy score** (*"with only N examples this checks the
+  wiring, not the verdict — the honest next move is more examples, and I can help build them"*),
+  so a beginner doesn't over-trust a noisy number.
 - **If a run showed no real gain, explain why in plain words** and give the honest next step —
   e.g. *"Your model already got all 12 examples right, so there was nothing to tune. To actually
   find a better setup we'd need a bigger, harder set of examples — want to build one?"* — rather
