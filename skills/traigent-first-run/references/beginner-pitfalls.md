@@ -13,17 +13,18 @@ reasoning lives in `GUIDE.md`; this is the fast lookup. Load it at Steps 2–3, 
 6. Handoff — the `.env` paste on headless / cloud IDEs, and key swaps
 7. Blocks-run — Windows venv activation
 8. Truth — tiny datasets are a smoke test, not a score
-9. Confusion — `.env.example` "REQUIRED" vs "leave blank"
+9. Confusion — the Traigent key is required *later*, not now
 10. Expectation — "Baseline only" leaves nothing in the portal
 
 ---
 
 ## 1. Money — the "$5 cap" is per run, not total
 A nervous beginner reads "capped at $5" as their whole ceiling, but the recommended **"Both"**
-path runs up to **three** paid runs (local baseline, enhanced, baseline-on-portal), and Step 11
-adds another — each separately capped, so worst-case is ~$15–20, not $5.
+path is several small paid runs (local baseline, enhanced, baseline-on-portal, plus any Step 11
+pass), each separately capped — so the total exceeds $5 (usually only a few dollars, since the
+baseline grids are deliberately cheap; more only if every run hit its cap).
 **Cover:** before the first paid launch, show the **combined worst-case across every run you
-plan**, in plain words — not just the next run's estimate.
+plan** — see GUIDE Step 9's cost gate for the exact framing — not just the next run's estimate.
 
 ## 2. Money — `TRAIGENT_COST_APPROVED` must live in the process env, never `.env`
 After the user approves, you set `TRAIGENT_COST_APPROVED=true`. If you write it into `.env`, it
@@ -81,11 +82,11 @@ failure.
 smoke test of the setup, not a trustworthy score — the honest next move is more examples, and I
 can help build them."*
 
-## 9. Confusion — `.env.example` "REQUIRED" vs "leave blank until Step 9"
-The template can label `TRAIGENT_API_KEY` as `REQUIRED`, contradicting the flow that defers it;
-a literal beginner front-loads the portal signup the guide deliberately postpones.
-**Cover:** the key is **required *later*** — leave it blank until the portal run (Step 9). Don't
-send the user hunting for it before they've seen a real "before" number.
+## 9. Confusion — the Traigent key is required *later*, not now
+Treating the Traigent platform key as up-front-required front-loads the portal signup the flow
+deliberately defers — a beginner goes hunting for it before they've seen any value.
+**Cover:** the key is **required *later*** — leave `TRAIGENT_API_KEY=` blank until the portal run
+(Step 9); everything up to it runs on the LLM vendor key alone.
 
 ## 10. Expectation — "Baseline only" leaves nothing in the portal
 A money-cautious beginner who picks "Baseline only" never gets a Traigent key and never sees a

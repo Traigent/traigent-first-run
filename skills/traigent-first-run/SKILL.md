@@ -21,7 +21,7 @@ the Traigent portal — the best accuracy for the least cost — without ever su
 spend or a misleading result.
 
 **Canonical procedure:** the full, self-contained step-by-step lives in this repo's
-[`GUIDE.md`](../../GUIDE.md) (12 steps) with a one-command preflight in
+[`GUIDE.md`](../../GUIDE.md) (steps 0–12) with a one-command preflight in
 [`templates/preflight.py`](../../templates/preflight.py). Read GUIDE.md and follow it in order —
 it is authoritative and more detailed than this file. This SKILL.md is the **spine + the
 non-negotiable gates**, kept inline so they hold from the first message even before you open the
@@ -42,7 +42,7 @@ guide. Where the guide names a `traigent-*` skill, it lives in
   barely helped, say so. Never dress up a zero delta; never imply they *need* Traigent.
 - **At most 3 options, one marked Recommended,** one-line trade-off each.
 
-## The 12-step spine (see GUIDE.md for each)
+## The step spine (0–12; see GUIDE.md for each)
 
 0. Greet: explain their small job; you do the rest. 1. Confirm Python 3.11–3.13. 2. Install
 `traigent[recommended]>=0.21` in a venv; verify (free mock, no keys); run `preflight.py`.

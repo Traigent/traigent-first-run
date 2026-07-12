@@ -99,8 +99,9 @@ Then show the user this message (verbatim is fine):
 >
 > Before we start, it helps to have ready: **one LLM key with a few dollars on it** (OpenRouter
 > is easiest — that's all you need to begin). A free Traigent account is only needed later for the
-> online portal; I'll walk you through it then. Spend is capped at $5 per run and I always do a
-> free dry-run first and ask before anything paid.
+> online portal; I'll walk you through it then. Spend is capped at $5 *per run* — a full
+> before/after is a few small runs, so I'll show you the combined estimate first, always do a
+> free dry-run first, and ask before anything paid.
 >
 > Here's the plan, start to finish:
 > 1. Install Traigent and check it works — free.
@@ -865,11 +866,11 @@ results = my_agent.optimize_sync(max_trials=10, algorithm="auto")  # cap 10 tria
   strong config while staying under the $5 cap.
 - Use `algorithm="auto"` — the cloud smart optimizer **converges in far fewer trials
   than a full grid**, which is what keeps a wide search under the $5 cap. On current SDKs
-  (0.20/0.21) `auto` (or omitting `algorithm`), `grid`, and `random` are the reliably-executable
-  choices. The named smart selectors (`"bayesian"`, `"tpe"`, `"optuna"`, `"cmaes"`, `"nsga2"`)
-  behave **inconsistently across builds** — on some they fail before any trial runs; on newer
-  builds `bayesian`/`tpe`/`optuna` just map to the same cloud Optuna TPE that `auto` already runs
-  — so they give **no advantage** over `auto`; never "upgrade" `auto` to one of them. Keep offline
+  (0.20/0.21) only `auto` (or omitting `algorithm`), `grid`, and `random` execute reliably across
+  builds. The named smart selectors (`"bayesian"`, `"tpe"`, `"optuna"`, `"cmaes"`, `"nsga2"`)
+  behave inconsistently build-to-build and give **no reliable advantage** over `auto` (which
+  already runs the cloud smart optimizer), so always use `auto` — never "upgrade" it to one of
+  them. Keep offline
   **off** for this run — leave `TRAIGENT_OFFLINE_MODE` unset (offline never reaches the portal).
   (If the backend is unreachable, `auto` falls back to **local random search** with a logged
   warning —
