@@ -31,6 +31,12 @@ repo, step by step."* (Assistants that auto-read `AGENTS.md` / `CLAUDE.md` pick 
 on their own.) **Can't run `git`?** Paste your assistant the GUIDE.md link (or its
 contents) and say "follow it step by step."
 
+**Prefer an installed skill?** This repo is also packaged as an Agent Skill
+([`skills/traigent-first-run/`](skills/traigent-first-run/SKILL.md)) that auto-activates when you
+ask your assistant to run your first Traigent optimization — it carries the money-and-honesty
+safety gates and points at this same `GUIDE.md`. Install it with
+`npx skills add Traigent/traigent-first-run`.
+
 ---
 
 ## What you'll need (the assistant checks these for you)
@@ -47,9 +53,10 @@ contents) and say "follow it step by step."
   many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
   few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
   Mistral / Cohere / Bedrock keys work too (plus others like HuggingFace — see GUIDE.md for the
-  full vendor list). Spend is **capped at $5 per run** (the value this repo's
-  `.env` sets — the SDK's own default is $2), and the assistant always does a **free
-  dry-run first** and asks before any paid run.
+  full vendor list). Spend is **capped at $5 _per run_** (the value this repo's
+  `.env` sets — the SDK's own default is $2); a full before/after comparison is a few small runs,
+  so your assistant shows you the **combined** estimate and always does a **free dry-run first**
+  and asks before anything paid.
 
 You'll paste your keys into a `.env` file (template: [`.env.example`](.env.example))
 — never into the chat.
