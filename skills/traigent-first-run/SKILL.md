@@ -42,6 +42,82 @@ guide. Where the guide names a `traigent-*` skill, it lives in
   barely helped, say so. Never dress up a zero delta; never imply they *need* Traigent.
 - **At most 3 options, one marked Recommended,** one-line trade-off each.
 
+### Readiness scoreboard
+
+After your first look at the project, render a warm three-item scoreboard — Agent, Dataset,
+Evaluation — so the user sees exactly what unlocks their first run. **Base each line on what that
+first look actually found**, never a fixed template: a piece you can already see is green; one you
+genuinely haven't reached yet is a warm red. Open on the honest score — an all-red `0/3` is only
+the genuinely-nothing-found case; if the look already found some pieces, open higher. Show it once,
+then refresh a line **only when that item's own status or evidence changes** (GUIDE.md sets the
+refresh points) — do not re-render when no item's status or evidence changed. Keep it short and
+warm, never a nag.
+
+Each item is one blockquote line with a **blank `>` line between items**, so the three stay a
+scannable board (adjacent blockquote lines otherwise collapse into one paragraph). Say everything
+in **plain, warm words** — never a file path, a function signature, or an internal term.
+
+- **Green** on concrete evidence — never a bare `✅ ready`. Name the evidence in plain words
+  (*"your answer function"*, *"your 20 checked examples"*, *"the rule that checks each answer"*).
+- **Red** when the piece isn't in hand yet — two honest forms, and neither asserts a piece is
+  *missing* when the first look may simply not have reached it:
+  - **not found yet** — you haven't located it. Give the why-it-matters and the approved link.
+  - **needs one fix** — the piece exists but a later check found a problem (a dataset that
+    doesn't line up with the agent, a rule that scores a right answer wrong). Say it needs one
+    fix, keep the why-it-matters and the approved link, and decrement the heading.
+
+Initial all-red form (only when the first look found nothing):
+
+> **First-run readiness: 0/3 ready — three small pieces unlock your first run.**
+>
+> ❗ **Agent — not found yet.** Why it matters: Traigent needs your agent's answer function so it can improve it. [Wire your agent](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent-setup-decorator).
+>
+> ❗ **Dataset — not found yet.** Why it matters: example inputs and the answers you expect give Traigent something real to measure against. [Prepare a dataset](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent-dataset-curate).
+>
+> ❗ **Evaluation — not found yet.** Why it matters: a rule that checks whether an answer is right is how we tell if a change actually helped. [Build an evaluation rule](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent-eval-build) or [choose a metric](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent-eval-choose-metric).
+
+Green lines name the evidence in plain words — for example:
+
+> ✅ **Agent — ready:** your answer function.
+>
+> ✅ **Dataset — ready:** your 20 checked examples.
+>
+> ✅ **Evaluation — ready:** the rule that checks whether an answer is right.
+
+Update the heading to match, and make **every rung reachable** by refreshing per item as each one
+lands:
+
+- `0/3 ready — three small pieces unlock your first run.`
+- `1/3 ready — you're underway; two pieces to go.`
+- `2/3 ready — one piece from your first run.`
+- `3/3 in hand — next I'll wire it up and run a free check.` — the tail after the em-dash names
+  the user's **actual next step**, so it moves as the board is refreshed: before wiring, `next I'll
+  wire it up and run a free check`; after Step 8's preflight passes, name what's left (e.g. `3/3 in
+  hand — all three verified by the free check; next: the free dry-run.`).
+
+**Never put a preflight check ID (C7/C8/C9) or any internal scaffolding term in the board copy.**
+The check-to-item mapping is assistant-facing reconcile guidance only: **Dataset → C7
+(dataset-shape) + C8 (dataset-binding); Evaluation → C9 (scorer-sanity)**. A board line may say a
+piece is **verified by the free check** — but *only* once a **fully parameterized** preflight
+(`--dataset --agent --scorer --good --bad --expected`, plus `--metadata` when the scorer uses
+metadata) has actually returned **PASS** for that
+piece's checks. An env-only, SKIP, or WARN result never counts as passed; before that, keep the
+plain green wording with no verification claim.
+
+**Reopen rule.** Any later readiness-affecting failure turns that item red again in the *needs one
+fix* form and decrements the heading: a C7/C8 FAIL — or a dataset-binding / degenerate-reference
+repair — reopens Dataset; a C9 FAIL or the Step 8 semantic-equivalence probe failing reopens
+Evaluation.
+
+**Demo-ready is about the material's provenance, not who typed the glue.** If the *material* — the
+agent's logic, the dataset's contents, or the evaluation rule's logic (a synthetic scorer is
+synthetic material) — was invented to demonstrate the workflow, that piece is `✅ demo-ready`, not
+`✅ ready`. Wiring a decorator around the user's *real* agent stays real
+(that's glue, not invented material). When the score depends on synthetic material, mark the
+heading with explicit copy — for a mix, say which, placing the real/demo count before the wire-up
+clause (e.g. `3/3 in hand — 2 real, 1 demo — next I'll wire it up and run a free check.`) — and say
+once: "This proves the workflow can run; it is not a verdict on your real agent or data."
+
 ## The step spine (0–12; see GUIDE.md for each)
 
 0. Greet: explain their small job; you do the rest. 1. Confirm Python 3.11–3.13. 2. Install
