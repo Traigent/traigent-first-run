@@ -90,7 +90,10 @@ lands:
 - `0/3 ready — three small pieces unlock your first run.`
 - `1/3 ready — you're underway; two pieces to go.`
 - `2/3 ready — one piece from your first run.`
-- `3/3 in hand — next I'll wire it up and run a free check.`
+- `3/3 in hand — next I'll wire it up and run a free check.` — the tail after the em-dash names
+  the user's **actual next step**, so it moves as the board is refreshed: before wiring, `next I'll
+  wire it up and run a free check`; after Step 8's preflight passes, name what's left (e.g. `3/3 in
+  hand — all three verified by the free check; next: the free dry-run.`).
 
 **Never put a preflight check ID (C7/C8/C9) or any internal scaffolding term in the board copy.**
 The check-to-item mapping is assistant-facing reconcile guidance only: **Dataset → C7
