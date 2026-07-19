@@ -111,7 +111,8 @@ agent's logic, the dataset's contents, or the evaluation rule's logic (a synthet
 synthetic material) — was invented to demonstrate the workflow, that piece is `✅ demo-ready`, not
 `✅ ready`. Wiring a decorator around the user's *real* agent stays real
 (that's glue, not invented material). When the score depends on synthetic material, mark the
-heading with explicit copy — for a mix, say which (e.g. `3/3 in hand — 2 real, 1 demo`) — and say
+heading with explicit copy — for a mix, say which, placing the real/demo count before the wire-up
+clause (e.g. `3/3 in hand — 2 real, 1 demo — next I'll wire it up and run a free check.`) — and say
 once: "This proves the workflow can run; it is not a verdict on your real agent or data."
 
 ## The step spine (0–12; see GUIDE.md for each)
