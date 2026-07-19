@@ -40,6 +40,11 @@ tell "a measurement of my agent" from "a demo of the flow on synthetic everythin
 **Cover:** say it up front, *before* the run — *"Since we're building the example agent and its
 test set together, this first run shows you how Traigent works, not a verdict on a real system
 yet — bring your own agent or examples when you're ready for that."* Don't bury it in Step 12.
+Demo status is about the **material's provenance** — the agent's logic or the dataset's contents
+you *invented* — not who typed the glue: wrapping the user's *real* agent in a decorator stays
+real. Synthetic material may make the workflow **demo-ready**, but it must never earn an
+unqualified "ready" status or be presented as evidence about real optimization quality; for a mix,
+say which (e.g. "2 real, 1 demo").
 
 ## 4. Truth — mock mode leaking into the paid run
 `enable_mock_mode_for_quickstart()` has no undo; if the dry-run and the real run share one Python

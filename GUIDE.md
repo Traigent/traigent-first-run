@@ -117,6 +117,16 @@ Get their OK (and accommodate any reasonable change they ask for), then proceed.
 the LLM key yet — you'll set up your **LLM vendor key** at Step 3 (the free Traigent key comes
 later, at the enhanced portal run, Step 9).
 
+Once you've had your first quiet look at their project, render the **first-run readiness
+scoreboard** — Agent, Dataset, Evaluation — exactly as the `traigent-first-run` skill's
+*Readiness scoreboard* defines it: **base each line on what that first look actually found**
+(a piece already in hand is green; one you haven't reached yet is a warm red with its
+why-it-matters and approved link), open on the honest score (`0/3` only when the look found
+nothing), and keep a blank `>` line between items so it stays a scannable board. Render it once
+here; then refresh a line only when **that item's own** status or evidence changes — the Agent at
+the end of Step 4, the Dataset then Evaluation across Step 5, and Step 8's preflight/gates for
+verification and reopens — and **never re-render when no item's status or evidence changed**.
+
 ---
 
 ## Step 1 — Confirm the environment
@@ -302,6 +312,12 @@ retry wrapper, or generic provider client).
 agent-"shape" markers (single call, cheap-vs-expensive, chain, router, tool loop, …)
 that you'll reuse when choosing knobs at Step 7.
 
+**Refresh the readiness scoreboard — Agent line.** Once you've identified (or wired) the agent's
+answer function, turn the Agent line green — naming it in plain words (*"your answer function"*),
+never the module or signature — and update the progress heading. If *you* invented the agent's
+logic, it's `✅ demo-ready`, not `✅ ready` (wiring a decorator around the user's real agent stays
+real). Refresh only the Agent line, and only because its own evidence changed.
+
 ---
 
 ## Step 5 — Get a dataset and an evaluation method
@@ -407,6 +423,22 @@ question or two, not a wall of them). When you build, choose by output type:
 → `traigent-eval-choose-metric` (pick) and `traigent-eval-build`
 (build — includes input-aware, execution, and custom-evaluator patterns). Audit any LLM judge →
 `traigent-eval-audit`.
+
+**Refresh the readiness scoreboard — Dataset, then Evaluation.** Refresh per item as each one
+lands, so the board tracks real progress rung by rung. When the dataset is resolved, turn the
+Dataset line green in plain words (*"your 20 checked examples"* — the example inputs and the
+answers you expect); when the evaluation method is chosen, turn the Evaluation line green
+(*"the rule that checks whether an answer is right"*). Each time a line changes, **recompute the
+heading from the current status of all three items** — count the greens actually on the board now —
+rather than bumping it by a fixed rung: if Step 0's first look already had the Agent (or more) in
+hand, these refreshes land above the all-red path, so a hardcoded "→ 2/3" / "→ 3/3" would be wrong
+and would imply re-rendering lines whose evidence didn't change. (The rung strings in the
+`traigent-first-run` skill — `1/3`, `2/3`, `3/3 in hand` — are the heading vocabulary; the
+`0/3 → 1/3 → 2/3 → 3/3` climb only *illustrates* the path where the first look found nothing.)
+These greens are still what you *found by inspecting* — keep the plain green wording, with **no
+check IDs and no "verified" claim yet** (those come from Step 8's preflight). A dataset whose
+contents you invented is `✅ demo-ready`, not `✅ ready`. Refresh each line only because its own
+evidence changed.
 
 ---
 
@@ -617,6 +649,18 @@ python templates/preflight.py --env .env \
 ```
 
 Clear every FAIL before anything paid; WARNs are judgment calls to resolve knowingly.
+
+Once the **fully parameterized** preflight has run (dataset, agent, scorer, and good/bad/expected
+all supplied — plus `--metadata` when the scorer uses metadata), **reconcile the readiness
+scoreboard against its results**, following the
+check-to-item mapping the `traigent-first-run` skill defines. This is the first point a board line
+may say a piece is **verified by the free check** — and only for a check that actually returned
+**PASS**; an env-only, SKIP, or WARN run never counts as passed, so the board never shows a piece
+verified before preflight confirmed it. A failure reopens the matching item in the *needs one fix*
+form and decrements the heading — and this **reopen rule holds for every readiness-affecting gate
+in this step**, not just the shape/binding/sanity checks: the semantic-equivalence probe failing
+or a dataset-binding / degenerate-reference repair reopens its item the same way. Refresh only the
+lines this changed.
 
 > **FIRST — Mock ≠ universal interception — this is the one that can cost money.** Mock only
 > intercepts LLM calls made via **LiteLLM or LangChain**. A raw
