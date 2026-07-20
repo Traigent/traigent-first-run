@@ -50,6 +50,26 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         scorer.write_text("def score(output, expected):\n" f"    return {expression}\n")
         return scorer
 
+    def make_exact_label_scorer(self, directory: str) -> Path:
+        scorer = Path(directory) / "exact_label_scorer.py"
+        scorer.write_text(
+            "def score(output, expected):\n"
+            "    return float(output.casefold() == expected.casefold())\n"
+        )
+        return scorer
+
+    def make_mixed_mode_scorer(self, directory: str) -> Path:
+        scorer = Path(directory) / "mixed_mode_scorer.py"
+        scorer.write_text(
+            "def score(output, expected):\n"
+            "    if isinstance(expected, list):\n"
+            "        required = set(expected)\n"
+            "        actual = set(output)\n"
+            "        return len(required & actual) / len(required)\n"
+            "    return float(output.casefold() == expected.casefold())\n"
+        )
+        return scorer
+
     def command(self, scorer: Path) -> list[str]:
         return [
             sys.executable,
@@ -89,7 +109,9 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         payload = json.loads(process.stdout)
         self.assertTrue(payload["passed"])
+        self.assertEqual(payload["score_mode"], "graded")
         self.assertGreater(payload["scores"]["partial"], payload["scores"]["bad"])
+        self.assertIn("partial_is_above_bad", payload["checks"])
 
     def test_rejects_aliases_that_real_sdk_cannot_bind(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -159,6 +181,198 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             [case["name"] for case in payload["cases"]],
             ["field extraction", "sentiment classification"],
         )
+        self.assertEqual(
+            [case["score_mode"] for case in payload["cases"]],
+            ["graded", "graded"],
+        )
+
+    def test_binary_exact_label_calibration_accepts_no_partial_credit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_exact_label_scorer(directory)}:score",
+                    "--good",
+                    '"positive"',
+                    "--equivalent-good",
+                    '"POSITIVE"',
+                    "--partial",
+                    '"mixed"',
+                    "--bad",
+                    '"negative"',
+                    "--expected",
+                    '"positive"',
+                    "--score-mode",
+                    "binary",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        self.assertEqual(payload["score_mode"], "binary")
+        self.assertTrue(payload["checks"]["partial_fails"])
+        self.assertNotIn("partial_is_above_bad", payload["checks"])
+
+    def test_binary_mode_rejects_a_bad_probe_that_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_exact_label_scorer(directory)}:score",
+                    "--good",
+                    '"positive"',
+                    "--equivalent-good",
+                    '"POSITIVE"',
+                    "--partial",
+                    '"mixed"',
+                    "--bad",
+                    '"positive"',
+                    "--expected",
+                    '"positive"',
+                    "--score-mode",
+                    "binary",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertFalse(payload["passed"])
+        self.assertFalse(payload["checks"]["bad_fails"])
+
+    def test_graded_default_keeps_strict_partial_separation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_exact_label_scorer(directory)}:score",
+                    "--good",
+                    '"positive"',
+                    "--equivalent-good",
+                    '"POSITIVE"',
+                    "--partial",
+                    '"mixed"',
+                    "--bad",
+                    '"negative"',
+                    "--expected",
+                    '"positive"',
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["score_mode"], "graded")
+        self.assertFalse(payload["checks"]["partial_is_above_bad"])
+
+    def test_matrix_can_mix_graded_and_binary_score_modes(self) -> None:
+        cases = [
+            {
+                "name": "graded extraction",
+                "score_mode": "graded",
+                "expected": ["name", "email", "phone", "city"],
+                "probes": {
+                    "good": ["name", "email", "phone", "city"],
+                    "equivalent_good": ["city", "phone", "email", "name"],
+                    "partial": ["name", "email"],
+                    "bad": ["unrelated"],
+                },
+            },
+            {
+                "name": "binary sentiment",
+                "score_mode": "binary",
+                "expected": "positive",
+                "probes": {
+                    "good": "positive",
+                    "equivalent_good": "POSITIVE",
+                    "partial": "mixed",
+                    "bad": "negative",
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_mixed_mode_scorer(directory)}:score",
+                    "--cases",
+                    json.dumps(cases),
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        self.assertEqual(
+            [case["score_mode"] for case in payload["cases"]],
+            ["graded", "binary"],
+        )
+        self.assertTrue(all(case["passed"] for case in payload["cases"]))
+
+    def test_rejects_unknown_or_malformed_score_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.make_exact_label_scorer(directory)
+            single_process = subprocess.run(
+                [
+                    *self.command(scorer),
+                    "--score-mode",
+                    "unknown",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(single_process.returncode, 2)
+            self.assertIn("invalid choice", single_process.stderr)
+
+            for invalid_mode in ("unknown", {"kind": "binary"}):
+                with self.subTest(invalid_mode=invalid_mode):
+                    cases = [
+                        {
+                            "score_mode": invalid_mode,
+                            "expected": "positive",
+                            "probes": {
+                                "good": "positive",
+                                "equivalent_good": "POSITIVE",
+                                "partial": "mixed",
+                                "bad": "negative",
+                            },
+                        }
+                    ]
+                    matrix_process = subprocess.run(
+                        [
+                            sys.executable,
+                            str(SCRIPT),
+                            "--scorer",
+                            f"{scorer}:score",
+                            "--cases",
+                            json.dumps(cases),
+                            "--allow-execution",
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(matrix_process.returncode, 2)
+                    self.assertIn("score_mode must be one of", matrix_process.stderr)
 
     def test_rejects_scores_outside_normalized_finite_contract(self) -> None:
         invalid_scores = {

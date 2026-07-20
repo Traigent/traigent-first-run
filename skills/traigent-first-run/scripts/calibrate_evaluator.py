@@ -47,6 +47,7 @@ SDK_METRIC_VALUES = {
     "example_index",
 }
 PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
+SCORE_MODES = ("graded", "binary")
 
 
 def literal_or_file(value: str) -> Any:
@@ -235,10 +236,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-data")
     parser.add_argument("--metadata")
     parser.add_argument(
+        "--score-mode",
+        choices=SCORE_MODES,
+        help=(
+            "probe contract for a single case: graded (default) requires ordered "
+            "partial credit; binary requires partial and bad probes to fail"
+        ),
+    )
+    parser.add_argument(
         "--cases",
         help=(
             "JSON array or @FILE of named cases; each case requires expected and "
-            "good/equivalent_good/partial/bad probes"
+            "good/equivalent_good/partial/bad probes and may select score_mode"
         ),
     )
     parser.add_argument(
@@ -269,6 +278,7 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
         "--expected": args.expected,
         "--input-data": args.input_data,
         "--metadata": args.metadata,
+        "--score-mode": args.score_mode,
     }
     if args.cases is not None:
         combined = [
@@ -299,9 +309,16 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
             name = raw_case.get("name", f"case-{index}")
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"case {index} name must be a non-empty string")
+            score_mode = raw_case.get("score_mode", "graded")
+            if not isinstance(score_mode, str) or score_mode not in SCORE_MODES:
+                raise ValueError(
+                    f"case {index} score_mode must be one of: "
+                    f"{', '.join(SCORE_MODES)}"
+                )
             cases.append(
                 {
                     "name": name,
+                    "score_mode": score_mode,
                     "expected": raw_case["expected"],
                     "input_data": raw_case.get("input_data"),
                     "metadata": raw_case.get("metadata", {}),
@@ -322,6 +339,7 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
         [
             {
                 "name": "case-1",
+                "score_mode": args.score_mode or "graded",
                 "expected": literal_or_file(args.expected),
                 "input_data": (
                     literal_or_file(args.input_data)
@@ -343,17 +361,27 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
     )
 
 
-def calibration_checks(scores: dict[str, float]) -> dict[str, bool]:
-    return {
+def calibration_checks(scores: dict[str, float], score_mode: str) -> dict[str, bool]:
+    common = {
         "good_passes": scores["good"] >= GOOD_MINIMUM,
         "equivalent_is_accepted": scores["equivalent_good"] >= GOOD_MINIMUM,
+        "bad_fails": scores["bad"] <= BAD_MAXIMUM,
+        "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
+    }
+    if score_mode == "binary":
+        return {
+            **common,
+            "partial_fails": scores["partial"] <= BAD_MAXIMUM,
+        }
+    if score_mode != "graded":
+        raise ValueError(f"score_mode must be one of: {', '.join(SCORE_MODES)}")
+    return {
+        **common,
         "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
         <= EQUIVALENCE_TOLERANCE,
         "partial_is_below_good": scores["partial"]
         <= min(scores["good"], scores["equivalent_good"]) - SEPARATION_MARGIN,
         "partial_is_above_bad": scores["partial"] >= scores["bad"] + SEPARATION_MARGIN,
-        "bad_fails": scores["bad"] <= BAD_MAXIMUM,
-        "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
     }
 
 
@@ -412,11 +440,13 @@ def main() -> int:
 
     payload = json.loads(process.stdout)
     case_results = []
-    for case in payload["cases"]:
-        checks = calibration_checks(case["scores"])
+    for configured_case, case in zip(cases, payload["cases"], strict=True):
+        score_mode = configured_case["score_mode"]
+        checks = calibration_checks(case["scores"], score_mode)
         case_results.append(
             {
                 "name": case["name"],
+                "score_mode": score_mode,
                 "scores": case["scores"],
                 "checks": checks,
                 "passed": all(checks.values()),
@@ -429,6 +459,7 @@ def main() -> int:
         }
     else:
         result = {
+            "score_mode": case_results[0]["score_mode"],
             "scores": case_results[0]["scores"],
             "checks": case_results[0]["checks"],
             "passed": case_results[0]["passed"],
@@ -437,13 +468,14 @@ def main() -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif is_matrix:
         for case in case_results:
-            print(f"[{case['name']}]")
+            print(f"[{case['name']}] mode={case['score_mode']}")
             for label, score in case["scores"].items():
                 print(f"{label:<16} {score:.4f}")
             failed = [name for name, passed in case["checks"].items() if not passed]
             print("PASS" if not failed else f"FAIL: {', '.join(failed)}")
         print("OVERALL PASS" if result["passed"] else "OVERALL FAIL")
     else:
+        print(f"mode             {result['score_mode']}")
         for label, score in result["scores"].items():
             print(f"{label:<16} {score:.4f}")
         failed = [name for name, passed in result["checks"].items() if not passed]
