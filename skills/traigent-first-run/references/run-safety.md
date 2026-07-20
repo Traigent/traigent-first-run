@@ -70,10 +70,10 @@ Use this gate order:
    `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
    external evaluator; keep it behind explicit combined approval.
-5. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
-   OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
-   fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
-   required.
+5. Reuse the project's configured provider. When none exists, default to OpenRouter without a
+   separate choice question; the user may request a direct provider instead. If OpenRouter is
+   selected, identify every allowed upstream inference provider/route, disclose fallback
+   behavior, and pin allowed routes and disable fallbacks when an exact recipient set is required.
 6. Create the isolated environment with Python 3.11-3.13 without fetching packages.
 7. Install the exact declared dependencies under the narrow package-artifact authorization.
 8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
@@ -86,12 +86,11 @@ Use this gate order:
 9. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
    do not over-prescribe execution.
-10. After every applicable free check is complete, create the minimal `.env` and stop for the
-   provider-key paste.
-11. Stop for the Traigent portal-key paste immediately before connected work.
-12. Present one combined approval covering the smallest live provider/key check, any LLM-judge
+10. After every applicable free check is complete, create the minimal `.env` with blank selected
+    provider and Traigent key entries, then stop once for both local secret pastes.
+11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-13. After approval, run the live check first. Continue only if it passes.
+12. After approval, run the live check first. Continue only if it passes.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
@@ -147,41 +146,43 @@ provider/SDK usage record.
 
 ## Approval and budgets
 
-Before any paid/provider work, show one combined approval for the full planned first run:
+Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
+paid/provider work, show one concise approval for the full planned first run:
 
 - Baseline plus one optimization.
-- Number of dataset rows and trials.
-- Agent calls per item.
-- Evaluator/judge calls per item.
-- Total call floor and composite/retry multiplier.
-- Positive provider-request, live-check, judge, baseline, search, and holdout phase timeouts plus
-  the explicit provider retry count.
-- Estimated runtime, calculated with every permitted retry attempt and composite/judge call rather
-  than only the first-attempt call floor.
-- Combined worst-case spend and an aggregate walkthrough cap.
+- Dataset rows, maximum trials, and approximate total agent/evaluator calls.
+- Approximate runtime and estimated spend.
+- One total walkthrough ceiling, defaulting to `$5.00`.
+- Any untracked-cost path; for such a path, call the ceiling a conservative execution stop target,
+  not a provider-billing guarantee.
 - Services receiving data. For OpenRouter this means the OpenRouter gateway plus every allowed
   upstream inference provider/route, with fallback routing disclosed.
-- Stop condition.
 
-Derive the named positive timeouts from this approved call plan. A conservative runtime estimate
-multiplies each provider-call floor by `(1 + provider retry count)` and its per-request timeout,
-then adds judge retries, composite calls, and orchestration allowance. Record the rationale for
-each phase timeout. Pass the approved request timeout and retry count to the provider client, pass
-the approved baseline/search timeouts to the SDK, and enforce a monotonic deadline around each
-holdout phase.
+Keep the default `$5.00` ceiling without asking the user to choose a number. If the plan exceeds
+it or is materially long, recommend a smaller representative tuning slice or fewer trials first.
+Ask about a larger/longer run only if the user prefers the expanded scope.
 
-Record an aggregate remaining-budget ledger with separate rows for the live provider/key check,
-LLM-judge calibration/evaluation, current baseline, bounded search, retries/composites,
-current-configuration holdout, and winner holdout. For each row record allocation, phase
-worst-case cost, the charged or conservative deduction, and remaining aggregate cap. Before every
-paid phase or call batch, confirm its combined worst-case cost fits the remaining aggregate
-budget. Deduct tracked cost when reliable and the approved worst case otherwise. Stop and obtain
-revised approval if the next batch does not fit or the planned recipients, routes/fallbacks,
-data, call count, model, retry count, or timeout changes.
+Use the installed SDK's default per-optimization cost limit unless it is greater than the
+walkthrough's remaining total ceiling; then lower it for that process. Do not persist
+`TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process. The SDK enforces its
+optimization-call limit, but it does not yet share one cumulative budget with judge and holdout
+calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
+cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked.
+Before the next phase, stop if its estimate does not fit the remaining total ceiling.
+Never describe this as a hard provider-billing cap.
 
-`TRAIGENT_RUN_COST_LIMIT` limits one SDK optimization call. It does not cover the full walkthrough
-and does not enforce the aggregate cap. Do not persist `TRAIGENT_COST_APPROVED=true`; set it only
-in the approved process.
+The SDK already retries transient Traigent-backend requests and classifies provider failures.
+Do not layer another retry loop over it, expose retry counts to the user, or set
+`TRAIGENT_VENDOR_MAX_RETRIES` for the first run. Preserve retry behavior already present in the
+user's agent/provider client. Generated walkthrough provider calls add no explicit retries.
+
+After the approved live probe, calculate internal request and SDK optimization bounds from
+observed latency, rows, trials, calls per example, and concurrency, with a reasonable completion
+margin. These are implementation details, not user choices. If observation makes the run
+materially longer than the approved estimate, offer a smaller run or quote the additional
+time/cost. If the SDK returns a timeout with completed trials, show the best partial result and
+offer another bounded pass only when additional search is justified. A timeout with zero trials
+requires diagnosis, not more time.
 
 Verify selected model IDs are live and cost-tracked before scaling. If a model chosen by the
 assistant is unavailable or unpriced, replace it only with a working model from the same chosen
@@ -251,7 +252,14 @@ can look identical to a production one.
 - Permanent HTTP validation error or missing `cloud_url`: surface the precise backend reason; do
   not replace it with a guessed explanation or claim portal success.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
-- Quota failure: reduce samples/trials; do not retry blindly.
+- Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
+  classification; do not add a duplicate retry loop.
+- Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
+  do not retry or describe every case as "no tokens."
+- Timeout with completed trials: show the best partial result before offering one additional
+  bounded pass with its extra approximate time and cost.
+- Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before
+  considering another run.
 - Evaluator exceptions or all-zero/all-one measures: repair evaluator/data and rerun only after
   calibration.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator

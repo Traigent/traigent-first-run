@@ -28,11 +28,8 @@ policy with invented material does.
 
 Record in `traigent-runs/run-plan.md`:
 
-- Source path and stable identifier.
-- Provenance classification.
-- Any conversion or wrapper created.
-- Validation evidence.
-- Unresolved real-world gap.
+- Source path or stable identifier, provenance classification, any generated wrapper/copy,
+  validation evidence, and the unresolved real-world gap.
 
 Resolve `limited` and `invalid` candidates before using the matrix. For `limited`, recommend
 repairing a working copy and revalidating it; if the user explicitly continues unchanged, preserve

@@ -29,7 +29,7 @@ Traigent generates a coherent substitute around everything that already exists.
 
 ## Install as an Agent Skill
 
-The complete guide, references, scripts, and run-plan asset are packaged together:
+The complete guide, references, scripts, and compact internal run record are packaged together:
 
 ```bash
 npx skills add Traigent/traigent-first-run
@@ -49,7 +49,7 @@ Node.js is needed only for this optional installation command, not for the Traig
 2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
 4. Validates compatibility and evaluator discrimination.
-5. Shows one combined time, cost, and data-egress approval.
+5. Shows one concise runtime, cost-ceiling, and data-egress approval immediately before paid work.
 6. Evaluates the current configuration, then runs one bounded optimization when meaningful.
 7. Reports the result, limitations, artifacts, and verified portal links.
 

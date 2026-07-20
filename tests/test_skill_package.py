@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import json
 import re
-import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -206,17 +205,39 @@ class SkillPackageTests(unittest.TestCase):
             "judgment-dependent change",
             "local-only",
             "separate explicit approval",
-            "aggregate remaining-budget ledger",
+            "one concise approval",
+            "single running total",
         ):
             self.assertIn(phrase, contract_text)
         self.assertIn(
-            "does not enforce the aggregate walkthrough cap",
+            "does not yet share one cumulative budget",
             contract_text,
         )
         self.assertIn(
             "never replace it silently",
             safety_text,
         )
+
+    def test_first_run_does_not_ask_for_implementation_settings(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        combined = f"{skill_text} {safety_text}"
+        for phrase in (
+            "do not create a separate provider-choice question",
+            "stop once",
+            "do not ask the user to choose cost, retries, or timeout settings",
+            "one concise combined approval",
+            "`$5.00` total walkthrough ceiling by default",
+            "do not add or ask the user to configure another retry policy",
+            "never call the walkthrough ceiling a hard provider-billing cap",
+        ):
+            self.assertIn(phrase, combined)
+        for obsolete_prompt in (
+            "explicit provider retry count",
+            "remaining-budget ledger",
+            "holdout phase timeout",
+        ):
+            self.assertNotIn(obsolete_prompt, combined)
 
     def test_dependency_install_authorization_is_narrow(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -284,7 +305,7 @@ class SkillPackageTests(unittest.TestCase):
             "verify the installed sdk's capabilities",
             "run a fresh-process traigent mock plumbing check",
             "create the minimal `.env`",
-            "stop for the provider-key paste",
+            "stop once",
         )
         positions = [
             normalized_environment.index(phrase)
@@ -310,7 +331,7 @@ class SkillPackageTests(unittest.TestCase):
             "use the installed sdk's public dataset validator/loader",
             "run a fresh-process traigent mock plumbing check",
             "create the minimal `.env`",
-            "stop for the provider-key paste",
+            "stop once",
         )
         positions = [normalized_gate.index(phrase) for phrase in ordered_gate_phrases]
         self.assertEqual(positions, sorted(positions))
@@ -381,17 +402,15 @@ class SkillPackageTests(unittest.TestCase):
             "rubric branch",
             "mode",
             "threshold",
-            "known evidence or coverage gaps",
+            "evidence or coverage gap",
             "semantic-coverage verdict",
         ):
             self.assertIn(phrase, quality_text)
         for phrase in (
-            "semantic-coverage reviewer",
             "semantic-coverage evidence",
-            "materially distinct inputs",
-            "mode and threshold rationale from product evidence",
-            "known semantic-coverage gaps",
-            "semantic-coverage verdict (`sufficient`/`ambiguous`)",
+            "verdict (`sufficient`/`ambiguous`)",
+            "known gaps",
+            "calibration cases/results artifact",
         ):
             self.assertIn(phrase, plan_text)
 
@@ -568,26 +587,24 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("--input-field", preflight_text)
         self.assertIn("--expected-field", preflight_text)
 
-    def test_run_plan_records_repeatable_calibration_and_ledger(self) -> None:
+    def test_run_record_is_compact_and_keeps_essential_state(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
-            "input/fixture",
-            "expected outcome",
-            "rubric/schema branch",
-            "chosen thresholds and rationale",
-            "semantic-coverage reviewer",
-            "semantic-coverage evidence",
-            "semantic-coverage verdict (`sufficient`/`ambiguous`)",
-            "live provider/key check",
-            "llm-judge calibration/evaluation",
-            "retries/composites",
-            "current-configuration holdout",
-            "winner holdout",
-            "phase worst case",
-            "charged or conservative deduction",
-            "remaining aggregate cap",
+            "the user does not fill it in",
+            "calibration cases/results artifact",
+            "total walkthrough ceiling (default `$5.00`)",
+            "tracked spend, or conservative deduction",
+            "remaining total ceiling",
+            "partial/final result",
         ):
             self.assertIn(phrase, text)
+        self.assertLessEqual(len(text.splitlines()), 60)
+        for removed_detail in (
+            "provider retry count",
+            "provider-request timeout",
+            "aggregate budget ledger",
+        ):
+            self.assertNotIn(removed_detail, text)
 
     def test_sdk_template_defines_prompt_builder(self) -> None:
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
@@ -595,21 +612,26 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('if style == "direct":', text)
         self.assertIn('if style == "structured":', text)
 
-    def test_sdk_template_bounds_requests_phases_and_retries(self) -> None:
+    def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()
+        normalized = " ".join(text.casefold().split())
         for phrase in (
-            "PROVIDER_REQUEST_TIMEOUT_SECONDS",
+            "MODEL_REQUEST_TIMEOUT_SECONDS",
             "BASELINE_TIMEOUT_SECONDS",
             "OPTIMIZATION_TIMEOUT_SECONDS",
-            "HOLDOUT_PHASE_TIMEOUT_SECONDS",
-            "PROVIDER_RETRY_COUNT",
             "not math.isfinite(value) or value <= 0",
-            "num_retries=PROVIDER_RETRY_COUNT",
             "timeout=BASELINE_TIMEOUT_SECONDS",
             "timeout=OPTIMIZATION_TIMEOUT_SECONDS",
-            "deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS",
         ):
             self.assertIn(phrase, text)
+        for phrase in (
+            "the user does not fill them in",
+            "do not set `traigent_vendor_max_retries`",
+        ):
+            self.assertIn(phrase, normalized)
+        self.assertNotIn("num_retries=", text)
+        self.assertNotIn("HOLDOUT_PHASE_TIMEOUT_SECONDS", text)
+        self.assertNotIn("PROVIDER_RETRY_COUNT", text)
 
     def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -678,8 +700,8 @@ class SkillPackageTests(unittest.TestCase):
                 loaded_paths.append(path)
                 return SimpleNamespace(examples=examples)
 
-        def call_agent(message, config, *, request_timeout_seconds=None):
-            agent_calls.append((message, config, request_timeout_seconds))
+        def call_agent(message, config):
+            agent_calls.append((message, config))
             return "urgent" if message == "classify this" else "normal", 0.25
 
         def task_score(output, expected, input_data):
@@ -688,27 +710,22 @@ class SkillPackageTests(unittest.TestCase):
 
         namespace = {
             "HOLDOUT_DATASET": "traigent-runs/holdout.jsonl",
-            "HOLDOUT_PHASE_TIMEOUT_SECONDS": 30.0,
-            "PROVIDER_REQUEST_TIMEOUT_SECONDS": 10.0,
-            "PROVIDER_RETRY_COUNT": 0,
             "call_agent": call_agent,
             "task_score": task_score,
-            "time": time,
             "traigent": SimpleNamespace(Dataset=Dataset),
         }
         exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
 
         config = {"model": "preserved-current-model"}
-        score, cost = namespace["evaluate_holdout"](config, phase_name="test holdout")
+        score, cost = namespace["evaluate_holdout"](config)
 
         self.assertEqual(score, 1.0)
         self.assertEqual(cost, 0.5)
         self.assertEqual(loaded_paths, ["traigent-runs/holdout.jsonl"])
         self.assertEqual(
-            [(message, call_config) for message, call_config, _timeout in agent_calls],
+            agent_calls,
             [("classify this", config), ("classify that", config)],
         )
-        self.assertTrue(all(call[2] > 0 for call in agent_calls))
         self.assertEqual(
             scorer_calls,
             [

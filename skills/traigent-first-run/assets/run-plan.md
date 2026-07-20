@@ -1,119 +1,47 @@
 # Traigent First-Run Record
 
-The coding assistant fills this file from project evidence. Store the completed copy at
-`traigent-runs/run-plan.md`.
+The coding assistant maintains this concise internal record at
+`traigent-runs/run-plan.md`. The user does not fill it in.
 
-## Objective
+## Objective and provenance
 
-- Task:
-- Primary quality/success measure:
-- Secondary measures:
+- Task and primary success measure:
 - Unacceptable failure:
+- Agent (`real`/`limited`/`demo`/`missing`/`invalid`) - source, wrapper, evidence, gap:
+- Dataset (`real`/`limited`/`demo`/`missing`/`invalid`) - source, generated copy, evidence, gap:
+- Evaluation (`real`/`limited`/`demo`/`missing`/`invalid`) - source, adapter, evidence, gap:
 
-## Component provenance
+## Quality evidence
 
-| Component | State (`real`/`limited`/`demo`/`missing`/`invalid`) | Source or generated path | Validation evidence | Real-world gap |
-|---|---|---|---|---|
-| Agent |  |  |  |  |
-| Dataset |  |  |  |  |
-| Evaluation |  |  |  |  |
+- Dataset rows, split, difficulty/scenario coverage, corruption, duplicates, and ceiling risk:
+- Evaluator meaning of "correct":
+- Calibration cases/results artifact:
+- Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
+- Quality advisory, user choice, and revalidation result if applicable:
 
-## Dataset
+## Planned comparison
 
-- Input/output contract:
-- Tuning rows:
-- Holdout rows:
-- Split rule:
-- Difficulty/scenario coverage:
-- Duplicate/overlap check:
-- Corrupted/unusable rows and percentage:
-- Difficulty, boundary, and failure-mode coverage:
-- Ceiling-risk evidence:
-
-## Quality advisory
-
-- Affected component:
-- Concrete evidence:
-- Optimization consequence:
-- Recommended repair:
-- User choice (`repair`/`demonstration`/`pause`):
-- Revalidation evidence after repair:
-
-## Evaluator calibration
-
-Repeat one row for every materially distinct input, outcome class, and rubric/schema branch.
-
-| Case | Input/fixture | Expected outcome | Rubric/schema branch | Mode | Good probe / score | Equivalent-good probe / score | Partial probe / score | Bad probe / score | Chosen thresholds and rationale | Result / exceptions |
-|---|---|---|---|---|---|---|---|---|---|---|
-|  |  |  |  |  |  |  |  |  |  |  |
-
-- Evaluation method:
-- Product meaning of "correct":
-- Threshold values chosen before execution:
-- Threshold rationale:
-- Judge model/rubric, if applicable:
-- Calibration egress/cost approval, if applicable:
-- Semantic-coverage reviewer:
-- Semantic-coverage evidence (paths, stable identifiers, or representative case IDs):
-- Materially distinct inputs, outcome classes, labels, schema variants, metadata paths, and rubric branches reviewed:
-- Mode and threshold rationale from product evidence:
-- Known semantic-coverage gaps:
-- Semantic-coverage verdict (`sufficient`/`ambiguous`) and rationale:
-- Product-grading ambiguity question/answer, if applicable:
-- Explicit approval for any real grading-policy change, if applicable:
-
-## Comparison
-
-- Current baseline configuration:
-- Optimization space (must include baseline):
-- Tuning dataset and evaluator used by both:
-- Maximum trials:
-- Agent calls per example:
-- Evaluator/judge calls per example:
-- Provider retry count:
-- Provider-request timeout and rationale:
-- Live-check timeout and rationale:
-- Judge timeout and rationale:
-- Baseline timeout and rationale:
-- Optimization timeout and rationale:
-- Holdout phase timeout and rationale:
-- Runtime calculation including retries/composites:
-- Combined worst-case spend:
-- Total first-run cap:
-- Estimated runtime:
-- Services and routes receiving data, including OpenRouter upstreams/fallbacks:
+- Current configuration:
+- Search dimensions and maximum trials:
+- Tuning / holdout rows:
+- Agent and evaluator/judge calls per example:
+- Services/routes receiving data:
+- Approximate runtime:
+- Estimated spend:
+- Total walkthrough ceiling (default `$5.00`):
 - User approval:
 
-## Aggregate budget ledger
+## Running state
 
-Record the charged amount when reliably tracked; otherwise deduct the approved phase worst case.
-The remaining value is the aggregate cap after that deduction.
-
-| Phase | Approved calls/routes | Allocation | Phase worst case | Charged or conservative deduction | Remaining aggregate cap | Status/evidence |
-|---|---|---:|---:|---:|---:|---|
-| Live provider/key check |  |  |  |  |  |  |
-| LLM-judge calibration/evaluation |  |  |  |  |  |  |
-| Current baseline |  |  |  |  |  |  |
-| Bounded search |  |  |  |  |  |  |
-| Retries/composites |  |  |  |  |  |  |
-| Current-configuration holdout |  |  |  |  |  |  |
-| Winner holdout |  |  |  |  |  |  |
-
-## Results
-
-- Baseline tuning result:
-- Best tuning result:
+- Tracked spend, or conservative deduction where untracked:
+- Remaining total ceiling:
+- Baseline run ID, result, and portal link:
+- Optimization run ID, partial/final result, stop reason, and portal link:
 - Holdout result:
-- Total tracked cost:
-- Trials / failures / stop reason:
-- Truncation check:
-- Persistence status:
-- Baseline portal link:
-- Optimization portal link:
 
-## Claim
+## Interpretation
 
 - Components that remain walkthrough substitutes:
-- What this run demonstrates:
-- What this run does not establish:
+- What the result demonstrates:
+- What the result does not establish:
 - Recommended next real-world improvement:

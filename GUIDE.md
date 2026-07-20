@@ -26,7 +26,7 @@ Use the bundled tools:
   `python skills/traigent-first-run/scripts/preflight.py --help`
 - Readiness-state planning:
   `python skills/traigent-first-run/scripts/readiness.py --help`
-- Run record template:
+- Compact internal run record:
   `skills/traigent-first-run/assets/run-plan.md`
 
 ## User-facing promise

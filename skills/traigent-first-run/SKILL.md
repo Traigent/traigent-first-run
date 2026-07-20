@@ -27,7 +27,7 @@ Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight
 helpful. Use [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
-discovered evidence; do not ask the user to complete it.
+discovered evidence. Keep it concise and internal; do not ask the user to complete or review it.
 
 ## Operating contract
 
@@ -57,11 +57,11 @@ approval.
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
-| Create a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run; leave secrets blank and stop for the user to enter them locally. |
+| Create a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run; include only the selected provider and Traigent key names, leave both blank, and stop once for local secret entry. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
-| Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch above | Obtain the unchanged combined approval for recipients, data, calls, runtime, and worst-case spend. |
+| Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch above | Obtain one concise approval for recipients/data, planned scope, approximate runtime, and the total walkthrough ceiling. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
 ## Status language
@@ -250,9 +250,9 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 
 Only after the standard-library-only component checks:
 
-1. Reuse the project's provider. If none exists, recommend OpenRouter because one key can exercise
-   multiple model vendors, offer at most two direct-provider alternatives, and ask which services
-   may receive the walkthrough content.
+1. Reuse the project's configured provider. If none exists, default to OpenRouter because one key
+   can exercise multiple model vendors. Do not create a separate provider-choice question; mention
+   that the user may request a direct provider instead.
 2. Create the isolated environment with Python 3.11-3.13 without fetching packages.
 3. Install the exact declared dependencies under the narrow authorization above.
 4. Verify the installed SDK's capabilities and public signatures instead of relying on a
@@ -268,10 +268,10 @@ Only after the standard-library-only component checks:
    known to be intercepted. Raw provider clients, external evaluators, subprocesses, HTTP
    services, tools, and custom judges are not free merely because mock mode is enabled. Exit the
    mock process and never reuse it for a real run.
-6. After every applicable free check is complete, create the minimal `.env` with only the selected
-   provider's blank key entry and safe run settings, then stop for the provider-key paste. Ask the
-   user to enter it in that file, never in chat. Add the Traigent portal key only when connected
-   execution is about to start.
+6. After every applicable free check is complete, create the minimal `.env` with blank entries for
+   the selected provider key and Traigent portal key. Stop once and ask the user to enter both
+   locally, never in chat. If the portal key is not yet available, provide only the required
+   account/key destination and resume from this step afterward.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
@@ -288,28 +288,43 @@ Explain truthfully:
 
 ### 6. Ask once before paid work
 
-Prepare one combined approval containing:
+Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
+Prepare one concise combined approval immediately before paid work containing:
 
 - What will run: current-configuration baseline, then one bounded optimization.
-- Tuning and holdout sizes.
-- Agent calls and any evaluator/judge calls per example.
-- Holdout calls for the current and selected configurations.
-- Estimated runtime and combined worst-case spend.
-- Positive provider-request, baseline, optimization, and holdout timeouts; the explicit provider
-  retry count; and an estimated runtime that includes retry and composite-call multipliers.
+- Tuning/holdout sizes, trial limit, and approximate total calls.
+- Approximate runtime and estimated spend.
+- A `$5.00` total walkthrough ceiling by default.
+- Any call path whose cost is untracked; describe the ceiling as a stop target rather than a
+  provider-billing guarantee in that case.
 - What leaves the machine and every service or route that may receive it. For OpenRouter, name
   OpenRouter plus every allowed upstream inference provider/route and disclose fallback behavior.
-- An aggregate walkthrough budget and stop condition covering the baseline, search,
-  evaluator/judge calls, retries/composites, and both current-versus-winner holdout paths.
 
-Proceed only after explicit approval. Keep approval in the current process environment; never
-persist a cost-approval flag in `.env`. Record a remaining-budget ledger with separate rows for
-the live provider/key check, judge calls, baseline, search, retries/composites, current holdout,
-and winner holdout. Each row records its allocation, phase worst case, charged deduction, and
-remaining aggregate cap. Before every paid phase or call batch, check its combined worst-case cost
-against the remaining aggregate budget; stop and obtain revised approval when it does not fit.
-The SDK `TRAIGENT_RUN_COST_LIMIT` applies to one optimization call and does not enforce the
-aggregate walkthrough cap.
+If the estimated first run exceeds `$5.00` or is materially long, recommend a smaller
+representative tuning slice or fewer trials while preserving meaningful difficulty and a holdout.
+Ask about a larger/longer run only when the user prefers it. Proceed after one explicit approval.
+Keep approval in the current process only; never persist a cost-approval flag in `.env`.
+
+Use the installed SDK's default per-optimization cost limit unless it exceeds the remaining total
+walkthrough ceiling; if it does, lower the process-only per-run limit. The SDK owns optimization
+cost enforcement, timeout partial results, Traigent-backend retries, and provider-error
+classification. Do not add or ask the user to configure another retry policy. Preserve an
+existing agent/provider client's retry behavior; generated walkthrough code does not add provider
+retries and leaves `TRAIGENT_VENDOR_MAX_RETRIES` unset.
+
+Until the SDK exposes a cumulative budget across baseline, search, evaluator/judge, and holdout,
+maintain only one running total: add tracked cost after each paid phase, or deduct that phase's
+conservative estimate when cost is untracked. Before the next phase, compare its estimate with the
+remaining total ceiling. Stop before exceeding it and ask only if more paid work is required.
+Never call the walkthrough ceiling a hard provider-billing cap.
+
+After the approved live probe, derive internal request and optimization time bounds from observed
+latency, rows, trials, calls per example, and concurrency. Do not show or ask the user to choose
+those implementation values. If the measured runtime no longer fits the approved estimate,
+offer either a smaller run or the additional approximate time/cost. On SDK timeout, report a
+usable partial result when trials completed; request another bounded pass only when the evidence
+suggests more search could help. With zero completed trials, diagnose the failure instead of
+requesting more time.
 
 ### 7. Run the honest comparison
 

@@ -54,6 +54,14 @@ class StaticPreflightTests(unittest.TestCase):
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
+    def test_missing_custom_cost_limit_uses_sdk_default_without_warning(self) -> None:
+        MODULE.check_cost_settings({}, {})
+        cost_cap = next(
+            result for result in MODULE.RESULTS if result.check == "cost-cap"
+        )
+        self.assertEqual(cost_cap.status, MODULE.PASS)
+        self.assertIn("installed SDK default applies", cost_cap.detail)
+
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"

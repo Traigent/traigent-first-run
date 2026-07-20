@@ -100,16 +100,15 @@ product evidence, in this order where present:
 3. Dataset labels, examples, metadata, and schema variants.
 4. Existing evaluator rules, rubrics, failure reports, and reviewed traces.
 
-Record all of the following in `traigent-runs/run-plan.md`:
+Save the detailed case matrix and calibration results in
+`traigent-runs/calibration-cases.json`. Record only their path and this concise summary in
+`traigent-runs/run-plan.md`:
 
 - The semantic-coverage reviewer as the coding assistant and the evidence sources, with paths,
   stable identifiers, or representative case IDs.
-- Every materially distinct input shape, outcome class, label, schema variant, metadata-dependent
-  path, and rubric branch that can change scoring.
-- Why each probe family covers those branches and why its `score_mode`, pass/fail threshold,
-  approximate-equivalence tolerance, and separation margin follow the product semantics.
-- Known evidence or coverage gaps and whether each gap could change correctness or candidate
-  ranking.
+- The materially distinct input shapes, outcome classes, and scoring branches covered.
+- The mode/threshold rationale and any evidence or coverage gap that could change correctness or
+  candidate ranking.
 - A semantic-coverage verdict of `sufficient` or `ambiguous`, with a concise evidence-based
   rationale.
 

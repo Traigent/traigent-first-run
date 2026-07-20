@@ -5,10 +5,11 @@ Use this reference after component creation and before writing the run wrapper.
 ## Contents
 
 1. Capability discovery
-2. Decorator contract
-3. Current baseline
-4. Bounded optimization
-5. Holdout and result checks
+2. Automatic run bounds
+3. Decorator contract
+4. Current baseline
+5. Bounded optimization
+6. Holdout and result checks
 
 ## Capability discovery
 
@@ -28,26 +29,47 @@ PY
 ```
 
 After decorating the function, inspect `agent.optimize_sync` the same way. If the installed
-signatures or the public `traigent.Dataset.from_jsonl` loader do not support the usage below,
-stop and adapt from the installed public API. Do not invent arguments.
+signatures or public dataset loader do not support the usage below, adapt from the installed
+public API. Do not invent arguments or reproduce SDK internals.
 
-## Approved runtime bounds
+The installed SDK owns:
 
-Before writing the wrapper, copy the combined approval's named positive provider-request,
-baseline, optimization, and holdout phase timeouts plus its explicit provider retry count into
-the current process environment. Do not invent defaults or persist approval in `.env`. Derive
-each phase timeout from the approved call floor, `(1 + provider retry count)`, request timeout,
-judge/composite calls, and an explicit orchestration allowance. Record that calculation and the
-chosen values in `run-plan.md`.
+- The default per-optimization cost limit and its in-run enforcement.
+- Graceful partial results when an optimization timeout occurs.
+- Retries for transient Traigent-backend requests.
+- Provider-error classification and stop reasons.
 
-The example below passes the request timeout and retry count to LiteLLM, and the baseline/search
-timeouts to `optimize_sync`. The installed SDK must expose `timeout` on `optimize_sync`; the
-capability-discovery step above is the authority.
+The first-run wrapper must not duplicate those behaviors. Leave the SDK/provider retry defaults
+unchanged, preserve any retry behavior already present in the user's agent, and do not set
+`TRAIGENT_VENDOR_MAX_RETRIES` or LiteLLM `num_retries` for generated walkthrough code.
 
-Treat the SDK timeout as an optimization-phase stop bound, not as a replacement for the provider
-request timeout. The holdout deadline is checked around each synchronous call and divides the
-remaining time among permitted attempts; an in-flight request still returns or errors through its
-shorter provider timeout. Include retry backoff and cleanup in the orchestration allowance.
+## Automatic run bounds
+
+Do not ask the user for retry counts or timeout values. Before the paid live probe, estimate
+runtime conservatively from dataset size, planned trials, and calls per example. After the
+approved probe, replace that estimate with observed latency:
+
+```text
+expected seconds =
+    rows * trials * calls per example * observed upper latency / effective concurrency
+
+SDK phase timeout = expected seconds * a reasonable completion margin
+```
+
+Use a positive floor so setup overhead does not make a small run fail immediately. The coding
+assistant selects the exact internal values and places them in the current process; the user does
+not fill them in. If the observed estimate becomes materially longer than the approved estimate,
+offer a smaller representative run or state the additional approximate time and cost.
+
+Keep an individual model-request timeout so one stuck provider call cannot hang the walkthrough.
+Reuse the real agent's existing value when present. Generated LiteLLM walkthrough code may use a
+reasonable internal fallback such as 120 seconds, adjusted automatically after the live probe.
+This is not a new retry policy.
+
+Use one total walkthrough ceiling, `$5.00` by default. Leave the SDK per-optimization cost limit
+at its installed default unless it exceeds the remaining total ceiling; then lower it through the
+installed public API or a process-only setting. Keep one running total across paid phases, not a
+phase ledger.
 
 ## Decorator contract
 
@@ -56,7 +78,6 @@ Use one production-compatible function for baseline and optimization:
 ```python
 import math
 import os
-import time
 
 from dotenv import load_dotenv
 
@@ -72,17 +93,16 @@ SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
 
 
-def positive_seconds(name: str) -> float:
-    value = float(os.environ[name])
+def positive_number(name: str, *, default: float | None = None) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        if default is None:
+            raise ValueError(f"{name} is required")
+        value = default
+    else:
+        value = float(raw_value)
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and positive")
-    return value
-
-
-def nonnegative_int(name: str) -> int:
-    value = int(os.environ[name])
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative")
     return value
 
 
@@ -93,20 +113,16 @@ def positive_int(name: str) -> int:
     return value
 
 
-# Export these process-only values from the unchanged combined approval.
-PROVIDER_REQUEST_TIMEOUT_SECONDS = positive_seconds(
-    "TRAIGENT_FIRST_RUN_PROVIDER_REQUEST_TIMEOUT_SECONDS"
+MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
+    "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS",
+    default=120.0,
 )
-BASELINE_TIMEOUT_SECONDS = positive_seconds(
+BASELINE_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
 )
-OPTIMIZATION_TIMEOUT_SECONDS = positive_seconds(
+OPTIMIZATION_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS"
 )
-HOLDOUT_PHASE_TIMEOUT_SECONDS = positive_seconds(
-    "TRAIGENT_FIRST_RUN_HOLDOUT_PHASE_TIMEOUT_SECONDS"
-)
-PROVIDER_RETRY_COUNT = nonnegative_int("TRAIGENT_FIRST_RUN_PROVIDER_RETRY_COUNT")
 MAX_TRIALS = positive_int("TRAIGENT_FIRST_RUN_MAX_TRIALS")
 
 BASELINE_CONFIG = {
@@ -136,29 +152,16 @@ def build_prompt(message: str, *, style: str) -> str:
 
 
 def task_score(prediction, expected, input_data) -> float:
-    # Generate a runtime adapter from this installed SDK's documented public
+    # Generate this adapter from the installed SDK's documented public
     # metric_functions contract. Keep the preserved evaluator unchanged.
     ...
 
 
-def call_agent(
-    message: str,
-    config: dict,
-    *,
-    request_timeout_seconds: float | None = None,
-) -> tuple[str, float]:
-    effective_timeout = (
-        PROVIDER_REQUEST_TIMEOUT_SECONDS
-        if request_timeout_seconds is None
-        else request_timeout_seconds
-    )
-    if effective_timeout <= 0:
-        raise ValueError("request_timeout_seconds must be positive")
+def call_agent(message: str, config: dict) -> tuple[str, float]:
     response = litellm.completion(
         model=config["model"],
         temperature=config["temperature"],
-        timeout=effective_timeout,
-        num_retries=PROVIDER_RETRY_COUNT,
+        timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
         messages=[
             {
                 "role": "user",
@@ -184,26 +187,24 @@ def agent(message: str) -> str:
     return output
 ```
 
-Set the two non-secret model-id environment values from the real agent or the locally validated
-walkthrough choices before launch. Keep the real current model and parameter values in
-`BASELINE_CONFIG` and in every corresponding search dimension. Every search variable must affect
-the actual agent call.
+The process-only values above are selected by the coding assistant from the inspected project and
+live-probe observation; they are not questions for the user. Keep the real current model and
+parameter values in `BASELINE_CONFIG` and every corresponding search dimension. Every search
+variable must affect the actual agent call.
 
-Do not include `expected` in the agent signature. Dataset input fields call the agent; expected
-output belongs only to evaluation.
+Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
+belongs only to evaluation.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
-documented public `metric_functions` contract; the example above reflects the inspected
-three-argument contract. Do not infer aliases or positional fallbacks from SDK internals. When
-grading requires example metadata or full control of agent execution, use the installed SDK's
-public custom-evaluator model instead of extending this callback from memory. Do not change the
-evaluator's grading policy. The baseline, search, and holdout must use the same selected public
-evaluation path.
+documented public `metric_functions` contract; the example reflects the inspected three-argument
+contract. Do not infer aliases or positional fallbacks from SDK internals. When grading requires
+example metadata or full control of agent execution, use the installed SDK's public custom
+evaluator instead. The baseline, search, and holdout must use the same selected public evaluation
+path.
 
 ## Current baseline
 
-Check the baseline's combined worst-case cost against its allocation in the aggregate
-remaining-budget ledger. Then run the current configuration as one connected grid point:
+Run the actual current configuration as one connected grid point:
 
 ```python
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run current configuration"
@@ -219,10 +220,12 @@ baseline_results = agent.optimize_sync(
 
 If the installed SDK counts an implicit/default trial separately, size `max_trials` from observed
 behavior so the current configuration actually executes. Verify it appears in returned trials.
+For an existing agent without explicit configuration values, create a thin wrapper whose baseline
+branch calls the original behavior unchanged.
 
-For an existing agent that does not expose explicit configuration values, create a thin wrapper
-whose baseline branch calls the original behavior unchanged. Do not substitute an assistant-chosen
-"normal" configuration for the real current behavior.
+After the baseline, add its tracked cost to the single running total. If cost is unavailable,
+deduct the conservative estimate. Do not start the search if it cannot fit the remaining total
+ceiling.
 
 ## Bounded optimization
 
@@ -239,73 +242,45 @@ optimized_results = agent.optimize_sync(
 )
 ```
 
-Set `MAX_TRIALS`, the per-optimization-call SDK cost limit, provider key, Traigent key, and
-process-only cost approval from the recorded combined approval. Separately check the search's
-combined worst-case cost against the aggregate remaining-budget ledger before calling
-`optimize_sync`. Do not enable mock mode in this process.
+Do not enable mock mode in this process. The optimization space must include the current
+configuration.
 
-The optimization space must include the current configuration. If it does not, the comparison
-cannot prove the search beat what the user had.
+When `stop_reason == "timeout"` and trials completed, retain and report the best partial result.
+Offer another bounded pass only when the search was still improving or left a specific worthwhile
+hypothesis, and state its additional approximate time and cost. If zero trials completed,
+diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
+describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
 ## Holdout and result checks
 
 Evaluate the unchanged current configuration and selected best configuration on the untouched
-holdout with the same agent path and evaluator. Count these provider/evaluator calls in the
-combined approval. A holdout check is not another optimization search. Use the undecorated
-`call_agent` helper so each configuration is explicit:
+holdout with the same agent path and evaluator. A holdout check is not another optimization
+search:
 
 ```python
-def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
-    deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS
+def evaluate_holdout(config: dict) -> tuple[float, float]:
     scores = []
     tracked_cost = 0.0
     holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
     for example in holdout.examples:
-        remaining_seconds = deadline - time.monotonic()
-        if remaining_seconds <= 0:
-            raise TimeoutError(
-                f"{phase_name} exceeded its approved holdout phase deadline"
-            )
         input_data = example.input_data
         expected = example.expected_output
-        # Reserve request time for every permitted attempt inside the phase deadline.
-        per_attempt_timeout = min(
-            PROVIDER_REQUEST_TIMEOUT_SECONDS,
-            remaining_seconds / (1 + PROVIDER_RETRY_COUNT),
-        )
-        output, call_cost = call_agent(
-            input_data["message"],
-            config,
-            request_timeout_seconds=per_attempt_timeout,
-        )
-        if time.monotonic() > deadline:
-            raise TimeoutError(
-                f"{phase_name} exceeded its approved holdout phase deadline"
-            )
+        output, call_cost = call_agent(input_data["message"], config)
         scores.append(task_score(output, expected, input_data))
         tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
 
-baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(
-    BASELINE_CONFIG,
-    phase_name="current-configuration holdout",
-)
+baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(BASELINE_CONFIG)
 winner_holdout_score, winner_holdout_cost = evaluate_holdout(
-    optimized_results.best_config,
-    phase_name="winner holdout",
+    optimized_results.best_config
 )
 ```
 
-Adapt the input expansion to the real agent signature. For an LLM judge, instrument and add judge
-cost separately. Before each current-configuration and winner holdout call batch, confirm its
-combined worst-case cost fits the aggregate remaining-budget ledger. Add both holdout costs to the
-reported first-run total; they are not included in the optimization result object's aggregate.
-Loading holdout through the same installed public `traigent.Dataset.from_jsonl` loader used for
-tuning preserves the SDK's input, expected-output, and metadata normalization, including
-top-level side fields and a nested literal `metadata` field.
-The monotonic deadline is created separately for each holdout batch. Include both holdout phase
-timeouts and every permitted retry attempt in the approved runtime estimate.
+Before each holdout batch, ensure its conservative estimate fits the one remaining total. Add
+tracked holdout costs to the reported walkthrough total. Loading holdout through the same
+installed public `traigent.Dataset.from_jsonl` loader used for tuning preserves the SDK's
+normalization semantics.
 
 Before reporting:
 
@@ -316,6 +291,6 @@ assert optimized_results.best_config is not None, "no best configuration selecte
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
-Also inspect failed trials, cost tracking, truncation, declared measures, and persistence status as
-defined in `run-safety.md`. Do not apply the best configuration automatically. Export it as a
-candidate and ask before any production change.
+Also inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
+persistence status as defined in `run-safety.md`. Do not apply the best configuration
+automatically. Export it as a candidate and ask before any production change.

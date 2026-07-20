@@ -11,7 +11,6 @@ Use ``calibrate_evaluator.py`` separately to execute evaluator probes.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import re
@@ -159,12 +158,6 @@ def check_sdk() -> None:
         )
     else:
         emit("sdk-version", PASS, f"traigent {installed}")
-    if importlib.util.find_spec("tenacity") is None:
-        emit(
-            "sdk-retry-dep",
-            WARN,
-            "tenacity is absent; install it if the agent uses LiteLLM num_retries",
-        )
 
 
 def check_keys(env: dict[str, str | None]) -> None:
@@ -224,7 +217,11 @@ def check_cost_settings(
 ) -> None:
     raw_cap = env.get("TRAIGENT_RUN_COST_LIMIT")
     if not key_present(raw_cap):
-        emit("cost-cap", WARN, "TRAIGENT_RUN_COST_LIMIT is not configured")
+        emit(
+            "cost-cap",
+            PASS,
+            "no custom per-optimization cap; the installed SDK default applies",
+        )
     else:
         try:
             cap = float(raw_cap)
@@ -234,7 +231,7 @@ def check_cost_settings(
             if cap <= 0:
                 emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be positive")
             else:
-                emit("cost-cap", PASS, f"per-process cap: ${cap:.2f}")
+                emit("cost-cap", PASS, f"custom per-optimization cap: ${cap:.2f}")
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
     if key_present(approved_in_file) and approved_in_file.strip().lower() in {
