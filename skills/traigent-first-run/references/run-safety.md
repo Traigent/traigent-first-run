@@ -29,8 +29,8 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   Dependency installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
-- Build a minimal `.env` for the selected provider only after every applicable free component,
-  capability, and safe mock check. Leave the Traigent key blank until connected execution.
+- After every applicable free component, capability, and safe mock check, build one minimal `.env`
+  with blank selected-provider and Traigent key entries. Stop once for both local secret pastes.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
@@ -149,7 +149,8 @@ provider/SDK usage record.
 Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
 paid/provider work, show one concise approval for the full planned first run:
 
-- Baseline plus one optimization.
+- The smallest live provider/key check, any required LLM-judge calibration, baseline, one
+  optimization, and current-versus-winner holdout.
 - Dataset rows, maximum trials, and approximate total agent/evaluator calls.
 - Approximate runtime and estimated spend.
 - One total walkthrough ceiling, defaulting to `$5.00`.

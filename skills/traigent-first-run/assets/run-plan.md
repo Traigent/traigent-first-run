@@ -15,7 +15,7 @@ The coding assistant maintains this concise internal record at
 
 - Dataset rows, split, difficulty/scenario coverage, corruption, duplicates, and ceiling risk:
 - Evaluator meaning of "correct":
-- Calibration cases/results artifact:
+- Calibration cases and results artifacts:
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
 

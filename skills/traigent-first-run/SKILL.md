@@ -291,7 +291,8 @@ Explain truthfully:
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
 Prepare one concise combined approval immediately before paid work containing:
 
-- What will run: current-configuration baseline, then one bounded optimization.
+- What will run: the smallest live provider/key check, any required LLM-judge calibration,
+  current-configuration baseline, one bounded optimization, and current-versus-winner holdout.
 - Tuning/holdout sizes, trial limit, and approximate total calls.
 - Approximate runtime and estimated spend.
 - A `$5.00` total walkthrough ceiling by default.

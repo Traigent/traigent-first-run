@@ -238,6 +238,14 @@ class SkillPackageTests(unittest.TestCase):
             "holdout phase timeout",
         ):
             self.assertNotIn(obsolete_prompt, combined)
+        for paid_phase in (
+            "smallest live provider/key check",
+            "llm-judge calibration",
+            "current-configuration baseline",
+            "one bounded optimization",
+            "current-versus-winner holdout",
+        ):
+            self.assertIn(paid_phase, skill_text)
 
     def test_dependency_install_authorization_is_narrow(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -410,7 +418,7 @@ class SkillPackageTests(unittest.TestCase):
             "semantic-coverage evidence",
             "verdict (`sufficient`/`ambiguous`)",
             "known gaps",
-            "calibration cases/results artifact",
+            "calibration cases and results artifacts",
         ):
             self.assertIn(phrase, plan_text)
 
@@ -591,7 +599,7 @@ class SkillPackageTests(unittest.TestCase):
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
             "the user does not fill it in",
-            "calibration cases/results artifact",
+            "calibration cases and results artifacts",
             "total walkthrough ceiling (default `$5.00`)",
             "tracked spend, or conservative deduction",
             "remaining total ceiling",
@@ -605,6 +613,17 @@ class SkillPackageTests(unittest.TestCase):
             "aggregate budget ledger",
         ):
             self.assertNotIn(removed_detail, text)
+
+    def test_calibration_results_are_persisted_separately(self) -> None:
+        text = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        self.assertIn(
+            "--json > traigent-runs/calibration-results.json",
+            text,
+        )
+        self.assertIn(
+            "traigent-runs/calibration-cases.json",
+            text,
+        )
 
     def test_sdk_template_defines_prompt_builder(self) -> None:
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()

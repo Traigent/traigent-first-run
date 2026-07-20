@@ -100,9 +100,9 @@ product evidence, in this order where present:
 3. Dataset labels, examples, metadata, and schema variants.
 4. Existing evaluator rules, rubrics, failure reports, and reviewed traces.
 
-Save the detailed case matrix and calibration results in
-`traigent-runs/calibration-cases.json`. Record only their path and this concise summary in
-`traigent-runs/run-plan.md`:
+Save the detailed case matrix in `traigent-runs/calibration-cases.json` and capture executed
+scores, checks, and exceptions separately in `traigent-runs/calibration-results.json`. Record only
+those paths and this concise summary in `traigent-runs/run-plan.md`:
 
 - The semantic-coverage reviewer as the coding assistant and the evidence sources, with paths,
   stable identifiers, or representative case IDs.
@@ -166,7 +166,7 @@ python skills/traigent-first-run/scripts/calibrate_evaluator.py \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
   --allow-execution \
-  --json
+  --json > traigent-runs/calibration-results.json
 ```
 
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
