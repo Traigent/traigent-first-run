@@ -289,6 +289,51 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_top_level_self_or_cls_cannot_bind_scalar_input(self) -> None:
+        for receiver in ("self", "cls"):
+            with self.subTest(
+                receiver=receiver
+            ), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"def answer({receiver}, query):\n" "    return query\n"
+                )
+                MODULE.check_binding(
+                    [{"input": "hello", "output": "a"}], f"{agent}:answer"
+                )
+            self.assertTrue(
+                any(
+                    result.check == "dataset-binding"
+                    and result.status == MODULE.FAIL
+                    and "multiple required parameters" in result.detail
+                    for result in MODULE.RESULTS
+                )
+            )
+            MODULE.RESULTS.clear()
+
+    def test_top_level_self_or_cls_is_required_for_mapping_input(self) -> None:
+        for receiver in ("self", "cls"):
+            with self.subTest(
+                receiver=receiver
+            ), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"def answer({receiver}, query):\n" "    return query\n"
+                )
+                MODULE.check_binding(
+                    [{"input": {"query": "hello"}, "output": "a"}],
+                    f"{agent}:answer",
+                )
+            self.assertTrue(
+                any(
+                    result.check == "dataset-binding"
+                    and result.status == MODULE.FAIL
+                    and f"'{receiver}' is missing" in result.detail
+                    for result in MODULE.RESULTS
+                )
+            )
+            MODULE.RESULTS.clear()
+
     def test_scorer_check_is_static_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -310,7 +355,7 @@ class StaticPreflightTests(unittest.TestCase):
                 )
             )
 
-    def test_scorer_aliases_that_real_sdk_cannot_bind_fail(self) -> None:
+    def test_scorer_aliases_are_statically_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "scorer.py"
             scorer.write_text(
@@ -321,8 +366,69 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertTrue(
             any(
                 result.check == "scorer-signature"
+                and result.status == MODULE.PASS
+                and "keyword aliases/context" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_scorer_positional_fallbacks_are_statically_compatible(self) -> None:
+        sources = {
+            "positional-only": (
+                "def score(prediction, reference, /):\n"
+                "    return float(prediction == reference)\n"
+            ),
+            "arbitrary-names": (
+                "def score(left, right):\n" "    return float(left == right)\n"
+            ),
+            "variadic": "def score(*values):\n    return 1.0\n",
+            "zero-argument": "def score():\n    return 1.0\n",
+        }
+        for label, source in sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                scorer = Path(directory) / "scorer.py"
+                scorer.write_text(source)
+                MODULE.check_scorer_signature(f"{scorer}:score")
+            self.assertTrue(
+                any(
+                    result.check == "scorer-signature"
+                    and result.status == MODULE.PASS
+                    and "positional fallback" in result.detail
+                    for result in MODULE.RESULTS
+                )
+            )
+            MODULE.RESULTS.clear()
+
+    def test_async_scorer_is_statically_compatible_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(
+                "async def score(actual_output, ground_truth, *, metadata):\n"
+                "    return float(actual_output == ground_truth)\n"
+            )
+            MODULE.check_scorer_signature(f"{scorer}:score")
+        self.assertTrue(
+            any(
+                result.check == "scorer-signature"
+                and result.status == MODULE.PASS
+                and "async result will be awaited" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_scorer_that_sdk_cannot_bind_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(
+                "def score(*, unsupported_required):\n"
+                "    return float(bool(unsupported_required))\n"
+            )
+            MODULE.check_scorer_signature(f"{scorer}:score")
+        self.assertTrue(
+            any(
+                result.check == "scorer-signature"
                 and result.status == MODULE.FAIL
-                and "explicit 'output'" in result.detail
+                and "cannot bind" in result.detail
                 for result in MODULE.RESULTS
             )
         )

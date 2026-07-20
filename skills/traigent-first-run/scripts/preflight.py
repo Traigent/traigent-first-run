@@ -53,16 +53,35 @@ VENDOR_KEYS = {
     "HuggingFace": ("HF_TOKEN",),
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
-SCORER_NAMES = {
+OUTPUT_SCORER_NAMES = {
+    "actual",
+    "actual_output",
     "output",
+    "prediction",
+    "predicted",
+    "result",
+}
+EXPECTED_SCORER_NAMES = {
     "expected",
-    "llm_metrics",
+    "expected_output",
+    "ground_truth",
+    "reference",
+    "target",
+}
+LLM_METRIC_SCORER_NAMES = {"llm_metrics", "metrics"}
+CONTEXT_SCORER_NAMES = {
     "example",
     "input_data",
     "metadata",
     "config",
     "example_index",
 }
+SCORER_NAMES = (
+    OUTPUT_SCORER_NAMES
+    | EXPECTED_SCORER_NAMES
+    | LLM_METRIC_SCORER_NAMES
+    | CONTEXT_SCORER_NAMES
+)
 
 
 @dataclass(frozen=True)
@@ -709,14 +728,10 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     dict_rows = [row for row in rows if isinstance(row["input"], dict)]
     if not dict_rows:
         required_positional = [
-            name
-            for name in signature.positional
-            if name in signature.required and name not in {"self", "cls"}
+            name for name in signature.positional if name in signature.required
         ]
         required_keyword_only = [
-            name
-            for name in signature.keyword_only
-            if name in signature.required and name not in {"self", "cls"}
+            name for name in signature.keyword_only if name in signature.required
         ]
         if not signature.positional and not signature.has_varargs:
             emit(
@@ -756,8 +771,6 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
                 "dataset-binding", FAIL, f"input key '{key}' matches no agent parameter"
             )
     for name in signature.required:
-        if name in {"self", "cls"}:
-            continue
         missing_rows = [
             index for index, row in enumerate(dict_rows, 1) if name not in row["input"]
         ]
@@ -782,44 +795,63 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
         )
 
 
+def scorer_binding_mode(signature: StaticSignature) -> str | None:
+    """Return the first Traigent 0.23 local-evaluator call shape that can bind."""
+
+    def positional_binds(positional_count: int) -> bool:
+        required_keyword_only = set(signature.keyword_only) & set(signature.required)
+        if required_keyword_only:
+            return False
+        if positional_count > len(signature.positional) and not signature.has_varargs:
+            return False
+        return not any(
+            name in signature.required and index >= positional_count
+            for index, name in enumerate(signature.positional)
+        )
+
+    if signature.has_varargs and positional_binds(3):
+        return "3-argument positional fallback (variadic)"
+
+    keywordable = set(signature.positional) - set(signature.positional_only) | set(
+        signature.keyword_only
+    )
+    keyword_names = keywordable & SCORER_NAMES
+    if signature.has_kwargs:
+        keyword_names |= {"output", "expected", "llm_metrics"}
+    if keyword_names:
+        required_positional_only = set(signature.positional_only) & set(
+            signature.required
+        )
+        required_keywordable = set(signature.required) - set(signature.positional_only)
+        if not required_positional_only and required_keywordable <= keyword_names:
+            return "keyword aliases/context"
+
+    for positional_count in (3, 2, 1, 0):
+        if positional_binds(positional_count):
+            return f"{positional_count}-argument positional fallback"
+    return None
+
+
 def check_scorer_signature(scorer_spec: str) -> None:
     signature = parse_function_spec(scorer_spec, "scorer-signature")
     if signature is None:
         return
-    if signature.is_async:
-        emit("scorer-signature", FAIL, "async metric functions are not awaited")
-        return
-    if signature.positional_only:
+    binding_mode = scorer_binding_mode(signature)
+    if binding_mode is None:
         emit(
             "scorer-signature",
             FAIL,
-            "SDK metric parameters must be keyword-bindable; positional-only "
-            f"parameters found: {signature.positional_only}",
+            "Traigent 0.23 local evaluator cannot bind this signature using "
+            "documented output/expected/metric aliases, context keywords, or "
+            "the 3/2/1/0 positional fallbacks",
         )
         return
-    named = set(signature.positional) | set(signature.keyword_only)
-    if "output" not in named:
-        emit(
-            "scorer-signature",
-            FAIL,
-            "declare an explicit 'output' parameter; add an adapter instead of aliases",
-        )
-        return
-    unsupported_required = [
-        name for name in signature.required if name not in SCORER_NAMES
-    ]
-    if unsupported_required:
-        emit(
-            "scorer-signature",
-            FAIL,
-            "required parameters are not supported by the SDK metric binder: "
-            f"{unsupported_required}",
-        )
-        return
+    async_detail = "; async result will be awaited" if signature.is_async else ""
     emit(
         "scorer-signature",
         PASS,
-        "signature is statically compatible; evaluator code was not imported or executed",
+        f"signature is statically compatible via {binding_mode}{async_detail}; "
+        "evaluator code was not imported or executed",
     )
     emit(
         "scorer-calibration",

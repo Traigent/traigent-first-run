@@ -32,6 +32,16 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         )
         return scorer
 
+    def make_positional_scorer(self, directory: str, signature: str) -> Path:
+        scorer = Path(directory) / "positional_scorer.py"
+        scorer.write_text(
+            f"def score{signature}:\n"
+            "    required = set(reference)\n"
+            "    actual = set(prediction)\n"
+            "    return len(required & actual) / len(required)\n"
+        )
+        return scorer
+
     def make_case_dependent_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "case_dependent_scorer.py"
         scorer.write_text(
@@ -125,7 +135,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertGreater(payload["scores"]["partial"], payload["scores"]["bad"])
         self.assertIn("partial_is_above_bad", payload["checks"])
 
-    def test_rejects_aliases_that_real_sdk_cannot_bind(self) -> None:
+    def test_accepts_documented_output_and_expected_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             process = subprocess.run(
                 [
@@ -135,8 +145,119 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(json.loads(process.stdout)["passed"])
+
+    def test_accepts_positional_only_and_arbitrary_two_argument_scorers(self) -> None:
+        for signature in (
+            "(prediction, reference, /)",
+            "(prediction, reference)",
+        ):
+            with self.subTest(
+                signature=signature
+            ), tempfile.TemporaryDirectory() as directory:
+                process = subprocess.run(
+                    [
+                        *self.command(
+                            self.make_positional_scorer(directory, signature)
+                        ),
+                        "--allow-execution",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_accepts_context_parameters_and_llm_metric_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "context_scorer.py"
+            scorer.write_text(
+                "def score(prediction, reference, *, metrics, example, input_data, "
+                "metadata, config, example_index):\n"
+                "    assert example.expected_output == reference\n"
+                "    assert example.input_data == input_data\n"
+                "    assert example.metadata == metadata\n"
+                "    assert input_data == {'branch': 'extract'}\n"
+                "    assert metadata == {'source': 'probe'}\n"
+                "    assert metrics == {} and config == {} and example_index == 0\n"
+                "    required = set(reference)\n"
+                "    actual = set(prediction)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [
+                    *self.command(scorer),
+                    "--input-data",
+                    '{"branch": "extract"}',
+                    "--metadata",
+                    '{"source": "probe"}',
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_populates_every_documented_output_expected_and_metric_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "all_aliases_scorer.py"
+            scorer.write_text(
+                "def score(actual, actual_output, output, prediction, predicted, result, "
+                "expected, expected_output, ground_truth, reference, target, "
+                "llm_metrics, metrics):\n"
+                "    outputs = (actual, actual_output, output, prediction, predicted, result)\n"
+                "    expectations = (expected, expected_output, ground_truth, reference, target)\n"
+                "    assert all(value == output for value in outputs)\n"
+                "    assert all(value == expected for value in expectations)\n"
+                "    assert llm_metrics == metrics == {}\n"
+                "    return len(set(output) & set(expected)) / len(set(expected))\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_awaits_async_function_and_sync_returned_awaitable(self) -> None:
+        scorers = {
+            "async-function": (
+                "async def score(prediction, reference):\n"
+                "    return len(set(prediction) & set(reference)) / len(set(reference))\n"
+            ),
+            "returned-awaitable": (
+                "def score(prediction, reference):\n"
+                "    async def calculate():\n"
+                "        return len(set(prediction) & set(reference)) / len(set(reference))\n"
+                "    return calculate()\n"
+            ),
+        }
+        for label, source in scorers.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                scorer = Path(directory) / "async_scorer.py"
+                scorer.write_text(source)
+                process = subprocess.run(
+                    [*self.command(scorer), "--allow-execution"],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_fails_closed_for_signature_sdk_cannot_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "unbound_scorer.py"
+            scorer.write_text(
+                "def score(*, unsupported_required):\n"
+                "    return float(bool(unsupported_required))\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
         self.assertEqual(process.returncode, 1)
-        self.assertIn("explicit 'output'", process.stderr)
+        self.assertIn("TypeError:", process.stderr)
+        self.assertIn("unsupported_required", process.stderr)
 
     def test_matrix_fails_when_a_case_dependent_scorer_only_passes_first_case(
         self,
@@ -197,6 +318,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             [case["score_mode"] for case in payload["cases"]],
             ["graded", "graded"],
         )
+        self.assertIn("human review", payload["coverage_note"])
 
     def test_binary_exact_label_calibration_accepts_no_partial_credit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -394,6 +516,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 with self.subTest(invalid_mode=invalid_mode):
                     cases = [
                         {
+                            "name": "invalid mode",
                             "score_mode": invalid_mode,
                             "expected": "positive",
                             "probes": {
@@ -402,7 +525,17 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                                 "partial": "mixed",
                                 "bad": "negative",
                             },
-                        }
+                        },
+                        {
+                            "name": "second case",
+                            "expected": "negative",
+                            "probes": {
+                                "good": "negative",
+                                "equivalent_good": "NEGATIVE",
+                                "partial": "mixed",
+                                "bad": "positive",
+                            },
+                        },
                     ]
                     matrix_process = subprocess.run(
                         [
@@ -419,6 +552,180 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                     )
                     self.assertEqual(matrix_process.returncode, 2)
                     self.assertIn("score_mode must be one of", matrix_process.stderr)
+
+    def test_matrix_requires_two_distinct_named_case_payloads(self) -> None:
+        base_case = {
+            "name": "Branch One",
+            "expected": ["a", "b"],
+            "probes": {
+                "good": ["a", "b"],
+                "equivalent_good": ["b", "a"],
+                "partial": ["a"],
+                "bad": ["z"],
+            },
+        }
+        invalid_case_sets = {
+            "one case": [base_case],
+            "normalized duplicate names": [
+                base_case,
+                {
+                    **base_case,
+                    "name": "  branch   one ",
+                    "expected": ["c", "d"],
+                    "probes": {
+                        "good": ["c", "d"],
+                        "equivalent_good": ["d", "c"],
+                        "partial": ["c"],
+                        "bad": ["z"],
+                    },
+                },
+            ],
+            "duplicate payloads": [base_case, {**base_case, "name": "Branch Two"}],
+        }
+        for label, cases in invalid_case_sets.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                scorer = self.make_scorer(directory)
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--scorer",
+                        f"{scorer}:score",
+                        "--cases",
+                        json.dumps(cases),
+                        "--allow-execution",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("Invalid calibration cases", process.stderr)
+
+    def test_custom_thresholds_are_validated_and_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "threshold_scorer.py"
+            scorer.write_text(
+                "def score(output, expected):\n"
+                "    return {'good': 0.70, 'equivalent': 0.65, "
+                "'partial': 0.40, 'bad': 0.30}[output]\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--good",
+                    "good",
+                    "--equivalent-good",
+                    "equivalent",
+                    "--partial",
+                    "partial",
+                    "--bad",
+                    "bad",
+                    "--expected",
+                    "expected",
+                    "--good-minimum",
+                    "0.60",
+                    "--bad-maximum",
+                    "0.35",
+                    "--equivalence-tolerance",
+                    "0.10",
+                    "--separation-margin",
+                    "0.05",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertEqual(
+            payload["thresholds"],
+            {
+                "bad_maximum": 0.35,
+                "equivalence_tolerance": 0.1,
+                "good_minimum": 0.6,
+                "separation_margin": 0.05,
+            },
+        )
+
+    def test_rejects_invalid_or_incoherent_thresholds(self) -> None:
+        invalid_arguments = (
+            ("--good-minimum", "nan"),
+            ("--bad-maximum", "-0.1"),
+            ("--good-minimum", "0.2", "--bad-maximum", "0.2"),
+            (
+                "--good-minimum",
+                "0.8",
+                "--bad-maximum",
+                "0.2",
+                "--separation-margin",
+                "0.51",
+            ),
+        )
+        for arguments in invalid_arguments:
+            with self.subTest(
+                arguments=arguments
+            ), tempfile.TemporaryDirectory() as directory:
+                process = subprocess.run(
+                    [
+                        *self.command(self.make_scorer(directory)),
+                        *arguments,
+                        "--allow-execution",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 2)
+
+    def test_timeout_must_be_strictly_positive(self) -> None:
+        for value in ("0", "-1"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                process = subprocess.run(
+                    [
+                        *self.command(self.make_scorer(directory)),
+                        "--timeout",
+                        value,
+                        "--allow-execution",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("greater than zero", process.stderr)
+
+    def test_evaluator_exception_keeps_type_and_message(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "raising_scorer.py"
+            scorer.write_text(
+                "def score(output, expected):\n"
+                "    raise ValueError('rubric label missing')\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("ValueError: rubric label missing", process.stderr)
+        self.assertNotIn("score contract", process.stderr)
+
+    def test_nonnumeric_return_uses_score_contract_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "nonnumeric_scorer.py"
+            scorer.write_text(
+                "def score(output, expected):\n" "    return {'grade': 'pass'}\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("TypeError: score contract requires", process.stderr)
+        self.assertIn("got dict", process.stderr)
 
     def test_rejects_scores_outside_normalized_finite_contract(self) -> None:
         invalid_scores = {

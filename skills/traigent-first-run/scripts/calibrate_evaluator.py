@@ -7,6 +7,7 @@ Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import importlib.util
 import inspect
@@ -17,6 +18,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -36,16 +38,26 @@ SECRET_MARKERS = (
     "COOKIE",
     "SESSION",
 )
-SDK_METRIC_VALUES = {
+OUTPUT_METRIC_PARAM_NAMES = {
+    "actual",
+    "actual_output",
     "output",
-    "expected",
-    "llm_metrics",
-    "example",
-    "input_data",
-    "metadata",
-    "config",
-    "example_index",
+    "prediction",
+    "predicted",
+    "result",
 }
+EXPECTED_METRIC_PARAM_NAMES = {
+    "expected",
+    "expected_output",
+    "ground_truth",
+    "reference",
+    "target",
+}
+LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
+MATRIX_COVERAGE_NOTE = (
+    "Distinct names and payloads are structural checks only; confirm by human "
+    "review that the cases cover materially different task branches."
+)
 PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
 SCORE_MODES = ("graded", "binary")
 
@@ -98,9 +110,109 @@ def load_function(spec: str):
     function = getattr(module, name, None)
     if not callable(function):
         raise ValueError(f"{path} has no callable '{name}'")
-    if inspect.iscoroutinefunction(function):
-        raise ValueError("async metric functions are not supported")
     return function
+
+
+def metric_keyword_arguments(
+    parameters: list[inspect.Parameter],
+    output: Any,
+    example: Any,
+    config: dict[str, Any],
+    llm_metrics: dict[str, Any],
+    example_index: int,
+) -> dict[str, Any]:
+    """Build the keyword candidate used by Traigent 0.23's local evaluator."""
+    keyword_values = {
+        "example": example,
+        "input_data": example.input_data,
+        "metadata": example.metadata,
+        "config": config,
+        "example_index": example_index,
+    }
+    keyword_values.update({name: output for name in OUTPUT_METRIC_PARAM_NAMES})
+    keyword_values.update(
+        {name: example.expected_output for name in EXPECTED_METRIC_PARAM_NAMES}
+    )
+    keyword_values.update({name: llm_metrics for name in LLM_METRIC_PARAM_NAMES})
+
+    kwargs: dict[str, Any] = {}
+    accepts_arbitrary_kwargs = False
+    for parameter in parameters:
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            accepts_arbitrary_kwargs = True
+            continue
+        if parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+        }:
+            continue
+        if parameter.name in keyword_values:
+            kwargs[parameter.name] = keyword_values[parameter.name]
+
+    if accepts_arbitrary_kwargs:
+        kwargs.setdefault("output", output)
+        kwargs.setdefault("expected", example.expected_output)
+        kwargs.setdefault("llm_metrics", llm_metrics)
+    return kwargs
+
+
+def invoke_metric(
+    function,
+    output: Any,
+    expected: Any,
+    input_data: Any,
+    metadata: Any,
+    example_index: int,
+) -> Any:
+    """Invoke one scorer with Traigent 0.23 keyword and positional fallbacks."""
+    signature = inspect.signature(function)
+    parameters = list(signature.parameters.values())
+    llm_metrics: dict[str, Any] = {}
+    config: dict[str, Any] = {}
+    example = SimpleNamespace(
+        input_data=input_data,
+        expected_output=expected,
+        metadata=metadata or {},
+    )
+    positional_args = (output, expected, llm_metrics)
+    call_candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    if any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters
+    ):
+        call_candidates.append((positional_args, {}))
+
+    kwargs = metric_keyword_arguments(
+        parameters, output, example, config, llm_metrics, example_index
+    )
+    if kwargs:
+        call_candidates.append(((), kwargs))
+
+    call_candidates.extend(
+        [
+            (positional_args, {}),
+            (positional_args[:2], {}),
+            (positional_args[:1], {}),
+            ((), {}),
+        ]
+    )
+
+    bind_error: TypeError | None = None
+    for args, candidate_kwargs in call_candidates:
+        try:
+            signature.bind(*args, **candidate_kwargs)
+        except TypeError as error:
+            bind_error = error
+            continue
+        return function(*args, **candidate_kwargs)
+
+    if bind_error is not None:
+        raise bind_error
+    return function(output, expected)
+
+
+async def await_metric_value(value: Any) -> Any:
+    return await value
 
 
 def bind_call(
@@ -112,67 +224,17 @@ def bind_call(
     example_index: int,
 ) -> float:
     """Bind one SDK-shaped call and enforce the normalized score contract."""
-    signature = inspect.signature(function)
-    values = {
-        "output": output,
-        "expected": expected,
-        "llm_metrics": {},
-        "example": None,
-        "input_data": input_data,
-        "metadata": metadata or {},
-        "config": {},
-        "example_index": example_index,
-    }
-    parameters = list(signature.parameters.values())
-    kwargs = {
-        parameter.name: values[parameter.name]
-        for parameter in parameters
-        if parameter.name in SDK_METRIC_VALUES
-        and parameter.kind
-        not in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }
-    }
-    positional_only = [
-        parameter.name
-        for parameter in parameters
-        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
-    ]
-    if positional_only:
-        raise TypeError(
-            "SDK metric functions must use keyword-bindable parameters; "
-            f"positional-only parameters found: {positional_only}"
-        )
-    if "output" not in signature.parameters:
-        raise TypeError(
-            "SDK metric functions must declare an explicit 'output' parameter; "
-            "add an adapter instead of using aliases"
-        )
-    unsupported_required = [
-        parameter.name
-        for parameter in parameters
-        if parameter.default is inspect.Parameter.empty
-        and parameter.kind
-        not in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }
-        and parameter.name not in SDK_METRIC_VALUES
-    ]
-    if unsupported_required:
-        raise TypeError(
-            "required parameters are not supported by the SDK metric binder: "
-            f"{unsupported_required}"
-        )
-    signature.bind(**kwargs)
+    raw_score = invoke_metric(
+        function, output, expected, input_data, metadata, example_index
+    )
+    if inspect.isawaitable(raw_score):
+        raw_score = asyncio.run(await_metric_value(raw_score))
     try:
-        score = float(function(**kwargs))
+        score = float(raw_score)
     except (TypeError, ValueError) as error:
         raise TypeError(
             "score contract requires a numeric normalized higher-is-better value "
-            "in [0,1]"
+            f"in [0,1]; got {type(raw_score).__name__}"
         ) from error
     if not math.isfinite(score):
         raise ValueError(
@@ -217,8 +279,25 @@ def run_worker() -> int:
         )
         return 0
     except Exception as error:
-        print(f"Evaluator execution failed: {error}", file=sys.stderr)
+        print(
+            f"Evaluator execution failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         return 1
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def normalized_threshold(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("must be a finite number in [0,1]")
+    return parsed
 
 
 def parse_args() -> argparse.Namespace:
@@ -246,8 +325,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cases",
         help=(
-            "JSON array or @FILE of named cases; each case requires expected and "
-            "good/equivalent_good/partial/bad probes and may select score_mode"
+            "JSON array or @FILE containing at least two named, distinct cases; "
+            "each case requires expected and good/equivalent_good/partial/bad "
+            "probes and may select score_mode. Structural distinctness does not "
+            "replace human review of material task-branch coverage"
         ),
     )
     parser.add_argument(
@@ -263,7 +344,37 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="confirm explicit approval for LLM-judge provider calls",
     )
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--good-minimum",
+        type=normalized_threshold,
+        default=GOOD_MINIMUM,
+        help=f"minimum accepted good/equivalent score (default: {GOOD_MINIMUM})",
+    )
+    parser.add_argument(
+        "--bad-maximum",
+        type=normalized_threshold,
+        default=BAD_MAXIMUM,
+        help=f"maximum accepted bad/binary-partial score (default: {BAD_MAXIMUM})",
+    )
+    parser.add_argument(
+        "--equivalence-tolerance",
+        type=normalized_threshold,
+        default=EQUIVALENCE_TOLERANCE,
+        help=(
+            "maximum good/equivalent score difference "
+            f"(default: {EQUIVALENCE_TOLERANCE})"
+        ),
+    )
+    parser.add_argument(
+        "--separation-margin",
+        type=normalized_threshold,
+        default=SEPARATION_MARGIN,
+        help=(
+            "minimum graded partial-to-good and bad-to-partial margin "
+            f"(default: {SEPARATION_MARGIN})"
+        ),
+    )
+    parser.add_argument("--timeout", type=positive_int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -290,9 +401,11 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
                 + ", ".join(combined)
             )
         raw_cases = literal_or_file(args.cases)
-        if not isinstance(raw_cases, list) or not raw_cases:
-            raise ValueError("--cases must contain a non-empty JSON array")
+        if not isinstance(raw_cases, list) or len(raw_cases) < 2:
+            raise ValueError("--cases must contain a JSON array of at least two cases")
         cases = []
+        normalized_names: set[str] = set()
+        canonical_cases: set[str] = set()
         for index, raw_case in enumerate(raw_cases, 1):
             if not isinstance(raw_case, dict):
                 raise ValueError(f"case {index} must be a JSON object")
@@ -309,22 +422,43 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
             name = raw_case.get("name", f"case-{index}")
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"case {index} name must be a non-empty string")
+            display_name = " ".join(name.split())
+            normalized_name = display_name.casefold()
+            if normalized_name in normalized_names:
+                raise ValueError(
+                    f"case {index} name duplicates another case after normalization: "
+                    f"{display_name!r}"
+                )
+            normalized_names.add(normalized_name)
             score_mode = raw_case.get("score_mode", "graded")
             if not isinstance(score_mode, str) or score_mode not in SCORE_MODES:
                 raise ValueError(
                     f"case {index} score_mode must be one of: "
                     f"{', '.join(SCORE_MODES)}"
                 )
-            cases.append(
-                {
-                    "name": name,
-                    "score_mode": score_mode,
-                    "expected": raw_case["expected"],
-                    "input_data": raw_case.get("input_data"),
-                    "metadata": raw_case.get("metadata", {}),
-                    "probes": {name: probes[name] for name in PROBE_NAMES},
-                }
+            case = {
+                "name": display_name,
+                "score_mode": score_mode,
+                "expected": raw_case["expected"],
+                "input_data": raw_case.get("input_data"),
+                "metadata": raw_case.get("metadata", {}),
+                "probes": {
+                    probe_name: probes[probe_name] for probe_name in PROBE_NAMES
+                },
+            }
+            canonical_case = json.dumps(
+                {key: value for key, value in case.items() if key != "name"},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
             )
+            if canonical_case in canonical_cases:
+                raise ValueError(
+                    f"case {index} duplicates another case payload; names alone do "
+                    "not establish material branch coverage"
+                )
+            canonical_cases.add(canonical_case)
+            cases.append(case)
         return cases, True
 
     required_options = {
@@ -361,27 +495,51 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
     )
 
 
-def calibration_checks(scores: dict[str, float], score_mode: str) -> dict[str, bool]:
+def calibration_thresholds(args: argparse.Namespace) -> dict[str, float]:
+    thresholds = {
+        "good_minimum": args.good_minimum,
+        "bad_maximum": args.bad_maximum,
+        "equivalence_tolerance": args.equivalence_tolerance,
+        "separation_margin": args.separation_margin,
+    }
+    if thresholds["good_minimum"] <= thresholds["bad_maximum"]:
+        raise ValueError("--good-minimum must be greater than --bad-maximum")
+    if thresholds["separation_margin"] > 0.5:
+        raise ValueError(
+            "--separation-margin must be no greater than 0.5 so a normalized "
+            "partial score can be separated from both good and bad"
+        )
+    return thresholds
+
+
+def calibration_checks(
+    scores: dict[str, float],
+    score_mode: str,
+    thresholds: dict[str, float],
+) -> dict[str, bool]:
     common = {
-        "good_passes": scores["good"] >= GOOD_MINIMUM,
-        "equivalent_is_accepted": scores["equivalent_good"] >= GOOD_MINIMUM,
+        "good_passes": scores["good"] >= thresholds["good_minimum"],
+        "equivalent_is_accepted": scores["equivalent_good"]
+        >= thresholds["good_minimum"],
         "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
-        <= EQUIVALENCE_TOLERANCE,
-        "bad_fails": scores["bad"] <= BAD_MAXIMUM,
+        <= thresholds["equivalence_tolerance"],
+        "bad_fails": scores["bad"] <= thresholds["bad_maximum"],
         "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
     }
     if score_mode == "binary":
         return {
             **common,
-            "partial_fails": scores["partial"] <= BAD_MAXIMUM,
+            "partial_fails": scores["partial"] <= thresholds["bad_maximum"],
         }
     if score_mode != "graded":
         raise ValueError(f"score_mode must be one of: {', '.join(SCORE_MODES)}")
     return {
         **common,
         "partial_is_below_good": scores["partial"]
-        <= min(scores["good"], scores["equivalent_good"]) - SEPARATION_MARGIN,
-        "partial_is_above_bad": scores["partial"] >= scores["bad"] + SEPARATION_MARGIN,
+        <= min(scores["good"], scores["equivalent_good"])
+        - thresholds["separation_margin"],
+        "partial_is_above_bad": scores["partial"]
+        >= scores["bad"] + thresholds["separation_margin"],
     }
 
 
@@ -406,6 +564,11 @@ def main() -> int:
         cases, is_matrix = calibration_cases(args)
     except (OSError, json.JSONDecodeError, ValueError) as error:
         print(f"Invalid calibration cases: {error}", file=sys.stderr)
+        return 2
+    try:
+        thresholds = calibration_thresholds(args)
+    except ValueError as error:
+        print(f"Invalid calibration thresholds: {error}", file=sys.stderr)
         return 2
 
     scorer_file, separator, scorer_name = args.scorer.partition(":")
@@ -442,7 +605,7 @@ def main() -> int:
     case_results = []
     for configured_case, case in zip(cases, payload["cases"], strict=True):
         score_mode = configured_case["score_mode"]
-        checks = calibration_checks(case["scores"], score_mode)
+        checks = calibration_checks(case["scores"], score_mode, thresholds)
         case_results.append(
             {
                 "name": case["name"],
@@ -455,6 +618,8 @@ def main() -> int:
     if is_matrix:
         result = {
             "cases": case_results,
+            "coverage_note": MATRIX_COVERAGE_NOTE,
+            "thresholds": thresholds,
             "passed": all(case["passed"] for case in case_results),
         }
     else:
@@ -462,6 +627,7 @@ def main() -> int:
             "score_mode": case_results[0]["score_mode"],
             "scores": case_results[0]["scores"],
             "checks": case_results[0]["checks"],
+            "thresholds": thresholds,
             "passed": case_results[0]["passed"],
         }
     if args.json:
