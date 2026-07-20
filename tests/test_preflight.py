@@ -65,6 +65,116 @@ class StaticPreflightTests(unittest.TestCase):
         failures = [result for result in MODULE.RESULTS if result.status == MODULE.FAIL]
         self.assertEqual(failures, [])
 
+    def test_sdk_jsonl_input_and_expected_aliases_normalize_without_rewriting(
+        self,
+    ) -> None:
+        rows = []
+        expected_aliases = (
+            "output",
+            "expected",
+            "expected_output",
+            "answer",
+            "target",
+            "label",
+        )
+        for index, (input_alias, expected_alias) in enumerate(
+            (
+                (input_alias, expected_alias)
+                for input_alias in ("input", "input_data")
+                for expected_alias in expected_aliases
+            )
+        ):
+            rows.append(
+                {
+                    input_alias: {"message": f"case {index}"},
+                    expected_alias: f"answer {index}",
+                    "id": f"alias-{index}",
+                    "source": "reviewed",
+                    "metadata": {"rubric_branch": f"branch-{index % 3}"},
+                    "split": "tune" if index < 8 else "holdout",
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            original_text = "\n".join(json.dumps(row) for row in rows) + "\n"
+            dataset.write_text(original_text)
+            normalized_rows = MODULE.check_dataset(dataset)
+            self.assertEqual(dataset.read_text(), original_text)
+
+        self.assertEqual(len(normalized_rows or []), len(rows))
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+        for index, row in enumerate(normalized_rows or []):
+            with self.subTest(index=index):
+                self.assertEqual(row["input"], {"message": f"case {index}"})
+                self.assertEqual(row["output"], f"answer {index}")
+                self.assertEqual(row["id"], f"alias-{index}")
+                self.assertEqual(
+                    row["metadata"],
+                    {"rubric_branch": f"branch-{index % 3}"},
+                )
+
+    def test_conflicting_sdk_jsonl_aliases_fail_closed(self) -> None:
+        rows = [
+            {
+                "input": {"message": "canonical"},
+                "input_data": {"message": "conflict"},
+                "output": "answer",
+            },
+            {
+                "input": {"message": "case"},
+                "output": "canonical",
+                "expected_output": "conflict",
+            },
+            {
+                "input": {"message": "valid"},
+                "output": "valid",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            normalized_rows = MODULE.check_dataset(dataset)
+
+        self.assertEqual(len(normalized_rows or []), 1)
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.status, MODULE.FAIL)
+        self.assertIn(
+            "line 1: conflicting input fields: input, input_data", integrity.detail
+        )
+        self.assertIn(
+            "line 2: conflicting expected-output fields: output, expected_output",
+            integrity.detail,
+        )
+
+    def test_identical_sdk_jsonl_aliases_preserve_nonselected_side_fields(
+        self,
+    ) -> None:
+        row = {
+            "input": {"message": "same"},
+            "input_data": {"message": "same"},
+            "output": "answer",
+            "expected_output": "answer",
+            "metadata": {"rubric": "exact"},
+        }
+        normalized, error = MODULE.normalize_dataset_row(row)
+        self.assertIsNone(error)
+        self.assertEqual(
+            normalized,
+            {
+                "input_data": {"message": "same"},
+                "expected_output": "answer",
+                "metadata": {"rubric": "exact"},
+                "input": {"message": "same"},
+                "output": "answer",
+            },
+        )
+
     def test_duplicate_synthetic_input_fails(self) -> None:
         rows = synthetic_rows()
         rows[1]["input"] = rows[0]["input"]
@@ -333,6 +443,116 @@ class StaticPreflightTests(unittest.TestCase):
                 )
             )
             MODULE.RESULTS.clear()
+
+    def test_mapping_input_cannot_bind_required_positional_only_parameter(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(message, /, tone):\n" "    return f'{tone}: {message}'\n"
+            )
+            MODULE.check_binding(
+                [
+                    {
+                        "input": {"message": "hello", "tone": "plain"},
+                        "output": "plain: hello",
+                    }
+                ],
+                f"{agent}:answer",
+            )
+
+        failures = [
+            result.detail
+            for result in MODULE.RESULTS
+            if result.check == "dataset-binding" and result.status == MODULE.FAIL
+        ]
+        self.assertTrue(
+            any(
+                "required positional-only agent parameters: ['message']" in detail
+                for detail in failures
+            )
+        )
+        self.assertTrue(
+            any(
+                "input key 'message' targets a positional-only agent parameter"
+                in detail
+                for detail in failures
+            )
+        )
+        self.assertFalse(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.PASS
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_mapping_input_allows_omitted_defaulted_positional_only_parameter(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(prefix='default', /, *, message):\n"
+                "    return f'{prefix}: {message}'\n"
+            )
+            MODULE.check_binding(
+                [
+                    {
+                        "input": {"message": "hello"},
+                        "output": "default: hello",
+                    }
+                ],
+                f"{agent}:answer",
+            )
+
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.PASS
+                for result in MODULE.RESULTS
+            ),
+            MODULE.RESULTS,
+        )
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
+    def test_mapping_input_cannot_supply_defaulted_positional_only_parameter(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(prefix='default', /, *, message):\n"
+                "    return f'{prefix}: {message}'\n"
+            )
+            MODULE.check_binding(
+                [
+                    {
+                        "input": {"prefix": "custom", "message": "hello"},
+                        "output": "custom: hello",
+                    }
+                ],
+                f"{agent}:answer",
+            )
+
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding"
+                and result.status == MODULE.FAIL
+                and "input key 'prefix' targets a positional-only agent parameter"
+                in result.detail
+                for result in MODULE.RESULTS
+            ),
+            MODULE.RESULTS,
+        )
+        self.assertFalse(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.PASS
+                for result in MODULE.RESULTS
+            )
+        )
 
     def test_scorer_check_is_static_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

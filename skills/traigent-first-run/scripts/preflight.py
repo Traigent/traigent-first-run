@@ -42,6 +42,15 @@ COMMON_OUTCOME_FIELDS = (
     "type",
     "grade",
 )
+DATASET_INPUT_FIELDS = ("input", "input_data")
+DATASET_EXPECTED_OUTPUT_FIELDS = (
+    "output",
+    "expected",
+    "expected_output",
+    "answer",
+    "target",
+    "label",
+)
 
 VENDOR_KEYS = {
     "OpenRouter": ("OPENROUTER_API_KEY",),
@@ -357,6 +366,54 @@ def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
+def normalize_dataset_row(
+    row: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Mirror Traigent 0.23's public JSONL field selection without rewriting it."""
+
+    input_fields = [field for field in DATASET_INPUT_FIELDS if field in row]
+    if not input_fields:
+        return (
+            None,
+            "missing required input field "
+            f"(accepted: {', '.join(DATASET_INPUT_FIELDS)})",
+        )
+    selected_input = input_fields[0]
+    if any(
+        stable_json(row[field]) != stable_json(row[selected_input])
+        for field in input_fields[1:]
+    ):
+        return None, f"conflicting input fields: {', '.join(input_fields)}"
+
+    expected_fields = [
+        field for field in DATASET_EXPECTED_OUTPUT_FIELDS if field in row
+    ]
+    if not expected_fields:
+        return (
+            None,
+            "missing required expected-output field "
+            f"(accepted: {', '.join(DATASET_EXPECTED_OUTPUT_FIELDS)})",
+        )
+    selected_expected = expected_fields[0]
+    if any(
+        stable_json(row[field]) != stable_json(row[selected_expected])
+        for field in expected_fields[1:]
+    ):
+        return (
+            None,
+            f"conflicting expected-output fields: {', '.join(expected_fields)}",
+        )
+
+    normalized = {
+        key: value
+        for key, value in row.items()
+        if key not in {selected_input, selected_expected}
+    }
+    normalized["input"] = row[selected_input]
+    normalized["output"] = row[selected_expected]
+    return normalized, None
+
+
 def normalized_text(value: Any) -> str:
     text = stable_json(value) if not isinstance(value, str) else value
     return " ".join(re.findall(r"\w+", text.casefold()))
@@ -435,13 +492,12 @@ def check_dataset(
         if not isinstance(row, dict):
             invalid_rows.append((line_number, "row is not an object"))
             continue
-        missing = [field for field in ("input", "output") if field not in row]
-        if missing:
-            invalid_rows.append(
-                (line_number, f"missing required fields: {', '.join(missing)}")
-            )
+        normalized_row, normalization_error = normalize_dataset_row(row)
+        if normalization_error is not None:
+            invalid_rows.append((line_number, normalization_error))
             continue
-        rows.append(row)
+        assert normalized_row is not None
+        rows.append(normalized_row)
 
     if invalid_rows:
         invalid_percentage = len(invalid_rows) / candidate_count * 100
@@ -724,7 +780,10 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     signature = parse_function_spec(agent_spec, "dataset-binding")
     if signature is None:
         return
-    named = set(signature.positional) | set(signature.keyword_only)
+    positional_only = set(signature.positional_only)
+    keywordable = (set(signature.positional) - positional_only) | set(
+        signature.keyword_only
+    )
     dict_rows = [row for row in rows if isinstance(row["input"], dict)]
     if not dict_rows:
         required_positional = [
@@ -764,13 +823,37 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
         *({key for key in row if key not in {"input", "output"}} for row in dict_rows)
     )
     failed = False
+    required_positional_only = [
+        name for name in signature.positional_only if name in signature.required
+    ]
+    if required_positional_only:
+        failed = True
+        emit(
+            "dataset-binding",
+            FAIL,
+            "mapping input cannot bind individual fields to required positional-only "
+            f"agent parameters: {required_positional_only}; use scalar input or a "
+            "keyword-compatible adapter",
+        )
     for key in sorted(input_keys):
-        if key not in named and not signature.has_kwargs:
+        if key in positional_only:
+            failed = True
+            emit(
+                "dataset-binding",
+                FAIL,
+                f"input key '{key}' targets a positional-only agent parameter; "
+                "mapping rows cannot bind that field by name",
+            )
+        elif key not in keywordable and not signature.has_kwargs:
             failed = True
             emit(
                 "dataset-binding", FAIL, f"input key '{key}' matches no agent parameter"
             )
-    for name in signature.required:
+    for name in (
+        required_name
+        for required_name in signature.required
+        if required_name not in positional_only
+    ):
         missing_rows = [
             index for index, row in enumerate(dict_rows, 1) if name not in row["input"]
         ]
