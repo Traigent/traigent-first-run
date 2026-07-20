@@ -198,6 +198,95 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             )
         self.assertEqual(process.returncode, 0, process.stderr)
 
+    def test_default_import_root_supports_project_and_scorer_sibling_imports(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            scorer_directory = project_root / "traigent-runs"
+            scorer_directory.mkdir()
+            (project_root / "project_eval.py").write_text(
+                "def field_coverage(output, expected):\n"
+                "    required = set(expected)\n"
+                "    return len(required & set(output)) / len(required)\n"
+            )
+            (scorer_directory / "scorer_context.py").write_text(
+                "from pathlib import Path\n\n"
+                "def cwd_matches_scorer():\n"
+                "    return Path.cwd() == Path(__file__).resolve().parent\n"
+            )
+            scorer = scorer_directory / "evaluator.py"
+            scorer.write_text(
+                "from project_eval import field_coverage\n"
+                "from scorer_context import cwd_matches_scorer\n\n"
+                "def score(output, expected):\n"
+                "    assert cwd_matches_scorer()\n"
+                "    return field_coverage(output, expected)\n"
+            )
+            process = subprocess.run(
+                [
+                    *self.command(Path("traigent-runs/evaluator.py")),
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_explicit_import_root_supports_project_module_from_another_cwd(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            outer_directory = Path(directory)
+            project_root = outer_directory / "project"
+            scorer_directory = project_root / "traigent-runs"
+            scorer_directory.mkdir(parents=True)
+            (project_root / "project_eval.py").write_text(
+                "def field_coverage(output, expected):\n"
+                "    required = set(expected)\n"
+                "    return len(required & set(output)) / len(required)\n"
+            )
+            scorer = scorer_directory / "evaluator.py"
+            scorer.write_text(
+                "from project_eval import field_coverage\n\n"
+                "def score(output, expected):\n"
+                "    return field_coverage(output, expected)\n"
+            )
+            process = subprocess.run(
+                [
+                    *self.command(scorer),
+                    "--import-root",
+                    str(project_root),
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=outer_directory,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_import_root_must_be_an_existing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            not_a_directory = root / "not-a-directory"
+            not_a_directory.write_text("content")
+            for invalid_root in (root / "missing", not_a_directory):
+                with self.subTest(import_root=invalid_root):
+                    process = subprocess.run(
+                        [
+                            *self.command(self.make_scorer(directory)),
+                            "--import-root",
+                            str(invalid_root),
+                            "--allow-execution",
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                self.assertEqual(process.returncode, 2)
+                self.assertIn("--import-root", process.stderr)
+                self.assertIn("existing directory", process.stderr)
+
     def test_populates_every_documented_output_expected_and_metric_alias(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "all_aliases_scorer.py"
@@ -600,6 +689,46 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 )
             self.assertEqual(process.returncode, 2)
             self.assertIn("Invalid calibration cases", process.stderr)
+
+    def test_matrix_rejects_same_payload_with_different_score_modes(self) -> None:
+        base_case = {
+            "name": "Graded branch",
+            "score_mode": "graded",
+            "expected": ["a", "b"],
+            "input_data": {"branch": "same"},
+            "metadata": {"rubric": "same"},
+            "probes": {
+                "good": ["a", "b"],
+                "equivalent_good": ["b", "a"],
+                "partial": ["a"],
+                "bad": ["z"],
+            },
+        }
+        cases = [
+            base_case,
+            {
+                **base_case,
+                "name": "Binary branch",
+                "score_mode": "binary",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_scorer(directory)}:score",
+                    "--cases",
+                    json.dumps(cases),
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("Invalid calibration cases", process.stderr)
+        self.assertIn("names and score modes alone", process.stderr)
 
     def test_custom_thresholds_are_validated_and_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

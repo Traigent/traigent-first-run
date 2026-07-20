@@ -252,6 +252,12 @@ def bind_call(
 def run_worker() -> int:
     try:
         request = json.load(sys.stdin)
+        import_root = Path(request["import_root"])
+        scorer_file = Path(request["scorer"].partition(":")[0]).resolve()
+        import_paths = [str(import_root), str(scorer_file.parent)]
+        sys.path[:] = import_paths + [
+            path for path in sys.path if path not in import_paths
+        ]
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
             function = load_function(request["scorer"])
@@ -300,6 +306,16 @@ def normalized_threshold(value: str) -> float:
     return parsed
 
 
+def existing_directory(value: str) -> Path:
+    try:
+        path = Path(value).expanduser().resolve()
+    except (OSError, RuntimeError) as error:
+        raise argparse.ArgumentTypeError("must be an existing directory") from error
+    if not path.is_dir():
+        raise argparse.ArgumentTypeError("must be an existing directory")
+    return path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -307,6 +323,15 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--scorer", required=True, help="FILE.py:FUNCTION")
+    parser.add_argument(
+        "--import-root",
+        type=existing_directory,
+        default=str(Path.cwd()),
+        help=(
+            "project import root available to the scorer "
+            "(default: caller's current working directory)"
+        ),
+    )
     parser.add_argument("--good")
     parser.add_argument("--equivalent-good")
     parser.add_argument("--partial")
@@ -447,15 +472,19 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
                 },
             }
             canonical_case = json.dumps(
-                {key: value for key, value in case.items() if key != "name"},
+                {
+                    key: value
+                    for key, value in case.items()
+                    if key not in {"name", "score_mode"}
+                },
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=False,
             )
             if canonical_case in canonical_cases:
                 raise ValueError(
-                    f"case {index} duplicates another case payload; names alone do "
-                    "not establish material branch coverage"
+                    f"case {index} duplicates another case payload; names and score "
+                    "modes alone do not establish material branch coverage"
                 )
             canonical_cases.add(canonical_case)
             cases.append(case)
@@ -579,6 +608,7 @@ def main() -> int:
     request = {
         "scorer": absolute_scorer,
         "cases": cases,
+        "import_root": str(args.import_root),
     }
     try:
         process = subprocess.run(

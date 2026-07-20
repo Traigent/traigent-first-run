@@ -134,6 +134,10 @@ python skills/traigent-first-run/scripts/calibrate_evaluator.py \
   --json
 ```
 
+The scorer can import project modules because the import root defaults to the directory where the
+command is launched. When launching elsewhere, pass `--import-root /path/to/project` explicitly;
+the scorer's own directory remains available for sibling imports.
+
 The exact thresholds depend on the metric, but reject all of these:
 
 - All scores equal or nearly equal.
