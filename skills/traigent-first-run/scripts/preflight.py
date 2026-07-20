@@ -91,6 +91,14 @@ SCORER_NAMES = (
     | LLM_METRIC_SCORER_NAMES
     | CONTEXT_SCORER_NAMES
 )
+INJECTION_MODE_CONTEXT = "context"
+INJECTION_MODE_PARAMETER = "parameter"
+INJECTION_MODE_SEAMLESS = "seamless"
+INJECTION_MODES = {
+    INJECTION_MODE_CONTEXT,
+    INJECTION_MODE_PARAMETER,
+    INJECTION_MODE_SEAMLESS,
+}
 
 
 @dataclass(frozen=True)
@@ -111,6 +119,7 @@ class StaticSignature:
     has_varargs: bool
     has_kwargs: bool
     is_async: bool
+    injection_mode: str | None
 
 
 RESULTS: list[Result] = []
@@ -724,6 +733,96 @@ def check_dataset(
     return rows
 
 
+def dotted_name(node: ast.expr) -> str | None:
+    """Return a static dotted name without resolving or importing it."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id, *reversed(parts)])
+
+
+def literal_injection_mode(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value if node.value in INJECTION_MODES else None
+    name = dotted_name(node)
+    if name is None:
+        return None
+    parts = name.split(".")
+    if len(parts) >= 2 and parts[-2] == "InjectionMode":
+        mode = parts[-1].casefold()
+        return mode if mode in INJECTION_MODES else None
+    return None
+
+
+def grouped_injection_mode(node: ast.expr) -> str | None:
+    """Resolve a literal ``injection={...}`` bundle, or fail closed."""
+    if isinstance(node, ast.Constant) and node.value is None:
+        return INJECTION_MODE_CONTEXT
+    if not isinstance(node, ast.Dict):
+        return None
+
+    mode = INJECTION_MODE_CONTEXT
+    for key, value in zip(node.keys, node.values):
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            return None
+        if key.value == "injection_mode":
+            mode = literal_injection_mode(value)
+            if mode is None:
+                return None
+    return mode
+
+
+def optimize_injection_mode(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+    """Extract the selected function's literal Traigent optimize injection mode."""
+    optimize_calls = [
+        decorator
+        for decorator in node.decorator_list
+        if isinstance(decorator, ast.Call)
+        and (dotted_name(decorator.func) or "").split(".")[-1] == "optimize"
+    ]
+    if not optimize_calls:
+        return INJECTION_MODE_CONTEXT
+    if len(optimize_calls) != 1:
+        return None
+
+    flat_mode = INJECTION_MODE_CONTEXT
+    grouped_mode: str | None = None
+    saw_grouped_mode = False
+    for keyword in optimize_calls[0].keywords:
+        if keyword.arg is None:
+            return None
+        if keyword.arg == "legacy":
+            if (
+                not isinstance(keyword.value, ast.Constant)
+                or keyword.value.value is not None
+            ):
+                return None
+        elif keyword.arg == "injection_mode":
+            flat_mode = literal_injection_mode(keyword.value)
+            if flat_mode is None:
+                return None
+        elif keyword.arg == "injection":
+            if saw_grouped_mode:
+                return None
+            saw_grouped_mode = True
+            grouped_mode = grouped_injection_mode(keyword.value)
+            if grouped_mode is None:
+                return None
+
+    if grouped_mode is None:
+        return flat_mode
+    if (
+        flat_mode != INJECTION_MODE_CONTEXT
+        and grouped_mode != INJECTION_MODE_CONTEXT
+        and flat_mode != grouped_mode
+    ):
+        return None
+    return grouped_mode if flat_mode == INJECTION_MODE_CONTEXT else flat_mode
+
+
 def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
     file_part, separator, function_name = spec.partition(":")
     if not separator or not function_name:
@@ -773,6 +872,7 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
         has_varargs=node.args.vararg is not None,
         has_kwargs=node.args.kwarg is not None,
         is_async=isinstance(node, ast.AsyncFunctionDef),
+        injection_mode=optimize_injection_mode(node),
     )
 
 
@@ -780,6 +880,8 @@ def mapping_input_expands(
     signature: StaticSignature, input_data: dict[str, Any]
 ) -> bool:
     """Mirror Traigent 0.23 BaseEvaluator._should_expand_input_mapping."""
+    if signature.injection_mode == INJECTION_MODE_PARAMETER:
+        return True
     if signature.has_kwargs:
         return True
 
@@ -799,6 +901,14 @@ def mapping_input_expands(
 def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     signature = parse_function_spec(agent_spec, "dataset-binding")
     if signature is None:
+        return
+    if signature.injection_mode is None:
+        emit(
+            "dataset-binding",
+            FAIL,
+            "Traigent optimize injection mode cannot be resolved statically; use a "
+            "literal context, parameter, or seamless mode for binding preflight",
+        )
         return
     positional_only = set(signature.positional_only)
     keywordable = (set(signature.positional) - positional_only) | set(

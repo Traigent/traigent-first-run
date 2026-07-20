@@ -520,6 +520,176 @@ class StaticPreflightTests(unittest.TestCase):
             MODULE.RESULTS,
         )
 
+    def test_parameter_injection_forces_grouped_and_flat_mapping_expansion(
+        self,
+    ) -> None:
+        decorators = {
+            "grouped": (
+                "@traigent.optimize(\n"
+                "    injection={'injection_mode': 'parameter', "
+                "'config_param': 'config'}\n"
+                ")\n"
+            ),
+            "flat": (
+                "@traigent.optimize(\n"
+                "    injection_mode='parameter', config_param='config'\n"
+                ")\n"
+            ),
+            "enum": (
+                "@traigent.optimize(\n"
+                "    injection_mode=InjectionMode.PARAMETER, config_param='config'\n"
+                ")\n"
+            ),
+        }
+        for label, decorator in decorators.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"{decorator}def answer(payload):\n    return payload['message']\n"
+                )
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            failures = [
+                result.detail
+                for result in MODULE.RESULTS
+                if result.check == "dataset-binding" and result.status == MODULE.FAIL
+            ]
+            self.assertTrue(
+                any(
+                    "input key 'message' matches no agent parameter" in detail
+                    for detail in failures
+                ),
+                MODULE.RESULTS,
+            )
+            self.assertTrue(
+                any(
+                    "required agent parameter 'payload' is missing" in detail
+                    for detail in failures
+                ),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_context_default_and_seamless_injection_keep_adaptive_mapping(
+        self,
+    ) -> None:
+        decorators = {
+            "default": "@traigent.optimize()\n",
+            "flat-context": "@traigent.optimize(injection_mode='context')\n",
+            "grouped-context": (
+                "@traigent.optimize(injection={'injection_mode': 'context'})\n"
+            ),
+            "seamless": "@traigent.optimize(injection_mode='seamless')\n",
+        }
+        for label, decorator in decorators.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"{decorator}def answer(payload):\n    return payload['message']\n"
+                )
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertFalse(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_unresolved_optimize_injection_mode_fails_closed(self) -> None:
+        decorators = {
+            "flat": "@traigent.optimize(injection_mode=MODE)\n",
+            "grouped": "@traigent.optimize(injection=INJECTION_OPTIONS)\n",
+            "grouped-value": (
+                "@traigent.optimize(injection={'injection_mode': MODE})\n"
+            ),
+        }
+        for label, decorator in decorators.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"{decorator}def answer(payload):\n    return payload['message']\n"
+                )
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertTrue(
+                any(
+                    result.check == "dataset-binding"
+                    and result.status == MODULE.FAIL
+                    and "cannot be resolved statically" in result.detail
+                    for result in MODULE.RESULTS
+                ),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_parameter_injection_same_key_regular_passes_positional_only_fails(
+        self,
+    ) -> None:
+        sources = {
+            "regular": (
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(payload):\n"
+                "    return payload\n"
+            ),
+            "positional-only": (
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(payload, /):\n"
+                "    return payload\n"
+            ),
+        }
+        for label, source in sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(source)
+                MODULE.check_binding(
+                    [{"input": {"payload": "field value"}, "output": "field value"}],
+                    f"{agent}:answer",
+                )
+            failures = [
+                result
+                for result in MODULE.RESULTS
+                if result.check == "dataset-binding" and result.status == MODULE.FAIL
+            ]
+            if label == "regular":
+                self.assertEqual(failures, [], MODULE.RESULTS)
+            else:
+                self.assertTrue(
+                    any("positional-only" in result.detail for result in failures),
+                    MODULE.RESULTS,
+                )
+            MODULE.RESULTS.clear()
+
+    def test_parameter_injection_multi_parameter_mapping_still_uses_keywords(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(payload, tone='plain'):\n"
+                "    return f'{tone}: {payload}'\n"
+            )
+            MODULE.check_binding(
+                [
+                    {
+                        "input": {"payload": "hello", "tone": "formal"},
+                        "output": "formal: hello",
+                    }
+                ],
+                f"{agent}:answer",
+            )
+
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
     def test_single_keyword_only_parameter_cannot_receive_mapping_positionally(
         self,
     ) -> None:
