@@ -33,6 +33,10 @@ Validate it; do not silently redesign it.
 
 When building an evaluator:
 
+- Expose it to Traigent through a thin metric adapter with an explicit `output` parameter and only
+  SDK-supported names such as `expected`, `input_data`, and `metadata`. Preserve an existing
+  evaluator that uses names such as `prediction` or `reference`, but adapt those names at the
+  boundary instead of registering that function directly.
 - Infer the rubric from real labels, tests, accepted outputs, product rules, and failure reports.
 - Ask one product question only if ambiguity would materially change who wins.
 - Prefer partial credit when correctness has meaningful degrees.

@@ -32,20 +32,10 @@ SECRET_MARKERS = (
     "COOKIE",
     "SESSION",
 )
-RECOGNIZED_VALUES = {
-    "actual",
-    "actual_output",
+SDK_METRIC_VALUES = {
     "output",
-    "prediction",
-    "predicted",
-    "result",
     "expected",
-    "expected_output",
-    "ground_truth",
-    "reference",
-    "target",
     "llm_metrics",
-    "metrics",
     "example",
     "input_data",
     "metadata",
@@ -112,19 +102,9 @@ def bind_call(
 ) -> float:
     signature = inspect.signature(function)
     values = {
-        "actual": output,
-        "actual_output": output,
         "output": output,
-        "prediction": output,
-        "predicted": output,
-        "result": output,
         "expected": expected,
-        "expected_output": expected,
-        "ground_truth": expected,
-        "reference": expected,
-        "target": expected,
         "llm_metrics": {},
-        "metrics": {},
         "example": None,
         "input_data": input_data,
         "metadata": metadata or {},
@@ -135,7 +115,7 @@ def bind_call(
     kwargs = {
         parameter.name: values[parameter.name]
         for parameter in parameters
-        if parameter.name in RECOGNIZED_VALUES
+        if parameter.name in SDK_METRIC_VALUES
         and parameter.kind
         not in {
             inspect.Parameter.POSITIONAL_ONLY,
@@ -143,19 +123,39 @@ def bind_call(
             inspect.Parameter.VAR_KEYWORD,
         }
     }
-    candidates = [
-        ((), kwargs),
-        ((output, expected, {}), {}),
-        ((output, expected), {}),
-        ((output,), {}),
+    positional_only = [
+        parameter.name
+        for parameter in parameters
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
     ]
-    for args, keyword_args in candidates:
-        try:
-            signature.bind(*args, **keyword_args)
-        except TypeError:
-            continue
-        return float(function(*args, **keyword_args))
-    raise TypeError("no production-compatible scorer call form fits the signature")
+    if positional_only:
+        raise TypeError(
+            "SDK metric functions must use keyword-bindable parameters; "
+            f"positional-only parameters found: {positional_only}"
+        )
+    if "output" not in signature.parameters:
+        raise TypeError(
+            "SDK metric functions must declare an explicit 'output' parameter; "
+            "add an adapter instead of using aliases"
+        )
+    unsupported_required = [
+        parameter.name
+        for parameter in parameters
+        if parameter.default is inspect.Parameter.empty
+        and parameter.kind
+        not in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }
+        and parameter.name not in SDK_METRIC_VALUES
+    ]
+    if unsupported_required:
+        raise TypeError(
+            "required parameters are not supported by the SDK metric binder: "
+            f"{unsupported_required}"
+        )
+    signature.bind(**kwargs)
+    return float(function(**kwargs))
 
 
 def run_worker() -> int:

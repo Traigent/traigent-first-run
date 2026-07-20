@@ -17,8 +17,8 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   approval.
 - Create a separate environment when the project uses an incompatible interpreter:
   `python3.13 -m venv .venv`, then install with
-  `python -m pip install "traigent[recommended]>=0.21"`. Verify the installed package and public
-  signatures before generating integration code.
+  `python -m pip install "traigent[recommended]>=0.21" "python-dotenv>=1"`. Verify the installed
+  package and public signatures before generating integration code.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
 - Build a minimal `.env` for the selected provider. Leave the Traigent key blank until connected

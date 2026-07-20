@@ -154,6 +154,23 @@ class StaticPreflightTests(unittest.TestCase):
                 )
             )
 
+    def test_scorer_aliases_that_real_sdk_cannot_bind_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(
+                "def score(prediction, reference):\n"
+                "    return 1.0 if prediction == reference else 0.0\n"
+            )
+            MODULE.check_scorer_signature(f"{scorer}:score")
+        self.assertTrue(
+            any(
+                result.check == "scorer-signature"
+                and result.status == MODULE.FAIL
+                and "explicit 'output'" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_local_model_check_does_not_open_a_socket(self) -> None:
         with mock.patch(
             "socket.socket.connect",

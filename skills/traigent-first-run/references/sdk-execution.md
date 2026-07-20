@@ -39,7 +39,10 @@ import os
 
 import litellm
 import traigent
+from dotenv import load_dotenv
 from traigent.api.decorators import EvaluationOptions
+
+load_dotenv(override=False)
 
 TUNING_DATASET = "traigent-runs/tuning.jsonl"
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]

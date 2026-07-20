@@ -22,6 +22,16 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         )
         return scorer
 
+    def make_alias_scorer(self, directory: str) -> Path:
+        scorer = Path(directory) / "alias_scorer.py"
+        scorer.write_text(
+            "def score(prediction, reference):\n"
+            "    required = set(reference)\n"
+            "    actual = set(prediction)\n"
+            "    return len(required & actual) / len(required)\n"
+        )
+        return scorer
+
     def command(self, scorer: Path) -> list[str]:
         return [
             sys.executable,
@@ -62,6 +72,19 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         payload = json.loads(process.stdout)
         self.assertTrue(payload["passed"])
         self.assertGreater(payload["scores"]["partial"], payload["scores"]["bad"])
+
+    def test_rejects_aliases_that_real_sdk_cannot_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    *self.command(self.make_alias_scorer(directory)),
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("explicit 'output'", process.stderr)
 
     def test_llm_judge_requires_paid_approval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -42,19 +42,9 @@ VENDOR_KEYS = {
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
 SCORER_NAMES = {
-    "actual",
-    "actual_output",
     "output",
-    "prediction",
-    "predicted",
-    "result",
     "expected",
-    "expected_output",
-    "ground_truth",
-    "reference",
-    "target",
     "llm_metrics",
-    "metrics",
     "example",
     "input_data",
     "metadata",
@@ -73,6 +63,7 @@ class Result:
 @dataclass(frozen=True)
 class StaticSignature:
     name: str
+    positional_only: list[str]
     positional: list[str]
     keyword_only: list[str]
     required: list[str]
@@ -573,6 +564,7 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
         emit(check, FAIL, f"{path} has no function named '{function_name}'")
         return None
 
+    positional_only = [argument.arg for argument in node.args.posonlyargs]
     positional_nodes = [*node.args.posonlyargs, *node.args.args]
     positional = [argument.arg for argument in positional_nodes]
     keyword_only = [argument.arg for argument in node.args.kwonlyargs]
@@ -586,6 +578,7 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
     required = [name for name in [*positional, *keyword_only] if name not in defaults]
     return StaticSignature(
         name=function_name,
+        positional_only=positional_only,
         positional=positional,
         keyword_only=keyword_only,
         required=required,
@@ -672,26 +665,31 @@ def check_scorer_signature(scorer_spec: str) -> None:
     if signature.is_async:
         emit("scorer-signature", FAIL, "async metric functions are not awaited")
         return
-    unknown_keyword_required = [
-        name
-        for name in signature.keyword_only
-        if name in signature.required and name not in SCORER_NAMES
-    ]
-    if unknown_keyword_required and not signature.has_kwargs:
+    if signature.positional_only:
         emit(
             "scorer-signature",
             FAIL,
-            f"required keyword-only parameters are not recognized: {unknown_keyword_required}",
+            "SDK metric parameters must be keyword-bindable; positional-only "
+            f"parameters found: {signature.positional_only}",
         )
         return
-    required_positional = [
-        name for name in signature.positional if name in signature.required
-    ]
-    if len(required_positional) > 3 and not signature.has_varargs:
+    named = set(signature.positional) | set(signature.keyword_only)
+    if "output" not in named:
         emit(
             "scorer-signature",
             FAIL,
-            "the production scorer binder supports at most three positional values",
+            "declare an explicit 'output' parameter; add an adapter instead of aliases",
+        )
+        return
+    unsupported_required = [
+        name for name in signature.required if name not in SCORER_NAMES
+    ]
+    if unsupported_required:
+        emit(
+            "scorer-signature",
+            FAIL,
+            "required parameters are not supported by the SDK metric binder: "
+            f"{unsupported_required}",
         )
         return
     emit(

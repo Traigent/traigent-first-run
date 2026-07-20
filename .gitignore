@@ -18,6 +18,7 @@ results/
 *.results.json
 candidate_config.json
 run-plan*.md
+!skills/traigent-first-run/assets/run-plan.md
 !templates/run-plan.md
 
 # Local
