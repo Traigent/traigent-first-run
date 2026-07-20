@@ -1,85 +1,84 @@
-# Traigent — First Run
+# Traigent - First Run
 
-**Optimize your AI agent in one sitting, guided by your own coding assistant.**
+Run a guided Traigent optimization in one sitting, from whatever your project has today.
 
-You don't run any technical steps yourself. You point your coding assistant
-(Claude Code, Cursor, Codex, Gemini CLI, …) at this repo, and it walks you through
-installing Traigent, wiring it to *your* agent, and producing a real optimization
-run you can see in the [Traigent portal](https://portal.traigent.ai/) — your best
-accuracy for the least cost (the **Pareto frontier**), plus a suggestion of what to
-try next. If it turns out your agent is already near-best, the guide says so honestly
-rather than inventing an improvement.
+Your coding assistant inspects the project, preserves any real agent, dataset, and evaluation
+method it finds, and prepares only the missing pieces. If Traigent generates temporary walkthrough
+material, it remains clearly marked so a demonstration is never mistaken for production evidence.
 
----
+## Start with one prompt
 
-## How to use it — one step
-
-Paste this to your coding assistant (Claude Code, Cursor, Codex, Gemini CLI, …):
+Paste this into Claude Code, Cursor, Codex, Gemini CLI, or another coding assistant:
 
 ```text
-Help me run my first Traigent optimization on my agent.
-Clone https://github.com/Traigent/traigent-first-run and follow its GUIDE.md
-step by step. Use your most capable model.
+Help me run my first Traigent optimization.
+Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 ```
 
-That's it. The assistant clones this repo, reads the guide, and walks you through the
-rest — asking you only the few things it genuinely needs. You won't have to run
-terminal commands yourself, and you never paste a secret into the chat.
+The assistant performs the technical work and asks only when it needs:
 
-**Already have the repo open in your assistant?** Just say: *"Follow GUIDE.md in this
-repo, step by step."* (Assistants that auto-read `AGENTS.md` / `CLAUDE.md` pick it up
-on their own.) **Can't run `git`?** Paste your assistant the GUIDE.md link (or its
-contents) and say "follow it step by step."
+- A choice that materially changes the task.
+- A key pasted into a local, git-ignored `.env` file.
+- Approval before paid model calls or private-data egress.
 
-**Prefer an installed skill?** This repo is also packaged as an Agent Skill
-([`skills/traigent-first-run/`](skills/traigent-first-run/SKILL.md)) that auto-activates when you
-ask your assistant to run your first Traigent optimization — it carries the money-and-honesty
-safety gates and points at this same `GUIDE.md`. Install it with
-`npx skills add Traigent/traigent-first-run`.
+No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
+Traigent generates a coherent substitute around everything that already exists.
 
----
+## Install as an Agent Skill
 
-## What you'll need (the assistant checks these for you)
+The complete guide, references, scripts, and run-plan asset are packaged together:
 
-- **Python 3.11–3.13** — the assistant detects or installs it; you don't have to.
-- **A Traigent key** — sign up at <https://portal.traigent.ai/register>, create an
-  API key with **Full access** (it begins with `uk_`). This lets the run create
-  your experiment and read its results back. The key lives only in your git-ignored `.env`
-  (never in the chat), is used only to sync configuration choices and scores, and you can
-  revoke it anytime from the portal.<br>
-  You can get the key from clicking here as well (Portal top right area):<br> <img width="204" height="130" alt="image" src="https://github.com/user-attachments/assets/c9f63a88-c52a-4610-9949-91d633d68382" />
+```bash
+npx skills add Traigent/traigent-first-run
+```
 
-- **One LLM key with a few dollars on it** — **OpenRouter is recommended** (one key,
-  many low-cost/open-source models): get a key at <https://openrouter.ai/keys> and add a
-  few dollars of credit at <https://openrouter.ai/credits>. OpenAI / Anthropic / Gemini /
-  Mistral / Cohere / Bedrock keys work too (plus others like HuggingFace — see GUIDE.md for the
-  full vendor list). Spend is **capped at $5 _per run_** (the value this repo's
-  `.env` sets — the SDK's own default is $2); a full before/after comparison is a few small runs,
-  so your assistant shows you the **combined** estimate and always does a **free dry-run first**
-  and asks before anything paid.
+Then ask:
 
-You'll paste your keys into a `.env` file (template: [`.env.example`](.env.example))
-— never into the chat.
+```text
+Use $traigent-first-run to run my first Traigent optimization.
+```
 
-## Your privacy
+Node.js is needed only for this optional installation command, not for the Traigent Python run.
 
-During a run, only **configuration choices and numeric scores** reach Traigent — your data,
-prompts, outputs, code, and keys stay on your machine. (Your assistant encodes any prompt
-variations as short labels, so as long as it follows the guide your actual prompt text
-stays on your machine.) The one exception is the *optional* `traigent plan` command, which
-sends only a short task description you write yourself — never your code or data.
+## What the run does
 
----
+1. Inspects the project and reports real-world readiness.
+2. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
+3. Validates compatibility and evaluator discrimination.
+4. Shows one combined time, cost, and data-egress approval.
+5. Evaluates the current configuration, then runs one bounded optimization.
+6. Reports the result, limitations, artifacts, and verified portal links.
 
-## What's in here
+The default comparison is two optimization experiments - one honest current-configuration
+baseline and one optimization - followed by an untouched holdout check. A second optimization
+pass is optional, not required.
 
-| Path | What it is |
+## Requirements
+
+- Python 3.11-3.13 in an isolated environment.
+- One supported LLM-provider key with a small amount of credit for the real run.
+- A Traigent portal key for connected optimization and portal results.
+
+Your assistant creates a minimal `.env` for the chosen provider and asks you to paste keys there.
+Never paste secrets into chat.
+
+## Privacy
+
+Traigent receives configuration identifiers, numeric measures, and run status needed for connected
+optimization and portal history. It does not need the agent's prompts, examples, or outputs.
+
+The selected LLM provider still receives the content the agent normally sends during model calls.
+Your assistant explains which services receive data and asks before paid calls or private-data
+egress.
+
+## Repository layout
+
+| Path | Purpose |
 |---|---|
-| [`GUIDE.md`](GUIDE.md) | The step-by-step guide your assistant follows |
-| [`.env.example`](.env.example) | Template for your keys + run settings (copy to `.env`) |
-| [`templates/run-plan.md`](templates/run-plan.md) | Record one of these per optimization run |
+| [`GUIDE.md`](GUIDE.md) | Entry point for a cloned-repository run |
+| [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
+| [`.env.example`](.env.example) | Reference environment settings |
+| [`reports/`](reports/) | Field-test evidence that informed the safeguards |
 
-## After your first run
-
-When you're ready to push further, the full set of Traigent optimization skills
-lives at <https://github.com/Traigent/traigent-skills>.
+After the first result, the assistant can offer the advanced
+[Traigent optimization skills](https://github.com/Traigent/traigent-skills) as optional next steps.

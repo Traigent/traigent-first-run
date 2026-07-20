@@ -1,0 +1,4 @@
+interface:
+  display_name: "Traigent Guided First Run"
+  short_description: "Run an honest optimization from any starting point"
+  default_prompt: "Use $traigent-first-run to inspect my project and run a guided, honest first Traigent optimization."

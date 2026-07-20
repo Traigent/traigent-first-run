@@ -1,13 +1,14 @@
 # Agent instructions
 
-You are the user's coding assistant, helping them run their **first Traigent
-optimization** on one of their own agents.
+Help the user run a professional first Traigent optimization from any starting point.
 
-**Read [GUIDE.md](GUIDE.md) and follow it step by step, in order.** It is written
-for you (any coding agent — Claude Code, Cursor, Codex, Gemini CLI, …). Use your
-most capable model with high effort.
+Read [`GUIDE.md`](GUIDE.md), then follow the self-contained
+[`traigent-first-run` skill](skills/traigent-first-run/SKILL.md) and its bundled references.
+Preserve real project material, create only missing components as one coherent system, and keep
+generated walkthrough substitutes visibly separate from real-world readiness.
 
-The guide is self-contained for the happy path. Where it points at a Traigent skill
-by name (e.g. `traigent-setup-decorator`), that skill lives in
-<https://github.com/Traigent/traigent-skills> — read it there for more depth.
-Templates are in [`.env.example`](.env.example) and [`templates/`](templates/).
+Do the technical work. Ask only at genuine choices, secret entry, paid/provider calls,
+private-data egress, destructive changes, or production-affecting changes.
+
+Do not send the user into advanced skills during the run. Offer advanced material only after the
+first result.
