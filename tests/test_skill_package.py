@@ -110,6 +110,71 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, f"{skill_text}\n{quality_text}")
         self.assertIn("stop before the search", skill_text)
 
+    def test_guidance_is_progressively_routed(self) -> None:
+        text = SKILL.read_text().casefold()
+        self.assertNotIn("read these files before acting", text)
+        for phrase in (
+            "after inventory",
+            "evaluation method is assessed",
+            "before environment changes",
+            "only before writing the wrapper",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_action_authorization_is_closed_and_cost_aware(self) -> None:
+        skill_text = SKILL.read_text().casefold()
+        safety_text = (
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().casefold()
+        )
+        contract_text = " ".join(f"{skill_text} {safety_text}".split())
+        for phrase in (
+            "an action not listed here is forbidden",
+            "judgment-dependent change",
+            "local-only",
+            "separate explicit approval",
+            "aggregate remaining-budget ledger",
+        ):
+            self.assertIn(phrase, contract_text)
+        self.assertIn(
+            "does not enforce the aggregate walkthrough cap",
+            contract_text,
+        )
+        self.assertIn(
+            "never replace it silently",
+            safety_text,
+        )
+
+    def test_evaluator_calibration_covers_multiple_cases(self) -> None:
+        text = (
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+        )
+        for phrase in (
+            "materially distinct inputs and outcome classes",
+            "one input with four output variants is not enough",
+            "normalized score in `[0, 1]`",
+            "not proof of isolation",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_sdk_template_defines_prompt_builder(self) -> None:
+        text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        self.assertIn("def build_prompt(", text)
+        self.assertIn('if style == "direct":', text)
+        self.assertIn('if style == "structured":', text)
+
+    def test_ci_runs_package_and_format_validation(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
+        for phrase in (
+            'python-version: "3.12"',
+            "python -m unittest discover -s tests -v",
+            "ruff check .",
+            "black --check .",
+        ):
+            self.assertIn(phrase, workflow)
+        self.assertNotIn("/home/", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

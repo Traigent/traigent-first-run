@@ -74,6 +74,8 @@ A Traigent mock run is a separate plumbing check:
 - Confirm every agent and evaluator model path is interceptable. LiteLLM/LangChain paths may be
   intercepted; raw provider SDKs, subprocesses, HTTP services, tools, and custom judges may still
   make real calls.
+- Treat proxy variables, removed keys, and mock flags as defense in depth, not as a sandbox or
+  proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
 - Exit the process after mock validation. Mock state has no reliable public undo.
@@ -95,16 +97,26 @@ Before any paid/provider work, show one combined approval for the full planned f
 - Evaluator/judge calls per item.
 - Total call floor and composite/retry multiplier.
 - Estimated runtime.
-- Combined worst-case spend and total first-run cap.
+- Combined worst-case spend and an aggregate walkthrough cap.
 - Services receiving data.
 - Stop condition.
 
-Do not present a per-run cap as if it were the total. Do not persist
-`TRAIGENT_COST_APPROVED=true`; set it only in the approved process.
+Record an aggregate remaining-budget ledger that allocates worst-case cost to the baseline,
+search, evaluator/judge calls, retries and composite calls, current-configuration holdout, and
+winner holdout. Before every paid phase or call batch, confirm its combined worst-case cost fits
+the remaining aggregate budget. Deduct tracked or worst-case cost as appropriate. Stop and obtain
+revised approval if the next batch does not fit or the planned recipients, data, call count, or
+model changes.
+
+`TRAIGENT_RUN_COST_LIMIT` limits one SDK optimization call. It does not cover the full walkthrough
+and does not enforce the aggregate cap. Do not persist `TRAIGENT_COST_APPROVED=true`; set it only
+in the approved process.
 
 Verify selected model IDs are live and cost-tracked before scaling. If a model chosen by the
-assistant is unavailable/unpriced, replace it with a comparable working model. If the user chose
-it, present the limitation and one recommended alternative.
+assistant is unavailable or unpriced, replace it only with a working model from the same chosen
+provider for the same task and data, with unchanged-or-lower call counts and combined worst-case
+spend. Record the replacement. Any other change requires revised approval. If the user chose the
+model, never replace it silently; present the limitation and one recommended alternative.
 
 ## Baseline and optimization
 

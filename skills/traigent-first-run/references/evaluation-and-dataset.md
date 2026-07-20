@@ -41,6 +41,7 @@ When building an evaluator:
 - Infer the rubric from real labels, tests, accepted outputs, product rules, and failure reports.
 - Ask one product question only if ambiguity would materially change who wins.
 - Prefer partial credit when correctness has meaningful degrees.
+- Return a normalized score in `[0, 1]` from every metric helper.
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
   agent answer.
 - Name the primary metric after what it measures, such as `label_accuracy`, `schema_accuracy`,
@@ -61,6 +62,12 @@ Require:
 good ~= equivalent_good > partial > bad
 ```
 
+Use materially distinct inputs and outcome classes, and record each probe input, expected outcome,
+candidate output, score, and exception status. One input with four output variants is not enough
+when the scorer depends on input fields, labels, schema branches, metadata, or rubric branches.
+Cover each material scoring path with at least one probe family and confirm that every helper
+returns a normalized score in `[0, 1]`.
+
 The exact thresholds depend on the metric, but reject all of these:
 
 - All scores equal or nearly equal.
@@ -70,8 +77,11 @@ The exact thresholds depend on the metric, but reject all of these:
 - Bad output receiving a passing score.
 - Parse/evaluator exceptions converted silently to an ordinary zero.
 
-For deterministic evaluators, run probes locally in an isolated subprocess with provider keys
-removed.
+For deterministic evaluators, first inspect the complete invoked call path and establish that it
+is local-only and has no external side effects. Then run probes in an isolated subprocess with
+provider keys removed. Removing keys is defense in depth, not proof of isolation. If any invoked
+path is uncertain or external, treat calibration as an egress or paid action and obtain the
+combined approval before executing it.
 
 For LLM judges:
 

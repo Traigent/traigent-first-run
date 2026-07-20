@@ -9,18 +9,18 @@ Help the user see a credible optimization quickly without overstating synthetic 
 Do the technical work. Ask only for information or approval that changes the result, cost,
 data egress, or project behavior.
 
-## Load the bundled guidance
+## Bundled guidance index
 
-Read these files before acting:
+Load each reference when its stage begins:
 
-1. [`references/component-creation.md`](references/component-creation.md) - inventory all three
-   components and complete any missing combination coherently.
-2. [`references/evaluation-and-dataset.md`](references/evaluation-and-dataset.md) - choose and
-   calibrate a sensible evaluator; create a varied, non-duplicative dataset.
-3. [`references/run-safety.md`](references/run-safety.md) - environment, privacy, dry-run, cost,
-   execution, portal, recovery, and result-claim gates.
-4. [`references/sdk-execution.md`](references/sdk-execution.md) - inspect the installed SDK and
-   run the current baseline, bounded optimization, and holdout check with public APIs.
+1. [`references/component-creation.md`](references/component-creation.md) - after inventory and
+   before completing or integrating any missing component.
+2. [`references/evaluation-and-dataset.md`](references/evaluation-and-dataset.md) - when a dataset
+   or evaluation method is assessed, repaired, or created.
+3. [`references/run-safety.md`](references/run-safety.md) - before environment changes,
+   evaluator execution, mock checks, or any paid execution.
+4. [`references/sdk-execution.md`](references/sdk-execution.md) - only before writing the wrapper
+   or running the baseline, optimization, and holdout.
 
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) to verify the readiness-state transition when
@@ -44,6 +44,23 @@ it.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
 - Never expose secrets in chat, commands, logs, diffs, or metadata.
+
+## Action authorization
+
+Use this closed authorization table. An action not listed here is forbidden until it is classified
+and approved. Before beginning a new action class, re-ground in this table and the latest user
+approval.
+
+| Action class | Authorization |
+|---|---|
+| Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
+| Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed after inspection; preserve source material and provenance. |
+| Create an isolated environment and minimal `.env` | Proceed without paid calls; leave secrets blank and ask the user to enter them locally. |
+| Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
+| Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
+| Make provider, private-data, connected Traigent, or other external calls | Obtain the unchanged combined approval for recipients, data, calls, runtime, and worst-case spend. |
+| Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
 ## Status language
 
@@ -171,6 +188,9 @@ Then:
 - Validate the generated dataset and evaluator using
   `references/evaluation-and-dataset.md`.
 - Run deterministic evaluator calibration locally when applicable.
+- Treat calibration as free only after inspection establishes a local-only call path with no
+  external side effects. If the call path is uncertain or external, route it through the
+  egress/paid approval.
 - Treat LLM-judge calibration as a paid/provider action. Explain its small call count and ask for
   approval before executing it.
 - Run a fresh-process Traigent mock plumbing check only when every model call is known to be
@@ -201,10 +221,15 @@ Prepare one combined approval containing:
 - Holdout calls for the current and selected configurations.
 - Estimated runtime and combined worst-case spend.
 - What leaves the machine and which service receives it.
-- The total first-run cap and stop condition.
+- An aggregate walkthrough budget and stop condition covering the baseline, search,
+  evaluator/judge calls, retries/composites, and both current-versus-winner holdout paths.
 
 Proceed only after explicit approval. Keep approval in the current process environment; never
-persist a cost-approval flag in `.env`.
+persist a cost-approval flag in `.env`. Record a remaining-budget ledger with allocations for each
+paid phase. Before every paid phase or call batch, check its combined worst-case cost against the
+remaining aggregate budget; stop and obtain revised approval when it does not fit. The SDK
+`TRAIGENT_RUN_COST_LIMIT` applies to one optimization call and does not enforce the aggregate
+walkthrough cap.
 
 ### 7. Run the honest comparison
 
@@ -272,6 +297,8 @@ The first run is complete only when:
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
 - The evaluator discriminates good, equivalent, partial, and bad outputs.
+- Calibration covers materially distinct inputs and outcome classes when scoring depends on
+  inputs, labels, schemas, or rubric branches.
 - Free checks made no provider calls.
 - Paid work had explicit combined approval.
 - Baseline and optimization used the same tuning data and evaluator.

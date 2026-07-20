@@ -63,8 +63,19 @@ SEARCH_SPACE = {
 }
 
 
+def build_prompt(message: str, *, style: str) -> str:
+    if style == "direct":
+        return message
+    if style == "structured":
+        return (
+            "Complete the task below. Follow every requested output constraint and return only "
+            f"the requested result.\n\nTask:\n{message}"
+        )
+    raise ValueError(f"unsupported prompt style: {style}")
+
+
 def task_score(output, expected, input_data=None) -> float:
-    # Replace with the calibrated task-specific evaluator.
+    # Replace with the calibrated task-specific evaluator, normalized to [0, 1].
     ...
 
 
@@ -107,7 +118,8 @@ output belongs only to evaluation.
 
 ## Current baseline
 
-Run the current configuration as one connected grid point:
+Check the baseline's combined worst-case cost against its allocation in the aggregate
+remaining-budget ledger. Then run the current configuration as one connected grid point:
 
 ```python
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run current configuration"
@@ -141,8 +153,10 @@ optimized_results = agent.optimize_sync(
 )
 ```
 
-Set `MAX_TRIALS`, cost cap, provider key, Traigent key, and process-only cost approval from the
-recorded combined approval. Do not enable mock mode in this process.
+Set `MAX_TRIALS`, the per-optimization-call SDK cost limit, provider key, Traigent key, and
+process-only cost approval from the recorded combined approval. Separately check the search's
+combined worst-case cost against the aggregate remaining-budget ledger before calling
+`optimize_sync`. Do not enable mock mode in this process.
 
 The optimization space must include the current configuration. If it does not, the comparison
 cannot prove the search beat what the user had.
@@ -177,8 +191,9 @@ winner_holdout_score, winner_holdout_cost = evaluate_holdout(
 ```
 
 Adapt the input expansion to the real agent signature. For an LLM judge, instrument and add judge
-cost separately. Add both holdout costs to the reported first-run total; they are not included in
-the optimization result object's aggregate.
+cost separately. Before each current-configuration and winner holdout call batch, confirm its
+combined worst-case cost fits the aggregate remaining-budget ledger. Add both holdout costs to the
+reported first-run total; they are not included in the optimization result object's aggregate.
 
 Before reporting:
 
