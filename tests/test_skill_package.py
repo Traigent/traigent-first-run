@@ -258,10 +258,15 @@ class SkillPackageTests(unittest.TestCase):
         preflight = normalized_local.index("run the bundled static preflight")
         calibration = normalized_local.index("run deterministic evaluator calibration")
         semantic_review = normalized_local.index(
-            "record the human semantic-coverage review"
+            "record the assistant-performed semantic-coverage review"
+        )
+        ambiguity_gate = normalized_local.index(
+            "if unresolved product-grading ambiguity"
         )
         self.assertLess(preflight, calibration)
         self.assertLess(semantic_review, calibration)
+        self.assertLess(semantic_review, ambiguity_gate)
+        self.assertLess(ambiguity_gate, preflight)
         for phrase in (
             "dataset-agent binding",
             "before creating an isolated environment",
@@ -295,7 +300,8 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         normalized_gate = " ".join(gate.casefold().split())
         ordered_gate_phrases = (
-            "record the human semantic-coverage review",
+            "perform and record the evidence-backed semantic-coverage review",
+            "if unresolved product-grading ambiguity",
             "run the bundled static preflight",
             "run deterministic evaluator calibration",
             "create the isolated environment",
@@ -316,6 +322,129 @@ class SkillPackageTests(unittest.TestCase):
             "make model/provider calls",
         ):
             self.assertIn(phrase, normalized_safety)
+
+    def test_semantic_coverage_review_is_assistant_directed(self) -> None:
+        skill_text = SKILL.read_text().casefold()
+        quality_text = (
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+        )
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        plan_text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
+
+        self.assertIn(
+            "assistant-performed semantic-coverage review",
+            skill_text,
+        )
+        self.assertIn(
+            "the coding assistant performs and records a rigorous semantic-coverage review",
+            quality_text,
+        )
+        self.assertIn(
+            "coding assistant perform and record the evidence-backed semantic-coverage review",
+            safety_text,
+        )
+        self.assertNotIn("human semantic-coverage", skill_text)
+        self.assertNotIn("human semantic-coverage", quality_text)
+        self.assertNotIn("human semantic-coverage", safety_text)
+        self.assertNotIn("human semantic-coverage", plan_text)
+        self.assertNotIn("if that review is unavailable", skill_text)
+        self.assertNotIn("if that review is unavailable", safety_text)
+
+    def test_semantic_coverage_review_records_evidence_and_verdict(self) -> None:
+        quality_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        plan_text = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "product contracts",
+            "tests, fixtures",
+            "dataset labels",
+            "rubrics",
+            "materially distinct input shape",
+            "outcome class",
+            "rubric branch",
+            "mode",
+            "threshold",
+            "known evidence or coverage gaps",
+            "semantic-coverage verdict",
+        ):
+            self.assertIn(phrase, quality_text)
+        for phrase in (
+            "semantic-coverage reviewer",
+            "semantic-coverage evidence",
+            "materially distinct inputs",
+            "mode and threshold rationale from product evidence",
+            "known semantic-coverage gaps",
+            "semantic-coverage verdict (`sufficient`/`ambiguous`)",
+        ):
+            self.assertIn(phrase, plan_text)
+
+    def test_product_grading_question_is_an_ambiguity_only_gate(self) -> None:
+        quality_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        for text in (quality_text, skill_text):
+            for phrase in (
+                "unresolved product-grading ambiguity",
+                "materially change which output is correct",
+                "candidate configurations rank",
+                "ask exactly one product-grading question",
+                "stop and wait",
+            ):
+                self.assertIn(phrase, text)
+        self.assertIn(
+            "proceed without asking or pausing: run static preflight and then local deterministic calibration",
+            quality_text,
+        )
+        self.assertIn(
+            "do not ask for generic approval of the probe matrix",
+            quality_text,
+        )
+        self.assertIn(
+            "show the exact judgment-dependent change and obtain explicit approval",
+            quality_text,
+        )
+
+    def test_calibration_policy_cannot_be_chosen_to_make_the_scorer_pass(
+        self,
+    ) -> None:
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "never select binary mode, thresholds, or tolerances because they make the current evaluator pass",
+            "derive them from product semantics before any probe scores exist",
+            "let calibration expose a mismatch",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_production_holdout_review_does_not_pause_the_walkthrough(
+        self,
+    ) -> None:
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "later production-promotion safeguard, not a calibration gate or a reason to pause the first walkthrough",
+            text,
+        )
 
     def test_openrouter_approval_names_every_possible_recipient(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -411,8 +540,9 @@ class SkillPackageTests(unittest.TestCase):
             "expected outcome",
             "rubric/schema branch",
             "chosen thresholds and rationale",
-            "human semantic-coverage reviewer",
-            "human semantic-coverage verdict",
+            "semantic-coverage reviewer",
+            "semantic-coverage evidence",
+            "semantic-coverage verdict (`sufficient`/`ambiguous`)",
             "live provider/key check",
             "llm-judge calibration/evaluation",
             "retries/composites",

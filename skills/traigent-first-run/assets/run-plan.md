@@ -53,10 +53,14 @@ Repeat one row for every materially distinct input, outcome class, and rubric/sc
 - Threshold rationale:
 - Judge model/rubric, if applicable:
 - Calibration egress/cost approval, if applicable:
-- Human semantic-coverage reviewer:
-- Inputs, outcome classes, and rubric/schema branches reviewed:
+- Semantic-coverage reviewer:
+- Semantic-coverage evidence (paths, stable identifiers, or representative case IDs):
+- Materially distinct inputs, outcome classes, labels, schema variants, metadata paths, and rubric branches reviewed:
+- Mode and threshold rationale from product evidence:
 - Known semantic-coverage gaps:
-- Human semantic-coverage verdict:
+- Semantic-coverage verdict (`sufficient`/`ambiguous`) and rationale:
+- Product-grading ambiguity question/answer, if applicable:
+- Explicit approval for any real grading-policy change, if applicable:
 
 ## Comparison
 

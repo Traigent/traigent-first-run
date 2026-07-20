@@ -201,13 +201,23 @@ provider key, and before any SDK-specific check.
 Follow this order:
 
 1. Define the calibration case matrix and thresholds from the task semantics, then record the
-   human semantic-coverage review described in `references/evaluation-and-dataset.md`. If that
-   review is unavailable, record the gap and continue with static validation, but do not execute
-   calibration yet.
-2. Run the bundled static preflight with the dataset, agent, and scorer arguments so dataset
+   assistant-performed semantic-coverage review described in
+   `references/evaluation-and-dataset.md`. Ground it in the strongest available product evidence:
+   contracts and documentation, tests and fixtures, labels and examples, accepted outputs,
+   rubrics, and failure reports. Record the semantic-coverage reviewer and evidence, materially
+   distinct inputs, outcome classes, and rubric/schema branches, the mode and threshold rationale,
+   known gaps, and a `sufficient` or `ambiguous` verdict.
+2. If unresolved product-grading ambiguity would materially change which output is correct or how
+   candidate configurations rank, ask exactly one product-grading question, explain the competing
+   interpretations and affected decision, then stop and wait. Otherwise record that no material
+   ambiguity remains and proceed without a generic review pause. A clarification does not
+   authorize changing real labels, expected answers, examples, or rubric policy; show any exact
+   judgment-dependent change and obtain the explicit approval required by the action table.
+3. Run the bundled static preflight with the dataset, agent, and scorer arguments so dataset
    structure, dataset-agent binding, and scorer signatures are checked without importing user
    modules. Omit optional model-pricing checks in this standard-library-only pass.
-3. Run deterministic evaluator calibration only when the complete inspected import and call path
+4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
+   `sufficient` and the complete inspected import and call path
    is local-only, has no external side effects, and needs no unavailable third-party package.
    Execute it in the isolated subprocess with provider credentials removed.
 
@@ -363,8 +373,12 @@ The first run is complete only when:
   partial and bad outputs.
 - Calibration covers and records materially distinct inputs and outcome classes when scoring
   depends on inputs, labels, schemas, or rubric branches.
-- A human reviewed the probe families for semantic coverage of every material input, outcome, and
-  rubric/schema branch, with gaps recorded before execution.
+- The assistant performed and recorded an evidence-backed semantic-coverage review of every
+  material input, outcome, and rubric/schema branch, including mode and threshold rationale, known
+  gaps, and the verdict before execution.
+- Any unresolved ambiguity that would materially change correctness or ranking was resolved by one
+  product-grading question before calibration; absent such ambiguity, no review-only pause
+  occurred.
 - Free checks made no provider calls.
 - Paid work had explicit combined approval.
 - Baseline and optimization used the same tuning data and evaluator.

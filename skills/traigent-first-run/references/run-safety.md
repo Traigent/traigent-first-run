@@ -56,33 +56,38 @@ link; show only the selected provider and Traigent when each key becomes necessa
 
 Use this gate order:
 
-1. After component creation, define the calibration matrix and thresholds and record the human
-   semantic-coverage review. If that review is unavailable, record the gap; static validation
-   still proceeds, but calibration does not execute.
-2. Run the bundled static preflight with dataset, agent, and scorer arguments. Record dataset
+1. After component creation, define the calibration matrix and thresholds, then have the coding
+   assistant perform and record the evidence-backed semantic-coverage review. Record the reviewer
+   and evidence, materially distinct inputs, outcomes, and rubric/schema branches, mode and
+   threshold rationale, known gaps, and a `sufficient` or `ambiguous` verdict.
+2. If unresolved product-grading ambiguity would materially change correctness or candidate
+   ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
+   that no material ambiguity remains and continue without a generic semantic-review stop.
+3. Run the bundled static preflight with dataset, agent, and scorer arguments. Record dataset
    structure, dataset-agent binding, and scorer-signature results independently of SDK/package
    findings. A missing Traigent SDK cannot block these standard-library-only component checks.
-3. Run deterministic evaluator calibration only when the complete inspected import and call path
-   is local-only, side-effect-free, and needs no unavailable third-party package. Do not execute
-   an LLM judge or any uncertain or external evaluator; keep it behind explicit combined approval.
-4. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
+4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
+   `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
+   and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
+   external evaluator; keep it behind explicit combined approval.
+5. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
    OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
    fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
    required.
-5. Create the isolated environment with Python 3.11-3.13 without fetching packages.
-6. Install the exact declared dependencies under the narrow package-artifact authorization.
-7. Verify the installed SDK and its public signatures, then write the SDK integration from those
+6. Create the isolated environment with Python 3.11-3.13 without fetching packages.
+7. Install the exact declared dependencies under the narrow package-artifact authorization.
+8. Verify the installed SDK and its public signatures, then write the SDK integration from those
    verified capabilities. Run any local deterministic calibration deferred solely for an
    installed dependency.
-8. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
+9. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
    do not over-prescribe execution.
-9. After every applicable free check is complete, create the minimal `.env` and stop for the
+10. After every applicable free check is complete, create the minimal `.env` and stop for the
    provider-key paste.
-10. Stop for the Traigent portal-key paste immediately before connected work.
-11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
+11. Stop for the Traigent portal-key paste immediately before connected work.
+12. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-12. After approval, run the live check first. Continue only if it passes.
+13. After approval, run the live check first. Continue only if it passes.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
@@ -103,11 +108,14 @@ pass, omit optional model-pricing checks and interpret a missing SDK as a deferr
 not as a failure of dataset structure, dataset-agent binding, or scorer-signature checks.
 
 Deterministic calibration is a separate execution gate. Run it before environment setup only when
-human semantic coverage is recorded and inspection proves its complete call path is local-only,
-side-effect-free, and standard-library-only. If it needs a declared local dependency, defer it
-until that dependency is installed, but still run it before creating `.env` or requesting a
-provider key. Do not execute an LLM judge or an uncertain or external evaluator without the
-explicit combined approval for its recipients, data, calls, runtime, and spend.
+the assistant has recorded a `sufficient` evidence-backed semantic-coverage verdict and inspection
+proves its complete call path is local-only, side-effect-free, and standard-library-only. A
+generic outside-review wait is not a gate. Pause only for the one product-grading question when an
+unresolved ambiguity would materially change correctness or ranking. If calibration needs a
+declared local dependency, defer it until that dependency is installed, but still run it before
+creating `.env` or requesting a provider key. Do not execute an LLM judge or an uncertain or
+external evaluator without the explicit combined approval for its recipients, data, calls,
+runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 

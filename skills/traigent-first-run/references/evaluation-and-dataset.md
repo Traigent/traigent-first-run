@@ -44,7 +44,9 @@ When building an evaluator:
   supported or unsupported from memory; inspect the installed binding behavior and adapt at the
   boundary when direct registration has not been verified.
 - Infer the rubric from real labels, tests, accepted outputs, product rules, and failure reports.
-- Ask one product question only if ambiguity would materially change who wins.
+- Ask one product-grading question only if unresolved ambiguity would materially change which
+  output is correct or how candidate configurations rank. Do not ask for generic approval of the
+  probe matrix or the assistant's semantic-coverage review.
 - Prefer partial credit when correctness has meaningful degrees.
 - Return a normalized score in `[0, 1]` from every metric helper.
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
@@ -75,7 +77,9 @@ good ~= equivalent_good > partial > bad
   and require both `partial` and `bad` to fail.
 
 Binary mode is not an escape hatch for a graded task whose evaluator fails to recognize meaningful
-partial correctness. Repair that evaluator and keep `score_mode: "graded"`.
+partial correctness. Repair that evaluator and keep `score_mode: "graded"`. Never select binary
+mode, thresholds, or tolerances because they make the current evaluator pass; derive them from
+product semantics before any probe scores exist and let calibration expose a mismatch.
 
 Use materially distinct inputs and outcome classes. Record each case name, `score_mode`, input,
 expected outcome, candidate outputs, scores, checks, and exception status. One input with four
@@ -85,11 +89,43 @@ confirm that every helper returns a normalized score in `[0, 1]`. Before executi
 record the exact pass/fail and approximate-equivalence threshold values for each case and explain
 why they match that task and score mode; do not rely on unstated CLI defaults.
 
-Have a human review the proposed case matrix for semantic coverage before execution. Record who
-reviewed it, which materially distinct input shapes, outcome classes, and rubric/schema branches
-were checked, any known gap, and the coverage verdict. Script/schema validation proves the matrix
-is well formed; it does not prove that the selected probes cover the product's meaning of
-correctness.
+### Assistant semantic-coverage review
+
+The coding assistant performs and records a rigorous semantic-coverage review before execution;
+do not require an outside reviewer merely to approve the case matrix. Use the strongest available
+product evidence, in this order where present:
+
+1. Product contracts, requirements, and documented success or unacceptable-failure rules.
+2. Tests, fixtures, golden files, and accepted outputs.
+3. Dataset labels, examples, metadata, and schema variants.
+4. Existing evaluator rules, rubrics, failure reports, and reviewed traces.
+
+Record all of the following in `traigent-runs/run-plan.md`:
+
+- The semantic-coverage reviewer as the coding assistant and the evidence sources, with paths,
+  stable identifiers, or representative case IDs.
+- Every materially distinct input shape, outcome class, label, schema variant, metadata-dependent
+  path, and rubric branch that can change scoring.
+- Why each probe family covers those branches and why its `score_mode`, pass/fail threshold,
+  approximate-equivalence tolerance, and separation margin follow the product semantics.
+- Known evidence or coverage gaps and whether each gap could change correctness or candidate
+  ranking.
+- A semantic-coverage verdict of `sufficient` or `ambiguous`, with a concise evidence-based
+  rationale.
+
+Script/schema validation proves only that the matrix is well formed. The assistant's review must
+connect the selected probes to the product's meaning of correctness. If the evidence supports a
+`sufficient` verdict, proceed without asking or pausing: run static preflight and then local
+deterministic calibration.
+
+If the evidence leaves unresolved product-grading ambiguity that would materially change which
+output is correct or how candidate configurations rank, record an `ambiguous` verdict, ask
+exactly one product-grading question that states the competing interpretations and affected
+ranking decision, and **STOP and wait for the answer**. Do not invent an answer or silently
+change real grading policy. After the answer, update the evidence, affected probe families,
+rationale, gaps, and verdict before continuing. If implementing the answer would change real
+labels, expected answers, examples, or rubric policy, show the exact judgment-dependent change
+and obtain explicit approval before editing it.
 
 The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
 to the real task, save the JSON as `traigent-runs/calibration-cases.json`, and run the command from
@@ -275,7 +311,8 @@ across difficulty and scenario. The holdout checks whether the walkthrough confi
 generalizes to unseen synthetic examples. It does not validate production performance.
 
 Synthetic examples may enter a production holdout only after independent human review against
-the real task. Until then:
+the real task. This is a later production-promotion safeguard, not a calibration gate or a reason
+to pause the first walkthrough. Until then:
 
 - Report them as synthetic holdout evidence.
 - Do not promote the result to production.
