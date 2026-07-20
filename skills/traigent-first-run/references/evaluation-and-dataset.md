@@ -176,7 +176,9 @@ Run quality checks:
 - Constant or empty expected outputs.
 - Agent-signature binding.
 - Difficulty, boundary, and known failure-mode coverage.
-- Dominant-output or majority-label baselines that could hide a ceiling.
+- Dominant-output or majority-label baselines that could hide a ceiling. For structured output,
+  inspect common label/category fields and pass `--outcome-field result.label` to the static
+  preflight when the task's discrete outcome uses a nonstandard or nested field.
 
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.

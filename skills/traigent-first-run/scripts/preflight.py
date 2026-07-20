@@ -29,9 +29,19 @@ SUPPORTED_PYTHON_MAX = (3, 14)
 MIN_TRAIGENT_VERSION = (0, 21)
 MAX_NEAR_DUPLICATE_ROWS = 500
 NEAR_DUPLICATE_THRESHOLD = 0.9
-DOMINANT_OUTPUT_RATIO = 0.9
+DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
+COMMON_OUTCOME_FIELDS = (
+    "label",
+    "category",
+    "class",
+    "intent",
+    "decision",
+    "status",
+    "type",
+    "grade",
+)
 
 VENDOR_KEYS = {
     "OpenRouter": ("OPENROUTER_API_KEY",),
@@ -351,7 +361,42 @@ def row_metadata_value(row: dict[str, Any], key: str) -> Any:
     return metadata.get(key) if isinstance(metadata, dict) else None
 
 
-def check_dataset(path: Path) -> list[dict[str, Any]] | None:
+def nested_output_value(output: Any, field_path: str) -> tuple[bool, Any]:
+    value = output
+    for part in field_path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return False, None
+        value = value[part]
+    return True, value
+
+
+def structured_outcomes(
+    rows: list[dict[str, Any]], outcome_field: str | None
+) -> tuple[str, list[Any]] | None:
+    fields = (outcome_field,) if outcome_field else COMMON_OUTCOME_FIELDS
+    for field in fields:
+        values: list[Any] = []
+        for row in rows:
+            found, value = nested_output_value(row["output"], field)
+            if not found or isinstance(value, (dict, list)) or value is None:
+                values = []
+                break
+            values.append(value)
+        if values:
+            return field, values
+
+    if outcome_field:
+        emit(
+            "dataset-outcome-field",
+            FAIL,
+            f"output field '{outcome_field}' is missing or non-scalar in one or more rows",
+        )
+    return None
+
+
+def check_dataset(
+    path: Path, outcome_field: str | None = None
+) -> list[dict[str, Any]] | None:
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
         return None
@@ -494,13 +539,35 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
         emit("dataset-outputs", PASS, f"{len(set(outputs))} distinct expected outputs")
         dominant_count = max(output_counts.values())
         dominant_ratio = dominant_count / len(outputs)
-        if dominant_ratio >= DOMINANT_OUTPUT_RATIO:
+        if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
             emit(
                 "dataset-ceiling-risk",
                 WARN,
                 f"{dominant_count}/{len(outputs)} expected outputs "
                 f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
                 "could hide meaningful failures",
+            )
+
+    structured = structured_outcomes(rows, outcome_field)
+    if structured:
+        field, values = structured
+        normalized_values = [normalized_text(value) for value in values]
+        value_counts = Counter(normalized_values)
+        dominant_count = max(value_counts.values())
+        dominant_ratio = dominant_count / len(normalized_values)
+        if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
+            emit(
+                "dataset-ceiling-risk",
+                WARN,
+                f"{dominant_count}/{len(values)} values ({dominant_ratio:.1%}) in "
+                f"output field '{field}' are identical; a majority-only strategy "
+                "could hide meaningful failures",
+            )
+        else:
+            emit(
+                "dataset-outcome-field",
+                PASS,
+                f"output field '{field}' has {len(value_counts)} distinct values",
             )
 
     splits: dict[str, set[str]] = {}
@@ -758,6 +825,10 @@ def parse_args() -> argparse.Namespace:
         "--models", default="", help="comma-separated LiteLLM model ids"
     )
     parser.add_argument("--dataset", help="JSONL dataset to validate")
+    parser.add_argument(
+        "--outcome-field",
+        help="dot path for a structured discrete outcome, such as category or result.label",
+    )
     parser.add_argument("--agent", help="FILE.py:FUNC for static dataset binding")
     parser.add_argument("--scorer", help="FILE.py:FUNC for static signature validation")
     parser.add_argument(
@@ -778,7 +849,9 @@ def main() -> int:
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     check_models(models)
 
-    rows = check_dataset(Path(args.dataset)) if args.dataset else None
+    rows = (
+        check_dataset(Path(args.dataset), args.outcome_field) if args.dataset else None
+    )
     if args.agent and rows is not None:
         check_binding(rows, args.agent)
     elif args.agent:

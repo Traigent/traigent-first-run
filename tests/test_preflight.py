@@ -147,6 +147,58 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_dominant_structured_label_is_not_hidden_by_unique_reasons(self) -> None:
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"case {index}",
+                "output": {
+                    "label": "majority" if index < 9 else "minority",
+                    "reason": f"unique reason {index}",
+                },
+            }
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        self.assertTrue(
+            any(
+                result.check == "dataset-ceiling-risk"
+                and result.status == MODULE.WARN
+                and "output field 'label'" in result.detail
+                and "9/10" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_explicit_nested_outcome_field_detects_nonstandard_schema(self) -> None:
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"case {index}",
+                "output": {
+                    "result": {
+                        "priority": "normal" if index < 9 else "urgent",
+                    },
+                    "reason": f"unique reason {index}",
+                },
+            }
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset, "result.priority")
+        self.assertTrue(
+            any(
+                result.check == "dataset-ceiling-risk"
+                and "output field 'result.priority'" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_ast_binding_does_not_execute_module_top_level(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
