@@ -37,12 +37,13 @@ Use one production-compatible function for baseline and optimization:
 ```python
 import os
 
-import litellm
-import traigent
 from dotenv import load_dotenv
-from traigent.api.decorators import EvaluationOptions
 
 load_dotenv(override=False)
+
+import litellm
+import traigent
+from traigent.api.decorators import EvaluationOptions
 
 TUNING_DATASET = "traigent-runs/tuning.jsonl"
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
