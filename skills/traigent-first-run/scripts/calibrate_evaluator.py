@@ -365,6 +365,8 @@ def calibration_checks(scores: dict[str, float], score_mode: str) -> dict[str, b
     common = {
         "good_passes": scores["good"] >= GOOD_MINIMUM,
         "equivalent_is_accepted": scores["equivalent_good"] >= GOOD_MINIMUM,
+        "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
+        <= EQUIVALENCE_TOLERANCE,
         "bad_fails": scores["bad"] <= BAD_MAXIMUM,
         "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
     }
@@ -377,8 +379,6 @@ def calibration_checks(scores: dict[str, float], score_mode: str) -> dict[str, b
         raise ValueError(f"score_mode must be one of: {', '.join(SCORE_MODES)}")
     return {
         **common,
-        "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
-        <= EQUIVALENCE_TOLERANCE,
         "partial_is_below_good": scores["partial"]
         <= min(scores["good"], scores["equivalent_good"]) - SEPARATION_MARGIN,
         "partial_is_above_bad": scores["partial"] >= scores["bad"] + SEPARATION_MARGIN,

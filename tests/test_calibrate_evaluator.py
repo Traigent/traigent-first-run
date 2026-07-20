@@ -58,6 +58,18 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         )
         return scorer
 
+    def make_surface_penalty_scorer(self, directory: str) -> Path:
+        scorer = Path(directory) / "surface_penalty_scorer.py"
+        scorer.write_text(
+            "def score(output, expected):\n"
+            "    if output == expected:\n"
+            "        return 1.0\n"
+            "    if output.casefold() == expected.casefold():\n"
+            "        return 0.8\n"
+            "    return 0.0\n"
+        )
+        return scorer
+
     def make_mixed_mode_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "mixed_mode_scorer.py"
         scorer.write_text(
@@ -249,6 +261,40 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         payload = json.loads(process.stdout)
         self.assertFalse(payload["passed"])
         self.assertFalse(payload["checks"]["bad_fails"])
+
+    def test_binary_mode_rejects_excess_surface_form_penalty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{self.make_surface_penalty_scorer(directory)}:score",
+                    "--good",
+                    '"positive"',
+                    "--equivalent-good",
+                    '"POSITIVE"',
+                    "--partial",
+                    '"mixed"',
+                    "--bad",
+                    '"negative"',
+                    "--expected",
+                    '"positive"',
+                    "--score-mode",
+                    "binary",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["scores"]["good"], 1.0)
+        self.assertEqual(payload["scores"]["equivalent_good"], 0.8)
+        self.assertTrue(payload["checks"]["equivalent_is_accepted"])
+        self.assertFalse(payload["checks"]["equivalent_matches_good"])
+        self.assertFalse(payload["passed"])
 
     def test_graded_default_keeps_strict_partial_separation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
