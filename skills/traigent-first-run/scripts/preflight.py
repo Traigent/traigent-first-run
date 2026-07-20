@@ -120,6 +120,7 @@ class StaticSignature:
     has_kwargs: bool
     is_async: bool
     injection_mode: str | None
+    config_param: str | None
 
 
 RESULTS: list[Result] = []
@@ -757,70 +758,147 @@ def literal_injection_mode(node: ast.expr) -> str | None:
     return None
 
 
-def grouped_injection_mode(node: ast.expr) -> str | None:
+def grouped_injection_settings(
+    node: ast.expr,
+) -> tuple[str, str | None] | None:
     """Resolve a literal ``injection={...}`` bundle, or fail closed."""
     if isinstance(node, ast.Constant) and node.value is None:
-        return INJECTION_MODE_CONTEXT
-    if not isinstance(node, ast.Dict):
-        return None
+        return INJECTION_MODE_CONTEXT, None
 
     mode = INJECTION_MODE_CONTEXT
-    for key, value in zip(node.keys, node.values):
+    config_param: str | None = None
+    if isinstance(node, ast.Dict):
+        entries = list(zip(node.keys, node.values))
+    elif (
+        isinstance(node, ast.Call)
+        and (dotted_name(node.func) or "").split(".")[-1] == "InjectionOptions"
+        and not node.args
+    ):
+        if any(keyword.arg is None for keyword in node.keywords):
+            return None
+        entries = [
+            (ast.Constant(value=keyword.arg), keyword.value)
+            for keyword in node.keywords
+        ]
+    else:
+        return None
+
+    for key, value in entries:
         if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
             return None
         if key.value == "injection_mode":
             mode = literal_injection_mode(value)
             if mode is None:
                 return None
-    return mode
+        elif key.value == "config_param":
+            if isinstance(value, ast.Constant) and (
+                value.value is None
+                or isinstance(value.value, str)
+                and bool(value.value.strip())
+            ):
+                config_param = value.value
+            else:
+                return None
+    return mode, config_param
 
 
-def optimize_injection_mode(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+def traigent_optimize_imports(tree: ast.Module) -> tuple[set[str], set[str]]:
+    module_aliases: set[str] = set()
+    optimize_aliases: set[str] = set()
+    for item in tree.body:
+        if isinstance(item, ast.Import):
+            for alias in item.names:
+                if alias.name == "traigent" or alias.name.startswith("traigent."):
+                    module_aliases.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(item, ast.ImportFrom) and (
+            item.module == "traigent" or (item.module or "").startswith("traigent.")
+        ):
+            for alias in item.names:
+                if alias.name == "optimize":
+                    optimize_aliases.add(alias.asname or alias.name)
+    return module_aliases, optimize_aliases
+
+
+def optimize_injection_settings(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, tree: ast.Module
+) -> tuple[str | None, str | None]:
     """Extract the selected function's literal Traigent optimize injection mode."""
+    module_aliases, optimize_aliases = traigent_optimize_imports(tree)
+
+    def is_traigent_optimize(decorator: ast.expr) -> bool:
+        if not isinstance(decorator, ast.Call):
+            return False
+        name = dotted_name(decorator.func)
+        if name in optimize_aliases:
+            return True
+        parts = name.split(".") if name else []
+        return bool(parts) and parts[0] in module_aliases and parts[-1] == "optimize"
+
     optimize_calls = [
         decorator
         for decorator in node.decorator_list
-        if isinstance(decorator, ast.Call)
-        and (dotted_name(decorator.func) or "").split(".")[-1] == "optimize"
+        if is_traigent_optimize(decorator)
     ]
     if not optimize_calls:
-        return INJECTION_MODE_CONTEXT
+        return INJECTION_MODE_CONTEXT, None
     if len(optimize_calls) != 1:
-        return None
+        return None, None
 
     flat_mode = INJECTION_MODE_CONTEXT
+    flat_config_param: str | None = None
+    saw_flat_mode = False
     grouped_mode: str | None = None
+    grouped_config_param: str | None = None
     saw_grouped_mode = False
     for keyword in optimize_calls[0].keywords:
         if keyword.arg is None:
-            return None
+            return None, None
         if keyword.arg == "legacy":
             if (
                 not isinstance(keyword.value, ast.Constant)
                 or keyword.value.value is not None
             ):
-                return None
+                return None, None
         elif keyword.arg == "injection_mode":
+            saw_flat_mode = True
             flat_mode = literal_injection_mode(keyword.value)
             if flat_mode is None:
-                return None
+                return None, None
+        elif keyword.arg == "config_param":
+            if isinstance(keyword.value, ast.Constant) and (
+                keyword.value.value is None
+                or isinstance(keyword.value.value, str)
+                and bool(keyword.value.value.strip())
+            ):
+                flat_config_param = keyword.value.value
+            else:
+                return None, None
         elif keyword.arg == "injection":
             if saw_grouped_mode:
-                return None
+                return None, None
             saw_grouped_mode = True
-            grouped_mode = grouped_injection_mode(keyword.value)
-            if grouped_mode is None:
-                return None
+            grouped = grouped_injection_settings(keyword.value)
+            if grouped is None:
+                return None, None
+            grouped_mode, grouped_config_param = grouped
 
     if grouped_mode is None:
-        return flat_mode
-    if (
-        flat_mode != INJECTION_MODE_CONTEXT
-        and grouped_mode != INJECTION_MODE_CONTEXT
-        and flat_mode != grouped_mode
-    ):
-        return None
-    return grouped_mode if flat_mode == INJECTION_MODE_CONTEXT else flat_mode
+        mode = flat_mode
+        config_param = flat_config_param
+    elif saw_flat_mode and flat_mode != grouped_mode:
+        return None, None
+    else:
+        mode = grouped_mode if flat_mode == INJECTION_MODE_CONTEXT else flat_mode
+        if (
+            flat_config_param is not None
+            and grouped_config_param is not None
+            and flat_config_param != grouped_config_param
+        ):
+            return None, None
+        config_param = flat_config_param or grouped_config_param
+    if mode == INJECTION_MODE_PARAMETER:
+        config_param = config_param or "config"
+    return mode, config_param
 
 
 def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
@@ -862,6 +940,7 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
         if default is not None:
             defaults[argument.arg] = ast.unparse(default)
     required = [name for name in [*positional, *keyword_only] if name not in defaults]
+    injection_mode, config_param = optimize_injection_settings(node, tree)
     return StaticSignature(
         name=function_name,
         positional_only=positional_only,
@@ -872,7 +951,8 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
         has_varargs=node.args.vararg is not None,
         has_kwargs=node.args.kwarg is not None,
         is_async=isinstance(node, ast.AsyncFunctionDef),
-        injection_mode=optimize_injection_mode(node),
+        injection_mode=injection_mode,
+        config_param=config_param,
     )
 
 
@@ -910,6 +990,26 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
             "literal context, parameter, or seamless mode for binding preflight",
         )
         return
+    config_param = (
+        signature.config_param
+        if signature.injection_mode == INJECTION_MODE_PARAMETER
+        else None
+    )
+    if config_param is not None:
+        if config_param not in [*signature.positional, *signature.keyword_only]:
+            emit(
+                "dataset-binding",
+                FAIL,
+                f"parameter injection requires agent parameter '{config_param}'",
+            )
+            return
+        if config_param in signature.positional_only:
+            emit(
+                "dataset-binding",
+                FAIL,
+                f"injected config parameter '{config_param}' must be keyword-bindable",
+            )
+            return
     positional_only = set(signature.positional_only)
     keywordable = (set(signature.positional) - positional_only) | set(
         signature.keyword_only
@@ -917,10 +1017,14 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     dict_rows = [row for row in rows if isinstance(row["input"], dict)]
     if not dict_rows:
         required_positional = [
-            name for name in signature.positional if name in signature.required
+            name
+            for name in signature.positional
+            if name in signature.required and name != config_param
         ]
         required_keyword_only = [
-            name for name in signature.keyword_only if name in signature.required
+            name
+            for name in signature.keyword_only
+            if name in signature.required and name != config_param
         ]
         if not signature.positional and not signature.has_varargs:
             emit(
@@ -960,6 +1064,18 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
         for index, row in indexed_rows
         if not mapping_input_expands(signature, row["input"])
     ]
+    if config_param is not None:
+        collision_rows = [
+            index for index, row in indexed_rows if config_param in row["input"]
+        ]
+        if collision_rows:
+            failed = True
+            emit(
+                "dataset-binding",
+                FAIL,
+                f"input key '{config_param}' collides with the SDK-injected config "
+                f"parameter on rows {collision_rows[:10]}",
+            )
 
     for name in signature.positional_only:
         targeted_rows = [index for index, row in expanded_rows if name in row["input"]]
@@ -976,10 +1092,14 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     if positional_mapping_rows:
         positional_row_numbers = [index for index, _row in positional_mapping_rows]
         required_positional = [
-            name for name in signature.positional if name in signature.required
+            name
+            for name in signature.positional
+            if name in signature.required and name != config_param
         ]
         required_keyword_only = [
-            name for name in signature.keyword_only if name in signature.required
+            name
+            for name in signature.keyword_only
+            if name in signature.required and name != config_param
         ]
         if not signature.positional and not signature.has_varargs:
             failed = True
@@ -1044,7 +1164,7 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     for name in (
         required_name
         for required_name in signature.required
-        if required_name not in positional_only
+        if required_name not in positional_only and required_name != config_param
     ):
         missing_rows = [
             index for index, row in expanded_rows if name not in row["input"]
@@ -1057,6 +1177,8 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
                 f"required agent parameter '{name}' is missing from rows {missing_rows[:10]}",
             )
     for name, default in signature.defaults.items():
+        if name == config_param:
+            continue
         top_level_only_rows = [
             index
             for index, row in expanded_rows

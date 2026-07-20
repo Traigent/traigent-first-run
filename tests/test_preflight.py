@@ -540,12 +540,21 @@ class StaticPreflightTests(unittest.TestCase):
                 "    injection_mode=InjectionMode.PARAMETER, config_param='config'\n"
                 ")\n"
             ),
+            "options": (
+                "@traigent.optimize(\n"
+                "    injection=InjectionOptions(\n"
+                "        injection_mode='parameter', config_param='config'\n"
+                "    )\n"
+                ")\n"
+            ),
         }
         for label, decorator in decorators.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
                 agent = Path(directory) / "agent.py"
                 agent.write_text(
-                    f"{decorator}def answer(payload):\n    return payload['message']\n"
+                    "import traigent\n"
+                    f"{decorator}def answer(payload, config=None):\n"
+                    "    return payload['message']\n"
                 )
                 MODULE.check_binding(
                     [{"input": {"message": "hello"}, "output": "hello"}],
@@ -587,6 +596,7 @@ class StaticPreflightTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
                 agent = Path(directory) / "agent.py"
                 agent.write_text(
+                    "import traigent\n"
                     f"{decorator}def answer(payload):\n    return payload['message']\n"
                 )
                 MODULE.check_binding(
@@ -611,6 +621,7 @@ class StaticPreflightTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
                 agent = Path(directory) / "agent.py"
                 agent.write_text(
+                    "import traigent\n"
                     f"{decorator}def answer(payload):\n    return payload['message']\n"
                 )
                 MODULE.check_binding(
@@ -633,13 +644,15 @@ class StaticPreflightTests(unittest.TestCase):
     ) -> None:
         sources = {
             "regular": (
+                "import traigent\n"
                 "@traigent.optimize(injection_mode='parameter')\n"
-                "def answer(payload):\n"
+                "def answer(payload, config=None):\n"
                 "    return payload\n"
             ),
             "positional-only": (
+                "import traigent\n"
                 "@traigent.optimize(injection_mode='parameter')\n"
-                "def answer(payload, /):\n"
+                "def answer(payload, /, config=None):\n"
                 "    return payload\n"
             ),
         }
@@ -671,8 +684,9 @@ class StaticPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             agent = Path(directory) / "agent.py"
             agent.write_text(
+                "import traigent\n"
                 "@traigent.optimize(injection_mode='parameter')\n"
-                "def answer(payload, tone='plain'):\n"
+                "def answer(payload, tone='plain', config=None):\n"
                 "    return f'{tone}: {payload}'\n"
             )
             MODULE.check_binding(
@@ -687,6 +701,155 @@ class StaticPreflightTests(unittest.TestCase):
 
         self.assertFalse(
             any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
+    def test_traigent_optimize_import_aliases_are_recognized(self) -> None:
+        sources = {
+            "module-alias": (
+                "import traigent as tg\n"
+                "@tg.optimize(injection_mode='parameter')\n"
+                "def answer(payload, config=None):\n"
+                "    return payload\n"
+            ),
+            "function-alias": (
+                "from traigent.api.decorators import optimize as tune\n"
+                "@tune(injection_mode='parameter')\n"
+                "def answer(payload, config=None):\n"
+                "    return payload\n"
+            ),
+        }
+        for label, source in sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(source)
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertTrue(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_unrelated_optimize_decorator_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "import unrelated_optimizer\n"
+                "@unrelated_optimizer.optimize(injection_mode=DYNAMIC_MODE)\n"
+                "def answer(payload):\n"
+                "    return payload['message']\n"
+            )
+            MODULE.check_binding(
+                [{"input": {"message": "hello"}, "output": "hello"}],
+                f"{agent}:answer",
+            )
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
+    def test_parameter_injection_validates_config_parameter(self) -> None:
+        sources = {
+            "missing": (
+                "import traigent\n"
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(question):\n"
+                "    return question\n"
+            ),
+            "positional-only": (
+                "import traigent\n"
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(question, config, /):\n"
+                "    return question\n"
+            ),
+            "dynamic": (
+                "import traigent\n"
+                "@traigent.optimize(\n"
+                "    injection_mode='parameter', config_param=CONFIG_NAME\n"
+                ")\n"
+                "def answer(question, config=None):\n"
+                "    return question\n"
+            ),
+            "mode-conflict": (
+                "import traigent\n"
+                "@traigent.optimize(\n"
+                "    injection_mode='context',\n"
+                "    injection={'injection_mode': 'parameter'}\n"
+                ")\n"
+                "def answer(question, config=None):\n"
+                "    return question\n"
+            ),
+            "config-conflict": (
+                "import traigent\n"
+                "@traigent.optimize(\n"
+                "    injection_mode='parameter', config_param='config',\n"
+                "    injection={'injection_mode': 'parameter', "
+                "'config_param': 'settings'}\n"
+                ")\n"
+                "def answer(question, config=None, settings=None):\n"
+                "    return question\n"
+            ),
+        }
+        for label, source in sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(source)
+                MODULE.check_binding(
+                    [{"input": {"question": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertTrue(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_injected_config_is_exempt_but_dataset_collision_fails(self) -> None:
+        source = (
+            "import traigent\n"
+            "@traigent.optimize(injection_mode='parameter')\n"
+            "def answer(question, config=None):\n"
+            "    return question\n"
+        )
+        for label, input_data, should_fail in (
+            ("valid", {"question": "hello"}, False),
+            ("collision", {"question": "hello", "config": "user value"}, True),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(source)
+                MODULE.check_binding(
+                    [{"input": input_data, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertEqual(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                should_fail,
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_parameter_injection_does_not_exempt_real_dataset_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "import traigent\n"
+                "@traigent.optimize(injection_mode='parameter')\n"
+                "def answer(question, tone, config=None):\n"
+                "    return f'{tone}: {question}'\n"
+            )
+            MODULE.check_binding(
+                [{"input": {"question": "hello"}, "output": "hello"}],
+                f"{agent}:answer",
+            )
+        self.assertTrue(
+            any(
+                result.status == MODULE.FAIL and "'tone' is missing" in result.detail
+                for result in MODULE.RESULTS
+            ),
             MODULE.RESULTS,
         )
 
