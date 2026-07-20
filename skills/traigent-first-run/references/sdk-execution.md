@@ -23,12 +23,13 @@ from traigent.api.decorators import EvaluationOptions
 print(getattr(traigent, "__version__", "unknown"))
 print(inspect.signature(traigent.optimize))
 print(inspect.signature(EvaluationOptions))
+print(inspect.signature(traigent.Dataset.from_jsonl))
 PY
 ```
 
 After decorating the function, inspect `agent.optimize_sync` the same way. If the installed
-signatures do not support the arguments below, stop and adapt from the installed public API. Do
-not invent arguments.
+signatures or the public `traigent.Dataset.from_jsonl` loader do not support the usage below,
+stop and adapt from the installed public API. Do not invent arguments.
 
 ## Approved runtime bounds
 
@@ -53,7 +54,6 @@ shorter provider timeout. Include retry backoff and cleanup in the orchestration
 Use one production-compatible function for baseline and optimization:
 
 ```python
-import json
 import math
 import os
 import time
@@ -67,6 +67,7 @@ import traigent
 from traigent.api.decorators import EvaluationOptions
 
 TUNING_DATASET = "traigent-runs/tuning.jsonl"
+HOLDOUT_DATASET = "traigent-runs/holdout.jsonl"
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
 
@@ -257,33 +258,32 @@ def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
     deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS
     scores = []
     tracked_cost = 0.0
-    with open("traigent-runs/holdout.jsonl") as holdout_file:
-        for line in holdout_file:
-            remaining_seconds = deadline - time.monotonic()
-            if remaining_seconds <= 0:
-                raise TimeoutError(
-                    f"{phase_name} exceeded its approved holdout phase deadline"
-                )
-            row = json.loads(line)
-            input_data = row["input"]
-            metadata = row.get("metadata", {})
-            expected = row["output"]
-            # Reserve request time for every permitted attempt inside the phase deadline.
-            per_attempt_timeout = min(
-                PROVIDER_REQUEST_TIMEOUT_SECONDS,
-                remaining_seconds / (1 + PROVIDER_RETRY_COUNT),
+    holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
+    for example in holdout.examples:
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise TimeoutError(
+                f"{phase_name} exceeded its approved holdout phase deadline"
             )
-            output, call_cost = call_agent(
-                input_data["message"],
-                config,
-                request_timeout_seconds=per_attempt_timeout,
+        input_data = example.input_data
+        expected = example.expected_output
+        metadata = example.metadata or {}
+        # Reserve request time for every permitted attempt inside the phase deadline.
+        per_attempt_timeout = min(
+            PROVIDER_REQUEST_TIMEOUT_SECONDS,
+            remaining_seconds / (1 + PROVIDER_RETRY_COUNT),
+        )
+        output, call_cost = call_agent(
+            input_data["message"],
+            config,
+            request_timeout_seconds=per_attempt_timeout,
+        )
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"{phase_name} exceeded its approved holdout phase deadline"
             )
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"{phase_name} exceeded its approved holdout phase deadline"
-                )
-            scores.append(task_score(output, expected, input_data, metadata))
-            tracked_cost += call_cost
+        scores.append(task_score(output, expected, input_data, metadata))
+        tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
 
@@ -301,6 +301,9 @@ Adapt the input expansion to the real agent signature. For an LLM judge, instrum
 cost separately. Before each current-configuration and winner holdout call batch, confirm its
 combined worst-case cost fits the aggregate remaining-budget ledger. Add both holdout costs to the
 reported first-run total; they are not included in the optimization result object's aggregate.
+Loading holdout through the same installed public `traigent.Dataset.from_jsonl` loader used for
+tuning preserves the SDK's input, expected-output, and metadata normalization, including
+top-level side fields and a nested literal `metadata` field.
 The monotonic deadline is created separately for each holdout batch. Include both holdout phase
 timeouts and every permitted retry attempt in the approved runtime estimate.
 

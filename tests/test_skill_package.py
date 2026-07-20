@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ast
-import io
 import json
 import re
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -471,26 +471,53 @@ class SkillPackageTests(unittest.TestCase):
             "adapter around the preserved evaluator",
             "baseline and search receive these evaluator inputs",
             "holdout must reconstruct the same canonical values",
+            "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
+        self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
+        self.assertIn(
+            'HOLDOUT_DATASET = "traigent-runs/holdout.jsonl"',
+            text,
+        )
 
         holdout_node = functions["evaluate_holdout"]
         holdout_module = ast.fix_missing_locations(
             ast.Module(body=[holdout_node], type_ignores=[])
         )
-        rows = [
-            {
-                "input": {"message": "classify this", "account_tier": "enterprise"},
-                "output": "urgent",
-                "metadata": {"rubric_branch": "priority", "source": "reviewed"},
-            },
-            {
-                "input": {"message": "classify that", "account_tier": "standard"},
-                "output": "normal",
-            },
+        examples = [
+            SimpleNamespace(
+                input_data={
+                    "message": "classify this",
+                    "account_tier": "enterprise",
+                },
+                expected_output="urgent",
+                metadata={
+                    "id": "case-1",
+                    "source": "reviewed",
+                    "difficulty": "hard",
+                    "coverage": "priority",
+                    "split": "holdout",
+                    "metadata": {"rubric_branch": "priority"},
+                },
+            ),
+            SimpleNamespace(
+                input_data={
+                    "message": "classify that",
+                    "account_tier": "standard",
+                },
+                expected_output="normal",
+                metadata={},
+            ),
         ]
+        loaded_paths = []
         agent_calls = []
         scorer_calls = []
+
+        class Dataset:
+            @staticmethod
+            def from_jsonl(path):
+                loaded_paths.append(path)
+                return SimpleNamespace(examples=examples)
 
         def call_agent(message, config, *, request_timeout_seconds=None):
             agent_calls.append((message, config, request_timeout_seconds))
@@ -501,16 +528,14 @@ class SkillPackageTests(unittest.TestCase):
             return 1.0
 
         namespace = {
+            "HOLDOUT_DATASET": "traigent-runs/holdout.jsonl",
             "HOLDOUT_PHASE_TIMEOUT_SECONDS": 30.0,
             "PROVIDER_REQUEST_TIMEOUT_SECONDS": 10.0,
             "PROVIDER_RETRY_COUNT": 0,
             "call_agent": call_agent,
-            "json": json,
-            "open": lambda _path: io.StringIO(
-                "".join(f"{json.dumps(row)}\n" for row in rows)
-            ),
             "task_score": task_score,
             "time": time,
+            "traigent": SimpleNamespace(Dataset=Dataset),
         }
         exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
 
@@ -519,6 +544,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(cost, 0.5)
+        self.assertEqual(loaded_paths, ["traigent-runs/holdout.jsonl"])
         self.assertEqual(
             [(message, call_config) for message, call_config, _timeout in agent_calls],
             [("classify this", config), ("classify that", config)],
@@ -527,8 +553,18 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             scorer_calls,
             [
-                ("urgent", "urgent", rows[0]["input"], rows[0]["metadata"]),
-                ("normal", "normal", rows[1]["input"], {}),
+                (
+                    "urgent",
+                    examples[0].expected_output,
+                    examples[0].input_data,
+                    examples[0].metadata,
+                ),
+                (
+                    "normal",
+                    examples[1].expected_output,
+                    examples[1].input_data,
+                    {},
+                ),
             ],
         )
 
