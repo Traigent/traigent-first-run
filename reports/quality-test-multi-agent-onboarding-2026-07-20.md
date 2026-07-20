@@ -97,9 +97,9 @@ them.
 2. **Custom objective direction was implicit.** The canonical wrapper used strings such as
    `task_success`; SDK 0.25 warns and defaults unknown names to maximize. Use explicit
    `ObjectiveSchema` declarations.
-3. **The incompatible-environment recovery path collided with `.venv`.** A supposedly separate
-   recovery environment was also named `.venv`; use a distinct `.venv-traigent` and preserve the
-   original.
+3. **The incompatible-environment recovery path collided with `.venv`.** Keep the conventional
+   `.venv` for normal setup. Only when an incompatible `.venv` already exists, preserve it and use
+   `.venv-traigent` as the non-destructive fallback.
 4. **Credential inventory was treated as provider selection.** Key names show what credentials
    may be available; the actual agent/model route establishes the current provider. Multiple key
    names alone should not trigger a provider-choice question.

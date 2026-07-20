@@ -261,8 +261,10 @@ Only after the standard-library-only component checks:
    different provider credential is present, stop with one clear mismatch: recommend adding the
    current route's key, and offer an explicit route change as the alternative. Never rewrite the
    model identifier or provider prefix merely to match an available key.
-2. Create the isolated environment with Python 3.11-3.13 without fetching packages. When an
-   incompatible `.venv` already exists, preserve it and create `.venv-traigent` instead.
+2. Reuse an existing compatible isolated environment. Otherwise, create the conventional `.venv`
+   with Python 3.11-3.13 without fetching packages. Only when `.venv` already exists but is
+   incompatible, preserve it and create `.venv-traigent` as a non-destructive fallback. Treat the
+   fallback name as an implementation detail, not a user choice.
 3. Install the exact declared dependencies under the narrow authorization above: use the project's
    compatible exact declarations, or otherwise the exact pins in
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.

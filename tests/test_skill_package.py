@@ -286,9 +286,17 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("unversioned `pip install traigent`", text)
 
     def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
+        skill_text = SKILL.read_text()
         safety_text = RUN_SAFETY.read_text()
+
+        for text in (skill_text, safety_text):
+            self.assertIn("conventional `.venv`", text)
+            self.assertIn("implementation detail", text)
+        self.assertIn("`.venv` already exists but is\n   incompatible", skill_text)
+        self.assertIn(
+            "`.venv` already exists but uses an incompatible interpreter", safety_text
+        )
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
-        self.assertIn("Preserve the incompatible `.venv`", safety_text)
         self.assertNotIn("python3.13 -m venv .venv`", safety_text)
 
     def test_provider_inventory_is_separate_from_route_selection(self) -> None:
@@ -345,7 +353,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_local)
 
         ordered_environment_phrases = (
-            "create the isolated environment",
+            "reuse an existing compatible isolated environment",
             "install the exact declared dependencies",
             "verify the installed sdk's capabilities",
             "run a fresh-process traigent mock plumbing check",
@@ -371,7 +379,7 @@ class SkillPackageTests(unittest.TestCase):
             "if unresolved product-grading ambiguity",
             "run the bundled static preflight",
             "run deterministic evaluator calibration",
-            "create the isolated environment",
+            "reuse an existing compatible isolated environment",
             "install the exact declared dependencies",
             "use the installed sdk's public dataset validator/loader",
             "run a fresh-process traigent mock plumbing check",

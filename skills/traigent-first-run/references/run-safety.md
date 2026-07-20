@@ -13,10 +13,12 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ## Environment and privacy
 
-- Use an isolated Python 3.11-3.13 environment; do not replace the project's interpreter without
-  approval.
-- Create a separate environment when the project uses an incompatible interpreter:
-  `python3.13 -m venv .venv-traigent`. Preserve the incompatible `.venv`.
+- Reuse an existing compatible isolated environment. When none exists, use the conventional
+  `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
+- Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
+  `.venv-traigent` with a supported interpreter, for example
+  `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
+  than asking the user to choose an environment name.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the
   run, as a package-artifact-only fetch/install with no provider or Traigent calls, private-data
@@ -81,8 +83,9 @@ Use this gate order:
    OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
    fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
    required.
-6. Create the isolated environment with Python 3.11-3.13 without fetching packages. Preserve an
-   incompatible `.venv` and use `.venv-traigent` for recovery.
+6. Reuse an existing compatible isolated environment, or create the conventional `.venv` with Python
+   3.11-3.13 without fetching packages. Only if an incompatible `.venv` already exists, preserve it
+   and use `.venv-traigent` as the non-destructive fallback without making its name a user choice.
 7. Install the exact declared dependencies under the narrow package-artifact authorization: use
    compatible exact project declarations or the skill's `assets/requirements-first-run.txt`.
 8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
