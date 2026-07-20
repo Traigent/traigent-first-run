@@ -332,6 +332,9 @@ class SkillPackageTests(unittest.TestCase):
         )
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
         plan_text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
+        calibrator_text = (
+            (SKILL_ROOT / "scripts" / "calibrate_evaluator.py").read_text().casefold()
+        )
 
         self.assertIn(
             "assistant-performed semantic-coverage review",
@@ -349,8 +352,13 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("human semantic-coverage", quality_text)
         self.assertNotIn("human semantic-coverage", safety_text)
         self.assertNotIn("human semantic-coverage", plan_text)
+        self.assertNotIn("human review", calibrator_text)
         self.assertNotIn("if that review is unavailable", skill_text)
         self.assertNotIn("if that review is unavailable", safety_text)
+        self.assertIn(
+            "coding assistant's recorded evidence-backed semantic-coverage review",
+            calibrator_text,
+        )
 
     def test_semantic_coverage_review_records_evidence_and_verdict(self) -> None:
         quality_text = " ".join(

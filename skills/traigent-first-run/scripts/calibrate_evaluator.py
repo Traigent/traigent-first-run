@@ -55,8 +55,10 @@ EXPECTED_METRIC_PARAM_NAMES = {
 }
 LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
 MATRIX_COVERAGE_NOTE = (
-    "Distinct names and payloads are structural checks only; confirm by human "
-    "review that the cases cover materially different task branches."
+    "Distinct names and payloads are structural checks only; calibration relies on "
+    "the coding assistant's recorded evidence-backed semantic-coverage review of "
+    "materially distinct inputs, outcome classes, and rubric/schema branches, "
+    "including mode/threshold rationale, gaps, and verdict."
 )
 PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
 SCORE_MODES = ("graded", "binary")
@@ -353,7 +355,8 @@ def parse_args() -> argparse.Namespace:
             "JSON array or @FILE containing at least two named, distinct cases; "
             "each case requires expected and good/equivalent_good/partial/bad "
             "probes and may select score_mode. Structural distinctness does not "
-            "replace human review of material task-branch coverage"
+            "replace the coding assistant's recorded evidence-backed "
+            "semantic-coverage review of material task branches"
         ),
     )
     parser.add_argument(

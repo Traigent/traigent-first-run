@@ -407,7 +407,31 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             [case["score_mode"] for case in payload["cases"]],
             ["graded", "graded"],
         )
-        self.assertIn("human review", payload["coverage_note"])
+        self.assertEqual(
+            payload["coverage_note"],
+            "Distinct names and payloads are structural checks only; calibration "
+            "relies on the coding assistant's recorded evidence-backed "
+            "semantic-coverage review of materially distinct inputs, outcome "
+            "classes, and rubric/schema branches, including mode/threshold "
+            "rationale, gaps, and verdict.",
+        )
+        self.assertNotIn("human review", payload["coverage_note"])
+
+    def test_matrix_help_uses_assistant_semantic_coverage_review(self) -> None:
+        process = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        normalized_help = " ".join(process.stdout.split())
+        self.assertIn(
+            "Structural distinctness does not replace the coding assistant's "
+            "recorded evidence-backed semantic-coverage review of material task "
+            "branches",
+            normalized_help,
+        )
+        self.assertNotIn("human review", normalized_help.casefold())
 
     def test_binary_exact_label_calibration_accepts_no_partial_credit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
