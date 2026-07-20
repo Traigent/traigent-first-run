@@ -69,7 +69,7 @@ win.
 
 Both portal-dev experiments were deleted after verification: each DELETE returned 204 and each
 follow-up read returned 404. Disposable local scenarios, environments, credentials, and results
-were also scheduled for deletion after the report and fix branches were preserved.
+were deleted after the report and fix branches were preserved.
 
 ## What worked
 
