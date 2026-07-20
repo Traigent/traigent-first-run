@@ -16,16 +16,26 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 - Use an isolated Python 3.11-3.13 environment; do not replace the project's interpreter without
   approval.
 - Create a separate environment when the project uses an incompatible interpreter:
-  `python3.13 -m venv .venv`, then install with
-  `python -m pip install "traigent[recommended]>=0.21" "python-dotenv>=1"`. Verify the installed
-  package and public signatures before generating integration code.
+  `python3.13 -m venv .venv`.
+- Keep dependency installation as its own action class. It may proceed without another approval
+  only inside that environment, from the exact packages and versions recorded for the
+  run, as a package-artifact-only fetch/install with no provider or Traigent calls, private-data
+  transfer, or user/project code execution. Prefer a fully pinned, hash-checked requirements file
+  and wheels; stop if fulfilling it requires source builds, undeclared packages, or code
+  execution. A user or environment install-approval policy still takes precedence.
+- Verify installed packages and public signatures before generating integration code. Dependency
+  installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
 - Build a minimal `.env` for the selected provider. Leave the Traigent key blank until connected
   execution.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
-- The LLM provider still receives whatever content the agent normally sends in model calls.
+- A selected direct LLM provider still receives whatever content the agent normally sends in
+  model calls.
+- With OpenRouter, OpenRouter receives the request as the gateway and the selected upstream
+  inference provider may also receive prompts, examples, and outputs. Automatic routing and
+  fallbacks can change that upstream recipient.
 - Connected Traigent runs transmit configuration identifiers, numeric measures, run state, and
   content-free metadata needed for optimization and portal history.
 
@@ -44,7 +54,10 @@ link; show only the selected provider and Traigent when each key becomes necessa
 
 Use this gate order:
 
-1. Reuse the project's provider, or ask once and recommend OpenRouter when none exists.
+1. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
+   OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
+   fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
+   required.
 2. Create the minimal `.env` and stop for the provider-key paste.
 3. Run static preflight and deterministic calibration without network calls.
 4. Stop for the Traigent portal-key paste immediately before connected work.
@@ -96,17 +109,30 @@ Before any paid/provider work, show one combined approval for the full planned f
 - Agent calls per item.
 - Evaluator/judge calls per item.
 - Total call floor and composite/retry multiplier.
-- Estimated runtime.
+- Positive provider-request, live-check, judge, baseline, search, and holdout phase timeouts plus
+  the explicit provider retry count.
+- Estimated runtime, calculated with every permitted retry attempt and composite/judge call rather
+  than only the first-attempt call floor.
 - Combined worst-case spend and an aggregate walkthrough cap.
-- Services receiving data.
+- Services receiving data. For OpenRouter this means the OpenRouter gateway plus every allowed
+  upstream inference provider/route, with fallback routing disclosed.
 - Stop condition.
 
-Record an aggregate remaining-budget ledger that allocates worst-case cost to the baseline,
-search, evaluator/judge calls, retries and composite calls, current-configuration holdout, and
-winner holdout. Before every paid phase or call batch, confirm its combined worst-case cost fits
-the remaining aggregate budget. Deduct tracked or worst-case cost as appropriate. Stop and obtain
-revised approval if the next batch does not fit or the planned recipients, data, call count, or
-model changes.
+Derive the named positive timeouts from this approved call plan. A conservative runtime estimate
+multiplies each provider-call floor by `(1 + provider retry count)` and its per-request timeout,
+then adds judge retries, composite calls, and orchestration allowance. Record the rationale for
+each phase timeout. Pass the approved request timeout and retry count to the provider client, pass
+the approved baseline/search timeouts to the SDK, and enforce a monotonic deadline around each
+holdout phase.
+
+Record an aggregate remaining-budget ledger with separate rows for the live provider/key check,
+LLM-judge calibration/evaluation, current baseline, bounded search, retries/composites,
+current-configuration holdout, and winner holdout. For each row record allocation, phase
+worst-case cost, the charged or conservative deduction, and remaining aggregate cap. Before every
+paid phase or call batch, confirm its combined worst-case cost fits the remaining aggregate
+budget. Deduct tracked cost when reliable and the approved worst case otherwise. Stop and obtain
+revised approval if the next batch does not fit or the planned recipients, routes/fallbacks,
+data, call count, model, retry count, or timeout changes.
 
 `TRAIGENT_RUN_COST_LIMIT` limits one SDK optimization call. It does not cover the full walkthrough
 and does not enforce the aggregate cap. Do not persist `TRAIGENT_COST_APPROVED=true`; set it only

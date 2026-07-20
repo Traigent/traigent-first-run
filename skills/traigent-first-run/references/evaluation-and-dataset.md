@@ -34,10 +34,15 @@ Validate it; do not silently redesign it.
 
 When building an evaluator:
 
-- Expose it to Traigent through a thin metric adapter with an explicit `output` parameter and only
-  SDK-supported names such as `expected`, `input_data`, and `metadata`. Preserve an existing
-  evaluator that uses names such as `prediction` or `reference`, but adapt those names at the
-  boundary instead of registering that function directly.
+- Preserve an existing evaluator unchanged. When its local parameter names or calling convention
+  do not match the callback contract verified from the installed SDK, expose it through a thin
+  generated metric adapter under `traigent-runs/`. The adapter translates the verified callback
+  inputs to the existing evaluator; it does not replace the evaluator or change its provenance.
+- Give a generated metric callback an explicit `output` parameter and use only callback names
+  verified from the installed SDK, such as `expected`, `input_data`, and `metadata` when that
+  installation confirms them. Do not claim aliases such as `prediction` or `reference` are
+  supported or unsupported from memory; inspect the installed binding behavior and adapt at the
+  boundary when direct registration has not been verified.
 - Infer the rubric from real labels, tests, accepted outputs, product rules, and failure reports.
 - Ask one product question only if ambiguity would materially change who wins.
 - Prefer partial credit when correctness has meaningful degrees.
@@ -76,7 +81,15 @@ Use materially distinct inputs and outcome classes. Record each case name, `scor
 expected outcome, candidate outputs, scores, checks, and exception status. One input with four
 output variants is not enough when the scorer depends on input fields, labels, schema branches,
 metadata, or rubric branches. Cover each material scoring path with at least one probe family and
-confirm that every helper returns a normalized score in `[0, 1]`.
+confirm that every helper returns a normalized score in `[0, 1]`. Before executing calibration,
+record the exact pass/fail and approximate-equivalence threshold values for each case and explain
+why they match that task and score mode; do not rely on unstated CLI defaults.
+
+Have a human review the proposed case matrix for semantic coverage before execution. Record who
+reviewed it, which materially distinct input shapes, outcome classes, and rubric/schema branches
+were checked, any known gap, and the coverage verdict. Script/schema validation proves the matrix
+is well formed; it does not prove that the selected probes cover the product's meaning of
+correctness.
 
 The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
 to the real task, save the JSON as `traigent-runs/calibration-cases.json`, and run the command from

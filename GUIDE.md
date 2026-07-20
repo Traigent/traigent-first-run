@@ -12,13 +12,10 @@ demonstrate the workflow; it must never be presented as representative productio
 
 ## Start here
 
-Read and follow the self-contained skill:
-
-1. [`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md)
-2. [`skills/traigent-first-run/references/component-creation.md`](skills/traigent-first-run/references/component-creation.md)
-3. [`skills/traigent-first-run/references/evaluation-and-dataset.md`](skills/traigent-first-run/references/evaluation-and-dataset.md)
-4. [`skills/traigent-first-run/references/run-safety.md`](skills/traigent-first-run/references/run-safety.md)
-5. [`skills/traigent-first-run/references/sdk-execution.md`](skills/traigent-first-run/references/sdk-execution.md)
+Read and follow the self-contained
+[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md).
+The skill routes its bundled references at the stage where each is needed; do not front-load them
+before starting inspection.
 
 The same directory is what the Agent Skill installer copies, so the clone and installed-skill
 paths follow one canonical workflow.
@@ -52,6 +49,14 @@ discovery. Stop only for:
 - Paid/provider calls or private-data egress.
 - Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
+
+Creating the isolated environment and minimal `.env` is separate from installing dependencies.
+A dependency install may proceed without another approval only when it is confined to that
+environment, uses the exact packages and versions already declared for the run, fetches package
+artifacts only, and permits no project/provider/Traigent code execution or private-data transfer.
+A user or environment install policy still takes precedence and may require approval. Provider,
+connected Traigent, private-data, and all other external calls remain behind their stated
+approval gates.
 
 ## Default run
 

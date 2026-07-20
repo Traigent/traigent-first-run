@@ -55,11 +55,12 @@ approval.
 |---|---|
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed after inspection; preserve source material and provenance. |
-| Create an isolated environment and minimal `.env` | Proceed without paid calls; leave secrets blank and ask the user to enter them locally. |
+| Create an isolated environment and minimal `.env` | Proceed without fetching or installing packages; leave secrets blank and ask the user to enter them locally. |
+| Install dependencies in the isolated environment | Proceed only for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
-| Make provider, private-data, connected Traigent, or other external calls | Obtain the unchanged combined approval for recipients, data, calls, runtime, and worst-case spend. |
+| Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch above | Obtain the unchanged combined approval for recipients, data, calls, runtime, and worst-case spend. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
 ## Status language
@@ -168,14 +169,20 @@ instead of relying on a hardcoded "current" version statement.
 Create a minimal `.env` containing only the selected provider's blank key entry and safe run
 settings. Reuse a provider already used by the project. If none exists, recommend OpenRouter
 because one key can exercise multiple model vendors, offer at most two direct-provider
-alternatives, and ask which service may receive the walkthrough content. Ask the user to paste the
-key into that file, never into chat. Add the Traigent portal key only when the connected run is
-about to start.
+alternatives, and ask which services may receive the walkthrough content. With OpenRouter,
+OpenRouter is the gateway and an automatically selected upstream inference provider may also
+receive the prompts, examples, and outputs. Name OpenRouter and every allowed upstream provider
+or route in the approval, disclose whether fallback routing is enabled, and pin allowed routes
+and disable fallbacks when the user requires an exact recipient set. Ask the user to paste the key
+into that file, never into chat. Add the Traigent portal key only when the connected run is about
+to start.
 
 Explain truthfully:
 
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
-- The chosen LLM provider receives the content the agent normally sends during model calls.
+- The selected direct provider receives the content the agent normally sends during model calls.
+  For OpenRouter, both the OpenRouter gateway and the selected upstream inference provider may
+  receive it.
 - Connected runs send configuration identifiers, numeric measures, and run status to Traigent.
 
 ### 5. Validate before spending
@@ -222,16 +229,21 @@ Prepare one combined approval containing:
 - Agent calls and any evaluator/judge calls per example.
 - Holdout calls for the current and selected configurations.
 - Estimated runtime and combined worst-case spend.
-- What leaves the machine and which service receives it.
+- Positive provider-request, baseline, optimization, and holdout timeouts; the explicit provider
+  retry count; and an estimated runtime that includes retry and composite-call multipliers.
+- What leaves the machine and every service or route that may receive it. For OpenRouter, name
+  OpenRouter plus every allowed upstream inference provider/route and disclose fallback behavior.
 - An aggregate walkthrough budget and stop condition covering the baseline, search,
   evaluator/judge calls, retries/composites, and both current-versus-winner holdout paths.
 
 Proceed only after explicit approval. Keep approval in the current process environment; never
-persist a cost-approval flag in `.env`. Record a remaining-budget ledger with allocations for each
-paid phase. Before every paid phase or call batch, check its combined worst-case cost against the
-remaining aggregate budget; stop and obtain revised approval when it does not fit. The SDK
-`TRAIGENT_RUN_COST_LIMIT` applies to one optimization call and does not enforce the aggregate
-walkthrough cap.
+persist a cost-approval flag in `.env`. Record a remaining-budget ledger with separate rows for
+the live provider/key check, judge calls, baseline, search, retries/composites, current holdout,
+and winner holdout. Each row records its allocation, phase worst case, charged deduction, and
+remaining aggregate cap. Before every paid phase or call batch, check its combined worst-case cost
+against the remaining aggregate budget; stop and obtain revised approval when it does not fit.
+The SDK `TRAIGENT_RUN_COST_LIMIT` applies to one optimization call and does not enforce the
+aggregate walkthrough cap.
 
 ### 7. Run the honest comparison
 
@@ -303,6 +315,8 @@ The first run is complete only when:
   partial and bad outputs.
 - Calibration covers and records materially distinct inputs and outcome classes when scoring
   depends on inputs, labels, schemas, or rubric branches.
+- A human reviewed the probe families for semantic coverage of every material input, outcome, and
+  rubric/schema branch, with gaps recorded before execution.
 - Free checks made no provider calls.
 - Paid work had explicit combined approval.
 - Baseline and optimization used the same tuning data and evaluator.

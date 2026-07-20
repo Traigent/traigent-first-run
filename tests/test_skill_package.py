@@ -122,6 +122,18 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+    def test_guide_has_one_workflow_entrypoint(self) -> None:
+        guide = (ROOT / "GUIDE.md").read_text()
+        start_section = guide.split("## Start here", 1)[1].split("## ", 1)[0]
+        links = re.findall(r"\[[^\]]+\]\(([^)]+)\)", start_section)
+        self.assertEqual(links, ["skills/traigent-first-run/SKILL.md"])
+        normalized = " ".join(start_section.casefold().split())
+        self.assertIn(
+            "the skill routes its bundled references at the stage where each is needed",
+            normalized,
+        )
+        self.assertIn("do not front-load them", normalized)
+
     def test_action_authorization_is_closed_and_cost_aware(self) -> None:
         skill_text = SKILL.read_text().casefold()
         safety_text = (
@@ -144,6 +156,44 @@ class SkillPackageTests(unittest.TestCase):
             "never replace it silently",
             safety_text,
         )
+
+    def test_dependency_install_authorization_is_narrow(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().casefold().split()
+        )
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        for text in (skill_text, safety_text, guide_text):
+            for phrase in (
+                "exact packages and versions",
+                "user or environment",
+                "private-data",
+                "code execution",
+            ):
+                self.assertIn(phrase, text)
+        self.assertIn("package-artifact", skill_text)
+        self.assertIn(
+            "external calls other than the narrow dependency fetch",
+            skill_text,
+        )
+
+    def test_openrouter_approval_names_every_possible_recipient(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().casefold().split()
+        )
+        env_text = " ".join((ROOT / ".env.example").read_text().casefold().split())
+        for text in (skill_text, safety_text, env_text):
+            for phrase in (
+                "openrouter",
+                "gateway",
+                "upstream inference provider",
+                "fallback",
+                "exact recipient set",
+            ):
+                self.assertIn(phrase, text)
+        self.assertIn("every allowed upstream inference provider/route", skill_text)
+        self.assertIn("disable fallbacks", safety_text)
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
@@ -199,11 +249,62 @@ class SkillPackageTests(unittest.TestCase):
                     {"good", "equivalent_good", "partial", "bad"},
                 )
 
+    def test_existing_evaluator_adapter_preserves_provenance(self) -> None:
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "preserve an existing evaluator unchanged",
+            "does not replace the evaluator or change its provenance",
+            "do not claim aliases",
+            "inspect the installed binding behavior",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_run_plan_records_repeatable_calibration_and_ledger(self) -> None:
+        text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
+        for phrase in (
+            "input/fixture",
+            "expected outcome",
+            "rubric/schema branch",
+            "chosen thresholds and rationale",
+            "human semantic-coverage reviewer",
+            "human semantic-coverage verdict",
+            "live provider/key check",
+            "llm-judge calibration/evaluation",
+            "retries/composites",
+            "current-configuration holdout",
+            "winner holdout",
+            "phase worst case",
+            "charged or conservative deduction",
+            "remaining aggregate cap",
+        ):
+            self.assertIn(phrase, text)
+
     def test_sdk_template_defines_prompt_builder(self) -> None:
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
         self.assertIn("def build_prompt(", text)
         self.assertIn('if style == "direct":', text)
         self.assertIn('if style == "structured":', text)
+
+    def test_sdk_template_bounds_requests_phases_and_retries(self) -> None:
+        text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        for phrase in (
+            "PROVIDER_REQUEST_TIMEOUT_SECONDS",
+            "BASELINE_TIMEOUT_SECONDS",
+            "OPTIMIZATION_TIMEOUT_SECONDS",
+            "HOLDOUT_PHASE_TIMEOUT_SECONDS",
+            "PROVIDER_RETRY_COUNT",
+            "not math.isfinite(value) or value <= 0",
+            "num_retries=PROVIDER_RETRY_COUNT",
+            "timeout=BASELINE_TIMEOUT_SECONDS",
+            "timeout=OPTIMIZATION_TIMEOUT_SECONDS",
+            "deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS",
+        ):
+            self.assertIn(phrase, text)
 
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
@@ -214,6 +315,9 @@ class SkillPackageTests(unittest.TestCase):
             "black --check .",
         ):
             self.assertIn(phrase, workflow)
+        self.assertIn("ruff==0.15.12", workflow)
+        self.assertIn("black==26.5.1", workflow)
+        self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
 
 

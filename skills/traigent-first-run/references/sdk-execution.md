@@ -30,12 +30,33 @@ After decorating the function, inspect `agent.optimize_sync` the same way. If th
 signatures do not support the arguments below, stop and adapt from the installed public API. Do
 not invent arguments.
 
+## Approved runtime bounds
+
+Before writing the wrapper, copy the combined approval's named positive provider-request,
+baseline, optimization, and holdout phase timeouts plus its explicit provider retry count into
+the current process environment. Do not invent defaults or persist approval in `.env`. Derive
+each phase timeout from the approved call floor, `(1 + provider retry count)`, request timeout,
+judge/composite calls, and an explicit orchestration allowance. Record that calculation and the
+chosen values in `run-plan.md`.
+
+The example below passes the request timeout and retry count to LiteLLM, and the baseline/search
+timeouts to `optimize_sync`. The installed SDK must expose `timeout` on `optimize_sync`; the
+capability-discovery step above is the authority.
+
+Treat the SDK timeout as an optimization-phase stop bound, not as a replacement for the provider
+request timeout. The holdout deadline is checked around each synchronous call and divides the
+remaining time among permitted attempts; an in-flight request still returns or errors through its
+shorter provider timeout. Include retry backoff and cleanup in the orchestration allowance.
+
 ## Decorator contract
 
 Use one production-compatible function for baseline and optimization:
 
 ```python
+import json
+import math
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -48,6 +69,45 @@ from traigent.api.decorators import EvaluationOptions
 TUNING_DATASET = "traigent-runs/tuning.jsonl"
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
+
+
+def positive_seconds(name: str) -> float:
+    value = float(os.environ[name])
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return value
+
+
+def nonnegative_int(name: str) -> int:
+    value = int(os.environ[name])
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def positive_int(name: str) -> int:
+    value = int(os.environ[name])
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+# Export these process-only values from the unchanged combined approval.
+PROVIDER_REQUEST_TIMEOUT_SECONDS = positive_seconds(
+    "TRAIGENT_FIRST_RUN_PROVIDER_REQUEST_TIMEOUT_SECONDS"
+)
+BASELINE_TIMEOUT_SECONDS = positive_seconds(
+    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
+)
+OPTIMIZATION_TIMEOUT_SECONDS = positive_seconds(
+    "TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS"
+)
+HOLDOUT_PHASE_TIMEOUT_SECONDS = positive_seconds(
+    "TRAIGENT_FIRST_RUN_HOLDOUT_PHASE_TIMEOUT_SECONDS"
+)
+PROVIDER_RETRY_COUNT = nonnegative_int("TRAIGENT_FIRST_RUN_PROVIDER_RETRY_COUNT")
+MAX_TRIALS = positive_int("TRAIGENT_FIRST_RUN_MAX_TRIALS")
+
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
     "temperature": 0.0,
@@ -79,10 +139,24 @@ def task_score(output, expected, input_data=None) -> float:
     ...
 
 
-def call_agent(message: str, config: dict) -> tuple[str, float]:
+def call_agent(
+    message: str,
+    config: dict,
+    *,
+    request_timeout_seconds: float | None = None,
+) -> tuple[str, float]:
+    effective_timeout = (
+        PROVIDER_REQUEST_TIMEOUT_SECONDS
+        if request_timeout_seconds is None
+        else request_timeout_seconds
+    )
+    if effective_timeout <= 0:
+        raise ValueError("request_timeout_seconds must be positive")
     response = litellm.completion(
         model=config["model"],
         temperature=config["temperature"],
+        timeout=effective_timeout,
+        num_retries=PROVIDER_RETRY_COUNT,
         messages=[
             {
                 "role": "user",
@@ -128,6 +202,7 @@ baseline_results = agent.optimize_sync(
     algorithm="grid",
     configuration_space=baseline_space,
     max_trials=1,
+    timeout=BASELINE_TIMEOUT_SECONDS,
     save_to="traigent-runs/baseline-results.json",
 )
 ```
@@ -149,6 +224,7 @@ optimized_results = agent.optimize_sync(
     algorithm="auto",
     configuration_space=SEARCH_SPACE,
     max_trials=MAX_TRIALS,
+    timeout=OPTIMIZATION_TIMEOUT_SECONDS,
     save_to="traigent-runs/optimized-results.json",
 )
 ```
@@ -169,24 +245,44 @@ combined approval. A holdout check is not another optimization search. Use the u
 `call_agent` helper so each configuration is explicit:
 
 ```python
-import json
-
-
-def evaluate_holdout(config: dict) -> tuple[float, float]:
+def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
+    deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS
     scores = []
     tracked_cost = 0.0
     with open("traigent-runs/holdout.jsonl") as holdout_file:
         for line in holdout_file:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                raise TimeoutError(
+                    f"{phase_name} exceeded its approved holdout phase deadline"
+                )
             row = json.loads(line)
-            output, call_cost = call_agent(row["input"]["message"], config)
+            # Reserve request time for every permitted attempt inside the phase deadline.
+            per_attempt_timeout = min(
+                PROVIDER_REQUEST_TIMEOUT_SECONDS,
+                remaining_seconds / (1 + PROVIDER_RETRY_COUNT),
+            )
+            output, call_cost = call_agent(
+                row["input"]["message"],
+                config,
+                request_timeout_seconds=per_attempt_timeout,
+            )
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"{phase_name} exceeded its approved holdout phase deadline"
+                )
             scores.append(task_score(output, row["output"], row["input"]))
             tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
 
-baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(BASELINE_CONFIG)
+baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(
+    BASELINE_CONFIG,
+    phase_name="current-configuration holdout",
+)
 winner_holdout_score, winner_holdout_cost = evaluate_holdout(
-    optimized_results.best_config
+    optimized_results.best_config,
+    phase_name="winner holdout",
 )
 ```
 
@@ -194,6 +290,8 @@ Adapt the input expansion to the real agent signature. For an LLM judge, instrum
 cost separately. Before each current-configuration and winner holdout call batch, confirm its
 combined worst-case cost fits the aggregate remaining-budget ledger. Add both holdout costs to the
 reported first-run total; they are not included in the optimization result object's aggregate.
+The monotonic deadline is created separately for each holdout batch. Include both holdout phase
+timeouts and every permitted retry attempt in the approved runtime estimate.
 
 Before reporting:
 

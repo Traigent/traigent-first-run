@@ -41,17 +41,22 @@ The coding assistant fills this file from project evidence. Store the completed 
 
 ## Evaluator calibration
 
-| Probe | Expected relation | Observed score | Pass |
-|---|---|---:|---|
-| Good | highest |  |  |
-| Equivalent good | approximately good |  |  |
-| Partial | below both good probes |  |  |
-| Bad | lowest/failing |  |  |
+Repeat one row for every materially distinct input, outcome class, and rubric/schema branch.
+
+| Case | Input/fixture | Expected outcome | Rubric/schema branch | Mode | Good probe / score | Equivalent-good probe / score | Partial probe / score | Bad probe / score | Chosen thresholds and rationale | Result / exceptions |
+|---|---|---|---|---|---|---|---|---|---|---|
+|  |  |  |  |  |  |  |  |  |  |  |
 
 - Evaluation method:
 - Product meaning of "correct":
+- Threshold values chosen before execution:
+- Threshold rationale:
 - Judge model/rubric, if applicable:
 - Calibration egress/cost approval, if applicable:
+- Human semantic-coverage reviewer:
+- Inputs, outcome classes, and rubric/schema branches reviewed:
+- Known semantic-coverage gaps:
+- Human semantic-coverage verdict:
 
 ## Comparison
 
@@ -61,11 +66,34 @@ The coding assistant fills this file from project evidence. Store the completed 
 - Maximum trials:
 - Agent calls per example:
 - Evaluator/judge calls per example:
+- Provider retry count:
+- Provider-request timeout and rationale:
+- Live-check timeout and rationale:
+- Judge timeout and rationale:
+- Baseline timeout and rationale:
+- Optimization timeout and rationale:
+- Holdout phase timeout and rationale:
+- Runtime calculation including retries/composites:
 - Combined worst-case spend:
 - Total first-run cap:
 - Estimated runtime:
-- Services receiving data:
+- Services and routes receiving data, including OpenRouter upstreams/fallbacks:
 - User approval:
+
+## Aggregate budget ledger
+
+Record the charged amount when reliably tracked; otherwise deduct the approved phase worst case.
+The remaining value is the aggregate cap after that deduction.
+
+| Phase | Approved calls/routes | Allocation | Phase worst case | Charged or conservative deduction | Remaining aggregate cap | Status/evidence |
+|---|---|---:|---:|---:|---:|---|
+| Live provider/key check |  |  |  |  |  |  |
+| LLM-judge calibration/evaluation |  |  |  |  |  |  |
+| Current baseline |  |  |  |  |  |  |
+| Bounded search |  |  |  |  |  |  |
+| Retries/composites |  |  |  |  |  |  |
+| Current-configuration holdout |  |  |  |  |  |  |
+| Winner holdout |  |  |  |  |  |  |
 
 ## Results
 
