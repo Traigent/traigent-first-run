@@ -25,9 +25,9 @@ Load each reference when its stage begins:
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) to verify the readiness-state transition when
 helpful. Use [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
-explicit evaluator-execution gate. Copy [`assets/run-plan.md`](assets/run-plan.md) into
-`traigent-runs/run-plan.md` and fill it from discovered evidence; do not ask the user to complete
-it.
+explicit evaluator-execution gate. Only after task intent is anchored, copy
+[`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
+discovered evidence; do not ask the user to complete it.
 
 ## Operating contract
 
@@ -36,8 +36,8 @@ it.
 - Speak for a capable system: "Traigent will generate..." and "I will validate...", not
   "Traigent can use a sample..."
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
-- Put generated artifacts under `traigent-runs/`; add that directory to the project
-  `.gitignore`. Never overwrite source material.
+- After task intent is anchored, put generated artifacts under `traigent-runs/` and add that
+  directory to the project `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
 - Explain a blocked step in plain language and give one recommended recovery.
@@ -54,9 +54,9 @@ approval.
 | Action class | Authorization |
 |---|---|
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
-| Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed after inspection; preserve source material and provenance. |
-| Create an isolated environment and minimal `.env` | Proceed without fetching or installing packages; leave secrets blank and ask the user to enter them locally. |
-| Install dependencies in the isolated environment | Proceed only for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
+| Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
+| Create an isolated environment and minimal `.env` | Proceed only after task intent is anchored and without fetching or installing packages; leave secrets blank and ask the user to enter them locally. |
+| Install dependencies in the isolated environment | Proceed only after task intent is anchored and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -118,16 +118,44 @@ Perform safe, read-only discovery without asking for approval:
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain. If nothing anchors the task,
-ask one concise question: **"What should the walkthrough agent do?"** Offer at most three
-short choices and recommend a structured, deterministically scoreable task.
+Only ask which agent to use if multiple credible candidates remain.
+
+#### Zero-anchor intent gate
+
+When the read-only inventory finds no agent, dataset, evaluation, product documentation, tests,
+fixtures, or other component that anchors task intent, follow this exact order:
+
+1. Present the three real-world gaps:
+   - ❗ **Agent** - no production agent is connected.
+   - ❗ **Dataset** - no real examples are connected.
+   - ❗ **Evaluation** - no validated grading method is connected.
+2. State that Traigent will create the coherent walkthrough substitutes after the user chooses
+   the task, and that synthetic results will demonstrate workflow rather than production
+   performance.
+3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
+   most three short choices and recommend a structured, deterministically scoreable task.
+4. **STOP and wait for the answer.** Do not continue setup in the same turn.
+
+Before that answer, make zero writes:
+
+- Do not create `traigent-runs/`.
+- Do not copy or fill the run plan.
+- Do not change `.gitignore`.
+- Do not create an environment.
+- Do not install dependencies.
+- Do not generate components.
+
+Once the user answers, create the run record before generating the coherent trio, then continue
+with the remaining stages.
 
 ### 2. Show readiness once
 
-Render the initial real-world readiness board after inspection. State what Traigent will create
-for the walkthrough. Do not show external links. Do not ask the user to solve missing setup
-pieces. Refresh only changed evidence after creation; retain unresolved `❗` lines and add the
-new `🛠️` substitutes instead of replacing the initial board with a green one.
+For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
+render it again before the user answers. For every other starting state, render the initial
+real-world readiness board after inspection. State what Traigent will create for the walkthrough.
+Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
+changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
+instead of replacing the initial board with a green one.
 
 If real material exists but appears too weak to support a meaningful comparison, show a short
 **Quality advisory** immediately below the board:
@@ -150,7 +178,8 @@ Follow the dependency matrix in `references/component-creation.md`:
 - Preserve every real component.
 - Build only missing components.
 - Derive each created component from all existing anchors, not independently.
-- If nothing exists, create one coherent trio after the single task-intent question.
+- If nothing exists, create the run record and one coherent trio only after the user answers the
+  single task-intent question.
 - Validate compatibility in both directions: dataset inputs bind to the agent, and agent outputs
   are meaningfully scoreable by the evaluator.
 

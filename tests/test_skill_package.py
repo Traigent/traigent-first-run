@@ -122,6 +122,62 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+    def test_zero_anchor_task_intent_gate_requires_zero_writes(self) -> None:
+        text = SKILL.read_text()
+        gate_heading = "#### Zero-anchor intent gate"
+        next_heading = "### 2. Show readiness once"
+        self.assertIn(gate_heading, text)
+        self.assertIn(next_heading, text)
+        gate = text.split(gate_heading, 1)[1].split(next_heading, 1)[0]
+        normalized_gate = " ".join(gate.casefold().split())
+        top_level = " ".join(
+            text.split("## Operating contract", 1)[0].casefold().split()
+        )
+        authorization_rows = (
+            text.split("## Action authorization", 1)[1]
+            .split("## Status language", 1)[0]
+            .casefold()
+            .splitlines()
+        )
+
+        self.assertEqual(gate.count("What should the walkthrough agent do?"), 1)
+        self.assertEqual(gate.count("?"), 1)
+        self.assertLess(
+            normalized_gate.index("what should the walkthrough agent do?"),
+            normalized_gate.index("stop and wait for the answer"),
+        )
+        for component in ("❗ **agent**", "❗ **dataset**", "❗ **evaluation**"):
+            self.assertIn(component, normalized_gate)
+            self.assertLess(
+                normalized_gate.index(component),
+                normalized_gate.index("what should the walkthrough agent do?"),
+            )
+        for phrase in (
+            "stop and wait for the answer",
+            "before that answer, make zero writes",
+            "do not create `traigent-runs/`",
+            "do not copy or fill the run plan",
+            "do not change `.gitignore`",
+            "do not create an environment",
+            "do not install dependencies",
+            "do not generate components",
+            "once the user answers",
+            "create the run record before generating the coherent trio",
+        ):
+            self.assertIn(phrase, normalized_gate)
+        self.assertIn("only after task intent is anchored", top_level)
+        for action in (
+            "create `traigent-runs/` artifacts",
+            "create an isolated environment",
+            "install dependencies",
+        ):
+            action_row = next(
+                (row for row in authorization_rows if action in row),
+                "",
+            )
+            self.assertIn("| proceed only after", action_row)
+            self.assertIn("task intent is anchored", action_row)
+
     def test_guide_has_one_workflow_entrypoint(self) -> None:
         guide = (ROOT / "GUIDE.md").read_text()
         start_section = guide.split("## Start here", 1)[1].split("## ", 1)[0]
