@@ -93,6 +93,23 @@ class SkillPackageTests(unittest.TestCase):
             host = url.split("/", 3)[2]
             self.assertIn(host, allowed_hosts)
 
+    def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
+        skill_text = SKILL.read_text().casefold()
+        quality_text = (
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+        )
+        for phrase in (
+            "quality advisory",
+            "repair a working copy and re-run validation",
+            "continue as a workflow demonstration",
+            "pause for a user-authored fix",
+            'do not infer "easy-only"',
+        ):
+            self.assertIn(phrase, f"{skill_text}\n{quality_text}")
+        self.assertIn("stop before the search", skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,8 @@ SUPPORTED_PYTHON_MAX = (3, 14)
 MIN_TRAIGENT_VERSION = (0, 21)
 MAX_NEAR_DUPLICATE_ROWS = 500
 NEAR_DUPLICATE_THRESHOLD = 0.9
+DOMINANT_OUTPUT_RATIO = 0.9
+MAX_REPORTED_DATASET_ERRORS = 5
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
 
 VENDOR_KEYS = {
@@ -355,33 +357,45 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
         return None
 
     rows: list[dict[str, Any]] = []
+    invalid_rows: list[tuple[int, str]] = []
+    candidate_count = 0
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         if not raw_line.strip():
             continue
+        candidate_count += 1
         try:
             row = json.loads(raw_line)
         except json.JSONDecodeError as error:
-            emit(
-                "dataset-shape", FAIL, f"line {line_number}: invalid JSON ({error.msg})"
-            )
-            return None
+            invalid_rows.append((line_number, f"invalid JSON ({error.msg})"))
+            continue
         if not isinstance(row, dict):
-            emit("dataset-shape", FAIL, f"line {line_number}: row must be an object")
-            return None
+            invalid_rows.append((line_number, "row is not an object"))
+            continue
         missing = [field for field in ("input", "output") if field not in row]
         if missing:
-            emit(
-                "dataset-shape",
-                FAIL,
-                f"line {line_number}: missing {', '.join(missing)}",
+            invalid_rows.append(
+                (line_number, f"missing required fields: {', '.join(missing)}")
             )
-            return None
+            continue
         rows.append(row)
 
+    if invalid_rows:
+        invalid_percentage = len(invalid_rows) / candidate_count * 100
+        examples = "; ".join(
+            f"line {line_number}: {detail}"
+            for line_number, detail in invalid_rows[:MAX_REPORTED_DATASET_ERRORS]
+        )
+        emit(
+            "dataset-integrity",
+            FAIL,
+            f"{len(invalid_rows)}/{candidate_count} rows ({invalid_percentage:.1f}%) "
+            f"are unusable; {examples}",
+        )
     if not rows:
-        emit("dataset-shape", FAIL, "dataset is empty")
+        emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None
-    emit("dataset-shape", PASS, f"{len(rows)} valid JSONL rows")
+    if not invalid_rows:
+        emit("dataset-shape", PASS, f"{len(rows)} valid JSONL rows")
     if len(rows) < 10:
         emit(
             "dataset-size",
@@ -467,6 +481,7 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
         )
 
     outputs = [normalized_text(row["output"]) for row in rows]
+    output_counts = Counter(outputs)
     if any(not output for output in outputs):
         emit("dataset-outputs", FAIL, "one or more expected outputs are empty")
     elif len(set(outputs)) == 1:
@@ -477,6 +492,16 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
         )
     else:
         emit("dataset-outputs", PASS, f"{len(set(outputs))} distinct expected outputs")
+        dominant_count = max(output_counts.values())
+        dominant_ratio = dominant_count / len(outputs)
+        if dominant_ratio >= DOMINANT_OUTPUT_RATIO:
+            emit(
+                "dataset-ceiling-risk",
+                WARN,
+                f"{dominant_count}/{len(outputs)} expected outputs "
+                f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
+                "could hide meaningful failures",
+            )
 
     splits: dict[str, set[str]] = {}
     for row in rows:
@@ -501,12 +526,32 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
     else:
         emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
 
+    difficulty_values = [
+        str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")
+        for row in rows
+        if row_metadata_value(row, "difficulty")
+    ]
+    difficulties = set(difficulty_values)
+    if difficulty_values and difficulties == {"easy"}:
+        emit(
+            "dataset-difficulty",
+            FAIL if synthetic else WARN,
+            f"all {len(difficulty_values)} difficulty-tagged rows are easy; "
+            "a ceiling effect may leave configurations indistinguishable",
+        )
+    elif (
+        not synthetic and difficulty_values and not difficulties & {"hard", "very-hard"}
+    ):
+        emit(
+            "dataset-difficulty",
+            WARN,
+            f"none of {len(difficulty_values)} difficulty-tagged rows are hard or "
+            "very-hard; boundary and failure-mode coverage may be missing",
+        )
+    elif not synthetic and EXPECTED_DIFFICULTIES <= difficulties:
+        emit("dataset-difficulty", PASS, "all four difficulty bands are represented")
+
     if synthetic:
-        difficulties = {
-            str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")
-            for row in rows
-            if row_metadata_value(row, "difficulty")
-        }
         missing_difficulties = EXPECTED_DIFFICULTIES - difficulties
         if missing_difficulties:
             emit(

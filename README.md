@@ -3,8 +3,11 @@
 Run a guided Traigent optimization in one sitting, from whatever your project has today.
 
 Your coding assistant inspects the project, preserves any real agent, dataset, and evaluation
-method it finds, and prepares only the missing pieces. If Traigent generates temporary walkthrough
-material, it remains clearly marked so a demonstration is never mistaken for production evidence.
+method it finds, and checks whether those components can support a meaningful comparison. If a
+real dataset or evaluator is too small, corrupted, narrow, trivial, or logically mismatched, the
+assistant explains the evidence and offers to repair a working copy and revalidate it. If Traigent
+generates temporary walkthrough material, it remains clearly marked so a demonstration is never
+mistaken for production evidence.
 
 ## Start with one prompt
 
@@ -43,11 +46,12 @@ Node.js is needed only for this optional installation command, not for the Traig
 ## What the run does
 
 1. Inspects the project and reports real-world readiness.
-2. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
-3. Validates compatibility and evaluator discrimination.
-4. Shows one combined time, cost, and data-egress approval.
-5. Evaluates the current configuration, then runs one bounded optimization.
-6. Reports the result, limitations, artifacts, and verified portal links.
+2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
+3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
+4. Validates compatibility and evaluator discrimination.
+5. Shows one combined time, cost, and data-egress approval.
+6. Evaluates the current configuration, then runs one bounded optimization when meaningful.
+7. Reports the result, limitations, artifacts, and verified portal links.
 
 The default comparison is two optimization experiments - one honest current-configuration
 baseline and one optimization - followed by an untouched holdout check. A second optimization

@@ -77,6 +77,76 @@ class StaticPreflightTests(unittest.TestCase):
         ]
         self.assertIn("dataset-duplicates", failures)
 
+    def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
+        valid_rows = [
+            {"input": f"case {index}", "output": f"answer {index}"}
+            for index in range(6)
+        ]
+        invalid_lines = [
+            "{broken",
+            json.dumps({"input": "missing output"}),
+            json.dumps(["not", "an", "object"]),
+            "{also broken",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text(
+                "\n".join([*(json.dumps(row) for row in valid_rows), *invalid_lines])
+                + "\n"
+            )
+            rows = MODULE.check_dataset(dataset)
+        self.assertEqual(len(rows or []), 6)
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.status, MODULE.FAIL)
+        self.assertIn("4/10 rows (40.0%)", integrity.detail)
+
+    def test_easy_only_real_dataset_warns_about_ceiling(self) -> None:
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"simple case {index}",
+                "output": f"answer {index}",
+                "difficulty": "easy",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        self.assertTrue(
+            any(
+                result.check == "dataset-difficulty"
+                and result.status == MODULE.WARN
+                and "ceiling effect" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_dominant_expected_output_warns_about_hidden_failures(self) -> None:
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"case {index}",
+                "output": "majority" if index < 9 else "minority",
+            }
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        self.assertTrue(
+            any(
+                result.check == "dataset-ceiling-risk"
+                and result.status == MODULE.WARN
+                and "9/10" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_ast_binding_does_not_execute_module_top_level(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

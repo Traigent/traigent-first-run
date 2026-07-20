@@ -12,7 +12,7 @@ The coding assistant fills this file from project evidence. Store the completed 
 
 ## Component provenance
 
-| Component | State (`real`/`demo`/`missing`/`invalid`) | Source or generated path | Validation evidence | Real-world gap |
+| Component | State (`real`/`limited`/`demo`/`missing`/`invalid`) | Source or generated path | Validation evidence | Real-world gap |
 |---|---|---|---|---|
 | Agent |  |  |  |  |
 | Dataset |  |  |  |  |
@@ -26,6 +26,18 @@ The coding assistant fills this file from project evidence. Store the completed 
 - Split rule:
 - Difficulty/scenario coverage:
 - Duplicate/overlap check:
+- Corrupted/unusable rows and percentage:
+- Difficulty, boundary, and failure-mode coverage:
+- Ceiling-risk evidence:
+
+## Quality advisory
+
+- Affected component:
+- Concrete evidence:
+- Optimization consequence:
+- Recommended repair:
+- User choice (`repair`/`demonstration`/`pause`):
+- Revalidation evidence after repair:
 
 ## Evaluator calibration
 

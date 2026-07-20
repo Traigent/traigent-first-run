@@ -8,7 +8,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-ComponentState = Literal["real", "demo", "missing", "invalid"]
+ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
 
 
@@ -34,10 +34,21 @@ def build_plan(
         "evaluation": evaluation,
     }
     real = {name for name, state in states.items() if state == "real"}
-    usable = {name for name, state in states.items() if state in {"real", "demo"}}
+    usable = {
+        name for name, state in states.items() if state in {"real", "limited", "demo"}
+    }
     missing = [name for name in COMPONENTS if name not in usable]
+    limited = [name for name, state in states.items() if state == "limited"]
+    invalid = [name for name, state in states.items() if state == "invalid"]
 
-    if real == set(COMPONENTS):
+    if limited or invalid:
+        create = missing
+        action = (
+            "Explain each concrete quality issue, recommend repairing a working copy, "
+            "and revalidate it. Continue with limited material only as an explicitly "
+            "labeled demonstration."
+        )
+    elif real == set(COMPONENTS):
         create: list[str] = []
         action = "Validate and use all three real components without replacement."
     elif "demo" in states.values():
@@ -89,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plan a first run from Agent/Dataset/Evaluation provenance."
     )
-    choices = ("real", "demo", "missing", "invalid")
+    choices = ("real", "limited", "demo", "missing", "invalid")
     parser.add_argument("--agent", choices=choices, required=True)
     parser.add_argument("--dataset", choices=choices, required=True)
     parser.add_argument("--evaluation", choices=choices, required=True)
@@ -106,6 +117,10 @@ def render_text(plan: ReadinessPlan) -> str:
         state = plan.states[name]
         if state == "real":
             lines.append(f"✅ {name.title()}: real")
+        elif state == "limited":
+            lines.append(
+                f"❗ {name.title()}: real material exists but evidence is limited"
+            )
         elif state == "invalid":
             lines.append(f"❗ {name.title()}: validation failed")
         else:

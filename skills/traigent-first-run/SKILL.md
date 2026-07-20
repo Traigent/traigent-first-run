@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization from any starting point, including projects missing an agent, evaluation dataset, or evaluation method. Use when a user asks to try Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, validate before spending, run an honest current-configuration baseline plus one bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, run an honest current-configuration baseline plus one bounded optimization, and report what the result does and does not prove.
 ---
 
 # Traigent Guided First Run
@@ -41,6 +41,8 @@ it.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
 - Explain a blocked step in plain language and give one recommended recovery.
+- Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
+  and preserve provenance; ask before any judgment-dependent change.
 - Never expose secrets in chat, commands, logs, diffs, or metadata.
 
 ## Status language
@@ -54,7 +56,8 @@ Track two different facts:
 Use exactly these meanings:
 
 - `✅` - real component found and validated.
-- `❗` - real component is missing or failed validation.
+- `❗` - real component is missing, failed validation, or exists with evidence too limited for a
+  credible optimization claim.
 - `🛠️` - temporary walkthrough substitute created by Traigent.
 
 Never mark synthetic material `✅`, never count it as real-world-ready, and never say "3/3 ready"
@@ -94,7 +97,8 @@ Perform safe, read-only discovery without asking for approval:
 - Find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
   and outcome checks.
 - Infer the agent input/output contract and the product behavior being attempted.
-- Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
+- Validate the apparent quality of real Dataset and Evaluation candidates, not only their
+  existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
 Only ask which agent to use if multiple credible candidates remain. If nothing anchors the task,
 ask one concise question: **"What should the walkthrough agent do?"** Offer at most three
@@ -106,6 +110,20 @@ Render the initial real-world readiness board after inspection. State what Traig
 for the walkthrough. Do not show external links. Do not ask the user to solve missing setup
 pieces. Refresh only changed evidence after creation; retain unresolved `❗` lines and add the
 new `🛠️` substitutes instead of replacing the initial board with a green one.
+
+If real material exists but appears too weak to support a meaningful comparison, show a short
+**Quality advisory** immediately below the board:
+
+- Name the affected component and cite measured evidence or specific examples.
+- Explain the optimization consequence in one sentence: unreliable ranking, no measurable
+  headroom, misleading accuracy, or failure during evaluation.
+- Recommend: **"Repair a working copy and re-run validation"**.
+- Offer only these alternatives: repair now, continue as a clearly labeled workflow
+  demonstration when technically safe, or pause while the user edits it.
+
+Do not call a component weak merely from intuition. For judgment-based findings such as "all
+examples are easy," cite representative rows and the missing challenge/failure modes. For
+structural findings, report counts and percentages.
 
 ### 3. Complete the system
 
@@ -160,8 +178,18 @@ Then:
   is enabled.
 - Exit the mock process. Never reuse it for a real run.
 
-If validation fails, repair the relevant component and reopen its `❗` state. Do not continue to
-paid optimization with a degenerate evaluator, incompatible dataset, or unverified call path.
+Classify a structurally usable but evidence-limited real component as `limited`; keep it `❗`.
+Classify a component that cannot execute or measure the task as `invalid`.
+
+For a limited component, recommend repairing a copy under `traigent-runs/`, then re-run every
+relevant check and calibration from the start. The user may continue unchanged only as an
+explicitly labeled workflow demonstration. Record the limitation before execution and repeat it
+beside the result.
+
+For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
+do not run paid optimization against it. Offer to repair and revalidate it, pause for a
+user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
+"continue as is" as permission to optimize against a broken grading signal.
 
 ### 6. Ask once before paid work
 
@@ -189,6 +217,12 @@ Use the same tuning slice and evaluator for both measurements:
 Run both connected once when the user wants portal comparison. Do not run an offline baseline and
 then pay to repeat it merely to populate the portal. A one-configuration baseline is the honest
 "before."
+
+After the baseline, check whether the dataset and evaluator can distinguish configurations. If
+the baseline is perfect or nearly perfect and has no informative failures, stop before the search
+and explain the likely ceiling effect. Recommend adding realistic boundary, failure, and harder
+cases, then revalidate. Continue only if the user accepts that the run is a workflow
+demonstration and may have no measurable room to improve.
 
 Do not require a second enhanced pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
@@ -233,6 +267,8 @@ Only after the result, offer optional next steps:
 The first run is complete only when:
 
 - The starting state and provenance of all three components are recorded.
+- Material quality limitations were explained with evidence and a repair/continue/pause choice.
+- Any repaired component was revalidated before its status changed.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
 - The evaluator discriminates good, equivalent, partial, and bad outputs.

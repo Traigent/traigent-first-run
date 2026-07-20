@@ -45,6 +45,18 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertIn("❗ Dataset", rendered)
         self.assertIn("🛠️ Dataset", rendered)
 
+    def test_limited_component_is_usable_but_not_real_world_ready(self) -> None:
+        plan = MODULE.build_plan("real", "limited", "real")
+        self.assertEqual(plan.real_ready_count, 2)
+        self.assertEqual(plan.walkthrough_ready_count, 3)
+        self.assertIn("dataset", plan.missing_real)
+        self.assertEqual(plan.create, [])
+        self.assertIn("revalid", plan.action)
+        rendered = MODULE.render_text(plan)
+        self.assertIn(
+            "❗ Dataset: real material exists but evidence is limited", rendered
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

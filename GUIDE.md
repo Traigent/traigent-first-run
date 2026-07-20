@@ -37,9 +37,11 @@ Use the bundled tools:
 Use this short opening, adapting only what inspection already established:
 
 > I will inspect what you already have, preserve it, and prepare anything missing for a complete
-> walkthrough. Before any paid model calls, I will validate the setup and show you one combined
-> estimate for the baseline and optimization. If Traigent generates temporary components, I will
-> keep them clearly separate from real-world readiness so the result is not overclaimed.
+> walkthrough. If an existing dataset or evaluation method has a material limitation, I will
+> explain the evidence and offer to repair and revalidate a working copy before any paid model
+> calls. I will then show one combined estimate for the baseline and optimization. If Traigent
+> generates temporary components, I will keep them clearly separate from real-world readiness so
+> the result is not overclaimed.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
@@ -48,6 +50,7 @@ discovery. Stop only for:
 - One task-intent question when nothing anchors the walkthrough.
 - Secrets that must be pasted into a local `.env`.
 - Paid/provider calls or private-data egress.
+- Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
 
 ## Default run
@@ -69,7 +72,7 @@ pass. Another iteration is optional after the first result identifies a specific
 Always report the component provenance:
 
 - `✅` real and validated.
-- `❗` real-world gap.
+- `❗` missing, invalid, or evidence-limited real-world component.
 - `🛠️` generated walkthrough substitute.
 
 If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not

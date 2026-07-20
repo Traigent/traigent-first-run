@@ -16,6 +16,8 @@ before creating any of them.
 Classify each component as:
 
 - `real` - project/customer material that exists independently of the walkthrough.
+- `limited` - real material is technically usable for a walkthrough, but concrete evidence shows
+  it cannot yet support a credible optimization claim.
 - `demo` - material invented to demonstrate the workflow.
 - `missing` - no usable component found.
 - `invalid` - material exists but fails compatibility or validation.
@@ -31,6 +33,12 @@ Record in `traigent-runs/run-plan.md`:
 - Any conversion or wrapper created.
 - Validation evidence.
 - Unresolved real-world gap.
+
+Resolve `limited` and `invalid` candidates before using the matrix. For `limited`, recommend
+repairing a working copy and revalidating it; if the user explicitly continues unchanged, preserve
+it as the real anchor in the matching `real` row but keep its readiness state `❗`. For `invalid`,
+repair it successfully or treat it as missing and create a clearly labeled `🛠️` substitute. A
+broken evaluator or incompatible dataset is not safe to continue unchanged.
 
 ## Dependency matrix
 
@@ -78,21 +86,28 @@ provider calls are not intercepted automatically by Traigent mock mode.
 
 Validate all of these before optimization:
 
+- The real agent performs the intended task rather than returning a constant, echo, fixture, or
+  placeholder response.
 - Every dataset input key binds to an agent parameter or a deliberate scalar adapter.
 - Required agent parameters are supplied by every row.
 - Agent output is parseable by the evaluator.
 - Dataset expected output matches the evaluator's gold contract.
 - Per-example side fields reach the evaluator through metadata.
 - The baseline configuration is included in the optimization space.
+- Every declared optimization variable changes the real agent call or behavior.
 - Generated component files import without reaching a provider or backend at module load.
 - No generated component overwrites production code or data.
 
-If compatibility fails, mark the affected real component `❗ needs one fix` or keep it missing.
-A generated adapter is `🛠️`; it does not silently convert an invalid real component into `✅`.
+If compatibility fails, mark the affected real component `invalid` and `❗ needs one fix` or keep
+it missing. If compatibility passes but the evidence is too small, narrow, or easy to support a
+meaningful comparison, mark it `limited` and keep `❗`. A generated adapter is `🛠️`; it does not
+silently convert an invalid real component into `✅`.
 
 ## Readiness transitions
 
-Real-world readiness changes to `✅` only when concrete real evidence passes validation.
+Real-world readiness changes to `✅` only when concrete real evidence passes validation without
+an unresolved material limitation. After a repair, re-run the relevant validation and calibration
+before changing `limited` or `invalid` to `real`.
 
 Walkthrough setup changes to `🛠️` when a generated substitute passes compatibility. Preserve the
 corresponding `❗` real-world gap until real material replaces it.
