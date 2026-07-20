@@ -60,6 +60,8 @@ pass is optional, not required.
 ## Requirements
 
 - Python 3.11-3.13 in an isolated environment.
+- The tested first-run SDK stack pinned in
+  [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt).
 - One supported LLM-provider key with a small amount of credit for the real run.
 - A Traigent portal key for connected optimization and portal results.
 

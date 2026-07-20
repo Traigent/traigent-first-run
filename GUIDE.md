@@ -28,6 +28,8 @@ Use the bundled tools:
   `python skills/traigent-first-run/scripts/readiness.py --help`
 - Compact internal run record:
   `skills/traigent-first-run/assets/run-plan.md`
+- Tested first-run SDK stack:
+  `skills/traigent-first-run/assets/requirements-first-run.txt`
 
 ## User-facing promise
 
@@ -54,6 +56,8 @@ Creating the isolated environment and minimal `.env` is separate from installing
 A dependency install may proceed without another approval only when it is confined to that
 environment, uses the exact packages and versions already declared for the run, fetches package
 artifacts only, and permits no project/provider/Traigent code execution or private-data transfer.
+A project without compatible exact declarations uses the skill's pinned first-run requirements;
+never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,
 connected Traigent, private-data, and all other external calls remain behind their stated
 approval gates.
