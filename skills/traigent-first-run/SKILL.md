@@ -310,7 +310,9 @@ walkthrough ceiling; if it does, lower the process-only per-run limit. The SDK o
 cost enforcement, timeout partial results, Traigent-backend retries, and provider-error
 classification. Do not add or ask the user to configure another retry policy. Preserve an
 existing agent/provider client's retry behavior; generated walkthrough code does not add provider
-retries and leaves `TRAIGENT_VENDOR_MAX_RETRIES` unset.
+retries and leaves `TRAIGENT_VENDOR_MAX_RETRIES` unset. When preserved provider retries are
+bounded, include their possible extra calls in the internal time/spend estimate without turning
+the retry count into a user choice.
 
 Until the SDK exposes a cumulative budget across baseline, search, evaluator/judge, and holdout,
 maintain only one running total: add tracked cost after each paid phase, or deduct that phase's

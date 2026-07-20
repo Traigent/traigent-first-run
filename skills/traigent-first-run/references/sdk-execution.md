@@ -41,7 +41,9 @@ The installed SDK owns:
 
 The first-run wrapper must not duplicate those behaviors. Leave the SDK/provider retry defaults
 unchanged, preserve any retry behavior already present in the user's agent, and do not set
-`TRAIGENT_VENDOR_MAX_RETRIES` or LiteLLM `num_retries` for generated walkthrough code.
+`TRAIGENT_VENDOR_MAX_RETRIES` or LiteLLM `num_retries` for generated walkthrough code. If the
+preserved agent already has bounded provider retries, include their possible extra calls in the
+automatic runtime/spend estimate without asking the user to choose the count.
 
 ## Automatic run bounds
 

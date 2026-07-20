@@ -174,7 +174,9 @@ Never describe this as a hard provider-billing cap.
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
 `TRAIGENT_VENDOR_MAX_RETRIES` for the first run. Preserve retry behavior already present in the
-user's agent/provider client. Generated walkthrough provider calls add no explicit retries.
+user's agent/provider client. Generated walkthrough provider calls add no explicit retries. When
+the preserved client has bounded retries, include their possible extra calls in the internal
+runtime/spend estimate without asking the user to configure them.
 
 After the approved live probe, calculate internal request and SDK optimization bounds from
 observed latency, rows, trials, calls per example, and concurrency, with a reasonable completion
