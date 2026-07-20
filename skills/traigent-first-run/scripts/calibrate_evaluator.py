@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -25,6 +27,10 @@ SECRET_MARKERS = (
     "PASSWORD",
     "CREDENTIAL",
     "PRIVATE_KEY",
+    "ACCESS_KEY",
+    "AUTHORIZATION",
+    "COOKIE",
+    "SESSION",
 )
 RECOGNIZED_VALUES = {
     "actual",
@@ -57,20 +63,27 @@ def literal_or_file(value: str) -> Any:
         return value
 
 
-def sanitized_environment() -> dict[str, str]:
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not any(marker in key.upper() for marker in SECRET_MARKERS)
-    }
+def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
+    if allow_provider_access:
+        environment = dict(os.environ)
+    else:
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not any(marker in key.upper() for marker in SECRET_MARKERS)
+        }
+        environment.update(
+            {
+                "HTTP_PROXY": "http://127.0.0.1:9",
+                "HTTPS_PROXY": "http://127.0.0.1:9",
+                "ALL_PROXY": "http://127.0.0.1:9",
+                "NO_PROXY": "",
+            }
+        )
     environment.update(
         {
             "TRAIGENT_OFFLINE_MODE": "true",
             "LITELLM_LOCAL_MODEL_COST_MAP": "true",
-            "HTTP_PROXY": "http://127.0.0.1:9",
-            "HTTPS_PROXY": "http://127.0.0.1:9",
-            "ALL_PROXY": "http://127.0.0.1:9",
-            "NO_PROXY": "",
         }
     )
     return environment
@@ -147,18 +160,20 @@ def bind_call(
 
 def run_worker() -> int:
     request = json.load(sys.stdin)
-    function = load_function(request["scorer"])
-    scores = {
-        label: bind_call(
-            function,
-            value,
-            request["expected"],
-            request.get("input_data"),
-            request.get("metadata"),
-        )
-        for label, value in request["probes"].items()
-    }
-    print(json.dumps({"scores": scores}))
+    captured_stdout = io.StringIO()
+    with contextlib.redirect_stdout(captured_stdout):
+        function = load_function(request["scorer"])
+        scores = {
+            label: bind_call(
+                function,
+                value,
+                request["expected"],
+                request.get("input_data"),
+                request.get("metadata"),
+            )
+            for label, value in request["probes"].items()
+        }
+    print(json.dumps({"scores": scores, "captured_stdout": captured_stdout.getvalue()}))
     return 0
 
 
@@ -234,7 +249,7 @@ def main() -> int:
             text=True,
             capture_output=True,
             timeout=args.timeout,
-            env=sanitized_environment(),
+            env=subprocess_environment(allow_provider_access=args.kind == "llm-judge"),
             cwd=Path(scorer_file).resolve().parent,
         )
     except subprocess.TimeoutExpired:

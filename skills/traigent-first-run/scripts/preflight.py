@@ -398,6 +398,20 @@ def check_dataset(path: Path) -> list[dict[str, Any]] | None:
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
 
+    input_types = {type(row["input"]).__name__ for row in rows}
+    if len(input_types) > 1:
+        emit(
+            "dataset-input-shape",
+            FAIL,
+            f"mixed input types cannot share one agent contract: {sorted(input_types)}",
+        )
+    else:
+        emit(
+            "dataset-input-shape",
+            PASS,
+            f"all inputs use the same {next(iter(input_types))} shape",
+        )
+
     synthetic = any(is_synthetic(row) for row in rows)
     raw_ids = [row_metadata_value(row, "id") for row in rows]
     missing_ids = [
@@ -549,7 +563,7 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
     node = next(
         (
             item
-            for item in ast.walk(tree)
+            for item in tree.body
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
             and item.name == function_name
         ),
@@ -589,11 +603,23 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     named = set(signature.positional) | set(signature.keyword_only)
     dict_rows = [row for row in rows if isinstance(row["input"], dict)]
     if not dict_rows:
+        required_positional = [
+            name
+            for name in signature.positional
+            if name in signature.required and name not in {"self", "cls"}
+        ]
         if not signature.positional and not signature.has_varargs:
             emit(
                 "dataset-binding",
                 FAIL,
                 "scalar input has no positional parameter to bind",
+            )
+        elif len(required_positional) > 1 and not signature.has_varargs:
+            emit(
+                "dataset-binding",
+                FAIL,
+                "scalar input cannot satisfy multiple required parameters: "
+                f"{required_positional}",
             )
         else:
             emit(
@@ -613,10 +639,17 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
                 "dataset-binding", FAIL, f"input key '{key}' matches no agent parameter"
             )
     for name in signature.required:
-        if name not in input_keys and name not in {"self", "cls"}:
+        if name in {"self", "cls"}:
+            continue
+        missing_rows = [
+            index for index, row in enumerate(dict_rows, 1) if name not in row["input"]
+        ]
+        if missing_rows:
             failed = True
             emit(
-                "dataset-binding", FAIL, f"required agent parameter '{name}' is missing"
+                "dataset-binding",
+                FAIL,
+                f"required agent parameter '{name}' is missing from rows {missing_rows[:10]}",
             )
     for name, default in signature.defaults.items():
         if name not in input_keys and name in top_level_keys:

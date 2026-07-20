@@ -99,6 +99,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def render_text(plan: ReadinessPlan) -> str:
+    """Render real readiness separately from generated walkthrough substitutes."""
+    lines = [f"Real-world readiness: {plan.real_ready_count}/3"]
+    for name in COMPONENTS:
+        state = plan.states[name]
+        if state == "real":
+            lines.append(f"✅ {name.title()}: real")
+        elif state == "invalid":
+            lines.append(f"❗ {name.title()}: validation failed")
+        else:
+            lines.append(f"❗ {name.title()}: no real component is connected")
+
+    demo_components = [name for name in COMPONENTS if plan.states[name] == "demo"]
+    if demo_components:
+        lines.extend(("", "Walkthrough setup:"))
+        for name in demo_components:
+            lines.append(f"🛠️ {name.title()}: generated walkthrough substitute")
+
+    lines.append(f"Action: {plan.action}")
+    return "\n".join(lines)
+
+
 def main() -> int:
     args = parse_args()
     plan = build_plan(args.agent, args.dataset, args.evaluation)
@@ -106,12 +128,7 @@ def main() -> int:
         print(json.dumps(asdict(plan), indent=2, sort_keys=True))
         return 0
 
-    print(f"Real-world readiness: {plan.real_ready_count}/3")
-    for name in COMPONENTS:
-        state = plan.states[name]
-        marker = "✅" if state == "real" else "🛠️" if state == "demo" else "❗"
-        print(f"{marker} {name.title()}: {state}")
-    print(f"Action: {plan.action}")
+    print(render_text(plan))
     return 0
 
 

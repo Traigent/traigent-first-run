@@ -41,6 +41,9 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(plan.walkthrough_ready_count, 2)
         self.assertIn("dataset", plan.missing_real)
         self.assertEqual(plan.create, ["evaluation"])
+        rendered = MODULE.render_text(plan)
+        self.assertIn("❗ Dataset", rendered)
+        self.assertIn("🛠️ Dataset", rendered)
 
 
 if __name__ == "__main__":

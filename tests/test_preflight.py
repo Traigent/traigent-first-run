@@ -98,6 +98,41 @@ class StaticPreflightTests(unittest.TestCase):
                 )
             )
 
+    def test_required_agent_parameter_must_exist_in_every_dict_row(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(question: str, tone: str) -> str:\n" "    return question\n"
+            )
+            rows = [
+                {"input": {"question": "hello", "tone": "plain"}, "output": "a"},
+                {"input": {"question": "goodbye"}, "output": "b"},
+            ]
+            MODULE.check_binding(rows, f"{agent}:answer")
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding"
+                and result.status == MODULE.FAIL
+                and "rows [2]" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_scalar_input_cannot_bind_multiple_required_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(question: str, tone: str) -> str:\n" "    return question\n"
+            )
+            rows = [{"input": "hello", "output": "a"}]
+            MODULE.check_binding(rows, f"{agent}:answer")
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.FAIL
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_scorer_check_is_static_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

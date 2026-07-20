@@ -78,6 +78,21 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 2)
         self.assertIn("--paid-approved", process.stderr)
 
+    def test_paid_approved_judge_path_can_execute(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    *self.command(self.make_scorer(directory)),
+                    "--allow-execution",
+                    "--kind",
+                    "llm-judge",
+                    "--paid-approved",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
