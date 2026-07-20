@@ -110,7 +110,10 @@ The static gate checks environment, package metadata, dataset structure/quality,
 safe configuration. It deliberately does not decide how the SDK normalizes rows, injects
 configuration, binds agent inputs, or invokes evaluator callbacks. During the first
 standard-library-only pass, omit optional model-pricing checks and interpret a missing SDK as a
-deferred SDK finding, not as a failure of dataset-quality checks.
+deferred SDK finding, not as a failure of dataset-quality checks. Dataset heuristics use canonical
+`input`/`output` fields unless the assistant explicitly selects other dot paths with
+`--input-field` and `--expected-field` from the user's schema. Those choices configure only the
+local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 
 Deterministic calibration is a separate execution gate. Run it before environment setup only when
 the assistant has recorded a `sufficient` evidence-backed semantic-coverage verdict and inspection

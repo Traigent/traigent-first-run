@@ -216,7 +216,9 @@ Follow this order:
    judgment-dependent change and obtain the explicit approval required by the action table.
 3. Run the bundled static preflight with the dataset argument so local structure and quality
    problems are checked without importing user modules. Omit optional model-pricing checks in this
-   standard-library-only pass. This heuristic check does not assert SDK compatibility.
+   standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
+   schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
+   data and task; do not infer SDK aliases. This heuristic check does not assert SDK compatibility.
 4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
    `sufficient` and the complete inspected import and call path
    is local-only, has no external side effects, and needs no unavailable third-party package.

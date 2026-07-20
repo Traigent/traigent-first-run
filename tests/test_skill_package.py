@@ -561,8 +561,12 @@ class SkillPackageTests(unittest.TestCase):
             "_prepare_call_arguments",
             "Traigent 0.23",
             "InjectionMode",
+            "DATASET_INPUT_FIELDS",
+            "DATASET_EXPECTED_OUTPUT_FIELDS",
         ):
             self.assertNotIn(sdk_internal, preflight_text)
+        self.assertIn("--input-field", preflight_text)
+        self.assertIn("--expected-field", preflight_text)
 
     def test_run_plan_records_repeatable_calibration_and_ledger(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()

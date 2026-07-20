@@ -41,16 +41,6 @@ COMMON_OUTCOME_FIELDS = (
     "type",
     "grade",
 )
-DATASET_INPUT_FIELDS = ("input", "input_data")
-DATASET_EXPECTED_OUTPUT_FIELDS = (
-    "output",
-    "expected",
-    "expected_output",
-    "answer",
-    "target",
-    "label",
-)
-
 VENDOR_KEYS = {
     "OpenRouter": ("OPENROUTER_API_KEY",),
     "OpenAI": ("OPENAI_API_KEY",),
@@ -323,55 +313,49 @@ def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
+def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any]:
+    value: Any = row
+    for part in field_path.split("."):
+        if not part or not isinstance(value, dict) or part not in value:
+            return False, None
+        value = value[part]
+    return True, value
+
+
 def normalize_dataset_row(
     row: dict[str, Any],
+    input_field: str = "input",
+    expected_field: str = "output",
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Normalize common field names for local quality heuristics.
+    """Project explicitly selected fields into the local quality-check shape.
 
     This deliberately does not assert SDK compatibility. Exact dataset normalization
     belongs to the installed SDK's public validation and loading paths.
     """
 
-    input_fields = [field for field in DATASET_INPUT_FIELDS if field in row]
-    if not input_fields:
+    if input_field == expected_field:
         return (
             None,
-            "missing required input field "
-            f"(accepted: {', '.join(DATASET_INPUT_FIELDS)})",
-        )
-    selected_input = input_fields[0]
-    if any(
-        stable_json(row[field]) != stable_json(row[selected_input])
-        for field in input_fields[1:]
-    ):
-        return None, f"conflicting input fields: {', '.join(input_fields)}"
-
-    expected_fields = [
-        field for field in DATASET_EXPECTED_OUTPUT_FIELDS if field in row
-    ]
-    if not expected_fields:
-        return (
-            None,
-            "missing required expected-output field "
-            f"(accepted: {', '.join(DATASET_EXPECTED_OUTPUT_FIELDS)})",
-        )
-    selected_expected = expected_fields[0]
-    if any(
-        stable_json(row[field]) != stable_json(row[selected_expected])
-        for field in expected_fields[1:]
-    ):
-        return (
-            None,
-            f"conflicting expected-output fields: {', '.join(expected_fields)}",
+            "input and expected-output field paths must be different",
         )
 
-    normalized = {
-        key: value
-        for key, value in row.items()
-        if key not in {selected_input, selected_expected}
-    }
-    normalized["input"] = row[selected_input]
-    normalized["output"] = row[selected_expected]
+    input_found, input_value = dataset_field_value(row, input_field)
+    if not input_found:
+        return (
+            None,
+            f"missing selected input field '{input_field}'",
+        )
+
+    expected_found, expected_value = dataset_field_value(row, expected_field)
+    if not expected_found:
+        return (
+            None,
+            f"missing selected expected-output field '{expected_field}'",
+        )
+
+    normalized = dict(row)
+    normalized["input"] = input_value
+    normalized["output"] = expected_value
     return normalized, None
 
 
@@ -432,7 +416,10 @@ def structured_outcomes(
 
 
 def check_dataset(
-    path: Path, outcome_field: str | None = None
+    path: Path,
+    outcome_field: str | None = None,
+    input_field: str = "input",
+    expected_field: str = "output",
 ) -> list[dict[str, Any]] | None:
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
@@ -453,7 +440,11 @@ def check_dataset(
         if not isinstance(row, dict):
             invalid_rows.append((line_number, "row is not an object"))
             continue
-        normalized_row, normalization_error = normalize_dataset_row(row)
+        normalized_row, normalization_error = normalize_dataset_row(
+            row,
+            input_field=input_field,
+            expected_field=expected_field,
+        )
         if normalization_error is not None:
             invalid_rows.append((line_number, normalization_error))
             continue
@@ -695,6 +686,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset", help="JSONL dataset to validate")
     parser.add_argument(
+        "--input-field",
+        default="input",
+        help=(
+            "dot path used only by local quality checks (default: input); "
+            "this does not configure or validate SDK loading"
+        ),
+    )
+    parser.add_argument(
+        "--expected-field",
+        default="output",
+        help=(
+            "dot path used only by local quality checks (default: output); "
+            "this does not configure or validate SDK loading"
+        ),
+    )
+    parser.add_argument(
         "--outcome-field",
         help="dot path for a structured discrete outcome, such as category or result.label",
     )
@@ -717,7 +724,12 @@ def main() -> int:
     check_models(models)
 
     if args.dataset:
-        check_dataset(Path(args.dataset), args.outcome_field)
+        check_dataset(
+            Path(args.dataset),
+            outcome_field=args.outcome_field,
+            input_field=args.input_field,
+            expected_field=args.expected_field,
+        )
 
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))

@@ -65,41 +65,29 @@ class StaticPreflightTests(unittest.TestCase):
         failures = [result for result in MODULE.RESULTS if result.status == MODULE.FAIL]
         self.assertEqual(failures, [])
 
-    def test_common_jsonl_fields_normalize_for_quality_checks_without_rewriting(
-        self,
-    ) -> None:
-        rows = []
-        expected_aliases = (
-            "output",
-            "expected",
-            "expected_output",
-            "answer",
-            "target",
-            "label",
-        )
-        for index, (input_alias, expected_alias) in enumerate(
-            (
-                (input_alias, expected_alias)
-                for input_alias in ("input", "input_data")
-                for expected_alias in expected_aliases
-            )
-        ):
-            rows.append(
-                {
-                    input_alias: {"message": f"case {index}"},
-                    expected_alias: f"answer {index}",
-                    "id": f"alias-{index}",
-                    "source": "reviewed",
-                    "metadata": {"rubric_branch": f"branch-{index % 3}"},
-                    "split": "tune" if index < 8 else "holdout",
-                }
-            )
+    def test_explicit_local_quality_fields_do_not_rewrite_dataset(self) -> None:
+        rows = [
+            {
+                "request.payload": "preserved side field",
+                "request": {"payload": f"case {index}"},
+                "reference": {"answer": f"answer {index}"},
+                "id": f"case-{index}",
+                "source": "reviewed",
+                "metadata": {"rubric_branch": f"branch-{index % 3}"},
+                "split": "tune" if index < 8 else "holdout",
+            }
+            for index in range(12)
+        ]
 
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             original_text = "\n".join(json.dumps(row) for row in rows) + "\n"
             dataset.write_text(original_text)
-            normalized_rows = MODULE.check_dataset(dataset)
+            normalized_rows = MODULE.check_dataset(
+                dataset,
+                input_field="request.payload",
+                expected_field="reference.answer",
+            )
             self.assertEqual(dataset.read_text(), original_text)
 
         self.assertEqual(len(normalized_rows or []), len(rows))
@@ -109,35 +97,38 @@ class StaticPreflightTests(unittest.TestCase):
         )
         for index, row in enumerate(normalized_rows or []):
             with self.subTest(index=index):
-                self.assertEqual(row["input"], {"message": f"case {index}"})
+                self.assertEqual(row["input"], f"case {index}")
                 self.assertEqual(row["output"], f"answer {index}")
-                self.assertEqual(row["id"], f"alias-{index}")
+                self.assertEqual(row["id"], f"case-{index}")
+                self.assertEqual(row["request.payload"], "preserved side field")
                 self.assertEqual(
                     row["metadata"],
                     {"rubric_branch": f"branch-{index % 3}"},
                 )
 
-    def test_conflicting_common_jsonl_fields_fail_quality_check(self) -> None:
+    def test_selected_local_quality_fields_must_exist(self) -> None:
         rows = [
             {
-                "input": {"message": "canonical"},
-                "input_data": {"message": "conflict"},
-                "output": "answer",
+                "request": {},
+                "reference": {"answer": "answer"},
             },
             {
-                "input": {"message": "case"},
-                "output": "canonical",
-                "expected_output": "conflict",
+                "request": {"payload": "case"},
+                "reference": {},
             },
             {
-                "input": {"message": "valid"},
-                "output": "valid",
+                "request": {"payload": "valid"},
+                "reference": {"answer": "valid"},
             },
         ]
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-            normalized_rows = MODULE.check_dataset(dataset)
+            normalized_rows = MODULE.check_dataset(
+                dataset,
+                input_field="request.payload",
+                expected_field="reference.answer",
+            )
 
         self.assertEqual(len(normalized_rows or []), 1)
         integrity = next(
@@ -145,35 +136,30 @@ class StaticPreflightTests(unittest.TestCase):
         )
         self.assertEqual(integrity.status, MODULE.FAIL)
         self.assertIn(
-            "line 1: conflicting input fields: input, input_data", integrity.detail
+            "line 1: missing selected input field 'request.payload'", integrity.detail
         )
         self.assertIn(
-            "line 2: conflicting expected-output fields: output, expected_output",
+            "line 2: missing selected expected-output field 'reference.answer'",
             integrity.detail,
         )
 
-    def test_identical_common_jsonl_fields_preserve_nonselected_side_fields(
-        self,
-    ) -> None:
+    def test_default_local_fields_do_not_infer_sdk_aliases(self) -> None:
         row = {
-            "input": {"message": "same"},
             "input_data": {"message": "same"},
-            "output": "answer",
             "expected_output": "answer",
-            "metadata": {"rubric": "exact"},
         }
         normalized, error = MODULE.normalize_dataset_row(row)
-        self.assertIsNone(error)
-        self.assertEqual(
-            normalized,
-            {
-                "input_data": {"message": "same"},
-                "expected_output": "answer",
-                "metadata": {"rubric": "exact"},
-                "input": {"message": "same"},
-                "output": "answer",
-            },
+        self.assertIsNone(normalized)
+        self.assertEqual(error, "missing selected input field 'input'")
+
+        normalized, error = MODULE.normalize_dataset_row(
+            row,
+            input_field="input_data",
+            expected_field="expected_output",
         )
+        self.assertIsNone(error)
+        self.assertEqual(normalized["input"], {"message": "same"})
+        self.assertEqual(normalized["output"], "answer")
 
     def test_duplicate_synthetic_input_fails(self) -> None:
         rows = synthetic_rows()
