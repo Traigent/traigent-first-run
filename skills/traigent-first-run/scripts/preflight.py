@@ -776,6 +776,26 @@ def parse_function_spec(spec: str, check: str) -> StaticSignature | None:
     )
 
 
+def mapping_input_expands(
+    signature: StaticSignature, input_data: dict[str, Any]
+) -> bool:
+    """Mirror Traigent 0.23 BaseEvaluator._should_expand_input_mapping."""
+    if signature.has_kwargs:
+        return True
+
+    effective_parameters = [*signature.positional, *signature.keyword_only]
+    if not effective_parameters:
+        return signature.has_varargs
+
+    if len(effective_parameters) == 1:
+        parameter = effective_parameters[0]
+        if parameter in signature.positional_only:
+            return False
+        return parameter in input_data
+
+    return True
+
+
 def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
     signature = parse_function_spec(agent_spec, "dataset-binding")
     if signature is None:
@@ -818,36 +838,98 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
             )
         return
 
-    input_keys = set().union(*(row["input"].keys() for row in dict_rows))
-    top_level_keys = set().union(
-        *({key for key in row if key not in {"input", "output"}} for row in dict_rows)
-    )
     failed = False
-    required_positional_only = [
-        name for name in signature.positional_only if name in signature.required
+    indexed_rows = list(enumerate(dict_rows, 1))
+    expanded_rows = [
+        (index, row)
+        for index, row in indexed_rows
+        if mapping_input_expands(signature, row["input"])
     ]
-    if required_positional_only:
-        failed = True
-        emit(
-            "dataset-binding",
-            FAIL,
-            "mapping input cannot bind individual fields to required positional-only "
-            f"agent parameters: {required_positional_only}; use scalar input or a "
-            "keyword-compatible adapter",
-        )
-    for key in sorted(input_keys):
-        if key in positional_only:
+    positional_mapping_rows = [
+        (index, row)
+        for index, row in indexed_rows
+        if not mapping_input_expands(signature, row["input"])
+    ]
+
+    for name in signature.positional_only:
+        targeted_rows = [index for index, row in expanded_rows if name in row["input"]]
+        if targeted_rows:
             failed = True
             emit(
                 "dataset-binding",
                 FAIL,
-                f"input key '{key}' targets a positional-only agent parameter; "
-                "mapping rows cannot bind that field by name",
+                f"input key '{name}' targets a positional-only agent parameter on "
+                f"rows {targeted_rows[:10]}; expanded mapping rows cannot bind that "
+                "field by name",
             )
-        elif key not in keywordable and not signature.has_kwargs:
+
+    if positional_mapping_rows:
+        positional_row_numbers = [index for index, _row in positional_mapping_rows]
+        required_positional = [
+            name for name in signature.positional if name in signature.required
+        ]
+        required_keyword_only = [
+            name for name in signature.keyword_only if name in signature.required
+        ]
+        if not signature.positional and not signature.has_varargs:
             failed = True
             emit(
-                "dataset-binding", FAIL, f"input key '{key}' matches no agent parameter"
+                "dataset-binding",
+                FAIL,
+                "mapping input is passed as one positional value on rows "
+                f"{positional_row_numbers[:10]}, but the agent has no positional parameter",
+            )
+        elif len(required_positional) > 1 and not signature.has_varargs:
+            failed = True
+            emit(
+                "dataset-binding",
+                FAIL,
+                "mapping input passed as one positional value cannot satisfy required "
+                f"parameters {required_positional[1:]} on rows "
+                f"{positional_row_numbers[:10]}",
+            )
+        if required_keyword_only:
+            failed = True
+            emit(
+                "dataset-binding",
+                FAIL,
+                "mapping input passed as one positional value cannot satisfy required "
+                f"keyword-only parameters {required_keyword_only} on rows "
+                f"{positional_row_numbers[:10]}",
+            )
+
+    required_positional_only = [
+        name for name in signature.positional_only if name in signature.required
+    ]
+    if required_positional_only and expanded_rows:
+        failed = True
+        expanded_row_numbers = [index for index, _row in expanded_rows]
+        emit(
+            "dataset-binding",
+            FAIL,
+            f"mapping input expands to keywords on rows {expanded_row_numbers[:10]} "
+            "and cannot satisfy required positional-only agent parameters: "
+            f"{required_positional_only}",
+        )
+
+    expanded_input_keys = set().union(
+        *(row["input"].keys() for _index, row in expanded_rows)
+    )
+    for key in sorted(expanded_input_keys):
+        if (
+            key not in keywordable
+            and not signature.has_kwargs
+            and key not in positional_only
+        ):
+            failed = True
+            affected_rows = [
+                index for index, row in expanded_rows if key in row["input"]
+            ]
+            emit(
+                "dataset-binding",
+                FAIL,
+                f"input key '{key}' matches no agent parameter on rows "
+                f"{affected_rows[:10]}",
             )
     for name in (
         required_name
@@ -855,7 +937,7 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
         if required_name not in positional_only
     ):
         missing_rows = [
-            index for index, row in enumerate(dict_rows, 1) if name not in row["input"]
+            index for index, row in expanded_rows if name not in row["input"]
         ]
         if missing_rows:
             failed = True
@@ -865,16 +947,25 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
                 f"required agent parameter '{name}' is missing from rows {missing_rows[:10]}",
             )
     for name, default in signature.defaults.items():
-        if name not in input_keys and name in top_level_keys:
+        top_level_only_rows = [
+            index
+            for index, row in expanded_rows
+            if name not in row["input"]
+            and name in {key for key in row if key not in {"input", "output"}}
+        ]
+        if top_level_only_rows:
             failed = True
             emit(
                 "dataset-binding",
                 FAIL,
-                f"'{name}' is top-level only and would stay at default {default}; copy it into input",
+                f"'{name}' is top-level only on rows {top_level_only_rows[:10]} and "
+                f"would stay at default {default}; copy it into input",
             )
     if not failed:
         emit(
-            "dataset-binding", PASS, f"all {len(input_keys)} input keys bind statically"
+            "dataset-binding",
+            PASS,
+            f"all {len(dict_rows)} mapping rows bind using Traigent's static call shape",
         )
 
 

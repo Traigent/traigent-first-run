@@ -444,6 +444,135 @@ class StaticPreflightTests(unittest.TestCase):
             )
             MODULE.RESULTS.clear()
 
+    def test_single_parameter_receives_whole_mapping_when_name_is_absent(
+        self,
+    ) -> None:
+        sources = {
+            "regular": "def answer(payload):\n    return payload['message']\n",
+            "positional-only": (
+                "def answer(payload, /):\n    return payload['message']\n"
+            ),
+        }
+        for label, source in sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(source)
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertTrue(
+                any(
+                    result.check == "dataset-binding" and result.status == MODULE.PASS
+                    for result in MODULE.RESULTS
+                ),
+                MODULE.RESULTS,
+            )
+            self.assertFalse(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_single_parameter_mixed_positional_and_keyword_mapping_rows_pass(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text("def answer(payload):\n    return payload\n")
+            MODULE.check_binding(
+                [
+                    {"input": {"message": "whole mapping"}, "output": "a"},
+                    {"input": {"payload": "keyword value"}, "output": "b"},
+                ],
+                f"{agent}:answer",
+            )
+
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.PASS
+                for result in MODULE.RESULTS
+            ),
+            MODULE.RESULTS,
+        )
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
+    def test_single_positional_only_parameter_receives_same_named_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text("def answer(payload, /):\n    return payload\n")
+            signature = MODULE.parse_function_spec(f"{agent}:answer", "dataset-binding")
+            self.assertIsNotNone(signature)
+            self.assertFalse(
+                MODULE.mapping_input_expands(signature, {"payload": "field value"})
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_binding(
+                [{"input": {"payload": "field value"}, "output": "field value"}],
+                f"{agent}:answer",
+            )
+
+        self.assertFalse(
+            any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+            MODULE.RESULTS,
+        )
+
+    def test_single_keyword_only_parameter_cannot_receive_mapping_positionally(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text("def answer(*, payload):\n    return payload\n")
+            MODULE.check_binding(
+                [{"input": {"message": "hello"}, "output": "hello"}],
+                f"{agent}:answer",
+            )
+
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding"
+                and result.status == MODULE.FAIL
+                and "agent has no positional parameter" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            MODULE.RESULTS,
+        )
+
+    def test_multi_parameter_mapping_still_expands_and_fails_missing_fields(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(payload, tone='plain'):\n"
+                "    return f'{tone}: {payload}'\n"
+            )
+            MODULE.check_binding(
+                [{"input": {"message": "hello"}, "output": "plain: hello"}],
+                f"{agent}:answer",
+            )
+
+        failures = [
+            result.detail
+            for result in MODULE.RESULTS
+            if result.check == "dataset-binding" and result.status == MODULE.FAIL
+        ]
+        self.assertTrue(
+            any(
+                "input key 'message' matches no agent parameter" in detail
+                for detail in failures
+            )
+        )
+        self.assertTrue(
+            any(
+                "required agent parameter 'payload' is missing from rows [1]" in detail
+                for detail in failures
+            )
+        )
+
     def test_mapping_input_cannot_bind_required_positional_only_parameter(
         self,
     ) -> None:
