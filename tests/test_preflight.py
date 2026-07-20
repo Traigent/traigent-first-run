@@ -255,6 +255,40 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_scalar_input_cannot_bind_required_keyword_only_parameter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(message: str, *, locale: str) -> str:\n"
+                "    return message\n"
+            )
+            rows = [{"input": "hello", "output": "a"}]
+            MODULE.check_binding(rows, f"{agent}:answer")
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding"
+                and result.status == MODULE.FAIL
+                and "required keyword-only parameters: ['locale']" in result.detail
+                for result in MODULE.RESULTS
+            )
+        )
+
+    def test_scalar_input_allows_defaulted_keyword_only_parameter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "def answer(message: str, *, locale: str = 'en') -> str:\n"
+                "    return message\n"
+            )
+            rows = [{"input": "hello", "output": "a"}]
+            MODULE.check_binding(rows, f"{agent}:answer")
+        self.assertTrue(
+            any(
+                result.check == "dataset-binding" and result.status == MODULE.PASS
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_scorer_check_is_static_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

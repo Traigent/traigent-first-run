@@ -713,6 +713,11 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
             for name in signature.positional
             if name in signature.required and name not in {"self", "cls"}
         ]
+        required_keyword_only = [
+            name
+            for name in signature.keyword_only
+            if name in signature.required and name not in {"self", "cls"}
+        ]
         if not signature.positional and not signature.has_varargs:
             emit(
                 "dataset-binding",
@@ -725,6 +730,13 @@ def check_binding(rows: list[dict[str, Any]], agent_spec: str) -> None:
                 FAIL,
                 "scalar input cannot satisfy multiple required parameters: "
                 f"{required_positional}",
+            )
+        elif required_keyword_only:
+            emit(
+                "dataset-binding",
+                FAIL,
+                "scalar input cannot satisfy required keyword-only parameters: "
+                f"{required_keyword_only}",
             )
         else:
             emit(

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Execute four evaluator probes in an isolated, explicitly approved subprocess."""
+"""Execute evaluator probes in an isolated, explicitly approved subprocess.
+
+Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ import importlib.util
 import inspect
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -42,6 +46,7 @@ SDK_METRIC_VALUES = {
     "config",
     "example_index",
 }
+PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
 
 
 def literal_or_file(value: str) -> Any:
@@ -98,8 +103,14 @@ def load_function(spec: str):
 
 
 def bind_call(
-    function, output: Any, expected: Any, input_data: Any, metadata: Any
+    function,
+    output: Any,
+    expected: Any,
+    input_data: Any,
+    metadata: Any,
+    example_index: int,
 ) -> float:
+    """Bind one SDK-shaped call and enforce the normalized score contract."""
     signature = inspect.signature(function)
     values = {
         "output": output,
@@ -109,7 +120,7 @@ def bind_call(
         "input_data": input_data,
         "metadata": metadata or {},
         "config": {},
-        "example_index": 0,
+        "example_index": example_index,
     }
     parameters = list(signature.parameters.values())
     kwargs = {
@@ -155,40 +166,81 @@ def bind_call(
             f"{unsupported_required}"
         )
     signature.bind(**kwargs)
-    return float(function(**kwargs))
+    try:
+        score = float(function(**kwargs))
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            "score contract requires a numeric normalized higher-is-better value "
+            "in [0,1]"
+        ) from error
+    if not math.isfinite(score):
+        raise ValueError(
+            "score contract requires a finite normalized higher-is-better value "
+            f"in [0,1]; got {score!r}"
+        )
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(
+            "score contract requires a normalized higher-is-better value in [0,1]; "
+            f"got {score!r}"
+        )
+    return score
 
 
 def run_worker() -> int:
-    request = json.load(sys.stdin)
-    captured_stdout = io.StringIO()
-    with contextlib.redirect_stdout(captured_stdout):
-        function = load_function(request["scorer"])
-        scores = {
-            label: bind_call(
-                function,
-                value,
-                request["expected"],
-                request.get("input_data"),
-                request.get("metadata"),
+    try:
+        request = json.load(sys.stdin)
+        captured_stdout = io.StringIO()
+        with contextlib.redirect_stdout(captured_stdout):
+            function = load_function(request["scorer"])
+            case_results = []
+            for index, case in enumerate(request["cases"]):
+                scores = {
+                    label: bind_call(
+                        function,
+                        value,
+                        case["expected"],
+                        case.get("input_data"),
+                        case.get("metadata"),
+                        index,
+                    )
+                    for label, value in case["probes"].items()
+                }
+                case_results.append({"name": case["name"], "scores": scores})
+        print(
+            json.dumps(
+                {
+                    "cases": case_results,
+                    "captured_stdout": captured_stdout.getvalue(),
+                }
             )
-            for label, value in request["probes"].items()
-        }
-    print(json.dumps({"scores": scores, "captured_stdout": captured_stdout.getvalue()}))
-    return 0
+        )
+        return 0
+    except Exception as error:
+        print(f"Evaluator execution failed: {error}", file=sys.stderr)
+        return 1
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Calibrate a Traigent evaluator with four ordered probes."
+        description=(
+            "Calibrate a Traigent evaluator with one or more four-probe cases."
+        )
     )
     parser.add_argument("--scorer", required=True, help="FILE.py:FUNCTION")
-    parser.add_argument("--good", required=True)
-    parser.add_argument("--equivalent-good", required=True)
-    parser.add_argument("--partial", required=True)
-    parser.add_argument("--bad", required=True)
-    parser.add_argument("--expected", required=True)
+    parser.add_argument("--good")
+    parser.add_argument("--equivalent-good")
+    parser.add_argument("--partial")
+    parser.add_argument("--bad")
+    parser.add_argument("--expected")
     parser.add_argument("--input-data")
     parser.add_argument("--metadata")
+    parser.add_argument(
+        "--cases",
+        help=(
+            "JSON array or @FILE of named cases; each case requires expected and "
+            "good/equivalent_good/partial/bad probes"
+        ),
+    )
     parser.add_argument(
         "--kind", choices=("deterministic", "llm-judge"), default="deterministic"
     )
@@ -208,6 +260,103 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], bool]:
+    single_case_options = {
+        "--good": args.good,
+        "--equivalent-good": args.equivalent_good,
+        "--partial": args.partial,
+        "--bad": args.bad,
+        "--expected": args.expected,
+        "--input-data": args.input_data,
+        "--metadata": args.metadata,
+    }
+    if args.cases is not None:
+        combined = [
+            name for name, value in single_case_options.items() if value is not None
+        ]
+        if combined:
+            raise ValueError(
+                "--cases cannot be combined with single-case options: "
+                + ", ".join(combined)
+            )
+        raw_cases = literal_or_file(args.cases)
+        if not isinstance(raw_cases, list) or not raw_cases:
+            raise ValueError("--cases must contain a non-empty JSON array")
+        cases = []
+        for index, raw_case in enumerate(raw_cases, 1):
+            if not isinstance(raw_case, dict):
+                raise ValueError(f"case {index} must be a JSON object")
+            if "expected" not in raw_case:
+                raise ValueError(f"case {index} is missing 'expected'")
+            probes = raw_case.get("probes")
+            if not isinstance(probes, dict):
+                raise ValueError(f"case {index} must contain a 'probes' object")
+            missing_probes = [name for name in PROBE_NAMES if name not in probes]
+            if missing_probes:
+                raise ValueError(
+                    f"case {index} is missing probes: {', '.join(missing_probes)}"
+                )
+            name = raw_case.get("name", f"case-{index}")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"case {index} name must be a non-empty string")
+            cases.append(
+                {
+                    "name": name,
+                    "expected": raw_case["expected"],
+                    "input_data": raw_case.get("input_data"),
+                    "metadata": raw_case.get("metadata", {}),
+                    "probes": {name: probes[name] for name in PROBE_NAMES},
+                }
+            )
+        return cases, True
+
+    required_options = {
+        name: value
+        for name, value in single_case_options.items()
+        if name in {"--good", "--equivalent-good", "--partial", "--bad", "--expected"}
+    }
+    missing = [name for name, value in required_options.items() if value is None]
+    if missing:
+        raise ValueError("single-case calibration requires " + ", ".join(missing))
+    return (
+        [
+            {
+                "name": "case-1",
+                "expected": literal_or_file(args.expected),
+                "input_data": (
+                    literal_or_file(args.input_data)
+                    if args.input_data is not None
+                    else None
+                ),
+                "metadata": (
+                    literal_or_file(args.metadata) if args.metadata is not None else {}
+                ),
+                "probes": {
+                    "good": literal_or_file(args.good),
+                    "equivalent_good": literal_or_file(args.equivalent_good),
+                    "partial": literal_or_file(args.partial),
+                    "bad": literal_or_file(args.bad),
+                },
+            }
+        ],
+        False,
+    )
+
+
+def calibration_checks(scores: dict[str, float]) -> dict[str, bool]:
+    return {
+        "good_passes": scores["good"] >= GOOD_MINIMUM,
+        "equivalent_is_accepted": scores["equivalent_good"] >= GOOD_MINIMUM,
+        "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
+        <= EQUIVALENCE_TOLERANCE,
+        "partial_is_below_good": scores["partial"]
+        <= min(scores["good"], scores["equivalent_good"]) - SEPARATION_MARGIN,
+        "partial_is_above_bad": scores["partial"] >= scores["bad"] + SEPARATION_MARGIN,
+        "bad_fails": scores["bad"] <= BAD_MAXIMUM,
+        "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
+    }
+
+
 def main() -> int:
     if "--_worker" in sys.argv:
         return run_worker()
@@ -225,6 +374,12 @@ def main() -> int:
         )
         return 2
 
+    try:
+        cases, is_matrix = calibration_cases(args)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        print(f"Invalid calibration cases: {error}", file=sys.stderr)
+        return 2
+
     scorer_file, separator, scorer_name = args.scorer.partition(":")
     if not separator or not scorer_name:
         print("--scorer must use FILE.py:FUNCTION.", file=sys.stderr)
@@ -232,15 +387,7 @@ def main() -> int:
     absolute_scorer = f"{Path(scorer_file).resolve()}:{scorer_name}"
     request = {
         "scorer": absolute_scorer,
-        "expected": literal_or_file(args.expected),
-        "input_data": literal_or_file(args.input_data) if args.input_data else None,
-        "metadata": literal_or_file(args.metadata) if args.metadata else {},
-        "probes": {
-            "good": literal_or_file(args.good),
-            "equivalent_good": literal_or_file(args.equivalent_good),
-            "partial": literal_or_file(args.partial),
-            "bad": literal_or_file(args.bad),
-        },
+        "cases": cases,
     }
     try:
         process = subprocess.run(
@@ -264,25 +411,42 @@ def main() -> int:
         return 1
 
     payload = json.loads(process.stdout)
-    scores = payload["scores"]
-    checks = {
-        "good_passes": scores["good"] >= GOOD_MINIMUM,
-        "equivalent_is_accepted": scores["equivalent_good"] >= GOOD_MINIMUM,
-        "equivalent_matches_good": abs(scores["good"] - scores["equivalent_good"])
-        <= EQUIVALENCE_TOLERANCE,
-        "partial_is_below_good": scores["partial"]
-        <= min(scores["good"], scores["equivalent_good"]) - SEPARATION_MARGIN,
-        "partial_is_above_bad": scores["partial"] >= scores["bad"] + SEPARATION_MARGIN,
-        "bad_fails": scores["bad"] <= BAD_MAXIMUM,
-        "non_constant": len({round(score, 8) for score in scores.values()}) > 1,
-    }
-    result = {"scores": scores, "checks": checks, "passed": all(checks.values())}
+    case_results = []
+    for case in payload["cases"]:
+        checks = calibration_checks(case["scores"])
+        case_results.append(
+            {
+                "name": case["name"],
+                "scores": case["scores"],
+                "checks": checks,
+                "passed": all(checks.values()),
+            }
+        )
+    if is_matrix:
+        result = {
+            "cases": case_results,
+            "passed": all(case["passed"] for case in case_results),
+        }
+    else:
+        result = {
+            "scores": case_results[0]["scores"],
+            "checks": case_results[0]["checks"],
+            "passed": case_results[0]["passed"],
+        }
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
+    elif is_matrix:
+        for case in case_results:
+            print(f"[{case['name']}]")
+            for label, score in case["scores"].items():
+                print(f"{label:<16} {score:.4f}")
+            failed = [name for name, passed in case["checks"].items() if not passed]
+            print("PASS" if not failed else f"FAIL: {', '.join(failed)}")
+        print("OVERALL PASS" if result["passed"] else "OVERALL FAIL")
     else:
-        for label, score in scores.items():
+        for label, score in result["scores"].items():
             print(f"{label:<16} {score:.4f}")
-        failed = [name for name, passed in checks.items() if not passed]
+        failed = [name for name, passed in result["checks"].items() if not passed]
         print("PASS" if not failed else f"FAIL: {', '.join(failed)}")
     return 0 if result["passed"] else 1
 
