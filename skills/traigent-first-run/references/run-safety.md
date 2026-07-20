@@ -23,12 +23,14 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   transfer, or user/project code execution. Prefer a fully pinned, hash-checked requirements file
   and wheels; stop if fulfilling it requires source builds, undeclared packages, or code
   execution. A user or environment install-approval policy still takes precedence.
-- Verify installed packages and public signatures before generating integration code. Dependency
-  installation does not authorize importing or executing user/project modules.
+- Before creating the environment or installing anything, run every available bundled component
+  check whose complete path needs only the Python standard library and local project files.
+- Verify installed packages and public signatures before generating SDK integration code.
+  Dependency installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
-- Build a minimal `.env` for the selected provider. Leave the Traigent key blank until connected
-  execution.
+- Build a minimal `.env` for the selected provider only after every applicable free component,
+  capability, and safe mock check. Leave the Traigent key blank until connected execution.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
@@ -54,23 +56,41 @@ link; show only the selected provider and Traigent when each key becomes necessa
 
 Use this gate order:
 
-1. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
+1. After component creation, define the calibration matrix and thresholds and record the human
+   semantic-coverage review. If that review is unavailable, record the gap; static validation
+   still proceeds, but calibration does not execute.
+2. Run the bundled static preflight with dataset, agent, and scorer arguments. Record dataset
+   structure, dataset-agent binding, and scorer-signature results independently of SDK/package
+   findings. A missing Traigent SDK cannot block these standard-library-only component checks.
+3. Run deterministic evaluator calibration only when the complete inspected import and call path
+   is local-only, side-effect-free, and needs no unavailable third-party package. Do not execute
+   an LLM judge or any uncertain or external evaluator; keep it behind explicit combined approval.
+4. Reuse the project's provider, or ask once and recommend OpenRouter when none exists. If
    OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
    fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
    required.
-2. Create the minimal `.env` and stop for the provider-key paste.
-3. Run static preflight and deterministic calibration without network calls.
-4. Stop for the Traigent portal-key paste immediately before connected work.
-5. Present one combined approval covering the smallest live provider/key check, any LLM-judge
-   calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-6. After approval, run the live check first. Continue only if it passes.
+5. Create the isolated environment with Python 3.11-3.13 without fetching packages.
+6. Install the exact declared dependencies under the narrow package-artifact authorization.
+7. Verify the installed SDK and its public signatures, then write the SDK integration from those
+   verified capabilities. Run any local deterministic calibration deferred solely for an
+   installed dependency.
+8. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
+   is intercepted and no external side effect can occur. Otherwise record the check as deferred;
+   do not over-prescribe execution.
+9. After every applicable free check is complete, create the minimal `.env` and stop for the
+   provider-key paste.
+10. Stop for the Traigent portal-key paste immediately before connected work.
+11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
+    calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
+12. After approval, run the live check first. Continue only if it passes.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
 ## Static and mock validation
 
-The bundled `scripts/preflight.py` is a static/free gate. It may read files and public package
-metadata, but it must not:
+The bundled `scripts/preflight.py` is a static/free gate. Run its component checks before
+environment creation or dependency installation. It may read files and public package metadata,
+but it must not:
 
 - Import user modules.
 - Execute the agent or evaluator.
@@ -78,7 +98,16 @@ metadata, but it must not:
 - Contact Traigent or consume optimization quota.
 
 The static gate checks environment, package compatibility, dataset structure/quality, function
-signatures from AST, model naming, and safe configuration.
+signatures from AST, model naming, and safe configuration. During the first standard-library-only
+pass, omit optional model-pricing checks and interpret a missing SDK as a deferred SDK finding,
+not as a failure of dataset structure, dataset-agent binding, or scorer-signature checks.
+
+Deterministic calibration is a separate execution gate. Run it before environment setup only when
+human semantic coverage is recorded and inspection proves its complete call path is local-only,
+side-effect-free, and standard-library-only. If it needs a declared local dependency, defer it
+until that dependency is installed, but still run it before creating `.env` or requesting a
+provider key. Do not execute an LLM judge or an uncertain or external evaluator without the
+explicit combined approval for its recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 

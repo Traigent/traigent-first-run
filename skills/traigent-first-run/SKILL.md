@@ -55,8 +55,9 @@ approval.
 |---|---|
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
-| Create an isolated environment and minimal `.env` | Proceed only after task intent is anchored and without fetching or installing packages; leave secrets blank and ask the user to enter them locally. |
-| Install dependencies in the isolated environment | Proceed only after task intent is anchored and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
+| Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
+| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
+| Create a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run; leave secrets blank and stop for the user to enter them locally. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -190,51 +191,33 @@ When nothing exists, use this internal order: define the task and output contrac
 the evaluator accepts, build the agent to that contract, build varied examples against both, then
 cross-validate and calibrate the finished trio.
 
-### 4. Prepare the environment
+### 4. Validate components locally
 
-Use Python 3.11-3.13 in an isolated virtual environment. Verify the installed SDK's capabilities
-instead of relying on a hardcoded "current" version statement.
+Immediately after completing the system, run every available bundled component check whose full
+path needs only the Python standard library and local project files. Do this before creating an
+isolated environment, before installing dependencies, before creating `.env`, before asking for a
+provider key, and before any SDK-specific check.
 
-Create a minimal `.env` containing only the selected provider's blank key entry and safe run
-settings. Reuse a provider already used by the project. If none exists, recommend OpenRouter
-because one key can exercise multiple model vendors, offer at most two direct-provider
-alternatives, and ask which services may receive the walkthrough content. With OpenRouter,
-OpenRouter is the gateway and an automatically selected upstream inference provider may also
-receive the prompts, examples, and outputs. Name OpenRouter and every allowed upstream provider
-or route in the approval, disclose whether fallback routing is enabled, and pin allowed routes
-and disable fallbacks when the user requires an exact recipient set. Ask the user to paste the key
-into that file, never into chat. Add the Traigent portal key only when the connected run is about
-to start.
+Follow this order:
 
-Explain truthfully:
+1. Define the calibration case matrix and thresholds from the task semantics, then record the
+   human semantic-coverage review described in `references/evaluation-and-dataset.md`. If that
+   review is unavailable, record the gap and continue with static validation, but do not execute
+   calibration yet.
+2. Run the bundled static preflight with the dataset, agent, and scorer arguments so dataset
+   structure, dataset-agent binding, and scorer signatures are checked without importing user
+   modules. Omit optional model-pricing checks in this standard-library-only pass.
+3. Run deterministic evaluator calibration only when the complete inspected import and call path
+   is local-only, has no external side effects, and needs no unavailable third-party package.
+   Execute it in the isolated subprocess with provider credentials removed.
 
-- Prompts, examples, and outputs are not sent to Traigent by the optimization service.
-- The selected direct provider receives the content the agent normally sends during model calls.
-  For OpenRouter, both the OpenRouter gateway and the selected upstream inference provider may
-  receive it.
-- Connected runs send configuration identifiers, numeric measures, and run status to Traigent.
+A missing Traigent SDK or optional provider package may make the preflight report its SDK check as
+deferred or failed, but it must not block the independent dataset, dataset-agent binding, scorer,
+or safe deterministic-calibration results. Record those component results separately.
 
-### 5. Validate before spending
-
-Run the bundled static preflight first. It must not import user modules, execute the agent,
-execute the evaluator, contact providers, or consume credits.
-
-Then:
-
-- Validate the generated dataset and evaluator using
-  `references/evaluation-and-dataset.md`.
-- Choose and record `graded` or `binary` calibration from the real task semantics for every
-  materially distinct case. Do not choose a mode merely because it lets the current scorer pass.
-- Run deterministic evaluator calibration locally when applicable.
-- Treat calibration as free only after inspection establishes a local-only call path with no
-  external side effects. If the call path is uncertain or external, route it through the
-  egress/paid approval.
-- Treat LLM-judge calibration as a paid/provider action. Explain its small call count and ask for
-  approval before executing it.
-- Run a fresh-process Traigent mock plumbing check only when every model call is known to be
-  intercepted. Raw provider clients and external services are not free merely because mock mode
-  is enabled.
-- Exit the mock process. Never reuse it for a real run.
+Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
+pending behind the combined egress and paid approval; removing keys or setting offline flags does
+not prove an external evaluator is safe.
 
 Classify a structurally usable but evidence-limited real component as `limited`; keep it `❗`.
 Classify a component that cannot execute or measure the task as `invalid`.
@@ -248,6 +231,42 @@ For an invalid evaluator, incompatible schema, corrupted required rows, or unver
 do not run paid optimization against it. Offer to repair and revalidate it, pause for a
 user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
 "continue as is" as permission to optimize against a broken grading signal.
+
+### 5. Prepare the environment and finish free checks
+
+Only after the standard-library-only component checks:
+
+1. Reuse the project's provider. If none exists, recommend OpenRouter because one key can exercise
+   multiple model vendors, offer at most two direct-provider alternatives, and ask which services
+   may receive the walkthrough content.
+2. Create the isolated environment with Python 3.11-3.13 without fetching packages.
+3. Install the exact declared dependencies under the narrow authorization above.
+4. Verify the installed SDK's capabilities and public signatures instead of relying on a
+   hardcoded "current" version statement. Write the SDK wrapper only from those verified
+   capabilities. A missing SDK may block only these SDK and mock checks, not the component checks
+   already recorded.
+5. Run any safe deterministic calibration that was deferred solely for an installed local
+   dependency. Then run a fresh-process Traigent mock plumbing check only when every model call is
+   known to be intercepted. Raw provider clients, external evaluators, subprocesses, HTTP
+   services, tools, and custom judges are not free merely because mock mode is enabled. Exit the
+   mock process and never reuse it for a real run.
+6. After every applicable free check is complete, create the minimal `.env` with only the selected
+   provider's blank key entry and safe run settings, then stop for the provider-key paste. Ask the
+   user to enter it in that file, never in chat. Add the Traigent portal key only when connected
+   execution is about to start.
+
+With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
+provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
+upstream provider or route in the later approval, disclose whether fallback routing is enabled,
+and pin allowed routes and disable fallbacks when the user requires an exact recipient set.
+
+Explain truthfully:
+
+- Prompts, examples, and outputs are not sent to Traigent by the optimization service.
+- The selected direct provider receives the content the agent normally sends during model calls.
+  For OpenRouter, both the OpenRouter gateway and the selected upstream inference provider may
+  receive it.
+- Connected runs send configuration identifiers, numeric measures, and run status to Traigent.
 
 ### 6. Ask once before paid work
 

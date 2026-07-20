@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
 SKILL = SKILL_ROOT / "SKILL.md"
+RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
 
@@ -236,6 +237,85 @@ class SkillPackageTests(unittest.TestCase):
             "external calls other than the narrow dependency fetch",
             skill_text,
         )
+
+    def test_stdlib_component_checks_precede_environment_and_secret_gates(
+        self,
+    ) -> None:
+        text = SKILL.read_text()
+        local_heading = "### 4. Validate components locally"
+        environment_heading = "### 5. Prepare the environment and finish free checks"
+        paid_heading = "### 6. Ask once before paid work"
+        for heading in (local_heading, environment_heading, paid_heading):
+            self.assertIn(heading, text)
+
+        local_section = text.split(local_heading, 1)[1].split(environment_heading, 1)[0]
+        environment_section = text.split(environment_heading, 1)[1].split(
+            paid_heading, 1
+        )[0]
+        normalized_local = " ".join(local_section.casefold().split())
+        normalized_environment = " ".join(environment_section.casefold().split())
+
+        preflight = normalized_local.index("run the bundled static preflight")
+        calibration = normalized_local.index("run deterministic evaluator calibration")
+        semantic_review = normalized_local.index(
+            "record the human semantic-coverage review"
+        )
+        self.assertLess(preflight, calibration)
+        self.assertLess(semantic_review, calibration)
+        for phrase in (
+            "dataset-agent binding",
+            "before creating an isolated environment",
+            "before installing dependencies",
+            "before creating `.env`",
+            "before asking for a provider key",
+            "missing traigent sdk",
+        ):
+            self.assertIn(phrase, normalized_local)
+
+        ordered_environment_phrases = (
+            "create the isolated environment",
+            "install the exact declared dependencies",
+            "verify the installed sdk",
+            "run a fresh-process traigent mock plumbing check",
+            "create the minimal `.env`",
+            "stop for the provider-key paste",
+        )
+        positions = [
+            normalized_environment.index(phrase)
+            for phrase in ordered_environment_phrases
+        ]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_run_safety_keeps_external_evaluators_and_provider_calls_gated(
+        self,
+    ) -> None:
+        text = RUN_SAFETY.read_text()
+        gate = text.split("Use this gate order:", 1)[1].split(
+            "Do not split paid work", 1
+        )[0]
+        normalized_gate = " ".join(gate.casefold().split())
+        ordered_gate_phrases = (
+            "record the human semantic-coverage review",
+            "run the bundled static preflight",
+            "run deterministic evaluator calibration",
+            "create the isolated environment",
+            "install the exact declared dependencies",
+            "verify the installed sdk",
+            "run a fresh-process traigent mock plumbing check",
+            "create the minimal `.env`",
+            "stop for the provider-key paste",
+        )
+        positions = [normalized_gate.index(phrase) for phrase in ordered_gate_phrases]
+        self.assertEqual(positions, sorted(positions))
+
+        normalized_safety = " ".join(text.casefold().split())
+        for phrase in (
+            "do not execute an llm judge",
+            "uncertain or external evaluator",
+            "explicit combined approval",
+            "make model/provider calls",
+        ):
+            self.assertIn(phrase, normalized_safety)
 
     def test_openrouter_approval_names_every_possible_recipient(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
