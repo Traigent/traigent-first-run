@@ -847,6 +847,25 @@ class SkillPackageTests(unittest.TestCase):
             ],
         )
 
+    def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        sdk_text = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        self.assertIn(
+            "retain the customer's baseline and optimization experiments", skill_text
+        )
+        self.assertIn(
+            "never delete portal experiments as automatic teardown", skill_text
+        )
+        self.assertIn("direct link to every persisted first-run experiment", skill_text)
+        self.assertIn("do not delete them as walkthrough cleanup", guide_text)
+        self.assertIn("assert baseline_results.cloud_url is not none", sdk_text)
+        self.assertIn("assert optimized_results.cloud_url is not none", sdk_text)
+        self.assertIn(
+            "portal experiment deletion is never walkthrough teardown", sdk_text
+        )
+
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
         for phrase in (

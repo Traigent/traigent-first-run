@@ -380,6 +380,11 @@ Report:
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 
+Retain the customer's baseline and optimization experiments in the Traigent portal so the user can
+open and compare them after the walkthrough. Never delete portal experiments as automatic teardown
+or cleanup. Delete one only after the user explicitly requests that destructive action; otherwise,
+finish by giving the user the direct link to every persisted first-run experiment.
+
 If any substitute was used, lead the interpretation with:
 
 > This run demonstrates that the Traigent optimization workflow works end to end. Because

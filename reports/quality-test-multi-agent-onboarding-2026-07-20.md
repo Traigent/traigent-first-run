@@ -4,9 +4,9 @@
 
 The merged first-run flow at `db35e44247cbd2926a96bdd3abaab79e83c2a524` is safe and
 useful, but it was not fully baked at the start of this test. It correctly stopped on weak or
-unsupported inputs, kept secrets late, completed a real portal-dev run, and cleaned up its remote
-experiments. The test also found reproducibility, provider-routing, path, objective-orientation,
-and OpenRouter cost-reading defects that should be fixed before treating the flow as seamless.
+unsupported inputs, kept secrets late, and completed a real portal-dev run. The test also found
+reproducibility, provider-routing, path, objective-orientation, and OpenRouter cost-reading defects
+that should be fixed before treating the flow as seamless.
 
 The `quality-test-multi-agent-onboarding` harness was also not release-ready as tested. Its
 scaffolder omitted the target's installed skill, some scenario expectations described an older
@@ -67,9 +67,13 @@ ceiling. The winning configuration remained
 allowed to show no improvement; preserving that honest result is more useful than manufacturing a
 win.
 
-Both portal-dev experiments were deleted after verification: each DELETE returned 204 and each
-follow-up read returned 404. Disposable local scenarios, environments, credentials, and results
-were deleted after the report and fix branches were preserved.
+Because the repository owner explicitly required disposal of every artifact created by this quality
+test, both test-only portal-dev experiments were deleted after verification: each DELETE returned
+204 and each follow-up read returned 404. Disposable local scenarios, environments, credentials,
+and results were also deleted after the report and fix branches were preserved. This was test
+harness teardown, not customer first-run behavior: customer baseline and optimization experiments
+must remain in the portal with direct links unless the customer later explicitly asks to delete
+them.
 
 ## What worked
 
@@ -133,6 +137,8 @@ true zero-anchor project, documented-intent/no-components project, complete trio
 
 - Python 3.10 resolving the placeholder package is already tracked by
   `Traigent/Traigent#1594`.
+- Provider readiness and OpenRouter route detection are already tracked by
+  `Traigent/Traigent#1781`; the first-run flow still preserves the actual agent route meanwhile.
 - Default configuration consuming/repeating trial capacity is already tracked by
   `Traigent/Traigent#1808`.
 - A public no-execution dataset/agent/evaluator compatibility contract is already tracked by

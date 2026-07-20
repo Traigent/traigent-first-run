@@ -51,7 +51,8 @@ Node.js is needed only for this optional installation command, not for the Traig
 4. Validates compatibility and evaluator discrimination.
 5. Shows one concise runtime, cost-ceiling, and data-egress approval immediately before paid work.
 6. Evaluates the current configuration, then runs one bounded optimization when meaningful.
-7. Reports the result, limitations, artifacts, and verified portal links.
+7. Retains the connected experiments and reports the result, limitations, artifacts, and verified
+   portal links so they remain available for comparison.
 
 The default comparison is two optimization experiments - one honest current-configuration
 baseline and one optimization - followed by an untouched holdout check. A second optimization

@@ -87,4 +87,8 @@ Always report the component provenance:
 If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not
 evidence of expected production performance. A synthetic holdout is still synthetic evidence.
 
+Keep the customer's connected baseline and optimization experiments in the portal and finish with
+their direct links. Do not delete them as walkthrough cleanup; deletion requires an explicit later
+request from the user.
+
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

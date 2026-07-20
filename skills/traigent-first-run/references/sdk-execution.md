@@ -367,9 +367,12 @@ Before reporting:
 assert baseline_results.trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
 assert optimized_results.best_config is not None, "no best configuration selected"
+assert baseline_results.cloud_url is not None, "baseline is not available in the portal"
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
 Also inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
-persistence status as defined in `run-safety.md`. Do not apply the best configuration
-automatically. Export it as a candidate and ask before any production change.
+persistence status as defined in `run-safety.md`. Keep both experiments in the portal and report
+their direct `cloud_url` values; portal experiment deletion is never walkthrough teardown and
+requires a later explicit user request. Do not apply the best configuration automatically. Export
+it as a candidate and ask before any production change.
