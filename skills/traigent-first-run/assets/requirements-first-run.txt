@@ -1,0 +1,3 @@
+traigent==0.25.0
+litellm==1.93.0
+python-dotenv==1.2.2

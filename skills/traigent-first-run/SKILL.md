@@ -28,6 +28,9 @@ helpful. Use [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) 
 explicit evaluator-execution gate. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
 discovered evidence. Keep it concise and internal; do not ask the user to complete or review it.
+When the project has no compatible exact SDK declaration, use the tested pins in
+[`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
+unversioned `traigent` package.
 
 ## Operating contract
 
@@ -250,11 +253,21 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 
 Only after the standard-library-only component checks:
 
-1. Reuse the project's configured provider. If none exists, default to OpenRouter because one key
-   can exercise multiple model vendors. Do not create a separate provider-choice question; mention
-   that the user may request a direct provider instead.
-2. Create the isolated environment with Python 3.11-3.13 without fetching packages.
-3. Install the exact declared dependencies under the narrow authorization above.
+1. Determine the current provider route from the agent's actual model call and configuration. Treat
+   discovered credential names only as an availability inventory; they do not select or change the
+   route. If no route exists, default to OpenRouter because one key can exercise multiple model
+   vendors. Do not create a separate provider-choice question; mention that the user may request a
+   direct provider instead. If the current route is clear but its credential is absent while a
+   different provider credential is present, stop with one clear mismatch: recommend adding the
+   current route's key, and offer an explicit route change as the alternative. Never rewrite the
+   model identifier or provider prefix merely to match an available key.
+2. Reuse an existing compatible isolated environment. Otherwise, create the conventional `.venv`
+   with Python 3.11-3.13 without fetching packages. Only when `.venv` already exists but is
+   incompatible, preserve it and create `.venv-traigent` as a non-destructive fallback. Treat the
+   fallback name as an implementation detail, not a user choice.
+3. Install the exact declared dependencies under the narrow authorization above: use the project's
+   compatible exact declarations, or otherwise the exact pins in
+   `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
 4. Verify the installed SDK's capabilities and public signatures instead of relying on a
    hardcoded "current" version statement. Use its public dataset validator/loader and construct the
    wrapper through its public decorator and evaluation models so the installed SDK owns
@@ -368,6 +381,11 @@ Report:
 - Holdout result separately, when a valid holdout exists.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
+
+Retain the customer's baseline and optimization experiments in the Traigent portal so the user can
+open and compare them after the walkthrough. Never delete portal experiments as automatic teardown
+or cleanup. Delete one only after the user explicitly requests that destructive action; otherwise,
+finish by giving the user the direct link to every persisted first-run experiment.
 
 If any substitute was used, lead the interpretation with:
 

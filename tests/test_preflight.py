@@ -62,6 +62,41 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(cost_cap.status, MODULE.PASS)
         self.assertIn("installed SDK default applies", cost_cap.detail)
 
+    def test_sdk_check_accepts_only_the_tested_version(self) -> None:
+        with mock.patch.object(
+            MODULE, "version", return_value=MODULE.SUPPORTED_TRAIGENT_VERSION
+        ):
+            MODULE.check_sdk()
+        result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+        self.assertEqual(result.status, MODULE.PASS)
+
+    def test_sdk_check_rejects_obsolete_and_unvalidated_versions(self) -> None:
+        for installed in ("0.0.1", "0.24.0", "0.25.1"):
+            with self.subTest(installed=installed):
+                MODULE.RESULTS.clear()
+                with mock.patch.object(MODULE, "version", return_value=installed):
+                    MODULE.check_sdk()
+                result = next(
+                    item for item in MODULE.RESULTS if item.check == "sdk-version"
+                )
+                self.assertEqual(result.status, MODULE.FAIL)
+                self.assertIn("install traigent==0.25.0", result.detail)
+
+    def test_provider_credentials_are_inventory_not_route_selection(self) -> None:
+        MODULE.check_keys(
+            {
+                "OPENAI_API_KEY": "placeholder-openai",
+                "ANTHROPIC_API_KEY": "placeholder-anthropic",
+            }
+        )
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "provider-credentials"
+        )
+        self.assertEqual(result.status, MODULE.PASS)
+        self.assertIn("OpenAI, Anthropic", result.detail)
+        self.assertIn("does not select or change", result.detail)
+        self.assertNotIn("select one", result.detail)
+
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"

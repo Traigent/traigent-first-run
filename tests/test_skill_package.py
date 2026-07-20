@@ -60,6 +60,7 @@ class SkillPackageTests(unittest.TestCase):
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
             "assets/run-plan.md",
+            "assets/requirements-first-run.txt",
         }
         actual = {
             str(path.relative_to(SKILL_ROOT))
@@ -267,6 +268,50 @@ class SkillPackageTests(unittest.TestCase):
             skill_text,
         )
 
+        requirements = (
+            (SKILL_ROOT / "assets" / "requirements-first-run.txt")
+            .read_text()
+            .splitlines()
+        )
+        self.assertEqual(
+            requirements,
+            [
+                "traigent==0.25.0",
+                "litellm==1.93.0",
+                "python-dotenv==1.2.2",
+            ],
+        )
+        for text in (skill_text, safety_text, guide_text):
+            self.assertIn("never", text)
+            self.assertIn("unversioned `pip install traigent`", text)
+
+    def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
+        skill_text = SKILL.read_text()
+        safety_text = RUN_SAFETY.read_text()
+
+        for text in (skill_text, safety_text):
+            self.assertIn("conventional `.venv`", text)
+            self.assertIn("implementation detail", text)
+        self.assertIn("`.venv` already exists but is\n   incompatible", skill_text)
+        self.assertIn(
+            "`.venv` already exists but uses an incompatible interpreter", safety_text
+        )
+        self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
+        self.assertNotIn("python3.13 -m venv .venv`", safety_text)
+
+    def test_provider_inventory_is_separate_from_route_selection(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for text in (skill_text, safety_text):
+            self.assertIn("credential", text)
+            self.assertIn("do not", text)
+            self.assertIn("route", text)
+        self.assertIn("credential names only as an availability inventory", skill_text)
+        self.assertIn("stop with one clear mismatch", skill_text)
+        self.assertIn(
+            "never rewrite the model identifier or provider prefix", skill_text
+        )
+
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,
     ) -> None:
@@ -308,7 +353,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_local)
 
         ordered_environment_phrases = (
-            "create the isolated environment",
+            "reuse an existing compatible isolated environment",
             "install the exact declared dependencies",
             "verify the installed sdk's capabilities",
             "run a fresh-process traigent mock plumbing check",
@@ -334,7 +379,7 @@ class SkillPackageTests(unittest.TestCase):
             "if unresolved product-grading ambiguity",
             "run the bundled static preflight",
             "run deterministic evaluator calibration",
-            "create the isolated environment",
+            "reuse an existing compatible isolated environment",
             "install the exact declared dependencies",
             "use the installed sdk's public dataset validator/loader",
             "run a fresh-process traigent mock plumbing check",
@@ -652,6 +697,58 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("HOLDOUT_PHASE_TIMEOUT_SECONDS", text)
         self.assertNotIn("PROVIDER_RETRY_COUNT", text)
 
+    def test_sdk_template_pins_paths_objectives_route_and_reported_cost(self) -> None:
+        text = SDK_EXECUTION.read_text()
+        for phrase in (
+            "RUN_DIR = Path(__file__).resolve().parent",
+            'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
+            'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
+            "save_to=BASELINE_RESULTS",
+            "save_to=OPTIMIZED_RESULTS",
+            "ObjectiveSchema.from_objectives(",
+            'name="task_success", orientation="maximize"',
+            'name="cost", orientation="minimize"',
+            "def require_current_route_credential()",
+            "def provider_reported_cost(response)",
+            'usage.get("cost")',
+            "llm_provider-x-litellm-response-cost",
+        ):
+            self.assertIn(phrase, text)
+        self.assertNotIn("cost = litellm.completion_cost(", text)
+
+    def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
+        self,
+    ) -> None:
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef):
+                    functions[node.name] = node
+        helper_module = ast.fix_missing_locations(
+            ast.Module(body=[functions["provider_reported_cost"]], type_ignores=[])
+        )
+        namespace = {"math": __import__("math")}
+        exec(compile(helper_module, "<provider-cost>", "exec"), namespace)
+        helper = namespace["provider_reported_cost"]
+
+        self.assertEqual(
+            helper(SimpleNamespace(usage=SimpleNamespace(cost=0.25))), 0.25
+        )
+        header_response = SimpleNamespace(
+            usage=SimpleNamespace(cost=None),
+            _hidden_params={
+                "additional_headers": {"llm_provider-x-litellm-response-cost": "0.125"}
+            },
+        )
+        self.assertEqual(helper(header_response), 0.125)
+        with self.assertRaisesRegex(RuntimeError, "stop before scaling"):
+            helper(SimpleNamespace(usage=SimpleNamespace(cost=None)))
+        with self.assertRaisesRegex(RuntimeError, "malformed response-cost metadata"):
+            helper(SimpleNamespace(usage=SimpleNamespace(cost="not-a-number")))
+        with self.assertRaisesRegex(RuntimeError, "invalid per-response cost"):
+            helper(SimpleNamespace(usage=SimpleNamespace(cost=float("nan"))))
+
     def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
         functions = {}
@@ -675,10 +772,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized)
         self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
-        self.assertIn(
-            'HOLDOUT_DATASET = "traigent-runs/holdout.jsonl"',
-            text,
-        )
+        self.assertIn('HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")', text)
 
         holdout_node = functions["evaluate_holdout"]
         holdout_module = ast.fix_missing_locations(
@@ -728,7 +822,7 @@ class SkillPackageTests(unittest.TestCase):
             return 1.0
 
         namespace = {
-            "HOLDOUT_DATASET": "traigent-runs/holdout.jsonl",
+            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
             "call_agent": call_agent,
             "task_score": task_score,
             "traigent": SimpleNamespace(Dataset=Dataset),
@@ -740,7 +834,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(cost, 0.5)
-        self.assertEqual(loaded_paths, ["traigent-runs/holdout.jsonl"])
+        self.assertEqual(loaded_paths, ["/project/traigent-runs/holdout.jsonl"])
         self.assertEqual(
             agent_calls,
             [("classify this", config), ("classify that", config)],
@@ -759,6 +853,25 @@ class SkillPackageTests(unittest.TestCase):
                     examples[1].input_data,
                 ),
             ],
+        )
+
+    def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        sdk_text = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        self.assertIn(
+            "retain the customer's baseline and optimization experiments", skill_text
+        )
+        self.assertIn(
+            "never delete portal experiments as automatic teardown", skill_text
+        )
+        self.assertIn("direct link to every persisted first-run experiment", skill_text)
+        self.assertIn("do not delete them as walkthrough cleanup", guide_text)
+        self.assertIn("assert baseline_results.cloud_url is not none", sdk_text)
+        self.assertIn("assert optimized_results.cloud_url is not none", sdk_text)
+        self.assertIn(
+            "portal experiment deletion is never walkthrough teardown", sdk_text
         )
 
     def test_ci_runs_package_and_format_validation(self) -> None:

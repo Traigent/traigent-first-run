@@ -20,11 +20,14 @@ python - <<'PY'
 import inspect
 import traigent
 from traigent.api.decorators import EvaluationOptions
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 print(getattr(traigent, "__version__", "unknown"))
 print(inspect.signature(traigent.optimize))
 print(inspect.signature(EvaluationOptions))
 print(inspect.signature(traigent.Dataset.from_jsonl))
+print(inspect.signature(ObjectiveDefinition))
+print(inspect.signature(ObjectiveSchema.from_objectives))
 PY
 ```
 
@@ -80,19 +83,34 @@ Use one production-compatible function for baseline and optimization:
 ```python
 import math
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(override=False)
+RUN_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = RUN_DIR.parent
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 import litellm
 import traigent
 from traigent.api.decorators import EvaluationOptions
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
-TUNING_DATASET = "traigent-runs/tuning.jsonl"
-HOLDOUT_DATASET = "traigent-runs/holdout.jsonl"
+TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
+HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
+BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
+OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
+SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
+PROVIDER_KEY_NAMES = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "cohere": "COHERE_API_KEY",
+}
 
 
 def positive_number(name: str, *, default: float | None = None) -> float:
@@ -127,6 +145,22 @@ OPTIMIZATION_TIMEOUT_SECONDS = positive_number(
 )
 MAX_TRIALS = positive_int("TRAIGENT_FIRST_RUN_MAX_TRIALS")
 
+
+def require_current_route_credential() -> None:
+    key_name = PROVIDER_KEY_NAMES.get(SELECTED_CURRENT_PROVIDER)
+    if key_name is None:
+        raise RuntimeError(
+            f"No first-run credential mapping is declared for the inspected "
+            f"provider route {SELECTED_CURRENT_PROVIDER!r}"
+        )
+    if not os.environ.get(key_name, "").strip():
+        raise RuntimeError(
+            f"The current model route {SELECTED_CURRENT_MODEL!r} uses "
+            f"{SELECTED_CURRENT_PROVIDER}, but {key_name} is not set. Add that "
+            "credential or explicitly approve a provider-route change; the "
+            "first run will not switch routes automatically."
+        )
+
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
     "temperature": 0.0,
@@ -140,6 +174,15 @@ SEARCH_SPACE = {
     "temperature": [BASELINE_CONFIG["temperature"], 0.2],
     "prompt_style": [BASELINE_CONFIG["prompt_style"], "structured"],
 }
+
+OBJECTIVES = ObjectiveSchema.from_objectives(
+    [
+        ObjectiveDefinition(
+            name="task_success", orientation="maximize", weight=1.0
+        ),
+        ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
+    ]
+)
 
 
 def build_prompt(message: str, *, style: str) -> str:
@@ -159,6 +202,29 @@ def task_score(prediction, expected, input_data) -> float:
     ...
 
 
+def provider_reported_cost(response) -> float:
+    usage = getattr(response, "usage", None)
+    reported = getattr(usage, "cost", None)
+    if reported is None and isinstance(usage, dict):
+        reported = usage.get("cost")
+    if reported is None:
+        hidden = getattr(response, "_hidden_params", {}) or {}
+        headers = hidden.get("additional_headers", {}) or {}
+        reported = headers.get("llm_provider-x-litellm-response-cost")
+    if reported is None:
+        raise RuntimeError(
+            "The provider response did not include a usable per-response cost; "
+            "stop before scaling this paid run rather than guessing from a model map"
+        )
+    try:
+        cost = float(reported)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("The provider returned malformed response-cost metadata") from error
+    if not math.isfinite(cost) or cost <= 0:
+        raise RuntimeError("The provider returned an invalid per-response cost")
+    return cost
+
+
 def call_agent(message: str, config: dict) -> tuple[str, float]:
     response = litellm.completion(
         model=config["model"],
@@ -171,12 +237,12 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
             }
         ],
     )
-    cost = float(litellm.completion_cost(completion_response=response))
+    cost = provider_reported_cost(response)
     return response.choices[0].message.content or "", cost
 
 
 @traigent.optimize(
-    objectives=["task_success", "cost"],
+    objectives=OBJECTIVES,
     configuration_space=SEARCH_SPACE,
     evaluation=EvaluationOptions(
         eval_dataset=TUNING_DATASET,
@@ -190,9 +256,19 @@ def agent(message: str) -> str:
 ```
 
 The process-only values above are selected by the coding assistant from the inspected project and
-live-probe observation; they are not questions for the user. Keep the real current model and
-parameter values in `BASELINE_CONFIG` and every corresponding search dimension. Every search
-variable must affect the actual agent call.
+live-probe observation; they are not questions for the user. Derive
+`TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` from the current agent call, not from which credential names
+happen to exist. Call `require_current_route_credential()` immediately before the approved live
+probe. If another provider's credential is present instead, stop with the mismatch; never rewrite
+the current model identifier or provider prefix silently. Keep the real current model and parameter
+values in `BASELINE_CONFIG` and every corresponding search dimension. Every search variable must
+affect the actual agent call.
+
+Use the provider's public response cost when it is present. The fallback above reads OpenRouter's
+provider-reported response-cost header as surfaced by LiteLLM. Do not call
+`litellm.completion_cost()` here: a real OpenRouter response can be billable and valid even when a
+local model-price lookup fails. If neither public usage nor a provider-reported cost is available,
+stop before baseline/search instead of scaling an untracked path.
 
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
@@ -210,13 +286,14 @@ Run the actual current configuration as one connected grid point:
 
 ```python
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run current configuration"
+require_current_route_credential()
 baseline_space = {name: [value] for name, value in BASELINE_CONFIG.items()}
 baseline_results = agent.optimize_sync(
     algorithm="grid",
     configuration_space=baseline_space,
     max_trials=1,
     timeout=BASELINE_TIMEOUT_SECONDS,
-    save_to="traigent-runs/baseline-results.json",
+    save_to=BASELINE_RESULTS,
 )
 ```
 
@@ -240,7 +317,7 @@ optimized_results = agent.optimize_sync(
     configuration_space=SEARCH_SPACE,
     max_trials=MAX_TRIALS,
     timeout=OPTIMIZATION_TIMEOUT_SECONDS,
-    save_to="traigent-runs/optimized-results.json",
+    save_to=OPTIMIZED_RESULTS,
 )
 ```
 
@@ -290,9 +367,12 @@ Before reporting:
 assert baseline_results.trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
 assert optimized_results.best_config is not None, "no best configuration selected"
+assert baseline_results.cloud_url is not None, "baseline is not available in the portal"
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
 Also inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
-persistence status as defined in `run-safety.md`. Do not apply the best configuration
-automatically. Export it as a candidate and ask before any production change.
+persistence status as defined in `run-safety.md`. Keep both experiments in the portal and report
+their direct `cloud_url` values; portal experiment deletion is never walkthrough teardown and
+requires a later explicit user request. Do not apply the best configuration automatically. Export
+it as a candidate and ask before any production change.

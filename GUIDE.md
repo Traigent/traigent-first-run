@@ -28,6 +28,8 @@ Use the bundled tools:
   `python skills/traigent-first-run/scripts/readiness.py --help`
 - Compact internal run record:
   `skills/traigent-first-run/assets/run-plan.md`
+- Tested first-run SDK stack:
+  `skills/traigent-first-run/assets/requirements-first-run.txt`
 
 ## User-facing promise
 
@@ -54,6 +56,8 @@ Creating the isolated environment and minimal `.env` is separate from installing
 A dependency install may proceed without another approval only when it is confined to that
 environment, uses the exact packages and versions already declared for the run, fetches package
 artifacts only, and permits no project/provider/Traigent code execution or private-data transfer.
+A project without compatible exact declarations uses the skill's pinned first-run requirements;
+never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,
 connected Traigent, private-data, and all other external calls remain behind their stated
 approval gates.
@@ -82,5 +86,9 @@ Always report the component provenance:
 
 If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not
 evidence of expected production performance. A synthetic holdout is still synthetic evidence.
+
+Keep the customer's connected baseline and optimization experiments in the portal and finish with
+their direct links. Do not delete them as walkthrough cleanup; deletion requires an explicit later
+request from the user.
 
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

@@ -24,7 +24,7 @@ from typing import Any
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
-MIN_TRAIGENT_VERSION = (0, 21)
+SUPPORTED_TRAIGENT_VERSION = "0.25.0"
 MAX_NEAR_DUPLICATE_ROWS = 500
 NEAR_DUPLICATE_THRESHOLD = 0.9
 DOMINANT_OUTCOME_RATIO = 0.9
@@ -139,56 +139,52 @@ def check_python() -> None:
         )
 
 
-def numeric_version(raw: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in re.findall(r"\d+", raw)[:3]) or (0,)
-
-
 def check_sdk() -> None:
     try:
         installed = version("traigent")
     except PackageNotFoundError:
         emit("sdk-version", FAIL, "traigent is not installed in the active interpreter")
         return
-    parsed = numeric_version(installed)
-    if installed == "0.0.1" or parsed < MIN_TRAIGENT_VERSION:
+    if installed != SUPPORTED_TRAIGENT_VERSION:
         emit(
             "sdk-version",
             FAIL,
-            f"traigent {installed} is unsupported; install a release >=0.21",
+            f"traigent {installed} is unsupported for this tested first run; "
+            f"install traigent=={SUPPORTED_TRAIGENT_VERSION}",
         )
     else:
         emit("sdk-version", PASS, f"traigent {installed}")
 
 
 def check_keys(env: dict[str, str | None]) -> None:
-    configured = [
+    available = [
         vendor
         for vendor, names in VENDOR_KEYS.items()
         if any(key_present(env.get(name)) for name in names)
     ]
     bedrock_present = [name for name in BEDROCK_KEYS if key_present(env.get(name))]
     if len(bedrock_present) == len(BEDROCK_KEYS):
-        configured.append("Bedrock")
+        available.append("Bedrock")
     elif bedrock_present:
         emit(
-            "provider-key",
+            "provider-credentials",
             WARN,
             "Bedrock credentials are incomplete; access key, secret, and region are required",
         )
 
-    if not configured:
+    if not available:
         emit(
-            "provider-key",
+            "provider-credentials",
             WARN,
-            "no LLM provider key is configured; static checks can continue, paid work cannot",
+            "no LLM provider credentials are available; inspect the agent route separately, "
+            "and do not begin paid work until that route's credential is present",
         )
-    elif len(configured) == 1:
-        emit("provider-key", PASS, f"configured provider: {configured[0]}")
     else:
         emit(
-            "provider-key",
-            WARN,
-            f"multiple providers are configured ({', '.join(configured)}); select one for this run",
+            "provider-credentials",
+            PASS,
+            f"credential names are available for {', '.join(available)}; "
+            "this inventory does not select or change the agent's provider route",
         )
 
     traigent_key = env.get("TRAIGENT_API_KEY")

@@ -13,16 +13,21 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ## Environment and privacy
 
-- Use an isolated Python 3.11-3.13 environment; do not replace the project's interpreter without
-  approval.
-- Create a separate environment when the project uses an incompatible interpreter:
-  `python3.13 -m venv .venv`.
+- Reuse an existing compatible isolated environment. When none exists, use the conventional
+  `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
+- Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
+  `.venv-traigent` with a supported interpreter, for example
+  `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
+  than asking the user to choose an environment name.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the
   run, as a package-artifact-only fetch/install with no provider or Traigent calls, private-data
   transfer, or user/project code execution. Prefer a fully pinned, hash-checked requirements file
   and wheels; stop if fulfilling it requires source builds, undeclared packages, or code
   execution. A user or environment install-approval policy still takes precedence.
+- If the project has no compatible exact SDK declaration, install the tested pins from
+  `assets/requirements-first-run.txt`. Never run an unversioned `pip install traigent`: on an
+  unsupported interpreter, package resolution can select the unrelated obsolete `0.0.1` release.
 - Before creating the environment or installing anything, run every available bundled component
   check whose complete path needs only the Python standard library and local project files.
 - Verify installed packages and public signatures before generating SDK integration code.
@@ -70,12 +75,19 @@ Use this gate order:
    `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
    external evaluator; keep it behind explicit combined approval.
-5. Reuse the project's configured provider. When none exists, default to OpenRouter without a
-   separate choice question; the user may request a direct provider instead. If OpenRouter is
-   selected, identify every allowed upstream inference provider/route, disclose fallback
-   behavior, and pin allowed routes and disable fallbacks when an exact recipient set is required.
-6. Create the isolated environment with Python 3.11-3.13 without fetching packages.
-7. Install the exact declared dependencies under the narrow package-artifact authorization.
+5. Determine the current provider route from the agent's actual model call and configuration;
+   inventory provider credential names separately. Credential presence does not select a route.
+   When no route exists, default to OpenRouter without a separate choice question; the user may
+   request a direct provider instead. If the current route lacks its credential but another
+   provider credential exists, stop with the mismatch instead of changing the route silently. If
+   OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
+   fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
+   required.
+6. Reuse an existing compatible isolated environment, or create the conventional `.venv` with Python
+   3.11-3.13 without fetching packages. Only if an incompatible `.venv` already exists, preserve it
+   and use `.venv-traigent` as the non-destructive fallback without making its name a user choice.
+7. Install the exact declared dependencies under the narrow package-artifact authorization: use
+   compatible exact project declarations or the skill's `assets/requirements-first-run.txt`.
 8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
    a public no-execution contract validator when the installed version provides one. Let those
    public paths own normalization, injection, agent-call, and evaluator-callback behavior. Never
@@ -192,6 +204,13 @@ assistant is unavailable or unpriced, replace it only with a working model from 
 provider for the same task and data, with unchanged-or-lower call counts and combined worst-case
 spend. Record the replacement. Any other change requires revised approval. If the user chose the
 model, never replace it silently; present the limitation and one recommended alternative.
+
+For manual live-probe and holdout calls, prefer cost returned in the provider's public response or
+provider-reported response metadata. Do not recalculate a completed OpenRouter response with
+`litellm.completion_cost()`: a missing local model-map entry can raise after the provider has
+already billed the call. If the response has no usable provider-reported cost, stop before scaling
+the paid run and use only the conservative approved deduction; the SDK result remains authoritative
+for SDK-managed baseline/search cost.
 
 ## Baseline and optimization
 
