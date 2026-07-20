@@ -49,31 +49,86 @@ When building an evaluator:
 
 ## Mandatory calibration
 
-Before any optimization, construct at least four probes from the same task:
+Before any optimization, construct at least four probes for each materially distinct case:
 
 1. `good` - clearly correct.
 2. `equivalent_good` - semantically correct with a different valid surface form.
 3. `partial` - contains some correct information but misses an important requirement.
 4. `bad` - clearly incorrect.
 
-Require:
+Choose and record `score_mode` from the real task semantics before running each case:
+
+- `graded` - use when correctness has meaningful degrees, such as field coverage, rubric quality,
+  or partially completed workflows. Require:
 
 ```text
 good ~= equivalent_good > partial > bad
 ```
 
-Use materially distinct inputs and outcome classes, and record each probe input, expected outcome,
-candidate output, score, and exception status. One input with four output variants is not enough
-when the scorer depends on input fields, labels, schema branches, metadata, or rubric branches.
-Cover each material scoring path with at least one probe family and confirm that every helper
-returns a normalized score in `[0, 1]`.
+- `binary` - use only when the product decision is nominal classification or pass/fail and partial
+  correctness has no valid intermediate meaning. Require `good` and `equivalent_good` to pass,
+  and require both `partial` and `bad` to fail.
+
+Binary mode is not an escape hatch for a graded task whose evaluator fails to recognize meaningful
+partial correctness. Repair that evaluator and keep `score_mode: "graded"`.
+
+Use materially distinct inputs and outcome classes. Record each case name, `score_mode`, input,
+expected outcome, candidate outputs, scores, checks, and exception status. One input with four
+output variants is not enough when the scorer depends on input fields, labels, schema branches,
+metadata, or rubric branches. Cover each material scoring path with at least one probe family and
+confirm that every helper returns a normalized score in `[0, 1]`.
+
+The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
+to the real task, save the JSON as `traigent-runs/calibration-cases.json`, and run the command from
+the repository root only after the evaluator-execution gate:
+
+```json
+[
+  {
+    "name": "support intent - billing",
+    "score_mode": "binary",
+    "expected": "billing",
+    "input_data": {"message": "I was charged twice"},
+    "metadata": {"scoring_path": "intent"},
+    "probes": {
+      "good": "billing",
+      "equivalent_good": "BILLING",
+      "partial": "account",
+      "bad": "sales"
+    }
+  },
+  {
+    "name": "required account fields",
+    "score_mode": "graded",
+    "expected": ["name", "email", "plan"],
+    "input_data": {"message": "Extract the available account fields"},
+    "metadata": {"scoring_path": "field_coverage"},
+    "probes": {
+      "good": ["name", "email", "plan"],
+      "equivalent_good": ["plan", "email", "name"],
+      "partial": ["name", "email"],
+      "bad": ["shipping_address"]
+    }
+  }
+]
+```
+
+```bash
+python skills/traigent-first-run/scripts/calibrate_evaluator.py \
+  --scorer traigent-runs/evaluator.py:task_score \
+  --cases @traigent-runs/calibration-cases.json \
+  --allow-execution \
+  --json
+```
 
 The exact thresholds depend on the metric, but reject all of these:
 
 - All scores equal or nearly equal.
 - All scores zero or all scores one.
 - Equivalent-good output penalized only for wording/order/format that the product accepts.
-- Partial output ranked at or above a fully correct output.
+- In `graded` mode, partial output ranked at or above a fully correct output or at or below a bad
+  output.
+- In `binary` mode, partial output receiving a passing score.
 - Bad output receiving a passing score.
 - Parse/evaluator exceptions converted silently to an ordinary zero.
 

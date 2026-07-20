@@ -187,6 +187,8 @@ Then:
 
 - Validate the generated dataset and evaluator using
   `references/evaluation-and-dataset.md`.
+- Choose and record `graded` or `binary` calibration from the real task semantics for every
+  materially distinct case. Do not choose a mode merely because it lets the current scorer pass.
 - Run deterministic evaluator calibration locally when applicable.
 - Treat calibration as free only after inspection establishes a local-only call path with no
   external side effects. If the call path is uncertain or external, route it through the
@@ -296,9 +298,11 @@ The first run is complete only when:
 - Any repaired component was revalidated before its status changed.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
-- The evaluator discriminates good, equivalent, partial, and bad outputs.
-- Calibration covers materially distinct inputs and outcome classes when scoring depends on
-  inputs, labels, schemas, or rubric branches.
+- The evaluator passes the recorded semantic mode for every case: graded tasks distinguish
+  good/equivalent, partial, and bad outputs; binary tasks accept good/equivalent and reject both
+  partial and bad outputs.
+- Calibration covers and records materially distinct inputs and outcome classes when scoring
+  depends on inputs, labels, schemas, or rubric branches.
 - Free checks made no provider calls.
 - Paid work had explicit combined approval.
 - Baseline and optimization used the same tuning data and evaluator.

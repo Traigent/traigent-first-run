@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -145,10 +146,11 @@ class SkillPackageTests(unittest.TestCase):
         )
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
-        text = (
+        text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .casefold()
+            .split()
         )
         for phrase in (
             "materially distinct inputs and outcome classes",
@@ -157,6 +159,45 @@ class SkillPackageTests(unittest.TestCase):
             "not proof of isolation",
         ):
             self.assertIn(phrase, text)
+
+    def test_calibration_modes_follow_real_task_semantics(self) -> None:
+        skill_text = SKILL.read_text().casefold()
+        quality_text = (
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        ).read_text()
+        normalized_quality = " ".join(quality_text.casefold().split())
+        for phrase in (
+            "choose and record `score_mode` from the real task semantics",
+            "binary mode is not an escape hatch",
+            "require both `partial` and `bad` to fail",
+            "good ~= equivalent_good > partial > bad",
+            "--cases @traigent-runs/calibration-cases.json",
+        ):
+            self.assertIn(phrase, normalized_quality)
+        self.assertNotIn(
+            "the evaluator discriminates good, equivalent, partial, and bad outputs",
+            skill_text,
+        )
+
+    def test_calibration_matrix_example_has_per_case_modes(self) -> None:
+        text = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        match = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
+        self.assertIsNotNone(match)
+        cases = json.loads(match.group(1))
+        self.assertEqual(
+            {case["score_mode"] for case in cases},
+            {"graded", "binary"},
+        )
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                self.assertTrue(
+                    {"name", "score_mode", "expected", "input_data", "probes"}
+                    <= case.keys()
+                )
+                self.assertEqual(
+                    set(case["probes"]),
+                    {"good", "equivalent_good", "partial", "bad"},
+                )
 
     def test_sdk_template_defines_prompt_builder(self) -> None:
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
