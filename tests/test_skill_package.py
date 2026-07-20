@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ast
+import io
 import json
 import re
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
 SKILL = SKILL_ROOT / "SKILL.md"
+SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
 
 class SkillPackageTests(unittest.TestCase):
@@ -347,7 +351,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('if style == "structured":', text)
 
     def test_sdk_template_bounds_requests_phases_and_retries(self) -> None:
-        text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        text = SDK_EXECUTION.read_text()
         for phrase in (
             "PROVIDER_REQUEST_TIMEOUT_SECONDS",
             "BASELINE_TIMEOUT_SECONDS",
@@ -361,6 +365,92 @@ class SkillPackageTests(unittest.TestCase):
             "deadline = time.monotonic() + HOLDOUT_PHASE_TIMEOUT_SECONDS",
         ):
             self.assertIn(phrase, text)
+
+    def test_sdk_holdout_preserves_canonical_evaluator_context(self) -> None:
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    functions[node.name] = node
+
+        task_score_node = functions["task_score"]
+        self.assertEqual(
+            [argument.arg for argument in task_score_node.args.args],
+            ["output", "expected", "input_data", "metadata"],
+        )
+        self.assertEqual(len(task_score_node.args.defaults), 2)
+        self.assertTrue(
+            all(
+                isinstance(default, ast.Constant) and default.value is None
+                for default in task_score_node.args.defaults
+            )
+        )
+        normalized = " ".join(text.casefold().split())
+        for phrase in (
+            "adapter around the preserved evaluator",
+            "baseline and search receive these evaluator inputs",
+            "holdout must reconstruct the same canonical values",
+        ):
+            self.assertIn(phrase, normalized)
+
+        holdout_node = functions["evaluate_holdout"]
+        holdout_module = ast.fix_missing_locations(
+            ast.Module(body=[holdout_node], type_ignores=[])
+        )
+        rows = [
+            {
+                "input": {"message": "classify this", "account_tier": "enterprise"},
+                "output": "urgent",
+                "metadata": {"rubric_branch": "priority", "source": "reviewed"},
+            },
+            {
+                "input": {"message": "classify that", "account_tier": "standard"},
+                "output": "normal",
+            },
+        ]
+        agent_calls = []
+        scorer_calls = []
+
+        def call_agent(message, config, *, request_timeout_seconds=None):
+            agent_calls.append((message, config, request_timeout_seconds))
+            return "urgent" if message == "classify this" else "normal", 0.25
+
+        def task_score(output, expected, input_data=None, metadata=None):
+            scorer_calls.append((output, expected, input_data, metadata))
+            return 1.0
+
+        namespace = {
+            "HOLDOUT_PHASE_TIMEOUT_SECONDS": 30.0,
+            "PROVIDER_REQUEST_TIMEOUT_SECONDS": 10.0,
+            "PROVIDER_RETRY_COUNT": 0,
+            "call_agent": call_agent,
+            "json": json,
+            "open": lambda _path: io.StringIO(
+                "".join(f"{json.dumps(row)}\n" for row in rows)
+            ),
+            "task_score": task_score,
+            "time": time,
+        }
+        exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
+
+        config = {"model": "preserved-current-model"}
+        score, cost = namespace["evaluate_holdout"](config, phase_name="test holdout")
+
+        self.assertEqual(score, 1.0)
+        self.assertEqual(cost, 0.5)
+        self.assertEqual(
+            [(message, call_config) for message, call_config, _timeout in agent_calls],
+            [("classify this", config), ("classify that", config)],
+        )
+        self.assertTrue(all(call[2] > 0 for call in agent_calls))
+        self.assertEqual(
+            scorer_calls,
+            [
+                ("urgent", "urgent", rows[0]["input"], rows[0]["metadata"]),
+                ("normal", "normal", rows[1]["input"], {}),
+            ],
+        )
 
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()

@@ -134,8 +134,9 @@ def build_prompt(message: str, *, style: str) -> str:
     raise ValueError(f"unsupported prompt style: {style}")
 
 
-def task_score(output, expected, input_data=None) -> float:
-    # Replace with the calibrated task-specific evaluator, normalized to [0, 1].
+def task_score(output, expected, input_data=None, metadata=None) -> float:
+    # Generate an adapter to the preserved calibrated evaluator, normalized to [0, 1].
+    # Map all four canonical values to its inspected parameter names without changing it.
     ...
 
 
@@ -189,6 +190,13 @@ the actual agent call.
 
 Do not include `expected` in the agent signature. Dataset input fields call the agent; expected
 output belongs only to evaluation.
+
+Generate `task_score` as an adapter around the preserved evaluator. Keep the canonical
+`output`, `expected`, `input_data`, and `metadata` parameters shown above, then map each value to
+the preserved evaluator's inspected parameter names. Do not change the evaluator's grading
+policy, drop metadata, or pass `input_data` in the metadata position. The baseline and search
+receive these evaluator inputs from each tuning row through `EvaluationOptions`; holdout must
+reconstruct the same canonical values from each holdout row and call the same adapter.
 
 ## Current baseline
 
@@ -257,13 +265,16 @@ def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
                     f"{phase_name} exceeded its approved holdout phase deadline"
                 )
             row = json.loads(line)
+            input_data = row["input"]
+            metadata = row.get("metadata", {})
+            expected = row["output"]
             # Reserve request time for every permitted attempt inside the phase deadline.
             per_attempt_timeout = min(
                 PROVIDER_REQUEST_TIMEOUT_SECONDS,
                 remaining_seconds / (1 + PROVIDER_RETRY_COUNT),
             )
             output, call_cost = call_agent(
-                row["input"]["message"],
+                input_data["message"],
                 config,
                 request_timeout_seconds=per_attempt_timeout,
             )
@@ -271,7 +282,7 @@ def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
                 raise TimeoutError(
                     f"{phase_name} exceeded its approved holdout phase deadline"
                 )
-            scores.append(task_score(output, row["output"], row["input"]))
+            scores.append(task_score(output, expected, input_data, metadata))
             tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
