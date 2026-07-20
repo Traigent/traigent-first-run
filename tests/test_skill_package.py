@@ -268,7 +268,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(semantic_review, ambiguity_gate)
         self.assertLess(ambiguity_gate, preflight)
         for phrase in (
-            "dataset-agent binding",
+            "local structure and quality",
+            "does not assert sdk compatibility",
             "before creating an isolated environment",
             "before installing dependencies",
             "before creating `.env`",
@@ -280,7 +281,7 @@ class SkillPackageTests(unittest.TestCase):
         ordered_environment_phrases = (
             "create the isolated environment",
             "install the exact declared dependencies",
-            "verify the installed sdk",
+            "verify the installed sdk's capabilities",
             "run a fresh-process traigent mock plumbing check",
             "create the minimal `.env`",
             "stop for the provider-key paste",
@@ -306,7 +307,7 @@ class SkillPackageTests(unittest.TestCase):
             "run deterministic evaluator calibration",
             "create the isolated environment",
             "install the exact declared dependencies",
-            "verify the installed sdk",
+            "use the installed sdk's public dataset validator/loader",
             "run a fresh-process traigent mock plumbing check",
             "create the minimal `.env`",
             "stop for the provider-key paste",
@@ -536,10 +537,32 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "preserve an existing evaluator unchanged",
             "does not replace the evaluator or change its provenance",
-            "do not claim aliases",
-            "inspect the installed binding behavior",
+            "skill-owned keyword contract",
+            "never reproduce or guess sdk callback aliases",
         ):
             self.assertIn(phrase, text)
+
+    def test_sdk_contract_ownership_stays_in_the_installed_sdk(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "public dataset validator/loader",
+            "public no-execution",
+            "never recreate sdk binding or callback fallbacks",
+        ):
+            self.assertIn(phrase, skill_text)
+        self.assertIn("never mirror sdk aliases or binding fallbacks", safety_text)
+
+        preflight_text = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
+        for sdk_internal in (
+            "BaseEvaluator._should_expand_input_mapping",
+            "_prepare_call_arguments",
+            "Traigent 0.23",
+            "InjectionMode",
+        ):
+            self.assertNotIn(sdk_internal, preflight_text)
 
     def test_run_plan_records_repeatable_calibration_and_ledger(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
@@ -584,7 +607,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
-    def test_sdk_holdout_preserves_canonical_evaluator_context(self) -> None:
+    def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
         functions = {}
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
@@ -595,20 +618,14 @@ class SkillPackageTests(unittest.TestCase):
         task_score_node = functions["task_score"]
         self.assertEqual(
             [argument.arg for argument in task_score_node.args.args],
-            ["output", "expected", "input_data", "metadata"],
+            ["prediction", "expected", "input_data"],
         )
-        self.assertEqual(len(task_score_node.args.defaults), 2)
-        self.assertTrue(
-            all(
-                isinstance(default, ast.Constant) and default.value is None
-                for default in task_score_node.args.defaults
-            )
-        )
+        self.assertEqual(task_score_node.args.defaults, [])
         normalized = " ".join(text.casefold().split())
         for phrase in (
             "adapter around the preserved evaluator",
-            "baseline and search receive these evaluator inputs",
-            "holdout must reconstruct the same canonical values",
+            "installed sdk's documented public `metric_functions` contract",
+            "baseline, search, and holdout must use the same selected public evaluation path",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
@@ -661,8 +678,8 @@ class SkillPackageTests(unittest.TestCase):
             agent_calls.append((message, config, request_timeout_seconds))
             return "urgent" if message == "classify this" else "normal", 0.25
 
-        def task_score(output, expected, input_data=None, metadata=None):
-            scorer_calls.append((output, expected, input_data, metadata))
+        def task_score(output, expected, input_data):
+            scorer_calls.append((output, expected, input_data))
             return 1.0
 
         namespace = {
@@ -695,13 +712,11 @@ class SkillPackageTests(unittest.TestCase):
                     "urgent",
                     examples[0].expected_output,
                     examples[0].input_data,
-                    examples[0].metadata,
                 ),
                 (
                     "normal",
                     examples[1].expected_output,
                     examples[1].input_data,
-                    {},
                 ),
             ],
         )

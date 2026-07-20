@@ -181,8 +181,9 @@ Follow the dependency matrix in `references/component-creation.md`:
 - Derive each created component from all existing anchors, not independently.
 - If nothing exists, create the run record and one coherent trio only after the user answers the
   single task-intent question.
-- Validate compatibility in both directions: dataset inputs bind to the agent, and agent outputs
-  are meaningfully scoreable by the evaluator.
+- Design compatibility in both directions: dataset inputs fit the agent contract, and agent
+  outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
+  runtime binding is owned by the installed SDK and is verified in stage 5.
 
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
@@ -213,17 +214,18 @@ Follow this order:
    ambiguity remains and proceed without a generic review pause. A clarification does not
    authorize changing real labels, expected answers, examples, or rubric policy; show any exact
    judgment-dependent change and obtain the explicit approval required by the action table.
-3. Run the bundled static preflight with the dataset, agent, and scorer arguments so dataset
-   structure, dataset-agent binding, and scorer signatures are checked without importing user
-   modules. Omit optional model-pricing checks in this standard-library-only pass.
+3. Run the bundled static preflight with the dataset argument so local structure and quality
+   problems are checked without importing user modules. Omit optional model-pricing checks in this
+   standard-library-only pass. This heuristic check does not assert SDK compatibility.
 4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
    `sufficient` and the complete inspected import and call path
    is local-only, has no external side effects, and needs no unavailable third-party package.
    Execute it in the isolated subprocess with provider credentials removed.
 
 A missing Traigent SDK or optional provider package may make the preflight report its SDK check as
-deferred or failed, but it must not block the independent dataset, dataset-agent binding, scorer,
-or safe deterministic-calibration results. Record those component results separately.
+deferred or failed, but it must not block independent dataset-quality or safe
+deterministic-calibration results. Record those component results separately. Do not reproduce
+SDK dataset normalization, injection, agent-binding, or evaluator-callback rules in this skill.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
 pending behind the combined egress and paid approval; removing keys or setting offline flags does
@@ -252,9 +254,13 @@ Only after the standard-library-only component checks:
 2. Create the isolated environment with Python 3.11-3.13 without fetching packages.
 3. Install the exact declared dependencies under the narrow authorization above.
 4. Verify the installed SDK's capabilities and public signatures instead of relying on a
-   hardcoded "current" version statement. Write the SDK wrapper only from those verified
-   capabilities. A missing SDK may block only these SDK and mock checks, not the component checks
-   already recorded.
+   hardcoded "current" version statement. Use its public dataset validator/loader and construct the
+   wrapper through its public decorator and evaluation models so the installed SDK owns
+   normalization, injection, agent-call, and evaluator-callback decisions. If the installed SDK
+   exposes a public no-execution evaluation-contract validator, use it. Otherwise do not claim
+   exhaustive static compatibility; finish the check with the safe mock plumbing step below. Never
+   recreate SDK binding or callback fallbacks in first-run code. A missing SDK may block only these
+   SDK and mock checks, not the component checks already recorded.
 5. Run any safe deterministic calibration that was deferred solely for an installed local
    dependency. Then run a fresh-process Traigent mock plumbing check only when every model call is
    known to be intercepted. Raw provider clients, external evaluators, subprocesses, HTTP

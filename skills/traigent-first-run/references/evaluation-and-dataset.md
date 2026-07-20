@@ -34,15 +34,15 @@ Validate it; do not silently redesign it.
 
 When building an evaluator:
 
-- Preserve an existing evaluator unchanged. When its local parameter names or calling convention
-  do not match the callback contract verified from the installed SDK, expose it through a thin
-  generated metric adapter under `traigent-runs/`. The adapter translates the verified callback
-  inputs to the existing evaluator; it does not replace the evaluator or change its provenance.
-- Give a generated metric callback an explicit `output` parameter and use only callback names
-  verified from the installed SDK, such as `expected`, `input_data`, and `metadata` when that
-  installation confirms them. Do not claim aliases such as `prediction` or `reference` are
-  supported or unsupported from memory; inspect the installed binding behavior and adapt at the
-  boundary when direct registration has not been verified.
+- Preserve an existing evaluator unchanged. Expose its grading logic through a thin generated
+  calibration adapter under `traigent-runs/` with the skill-owned keyword contract
+  `(output, expected, input_data, metadata)`. The adapter does not replace the evaluator or change
+  its provenance.
+- Keep calibration and SDK registration as separate boundaries. The calibration adapter above is
+  for deterministic probe execution; it is not proof that the SDK can bind the evaluator. After
+  installation, build the runtime adapter only from the installed SDK's public evaluation models,
+  documentation, and validation. Never reproduce or guess SDK callback aliases or positional
+  fallbacks in first-run code.
 - Infer the rubric from real labels, tests, accepted outputs, product rules, and failure reports.
 - Ask one product-grading question only if unresolved ambiguity would materially change which
   output is correct or how candidate configurations rank. Do not ask for generic approval of the
@@ -170,9 +170,11 @@ python skills/traigent-first-run/scripts/calibrate_evaluator.py \
   --json
 ```
 
-The scorer can import project modules because the import root defaults to the directory where the
+The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
+`metadata`. It may translate them into an existing evaluator's unchanged local convention. The
+adapter can import project modules because the import root defaults to the directory where the
 command is launched. When launching elsewhere, pass `--import-root /path/to/project` explicitly;
-the scorer's own directory remains available for sibling imports.
+the adapter's own directory remains available for sibling imports.
 
 The exact thresholds depend on the metric, but reject all of these:
 
@@ -292,7 +294,8 @@ Run quality checks:
 - Repeated scenario tags that crowd out coverage.
 - Tuning/holdout overlap by ID and normalized input.
 - Constant or empty expected outputs.
-- Agent-signature binding.
+- Agent/dataset contract consistency, confirmed later through the installed SDK's public
+  validation or safe mock execution rather than a first-run reimplementation.
 - Difficulty, boundary, and known failure-mode coverage.
 - Dominant-output or majority-label baselines that could hide a ceiling. For structured output,
   inspect common label/category fields and pass `--outcome-field result.label` to the static

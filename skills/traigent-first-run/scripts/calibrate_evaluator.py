@@ -18,7 +18,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -38,22 +37,6 @@ SECRET_MARKERS = (
     "COOKIE",
     "SESSION",
 )
-OUTPUT_METRIC_PARAM_NAMES = {
-    "actual",
-    "actual_output",
-    "output",
-    "prediction",
-    "predicted",
-    "result",
-}
-EXPECTED_METRIC_PARAM_NAMES = {
-    "expected",
-    "expected_output",
-    "ground_truth",
-    "reference",
-    "target",
-}
-LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
 MATRIX_COVERAGE_NOTE = (
     "Distinct names and payloads are structural checks only; calibration relies on "
     "the coding assistant's recorded evidence-backed semantic-coverage review of "
@@ -115,104 +98,6 @@ def load_function(spec: str):
     return function
 
 
-def metric_keyword_arguments(
-    parameters: list[inspect.Parameter],
-    output: Any,
-    example: Any,
-    config: dict[str, Any],
-    llm_metrics: dict[str, Any],
-    example_index: int,
-) -> dict[str, Any]:
-    """Build the keyword candidate used by Traigent 0.23's local evaluator."""
-    keyword_values = {
-        "example": example,
-        "input_data": example.input_data,
-        "metadata": example.metadata,
-        "config": config,
-        "example_index": example_index,
-    }
-    keyword_values.update({name: output for name in OUTPUT_METRIC_PARAM_NAMES})
-    keyword_values.update(
-        {name: example.expected_output for name in EXPECTED_METRIC_PARAM_NAMES}
-    )
-    keyword_values.update({name: llm_metrics for name in LLM_METRIC_PARAM_NAMES})
-
-    kwargs: dict[str, Any] = {}
-    accepts_arbitrary_kwargs = False
-    for parameter in parameters:
-        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
-            accepts_arbitrary_kwargs = True
-            continue
-        if parameter.kind in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.VAR_POSITIONAL,
-        }:
-            continue
-        if parameter.name in keyword_values:
-            kwargs[parameter.name] = keyword_values[parameter.name]
-
-    if accepts_arbitrary_kwargs:
-        kwargs.setdefault("output", output)
-        kwargs.setdefault("expected", example.expected_output)
-        kwargs.setdefault("llm_metrics", llm_metrics)
-    return kwargs
-
-
-def invoke_metric(
-    function,
-    output: Any,
-    expected: Any,
-    input_data: Any,
-    metadata: Any,
-    example_index: int,
-) -> Any:
-    """Invoke one scorer with Traigent 0.23 keyword and positional fallbacks."""
-    signature = inspect.signature(function)
-    parameters = list(signature.parameters.values())
-    llm_metrics: dict[str, Any] = {}
-    config: dict[str, Any] = {}
-    example = SimpleNamespace(
-        input_data=input_data,
-        expected_output=expected,
-        metadata=metadata or {},
-    )
-    positional_args = (output, expected, llm_metrics)
-    call_candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
-    if any(
-        parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters
-    ):
-        call_candidates.append((positional_args, {}))
-
-    kwargs = metric_keyword_arguments(
-        parameters, output, example, config, llm_metrics, example_index
-    )
-    if kwargs:
-        call_candidates.append(((), kwargs))
-
-    call_candidates.extend(
-        [
-            (positional_args, {}),
-            (positional_args[:2], {}),
-            (positional_args[:1], {}),
-            ((), {}),
-        ]
-    )
-
-    bind_error: TypeError | None = None
-    for args, candidate_kwargs in call_candidates:
-        try:
-            signature.bind(*args, **candidate_kwargs)
-        except TypeError as error:
-            bind_error = error
-            continue
-        return function(*args, **candidate_kwargs)
-
-    if bind_error is not None:
-        raise bind_error
-    return function(output, expected)
-
-
 async def await_metric_value(value: Any) -> Any:
     return await value
 
@@ -223,12 +108,23 @@ def bind_call(
     expected: Any,
     input_data: Any,
     metadata: Any,
-    example_index: int,
 ) -> float:
-    """Bind one SDK-shaped call and enforce the normalized score contract."""
-    raw_score = invoke_metric(
-        function, output, expected, input_data, metadata, example_index
-    )
+    """Call the skill-owned calibration-adapter contract and validate its score."""
+    arguments = {
+        "output": output,
+        "expected": expected,
+        "input_data": input_data,
+        "metadata": metadata or {},
+    }
+    try:
+        inspect.signature(function).bind(**arguments)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            "calibration adapter must accept keyword arguments "
+            "output, expected, input_data, and metadata; create a thin adapter "
+            "instead of relying on SDK callback aliases"
+        ) from error
+    raw_score = function(**arguments)
     if inspect.isawaitable(raw_score):
         raw_score = asyncio.run(await_metric_value(raw_score))
     try:
@@ -264,7 +160,7 @@ def run_worker() -> int:
         with contextlib.redirect_stdout(captured_stdout):
             function = load_function(request["scorer"])
             case_results = []
-            for index, case in enumerate(request["cases"]):
+            for case in request["cases"]:
                 scores = {
                     label: bind_call(
                         function,
@@ -272,7 +168,6 @@ def run_worker() -> int:
                         case["expected"],
                         case.get("input_data"),
                         case.get("metadata"),
-                        index,
                     )
                     for label, value in case["probes"].items()
                 }
@@ -321,10 +216,17 @@ def existing_directory(value: str) -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Calibrate a Traigent evaluator with one or more four-probe cases."
+            "Calibrate a first-run grading adapter with one or more four-probe cases."
         )
     )
-    parser.add_argument("--scorer", required=True, help="FILE.py:FUNCTION")
+    parser.add_argument(
+        "--scorer",
+        required=True,
+        help=(
+            "FILE.py:FUNCTION accepting keyword arguments output, expected, "
+            "input_data, and metadata"
+        ),
+    )
     parser.add_argument(
         "--import-root",
         type=existing_directory,

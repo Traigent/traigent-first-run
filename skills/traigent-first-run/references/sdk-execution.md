@@ -135,9 +135,9 @@ def build_prompt(message: str, *, style: str) -> str:
     raise ValueError(f"unsupported prompt style: {style}")
 
 
-def task_score(output, expected, input_data=None, metadata=None) -> float:
-    # Generate an adapter to the preserved calibrated evaluator, normalized to [0, 1].
-    # Map all four canonical values to its inspected parameter names without changing it.
+def task_score(prediction, expected, input_data) -> float:
+    # Generate a runtime adapter from this installed SDK's documented public
+    # metric_functions contract. Keep the preserved evaluator unchanged.
     ...
 
 
@@ -192,12 +192,13 @@ the actual agent call.
 Do not include `expected` in the agent signature. Dataset input fields call the agent; expected
 output belongs only to evaluation.
 
-Generate `task_score` as an adapter around the preserved evaluator. Keep the canonical
-`output`, `expected`, `input_data`, and `metadata` parameters shown above, then map each value to
-the preserved evaluator's inspected parameter names. Do not change the evaluator's grading
-policy, drop metadata, or pass `input_data` in the metadata position. The baseline and search
-receive these evaluator inputs from each tuning row through `EvaluationOptions`; holdout must
-reconstruct the same canonical values from each holdout row and call the same adapter.
+Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
+documented public `metric_functions` contract; the example above reflects the inspected
+three-argument contract. Do not infer aliases or positional fallbacks from SDK internals. When
+grading requires example metadata or full control of agent execution, use the installed SDK's
+public custom-evaluator model instead of extending this callback from memory. Do not change the
+evaluator's grading policy. The baseline, search, and holdout must use the same selected public
+evaluation path.
 
 ## Current baseline
 
@@ -267,7 +268,6 @@ def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
             )
         input_data = example.input_data
         expected = example.expected_output
-        metadata = example.metadata or {}
         # Reserve request time for every permitted attempt inside the phase deadline.
         per_attempt_timeout = min(
             PROVIDER_REQUEST_TIMEOUT_SECONDS,
@@ -282,7 +282,7 @@ def evaluate_holdout(config: dict, *, phase_name: str) -> tuple[float, float]:
             raise TimeoutError(
                 f"{phase_name} exceeded its approved holdout phase deadline"
             )
-        scores.append(task_score(output, expected, input_data, metadata))
+        scores.append(task_score(output, expected, input_data))
         tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 

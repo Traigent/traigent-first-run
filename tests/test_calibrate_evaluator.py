@@ -15,29 +15,9 @@ class EvaluatorCalibrationTests(unittest.TestCase):
     def make_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "scorer.py"
         scorer.write_text(
-            "def score(output, expected):\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
             "    required = set(expected)\n"
             "    actual = set(output)\n"
-            "    return len(required & actual) / len(required)\n"
-        )
-        return scorer
-
-    def make_alias_scorer(self, directory: str) -> Path:
-        scorer = Path(directory) / "alias_scorer.py"
-        scorer.write_text(
-            "def score(prediction, reference):\n"
-            "    required = set(reference)\n"
-            "    actual = set(prediction)\n"
-            "    return len(required & actual) / len(required)\n"
-        )
-        return scorer
-
-    def make_positional_scorer(self, directory: str, signature: str) -> Path:
-        scorer = Path(directory) / "positional_scorer.py"
-        scorer.write_text(
-            f"def score{signature}:\n"
-            "    required = set(reference)\n"
-            "    actual = set(prediction)\n"
             "    return len(required & actual) / len(required)\n"
         )
         return scorer
@@ -57,13 +37,16 @@ class EvaluatorCalibrationTests(unittest.TestCase):
 
     def make_constant_scorer(self, directory: str, expression: str) -> Path:
         scorer = Path(directory) / "constant_scorer.py"
-        scorer.write_text("def score(output, expected):\n" f"    return {expression}\n")
+        scorer.write_text(
+            "def score(output, expected, input_data=None, metadata=None):\n"
+            f"    return {expression}\n"
+        )
         return scorer
 
     def make_exact_label_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "exact_label_scorer.py"
         scorer.write_text(
-            "def score(output, expected):\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
             "    return float(output.casefold() == expected.casefold())\n"
         )
         return scorer
@@ -71,7 +54,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
     def make_surface_penalty_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "surface_penalty_scorer.py"
         scorer.write_text(
-            "def score(output, expected):\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
             "    if output == expected:\n"
             "        return 1.0\n"
             "    if output.casefold() == expected.casefold():\n"
@@ -83,7 +66,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
     def make_mixed_mode_scorer(self, directory: str) -> Path:
         scorer = Path(directory) / "mixed_mode_scorer.py"
         scorer.write_text(
-            "def score(output, expected):\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
             "    if isinstance(expected, list):\n"
             "        required = set(expected)\n"
             "        actual = set(output)\n"
@@ -135,69 +118,6 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertGreater(payload["scores"]["partial"], payload["scores"]["bad"])
         self.assertIn("partial_is_above_bad", payload["checks"])
 
-    def test_accepts_documented_output_and_expected_aliases(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            process = subprocess.run(
-                [
-                    *self.command(self.make_alias_scorer(directory)),
-                    "--allow-execution",
-                ],
-                capture_output=True,
-                text=True,
-            )
-        self.assertEqual(process.returncode, 0, process.stderr)
-        self.assertTrue(json.loads(process.stdout)["passed"])
-
-    def test_accepts_positional_only_and_arbitrary_two_argument_scorers(self) -> None:
-        for signature in (
-            "(prediction, reference, /)",
-            "(prediction, reference)",
-        ):
-            with self.subTest(
-                signature=signature
-            ), tempfile.TemporaryDirectory() as directory:
-                process = subprocess.run(
-                    [
-                        *self.command(
-                            self.make_positional_scorer(directory, signature)
-                        ),
-                        "--allow-execution",
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-            self.assertEqual(process.returncode, 0, process.stderr)
-
-    def test_accepts_context_parameters_and_llm_metric_alias(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            scorer = Path(directory) / "context_scorer.py"
-            scorer.write_text(
-                "def score(prediction, reference, *, metrics, example, input_data, "
-                "metadata, config, example_index):\n"
-                "    assert example.expected_output == reference\n"
-                "    assert example.input_data == input_data\n"
-                "    assert example.metadata == metadata\n"
-                "    assert input_data == {'branch': 'extract'}\n"
-                "    assert metadata == {'source': 'probe'}\n"
-                "    assert metrics == {} and config == {} and example_index == 0\n"
-                "    required = set(reference)\n"
-                "    actual = set(prediction)\n"
-                "    return len(required & actual) / len(required)\n"
-            )
-            process = subprocess.run(
-                [
-                    *self.command(scorer),
-                    "--input-data",
-                    '{"branch": "extract"}',
-                    "--metadata",
-                    '{"source": "probe"}',
-                    "--allow-execution",
-                ],
-                capture_output=True,
-                text=True,
-            )
-        self.assertEqual(process.returncode, 0, process.stderr)
-
     def test_default_import_root_supports_project_and_scorer_sibling_imports(
         self,
     ) -> None:
@@ -219,7 +139,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             scorer.write_text(
                 "from project_eval import field_coverage\n"
                 "from scorer_context import cwd_matches_scorer\n\n"
-                "def score(output, expected):\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
                 "    assert cwd_matches_scorer()\n"
                 "    return field_coverage(output, expected)\n"
             )
@@ -250,7 +170,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             scorer = scorer_directory / "evaluator.py"
             scorer.write_text(
                 "from project_eval import field_coverage\n\n"
-                "def score(output, expected):\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
                 "    return field_coverage(output, expected)\n"
             )
             process = subprocess.run(
@@ -287,37 +207,16 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 self.assertIn("--import-root", process.stderr)
                 self.assertIn("existing directory", process.stderr)
 
-    def test_populates_every_documented_output_expected_and_metric_alias(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            scorer = Path(directory) / "all_aliases_scorer.py"
-            scorer.write_text(
-                "def score(actual, actual_output, output, prediction, predicted, result, "
-                "expected, expected_output, ground_truth, reference, target, "
-                "llm_metrics, metrics):\n"
-                "    outputs = (actual, actual_output, output, prediction, predicted, result)\n"
-                "    expectations = (expected, expected_output, ground_truth, reference, target)\n"
-                "    assert all(value == output for value in outputs)\n"
-                "    assert all(value == expected for value in expectations)\n"
-                "    assert llm_metrics == metrics == {}\n"
-                "    return len(set(output) & set(expected)) / len(set(expected))\n"
-            )
-            process = subprocess.run(
-                [*self.command(scorer), "--allow-execution"],
-                capture_output=True,
-                text=True,
-            )
-        self.assertEqual(process.returncode, 0, process.stderr)
-
     def test_awaits_async_function_and_sync_returned_awaitable(self) -> None:
         scorers = {
             "async-function": (
-                "async def score(prediction, reference):\n"
-                "    return len(set(prediction) & set(reference)) / len(set(reference))\n"
+                "async def score(output, expected, input_data=None, metadata=None):\n"
+                "    return len(set(output) & set(expected)) / len(set(expected))\n"
             ),
             "returned-awaitable": (
-                "def score(prediction, reference):\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
                 "    async def calculate():\n"
-                "        return len(set(prediction) & set(reference)) / len(set(reference))\n"
+                "        return len(set(output) & set(expected)) / len(set(expected))\n"
                 "    return calculate()\n"
             ),
         }
@@ -332,7 +231,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 )
             self.assertEqual(process.returncode, 0, process.stderr)
 
-    def test_fails_closed_for_signature_sdk_cannot_bind(self) -> None:
+    def test_requires_explicit_calibration_adapter_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "unbound_scorer.py"
             scorer.write_text(
@@ -346,7 +245,10 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             )
         self.assertEqual(process.returncode, 1)
         self.assertIn("TypeError:", process.stderr)
-        self.assertIn("unsupported_required", process.stderr)
+        self.assertIn(
+            "calibration adapter must accept keyword arguments", process.stderr
+        )
+        self.assertIn("instead of relying on SDK callback aliases", process.stderr)
 
     def test_matrix_fails_when_a_case_dependent_scorer_only_passes_first_case(
         self,
@@ -758,7 +660,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "threshold_scorer.py"
             scorer.write_text(
-                "def score(output, expected):\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
                 "    return {'good': 0.70, 'equivalent': 0.65, "
                 "'partial': 0.40, 'bad': 0.30}[output]\n"
             )
@@ -853,7 +755,7 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "raising_scorer.py"
             scorer.write_text(
-                "def score(output, expected):\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
                 "    raise ValueError('rubric label missing')\n"
             )
             process = subprocess.run(
@@ -869,7 +771,8 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "nonnumeric_scorer.py"
             scorer.write_text(
-                "def score(output, expected):\n" "    return {'grade': 'pass'}\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    return {'grade': 'pass'}\n"
             )
             process = subprocess.run(
                 [*self.command(scorer), "--allow-execution"],

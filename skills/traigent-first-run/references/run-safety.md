@@ -63,9 +63,9 @@ Use this gate order:
 2. If unresolved product-grading ambiguity would materially change correctness or candidate
    ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
    that no material ambiguity remains and continue without a generic semantic-review stop.
-3. Run the bundled static preflight with dataset, agent, and scorer arguments. Record dataset
-   structure, dataset-agent binding, and scorer-signature results independently of SDK/package
-   findings. A missing Traigent SDK cannot block these standard-library-only component checks.
+3. Run the bundled static preflight with the dataset argument. Record local structure and quality
+   findings independently of SDK/package findings. This pass does not claim exact SDK
+   compatibility, and a missing Traigent SDK cannot block it.
 4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
    `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
@@ -76,9 +76,13 @@ Use this gate order:
    required.
 6. Create the isolated environment with Python 3.11-3.13 without fetching packages.
 7. Install the exact declared dependencies under the narrow package-artifact authorization.
-8. Verify the installed SDK and its public signatures, then write the SDK integration from those
-   verified capabilities. Run any local deterministic calibration deferred solely for an
-   installed dependency.
+8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
+   a public no-execution contract validator when the installed version provides one. Let those
+   public paths own normalization, injection, agent-call, and evaluator-callback behavior. Never
+   mirror SDK aliases or binding fallbacks in the first-run skill. If the installed version lacks
+   a full no-execution contract validator, record that limitation and use the safe mock plumbing
+   check for end-to-end compatibility. Run any local deterministic calibration deferred solely for
+   an installed dependency.
 9. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
    do not over-prescribe execution.
@@ -102,10 +106,11 @@ but it must not:
 - Make model/provider calls.
 - Contact Traigent or consume optimization quota.
 
-The static gate checks environment, package compatibility, dataset structure/quality, function
-signatures from AST, model naming, and safe configuration. During the first standard-library-only
-pass, omit optional model-pricing checks and interpret a missing SDK as a deferred SDK finding,
-not as a failure of dataset structure, dataset-agent binding, or scorer-signature checks.
+The static gate checks environment, package metadata, dataset structure/quality, model naming, and
+safe configuration. It deliberately does not decide how the SDK normalizes rows, injects
+configuration, binds agent inputs, or invokes evaluator callbacks. During the first
+standard-library-only pass, omit optional model-pricing checks and interpret a missing SDK as a
+deferred SDK finding, not as a failure of dataset-quality checks.
 
 Deterministic calibration is a separate execution gate. Run it before environment setup only when
 the assistant has recorded a `sufficient` evidence-backed semantic-coverage verdict and inspection
