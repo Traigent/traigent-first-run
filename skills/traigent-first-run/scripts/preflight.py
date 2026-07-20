@@ -802,28 +802,50 @@ def grouped_injection_settings(
     return mode, config_param
 
 
-def traigent_optimize_imports(tree: ast.Module) -> tuple[set[str], set[str]]:
-    module_aliases: set[str] = set()
-    optimize_aliases: set[str] = set()
+def traigent_optimize_imports(
+    tree: ast.Module, selected: ast.FunctionDef | ast.AsyncFunctionDef
+) -> tuple[set[str], set[str]]:
+    bindings: dict[str, str] = {}
     for item in tree.body:
+        if item is selected:
+            break
         if isinstance(item, ast.Import):
             for alias in item.names:
-                if alias.name == "traigent" or alias.name.startswith("traigent."):
-                    module_aliases.add(alias.asname or alias.name.split(".", 1)[0])
-        elif isinstance(item, ast.ImportFrom) and (
-            item.module == "traigent" or (item.module or "").startswith("traigent.")
-        ):
+                bound_name = alias.asname or alias.name.split(".", 1)[0]
+                provenance = (
+                    "module"
+                    if alias.name == "traigent" or alias.name.startswith("traigent.")
+                    else "other"
+                )
+                bindings[bound_name] = provenance
+        elif isinstance(item, ast.ImportFrom):
             for alias in item.names:
-                if alias.name == "optimize":
-                    optimize_aliases.add(alias.asname or alias.name)
-    return module_aliases, optimize_aliases
+                if alias.name == "*":
+                    continue
+                bound_name = alias.asname or alias.name
+                is_traigent_optimize = (
+                    item.module == "traigent"
+                    or (item.module or "").startswith("traigent.")
+                ) and alias.name == "optimize"
+                bindings[bound_name] = "optimize" if is_traigent_optimize else "other"
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings[item.name] = "other"
+        elif isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = "other"
+    return (
+        {name for name, provenance in bindings.items() if provenance == "module"},
+        {name for name, provenance in bindings.items() if provenance == "optimize"},
+    )
 
 
 def optimize_injection_settings(
     node: ast.FunctionDef | ast.AsyncFunctionDef, tree: ast.Module
 ) -> tuple[str | None, str | None]:
     """Extract the selected function's literal Traigent optimize injection mode."""
-    module_aliases, optimize_aliases = traigent_optimize_imports(tree)
+    module_aliases, optimize_aliases = traigent_optimize_imports(tree, node)
 
     def is_traigent_optimize(decorator: ast.expr) -> bool:
         if not isinstance(decorator, ast.Call):

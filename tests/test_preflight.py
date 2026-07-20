@@ -751,6 +751,64 @@ class StaticPreflightTests(unittest.TestCase):
             MODULE.RESULTS,
         )
 
+    def test_optimize_alias_uses_last_top_level_binding(self) -> None:
+        prefixes = {
+            "unrelated-import": (
+                "from traigent import optimize as tune\n"
+                "from unrelated_optimizer import optimize as tune\n"
+            ),
+            "assignment": (
+                "from traigent import optimize as tune\n"
+                "tune = unrelated_optimizer.optimize\n"
+            ),
+            "function": (
+                "from traigent import optimize as tune\n"
+                "def tune(**kwargs):\n"
+                "    return lambda function: function\n"
+            ),
+        }
+        for label, prefix in prefixes.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                agent = Path(directory) / "agent.py"
+                agent.write_text(
+                    f"{prefix}"
+                    "@tune(injection_mode=DYNAMIC_MODE)\n"
+                    "def answer(payload):\n"
+                    "    return payload['message']\n"
+                )
+                MODULE.check_binding(
+                    [{"input": {"message": "hello"}, "output": "hello"}],
+                    f"{agent}:answer",
+                )
+            self.assertFalse(
+                any(result.status == MODULE.FAIL for result in MODULE.RESULTS),
+                MODULE.RESULTS,
+            )
+            MODULE.RESULTS.clear()
+
+    def test_optimize_alias_recognizes_later_traigent_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent.py"
+            agent.write_text(
+                "from unrelated_optimizer import optimize as tune\n"
+                "from traigent import optimize as tune\n"
+                "@tune(injection_mode=DYNAMIC_MODE)\n"
+                "def answer(payload):\n"
+                "    return payload['message']\n"
+            )
+            MODULE.check_binding(
+                [{"input": {"message": "hello"}, "output": "hello"}],
+                f"{agent}:answer",
+            )
+        self.assertTrue(
+            any(
+                result.status == MODULE.FAIL
+                and "cannot be resolved statically" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            MODULE.RESULTS,
+        )
+
     def test_parameter_injection_validates_config_parameter(self) -> None:
         sources = {
             "missing": (
