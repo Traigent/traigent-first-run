@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -70,6 +72,80 @@ class StaticPreflightTests(unittest.TestCase):
         result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
         self.assertEqual(result.status, MODULE.PASS)
 
+    def test_sdk_check_can_defer_an_expected_preinstall_absence(self) -> None:
+        with mock.patch.object(
+            MODULE, "version", side_effect=MODULE.PackageNotFoundError
+        ):
+            MODULE.check_sdk(defer_missing=True)
+        result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+        self.assertEqual(result.status, MODULE.SKIP)
+        self.assertIn("after installation", result.detail)
+
+    def test_sdk_check_still_fails_on_missing_sdk_without_defer(self) -> None:
+        with mock.patch.object(
+            MODULE, "version", side_effect=MODULE.PackageNotFoundError
+        ):
+            MODULE.check_sdk()
+        result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+        self.assertEqual(result.status, MODULE.FAIL)
+
+    def test_deferred_preinstall_pass_exits_zero_when_sdk_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    str(SCRIPT),
+                    "--env",
+                    str(Path(directory) / ".env"),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+            ), mock.patch.object(
+                MODULE, "version", side_effect=MODULE.PackageNotFoundError
+            ):
+                with redirect_stdout(io.StringIO()):
+                    exit_code = MODULE.main()
+        self.assertEqual(exit_code, 0)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_env_permissions_reject_group_or_world_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.chmod(0o664)
+            MODULE.check_env_permissions(env_path)
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "env-permissions"
+        )
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("0600", result.detail)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_env_permissions_accept_owner_only_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.chmod(0o600)
+            MODULE.check_env_permissions(env_path)
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "env-permissions"
+        )
+        self.assertEqual(result.status, MODULE.PASS)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_env_permissions_reject_owner_execute_bits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.chmod(0o700)
+            MODULE.check_env_permissions(env_path)
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "env-permissions"
+        )
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("0700", result.detail)
+
     def test_sdk_check_rejects_obsolete_and_unvalidated_versions(self) -> None:
         for installed in ("0.0.1", "0.24.0", "0.25.1"):
             with self.subTest(installed=installed):
@@ -107,6 +183,32 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIsNotNone(rows)
         failures = [result for result in MODULE.RESULTS if result.status == MODULE.FAIL]
         self.assertEqual(failures, [])
+        tuning = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
+        )
+        holdout = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-holdout-resolution"
+        )
+        self.assertEqual(tuning.status, MODULE.PASS)
+        self.assertIn("18 tuning rows", tuning.detail)
+        self.assertEqual(holdout.status, MODULE.WARN)
+        self.assertIn("16.7 percentage points", holdout.detail)
+
+    def test_combined_dataset_reports_a_small_tuning_split(self) -> None:
+        rows = synthetic_rows()[:12]
+        for index, row in enumerate(rows):
+            row["split"] = "tune" if index < 8 else "holdout"
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        tuning = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
+        )
+        self.assertEqual(tuning.status, MODULE.WARN)
+        self.assertIn("8 tuning rows", tuning.detail)
 
     def test_explicit_local_quality_fields_do_not_rewrite_dataset(self) -> None:
         rows = [

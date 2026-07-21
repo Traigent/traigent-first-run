@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, run an honest current-configuration baseline plus one bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 ---
 
 # Traigent Guided First Run
@@ -60,7 +60,7 @@ approval.
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
-| Create a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run; include only the selected provider and Traigent key names, leave both blank, and stop once for local secret entry. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, and unrelated keys; append only missing selected-provider and Traigent key names with blank values. Before opening it, require mode `0600` on POSIX, then stop once for local secret entry. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -217,7 +217,8 @@ Follow this order:
    ambiguity remains and proceed without a generic review pause. A clarification does not
    authorize changing real labels, expected answers, examples, or rubric policy; show any exact
    judgment-dependent change and obtain the explicit approval required by the action table.
-3. Run the bundled static preflight with the dataset argument so local structure and quality
+3. Run the bundled static preflight with `--defer-missing-sdk` and the combined dataset argument
+   so local structure and quality
    problems are checked without importing user modules. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
@@ -227,8 +228,9 @@ Follow this order:
    is local-only, has no external side effects, and needs no unavailable third-party package.
    Execute it in the isolated subprocess with provider credentials removed.
 
-A missing Traigent SDK or optional provider package may make the preflight report its SDK check as
-deferred or failed, but it must not block independent dataset-quality or safe
+A missing Traigent SDK is `SKIP` in this explicitly deferred pre-install pass; an installed but
+unsupported SDK remains a failure. A missing optional provider package may defer its own check.
+Neither condition may block independent dataset-quality or safe
 deterministic-calibration results. Record those component results separately. Do not reproduce
 SDK dataset normalization, injection, agent-binding, or evaluator-callback rules in this skill.
 
@@ -274,17 +276,23 @@ Only after the standard-library-only component checks:
    normalization, injection, agent-call, and evaluator-callback decisions. If the installed SDK
    exposes a public no-execution evaluation-contract validator, use it. Otherwise do not claim
    exhaustive static compatibility; finish the check with the safe mock plumbing step below. Never
-   recreate SDK binding or callback fallbacks in first-run code. A missing SDK may block only these
+   recreate SDK binding or callback fallbacks in first-run code. Normalize dataset paths to
+   resolved absolute paths before passing them to SDK 0.25.0's public validator; its nested-relative
+   path defect is tracked upstream. A missing SDK may block only these
    SDK and mock checks, not the component checks already recorded.
 5. Run any safe deterministic calibration that was deferred solely for an installed local
    dependency. Then run a fresh-process Traigent mock plumbing check only when every model call is
    known to be intercepted. Raw provider clients, external evaluators, subprocesses, HTTP
    services, tools, and custom judges are not free merely because mock mode is enabled. Exit the
    mock process and never reuse it for a real run.
-6. After every applicable free check is complete, create the minimal `.env` with blank entries for
-   the selected provider key and Traigent portal key. Stop once and ask the user to enter both
-   locally, never in chat. If the portal key is not yet available, provide only the required
-   account/key destination and resume from this step afterward.
+6. After every applicable free check is complete, create the minimal `.env` when none exists, or
+   append only missing selected-provider and Traigent key names to the existing file. Leave new
+   entries blank; never replace existing values, comments, unrelated keys, or blank alternate
+   provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; correct
+   any other existing mode before opening the file.
+   Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
+   yet available, provide only the required account/key destination and resume from this step
+   afterward.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
@@ -305,7 +313,8 @@ Do not ask the user to choose cost, retries, or timeout settings during discover
 Prepare one concise combined approval immediately before paid work containing:
 
 - What will run: the smallest live provider/key check, any required LLM-judge calibration,
-  current-configuration baseline, one bounded optimization, and current-versus-winner holdout.
+  the preserved baseline or a generated six-row sweep, one broader bounded optimization, and
+  baseline winner versus enhanced winner holdout comparison.
 - Tuning/holdout sizes, trial limit, and approximate total calls.
 - Approximate runtime and estimated spend.
 - A `$5.00` total walkthrough ceiling by default.
@@ -314,10 +323,12 @@ Prepare one concise combined approval immediately before paid work containing:
 - What leaves the machine and every service or route that may receive it. For OpenRouter, name
   OpenRouter plus every allowed upstream inference provider/route and disclose fallback behavior.
 
-If the estimated first run exceeds `$5.00` or is materially long, recommend a smaller
-representative tuning slice or fewer trials while preserving meaningful difficulty and a holdout.
-Ask about a larger/longer run only when the user prefers it. Proceed after one explicit approval.
-Keep approval in the current process only; never persist a cost-approval flag in `.env`.
+If the estimated first run exceeds `$5.00` or is materially long, first recommend a smaller
+representative tuning slice while preserving meaningful difficulty and a holdout. Reduce the
+generated six-row baseline or the 10-13-trial enhanced target only when the approved ceiling,
+runtime, or plan quota still binds, and disclose that reduced comparison in the approval. Ask
+about a larger/longer run only when the user prefers it. Proceed after one explicit approval. Keep
+approval in the current process only; never persist a cost-approval flag in `.env`.
 
 Use the installed SDK's default per-optimization cost limit unless it exceeds the remaining total
 walkthrough ceiling; if it does, lower the process-only per-run limit. The SDK owns optimization
@@ -344,15 +355,30 @@ requesting more time.
 
 ### 7. Run the honest comparison
 
-Use the same tuning slice and evaluator for both measurements:
+Use the same tuning slice, evaluator, objectives, and agent call path for both measurements:
 
-1. **Current baseline** - the agent's actual current configuration. If no real agent exists, use
-   the generated walkthrough agent's initial configuration and label it as such.
-2. **Traigent optimization** - one bounded search that includes the baseline configuration.
+1. **Baseline** - preserve the user's existing baseline or fixed configuration exactly as defined,
+   including its original row count. Do not add variants to make it look fuller. Only when the
+   configuration is missing and Traigent creates it, generate a credible quick manual-style sweep
+   of six distinct configurations: by default, two credible models by three safe temperature
+   values, with enhanced-only controls pinned to their ordinary/off values.
+2. **Enhanced Traigent optimization** - a materially larger space that contains every baseline
+   value and adds meaningful controls that the agent actually consumes. Target 10-13 visible
+   trials, using 12 as the internal default cap. For the generated walkthrough, add prompt-policy
+   choices and a native boolean self-check control without adding another model call. For a real
+   agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
+   context format, few-shot count, tool policy, or repair behavior.
 
 Run both connected once when the user wants portal comparison. Do not run an offline baseline and
-then pay to repeat it merely to populate the portal. A one-configuration baseline is the honest
-"before."
+then pay to repeat it merely to populate the portal. Do not ask the user to choose trial counts or
+knobs; select them from the inspected agent and include their calls in the combined approval.
+Every knob must change real behavior, native booleans must stay booleans, and the enhanced space
+must be materially larger than its trial cap so Traigent is choosing what to test rather than
+replaying the same tiny grid.
+
+Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
+one-row before and stays unchanged. A Traigent-generated walkthrough must not proceed with a one-
+row baseline; generate enough real controls for the six-configuration default.
 
 After the baseline, check whether the dataset and evaluator can distinguish configurations. If
 the baseline is perfect or nearly perfect and has no informative failures, stop before the search
@@ -360,7 +386,7 @@ and explain the likely ceiling effect. Recommend adding realistic boundary, fail
 cases, then revalidate. Continue only if the user accepts that the run is a workflow
 demonstration and may have no measurable room to improve.
 
-Do not require a second enhanced pass. Recommend another iteration only after the first result
+Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
 
 ### 8. Verify and report
@@ -369,7 +395,12 @@ Before saying the run succeeded, verify:
 
 - Trials executed and no silent mock response leaked into the real run.
 - Real provider cost is positive or explicitly reported as untracked.
-- The baseline configuration was evaluated.
+- The user's existing baseline was preserved exactly, or the Traigent-generated baseline produced
+  six distinct rows including its initial configuration. If the approved plan explicitly reduced
+  that default, the executed count matches the disclosed reduction and still includes the initial
+  configuration.
+- The enhanced run added real controls and produced 10-13 trials by default, matched an explicitly
+  approved and disclosed reduced target, or has a concrete SDK stop reason or failure explanation.
 - The optimized result has a best configuration and non-degenerate measures.
 - No trial silently truncated.
 - Portal persistence completed or a precise degraded/failed state is reported.
@@ -377,7 +408,7 @@ Before saying the run succeeded, verify:
 
 Report:
 
-- Baseline versus best configuration on the tuning set.
+- Best small-sweep configuration versus best enhanced configuration on the tuning set.
 - Holdout result separately, when a valid holdout exists.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.

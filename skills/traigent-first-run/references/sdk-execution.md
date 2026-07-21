@@ -7,8 +7,8 @@ Use this reference after component creation and before writing the run wrapper.
 1. Capability discovery
 2. Automatic run bounds
 3. Decorator contract
-4. Current baseline
-5. Bounded optimization
+4. Small baseline sweep
+5. Broader optimization
 6. Holdout and result checks
 
 ## Capability discovery
@@ -90,6 +90,9 @@ from dotenv import load_dotenv
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
+if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
+    os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
 
 import litellm
 import traigent
@@ -126,8 +129,14 @@ def positive_number(name: str, *, default: float | None = None) -> float:
     return value
 
 
-def positive_int(name: str) -> int:
-    value = int(os.environ[name])
+def positive_int(name: str, *, default: int | None = None) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        if default is None:
+            raise ValueError(f"{name} is required")
+        value = default
+    else:
+        value = int(raw_value)
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value
@@ -143,7 +152,14 @@ BASELINE_TIMEOUT_SECONDS = positive_number(
 OPTIMIZATION_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS"
 )
-MAX_TRIALS = positive_int("TRAIGENT_FIRST_RUN_MAX_TRIALS")
+BASELINE_TRIALS = positive_int(
+    "TRAIGENT_FIRST_RUN_BASELINE_TRIALS",
+    default=6,
+)
+ENHANCED_MAX_TRIALS = positive_int(
+    "TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS",
+    default=12,
+)
 
 
 def require_current_route_credential() -> None:
@@ -165,15 +181,39 @@ BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
     "temperature": 0.0,
     "prompt_style": "direct",
+    "self_check": False,
 }
-SEARCH_SPACE = {
+BASELINE_SPACE = {
     "model": [
         BASELINE_CONFIG["model"],
         SELECTED_ALTERNATIVE_MODEL,
     ],
-    "temperature": [BASELINE_CONFIG["temperature"], 0.2],
-    "prompt_style": [BASELINE_CONFIG["prompt_style"], "structured"],
+    # Nonzero values are safe only when the evaluator tolerates valid surface variation.
+    # Otherwise pin 0.0 and substitute other real controls to retain the planned row count.
+    "temperature": [BASELINE_CONFIG["temperature"], 0.2, 0.4],
+    "prompt_style": [BASELINE_CONFIG["prompt_style"]],
+    "self_check": [BASELINE_CONFIG["self_check"]],
 }
+ENHANCED_SPACE = {
+    "model": BASELINE_SPACE["model"],
+    "temperature": BASELINE_SPACE["temperature"],
+    "prompt_style": [
+        BASELINE_CONFIG["prompt_style"],
+        "structured",
+        "criteria_first",
+    ],
+    "self_check": [False, True],
+}
+
+
+def configuration_count(space: dict[str, list]) -> int:
+    return math.prod(len(values) for values in space.values())
+
+
+assert SELECTED_ALTERNATIVE_MODEL != SELECTED_CURRENT_MODEL
+assert configuration_count(BASELINE_SPACE) == 6
+assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
+assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
@@ -185,15 +225,27 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 )
 
 
-def build_prompt(message: str, *, style: str) -> str:
+def build_prompt(message: str, *, style: str, self_check: bool) -> str:
     if style == "direct":
-        return message
-    if style == "structured":
-        return (
+        prompt = message
+    elif style == "structured":
+        prompt = (
             "Complete the task below. Follow every requested output constraint and return only "
             f"the requested result.\n\nTask:\n{message}"
         )
-    raise ValueError(f"unsupported prompt style: {style}")
+    elif style == "criteria_first":
+        prompt = (
+            "Identify the task's decision criteria, apply each criterion carefully, and return "
+            f"only the requested result.\n\nTask:\n{message}"
+        )
+    else:
+        raise ValueError(f"unsupported prompt style: {style}")
+    if self_check:
+        prompt += (
+            "\n\nBefore returning the result, silently check it against the task constraints "
+            "and correct any mismatch. Do not include the check in the response."
+        )
+    return prompt
 
 
 def task_score(prediction, expected, input_data) -> float:
@@ -233,7 +285,11 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
         messages=[
             {
                 "role": "user",
-                "content": build_prompt(message, style=config["prompt_style"]),
+                "content": build_prompt(
+                    message,
+                    style=config["prompt_style"],
+                    self_check=config["self_check"],
+                ),
             }
         ],
     )
@@ -243,7 +299,7 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
 
 @traigent.optimize(
     objectives=OBJECTIVES,
-    configuration_space=SEARCH_SPACE,
+    configuration_space=ENHANCED_SPACE,
     evaluation=EvaluationOptions(
         eval_dataset=TUNING_DATASET,
         metric_functions={"task_success": task_score},
@@ -256,13 +312,31 @@ def agent(message: str) -> str:
 ```
 
 The process-only values above are selected by the coding assistant from the inspected project and
-live-probe observation; they are not questions for the user. Derive
+live-probe observation; they are not questions for the user. The generated walkthrough defaults
+to six baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
+time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing the
+comparison back to one-versus-two rows. Derive
 `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` from the current agent call, not from which credential names
 happen to exist. Call `require_current_route_credential()` immediately before the approved live
 probe. If another provider's credential is present instead, stop with the mismatch; never rewrite
 the current model identifier or provider prefix silently. Keep the real current model and parameter
-values in `BASELINE_CONFIG` and every corresponding search dimension. Every search variable must
-affect the actual agent call.
+values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced dimension. Select
+the alternative from the same approved provider route when generating the walkthrough; a new route
+or recipient requires revised data-egress approval. Every search variable must affect the actual
+agent call.
+
+The concrete spaces above are the generated classification/extraction walkthrough default, not a
+template to force onto every real agent. Its baseline performs a credible six-point standard
+sweep: two live models by three evaluator-safe temperatures, with the added prompt controls pinned
+to the current behavior. The enhanced space keeps all of those values and adds two real one-call
+controls: three prompt policies and a native boolean self-check branch. That creates 36 possible
+configurations, so a 12-trial managed run has meaningful choices to make.
+
+When the user already has a baseline or fixed current configuration, preserve that baseline space
+and its row count exactly; do not expand it to six. Add task-relevant controls only to the enhanced
+space, based on the existing agent and observed failure modes. Useful additions include context
+format, retrieval depth, few-shot count, tool policy, or repair behavior. Do not add no-op fields,
+string-encoded booleans, or multi-call composite behavior merely to increase the portal row count.
 
 Use the provider's public response cost when it is present. The fallback above reads OpenRouter's
 provider-reported response-cost header as surfaced by LiteLLM. Do not call
@@ -280,33 +354,36 @@ example metadata or full control of agent execution, use the installed SDK's pub
 evaluator instead. The baseline, search, and holdout must use the same selected public evaluation
 path.
 
-## Current baseline
+## Small baseline sweep
 
-Run the actual current configuration as one connected grid point:
+For the generated walkthrough, run the credible small space as one connected grid. The generated
+initial configuration must be one of its points:
 
 ```python
-os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run current configuration"
+os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run standard sweep"
 require_current_route_credential()
-baseline_space = {name: [value] for name, value in BASELINE_CONFIG.items()}
 baseline_results = agent.optimize_sync(
     algorithm="grid",
-    configuration_space=baseline_space,
-    max_trials=1,
+    configuration_space=BASELINE_SPACE,
+    max_trials=BASELINE_TRIALS,
     timeout=BASELINE_TIMEOUT_SECONDS,
     save_to=BASELINE_RESULTS,
 )
 ```
 
-If the installed SDK counts an implicit/default trial separately, size `max_trials` from observed
-behavior so the current configuration actually executes. Verify it appears in returned trials.
-For an existing agent without explicit configuration values, create a thin wrapper whose baseline
-branch calls the original behavior unchanged.
+Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
+truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
+appears in the returned trials. If the combined approval explicitly reduced that default, verify
+the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
+existing user-owned baseline, replace the generated example's
+`BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A
+real one-row fixed configuration remains one row; never manufacture variants around it.
 
 After the baseline, add its tracked cost to the single running total. If cost is unavailable,
 deduct the conservative estimate. Do not start the search if it cannot fit the remaining total
 ceiling.
 
-## Bounded optimization
+## Broader optimization
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 
@@ -314,15 +391,19 @@ Run one connected search using the same decorated function, tuning dataset, and 
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
 optimized_results = agent.optimize_sync(
     algorithm="auto",
-    configuration_space=SEARCH_SPACE,
-    max_trials=MAX_TRIALS,
+    configuration_space=ENHANCED_SPACE,
+    max_trials=ENHANCED_MAX_TRIALS,
     timeout=OPTIMIZATION_TIMEOUT_SECONDS,
     save_to=OPTIMIZED_RESULTS,
 )
 ```
 
 Do not enable mock mode in this process. The optimization space must include the current
-configuration.
+configuration and every baseline value, plus meaningful added knobs that the function consumes.
+`max_trials` is a cap rather than an SDK-enforced minimum. The default target is 10-13 visible
+enhanced rows with a cap of 12; report the actual count and stop reason. Fewer than 10 rows requires
+a concrete backend stop, timeout, cost-limit, or failure explanation rather than being presented as
+the intended first-run comparison.
 
 When `stop_reason == "timeout"` and trials completed, retain and report the best partial result.
 Offer another bounded pass only when the search was still improving or left a specific worthwhile
@@ -332,11 +413,24 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 ## Holdout and result checks
 
-Evaluate the unchanged current configuration and selected best configuration on the untouched
-holdout with the same agent path and evaluator. A holdout check is not another optimization
-search:
+Evaluate the selected small-sweep configuration and selected enhanced configuration on the
+untouched holdout with the same agent path and evaluator. A holdout check is not another
+optimization search. Generate `holdout_agent_input` from the installed public loader's observed
+`input_data` shape and the inspected agent signature. The canonical `input`/`output` JSONL shape
+loads a scalar; the mapping branch below is only for the example agent's explicit `message` input
+contract, not an SDK alias:
 
 ```python
+def holdout_agent_input(input_data) -> str:
+    if isinstance(input_data, str):
+        return input_data
+    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
+        return input_data["message"]
+    raise TypeError(
+        "Holdout input does not match the inspected agent(message: str) contract"
+    )
+
+
 def evaluate_holdout(config: dict) -> tuple[float, float]:
     scores = []
     tracked_cost = 0.0
@@ -344,13 +438,15 @@ def evaluate_holdout(config: dict) -> tuple[float, float]:
     for example in holdout.examples:
         input_data = example.input_data
         expected = example.expected_output
-        output, call_cost = call_agent(input_data["message"], config)
+        output, call_cost = call_agent(holdout_agent_input(input_data), config)
         scores.append(task_score(output, expected, input_data))
         tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
 
-baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(BASELINE_CONFIG)
+baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(
+    baseline_results.best_config
+)
 winner_holdout_score, winner_holdout_cost = evaluate_holdout(
     optimized_results.best_config
 )
@@ -366,12 +462,17 @@ Before reporting:
 ```python
 assert baseline_results.trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
+assert baseline_results.best_config is not None, "no baseline winner selected"
 assert optimized_results.best_config is not None, "no best configuration selected"
 assert baseline_results.cloud_url is not None, "baseline is not available in the portal"
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
-Also inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
+Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
+returned all six intended distinct rows including its initial configuration. For an explicitly
+approved reduced plan, verify the disclosed lower count and initial configuration instead. Verify
+that the enhanced run returned 10-13 rows, the disclosed reduced target, or a concrete shortfall
+reason. Inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
 persistence status as defined in `run-safety.md`. Keep both experiments in the portal and report
 their direct `cloud_url` values; portal experiment deletion is never walkthrough teardown and
 requires a later explicit user request. Do not apply the best configuration automatically. Export

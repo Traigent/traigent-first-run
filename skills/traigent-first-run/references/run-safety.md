@@ -20,11 +20,12 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
   than asking the user to choose an environment name.
 - Keep dependency installation as its own action class. It may proceed without another approval
-  only inside that environment, from the exact packages and versions recorded for the
-  run, as a package-artifact-only fetch/install with no provider or Traigent calls, private-data
-  transfer, or user/project code execution. Prefer a fully pinned, hash-checked requirements file
-  and wheels; stop if fulfilling it requires source builds, undeclared packages, or code
-  execution. A user or environment install-approval policy still takes precedence.
+  only inside that environment, from the exact packages and versions recorded for the top-level
+  requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
+  with no provider or Traigent calls, private-data transfer, or user/project code execution. Prefer
+  a fully pinned, hash-checked requirements file and wheels; stop if fulfilling it requires source
+  builds, additional undeclared top-level packages, or code execution. A user or environment
+  install-approval policy still takes precedence.
 - If the project has no compatible exact SDK declaration, install the tested pins from
   `assets/requirements-first-run.txt`. Never run an unversioned `pip install traigent`: on an
   unsupported interpreter, package resolution can select the unrelated obsolete `0.0.1` release.
@@ -35,7 +36,9 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
 - After every applicable free component, capability, and safe mock check, build one minimal `.env`
-  with blank selected-provider and Traigent key entries. Stop once for both local secret pastes.
+  with blank selected-provider and Traigent key entries. If it exists, preserve existing values,
+  comments and unrelated keys and append only missing blank entries. Before opening it, require
+  mode `0600` on POSIX. Stop once for both local secret pastes.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
@@ -68,9 +71,10 @@ Use this gate order:
 2. If unresolved product-grading ambiguity would materially change correctness or candidate
    ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
    that no material ambiguity remains and continue without a generic semantic-review stop.
-3. Run the bundled static preflight with the dataset argument. Record local structure and quality
-   findings independently of SDK/package findings. This pass does not claim exact SDK
-   compatibility, and a missing Traigent SDK cannot block it.
+3. Run the bundled static preflight with `--defer-missing-sdk` and the combined dataset argument.
+   Record local structure, per-split size/resolution, and quality findings independently of
+   SDK/package findings. This pass does not claim exact SDK compatibility, and a missing Traigent
+   SDK cannot block it.
 4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
    `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
@@ -91,15 +95,17 @@ Use this gate order:
 8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
    a public no-execution contract validator when the installed version provides one. Let those
    public paths own normalization, injection, agent-call, and evaluator-callback behavior. Never
-   mirror SDK aliases or binding fallbacks in the first-run skill. If the installed version lacks
+   mirror SDK aliases or binding fallbacks in the first-run skill. Pass resolved absolute paths to
+   SDK 0.25.0's public dataset validator as a temporary workaround for its tracked nested-relative
+   path defect. If the installed version lacks
    a full no-execution contract validator, record that limitation and use the safe mock plumbing
    check for end-to-end compatibility. Run any local deterministic calibration deferred solely for
    an installed dependency.
 9. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
    do not over-prescribe execution.
-10. After every applicable free check is complete, create the minimal `.env` with blank selected
-    provider and Traigent key entries, then stop once for both local secret pastes.
+10. After every applicable free check is complete, create the minimal `.env` or minimally update
+    the existing one securely as described above, then stop once for both local secret pastes.
 11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
 12. After approval, run the live check first. Continue only if it passes.
@@ -161,8 +167,9 @@ provider/SDK usage record.
 Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
 paid/provider work, show one concise approval for the full planned first run:
 
-- The smallest live provider/key check, any required LLM-judge calibration, baseline, one
-  optimization, and current-versus-winner holdout.
+- The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
+  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced
+  winner holdout.
 - Dataset rows, maximum trials, and approximate total agent/evaluator calls.
 - Approximate runtime and estimated spend.
 - One total walkthrough ceiling, defaulting to `$5.00`.
@@ -216,28 +223,45 @@ for SDK-managed baseline/search cost.
 
 Use one honest comparison:
 
-1. Baseline: the current configuration exactly.
-2. Optimization: one bounded search containing that current configuration.
+1. Baseline: the user's existing baseline or fixed configuration exactly as defined. Only when
+   Traigent creates the missing configuration, use a credible six-row manual-style sweep that
+   includes the generated initial configuration.
+2. Optimization: one broader search containing all baseline values plus meaningful added knobs,
+   targeting 10-13 visible trials with an internal default cap of 12.
 
 Use the same tuning slice, evaluator, objective definitions, and call path for both. Run both
 connected once if portal comparison matters. Do not:
 
-- Create a 4-8 configuration "manual baseline" unless that sweep is genuinely the current
-  production selection process.
 - Run a local baseline and then pay to repeat it only for portal appearance.
-- Intentionally weaken the baseline.
-- Require a second optimization pass before showing the first result.
+- Intentionally weaken the baseline or replace user-defined values with strawman choices.
+- Add a variable that does not affect the agent merely to manufacture portal rows.
+- Require a third optimization pass before showing the result.
 - Compare different datasets or evaluators.
 
-Keep the configuration space tied to observed failure modes. A knob that does not influence the
-agent code is not a real optimization variable. Pin temperature to 0 for frail exact/case-sensitive
-metrics unless the evaluator explicitly tolerates surface variation.
+Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
+space unchanged, even when it contains one row. For a generated walkthrough, the default small
+space is two credible models by three safe temperature values, with prompt policy and self-check
+fixed to ordinary/off values. The enhanced space retains those values and adds multiple prompt
+policies plus a native boolean self-check branch, producing dozens of possible configurations
+while Traigent tests 12 by default. For preserved agents, add task-relevant controls only to the
+enhanced space, such as context format, retrieval depth, few-shot count, tool policy, or repair
+behavior; do not force the generated example's controls onto an unrelated task.
 
-Managed `auto` is a guided search, not an exhaustive grid: it may revisit a configuration and may
-not try every combination within a small trial budget. The separate one-point baseline run
-guarantees the current configuration was measured. If the user specifically needs every
-combination in a small space, use connected `grid` only after the installed SDK confirms that
-local proposal execution still syncs results; otherwise state that the search is non-exhaustive.
+A knob that does not influence the agent code is not a real optimization variable. Native boolean
+knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
+sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
+controls to keep the baseline meaningful in that case. Multi-call composite controls multiply
+cost and require a concrete failure-mode justification; the generated default's self-check stays
+within one provider call.
+
+Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
+so the service can stop with fewer trials. For a generated baseline, use connected `grid` so all
+six distinct rows are predictable. For a user-owned baseline, preserve its space and behavior
+exactly while using a connected execution path compatible with the portal comparison. Use
+connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
+count and stop reason. Fewer than 10
+enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
+present a two-row generated run as the intended comparison.
 
 Reasoning models need sufficient output-token headroom; scan for `finish_reason == "length"`.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
@@ -287,8 +311,11 @@ can look identical to a production one.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 
-Keep logs and artifacts under `traigent-runs/`. Store no secrets, raw private content in run names,
-or prompts/outputs in numeric telemetry.
+Keep assistant-created walkthrough artifacts under `traigent-runs/`. For generated wrappers, set
+the process-only SDK results folder to a child of `traigent-runs/` before importing Traigent so its
+local optimization logs and state remain inside the ignored walkthrough directory. If a preserved
+project already configures another SDK results folder, honor and record it instead. Store no
+secrets, raw private content in run names, or prompts/outputs in numeric telemetry.
 
 Privacy wording describes Traigent's documented payload contract, not an independent packet audit.
 Keep metrics, metadata, experiment names, and errors content-free. Verify the installed SDK's

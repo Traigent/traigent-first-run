@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -127,6 +128,28 @@ def read_env(path: Path) -> tuple[dict[str, str | None], dict[str, str | None]]:
     return effective, file_values
 
 
+def check_env_permissions(path: Path) -> None:
+    """Require owner-only access before a local file receives secrets."""
+    if not path.exists():
+        return
+    if os.name == "nt":
+        emit(
+            "env-permissions",
+            SKIP,
+            "POSIX mode checks are unavailable; protect this file with the platform ACL",
+        )
+        return
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode != 0o600:
+        emit(
+            "env-permissions",
+            FAIL,
+            f"{path} mode is {mode:04o}; set owner-only mode 0600 before entering secrets",
+        )
+    else:
+        emit("env-permissions", PASS, f"{path} mode is 0600")
+
+
 def check_python() -> None:
     current = (sys.version_info.major, sys.version_info.minor)
     if SUPPORTED_PYTHON_MIN <= current < SUPPORTED_PYTHON_MAX:
@@ -139,11 +162,22 @@ def check_python() -> None:
         )
 
 
-def check_sdk() -> None:
+def check_sdk(*, defer_missing: bool = False) -> None:
     try:
         installed = version("traigent")
     except PackageNotFoundError:
-        emit("sdk-version", FAIL, "traigent is not installed in the active interpreter")
+        if defer_missing:
+            emit(
+                "sdk-version",
+                SKIP,
+                "traigent is not installed yet; verify it in the isolated environment after installation",
+            )
+        else:
+            emit(
+                "sdk-version",
+                FAIL,
+                "traigent is not installed in the active interpreter",
+            )
         return
     if installed != SUPPORTED_TRAIGENT_VERSION:
         emit(
@@ -591,12 +625,13 @@ def check_dataset(
             )
 
     splits: dict[str, set[str]] = {}
+    split_counts: Counter[str] = Counter()
     for row in rows:
         split = row_metadata_value(row, "split")
         if split:
-            splits.setdefault(str(split).casefold(), set()).add(
-                normalized_text(row["input"])
-            )
+            split_name = str(split).casefold()
+            split_counts[split_name] += 1
+            splits.setdefault(split_name, set()).add(normalized_text(row["input"]))
     tune_names = {"tune", "tuning", "train", "search"}
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(
@@ -610,6 +645,26 @@ def check_dataset(
         emit("dataset-split", FAIL, f"{len(overlap)} inputs overlap tuning and holdout")
     elif tune_inputs and holdout_inputs:
         emit("dataset-split", PASS, "tuning and holdout inputs are disjoint")
+        tuning_count = sum(
+            count for name, count in split_counts.items() if name in tune_names
+        )
+        holdout_count = sum(
+            count for name, count in split_counts.items() if name in holdout_names
+        )
+        if tuning_count < 10:
+            emit(
+                "dataset-tuning-size",
+                WARN,
+                f"{tuning_count} tuning rows is a wiring check, not a credible optimization score",
+            )
+        else:
+            emit("dataset-tuning-size", PASS, f"{tuning_count} tuning rows")
+        emit(
+            "dataset-holdout-resolution",
+            WARN if holdout_count < 10 else PASS,
+            f"{holdout_count} holdout rows; one example changes the score by "
+            f"{(100 / holdout_count):.1f} percentage points",
+        )
     else:
         emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
 
@@ -701,15 +756,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--json", action="store_true", help="emit machine-readable results"
     )
+    parser.add_argument(
+        "--defer-missing-sdk",
+        action="store_true",
+        help="report an absent SDK as deferred during the mandatory pre-install component pass",
+    )
     parser.add_argument("--strict", action="store_true", help="exit 1 on warnings")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    env, file_values = read_env(Path(args.env))
+    env_path = Path(args.env)
+    env, file_values = read_env(env_path)
+    check_env_permissions(env_path)
     check_python()
-    check_sdk()
+    check_sdk(defer_missing=args.defer_missing_sdk)
     check_keys(env)
     check_cost_settings(env, file_values)
 

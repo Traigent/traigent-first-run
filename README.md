@@ -50,13 +50,17 @@ Node.js is needed only for this optional installation command, not for the Traig
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
 4. Validates compatibility and evaluator discrimination.
 5. Shows one concise runtime, cost-ceiling, and data-egress approval immediately before paid work.
-6. Evaluates the current configuration, then runs one bounded optimization when meaningful.
+6. Preserves an existing baseline or creates a credible small parameter sweep, then runs a
+   broader optimization with additional meaningful knobs when the evaluator can distinguish
+   configurations.
 7. Retains the connected experiments and reports the result, limitations, artifacts, and verified
    portal links so they remain available for comparison.
 
-The default comparison is two optimization experiments - one honest current-configuration
-baseline and one optimization - followed by an untouched holdout check. A second optimization
-pass is optional, not required.
+The default generated comparison is two connected optimization experiments: six standard
+parameter combinations in the first, then 10-13 trials from a materially broader space with added
+knobs in the second. If the user already has a baseline, the first experiment preserves it exactly
+instead of padding it with invented rows. Both runs use the same data and evaluator, followed by an
+untouched holdout check. Any later iteration is optional, not required.
 
 ## Requirements
 
@@ -66,8 +70,8 @@ pass is optional, not required.
 - One supported LLM-provider key with a small amount of credit for the real run.
 - A Traigent portal key for connected optimization and portal results.
 
-Your assistant creates a minimal `.env` for the chosen provider and asks you to paste keys there.
-Never paste secrets into chat.
+Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the
+chosen provider and Traigent, and asks you to paste the values there. Never paste secrets into chat.
 
 ## Privacy
 

@@ -47,15 +47,16 @@ discovery. Stop only for:
 
 - A genuine choice between multiple agent candidates.
 - One task-intent question when nothing anchors the walkthrough.
-- Secrets that must be pasted into a local `.env`.
+- Secrets that must be pasted into a preserved or newly created owner-only local `.env`.
 - Paid/provider calls or private-data egress.
 - Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
 
 Creating the isolated environment and minimal `.env` is separate from installing dependencies.
 A dependency install may proceed without another approval only when it is confined to that
-environment, uses the exact packages and versions already declared for the run, fetches package
-artifacts only, and permits no project/provider/Traigent code execution or private-data transfer.
+environment, uses the exact packages and versions declared at the top level plus their
+package-declared dependencies, fetches package artifacts only, and permits no
+project/provider/Traigent code execution or private-data transfer.
 A project without compatible exact declarations uses the skill's pinned first-run requirements;
 never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,
@@ -64,17 +65,24 @@ approval gates.
 
 ## Default run
 
-The default paid path uses exactly two optimization experiments with the same tuning data and
-evaluator:
+The default paid path uses exactly two connected optimization experiments with the same tuning
+data, evaluator, objectives, and agent call path:
 
-1. The agent's current configuration.
-2. One bounded Traigent optimization that includes that configuration.
+1. The user's existing baseline/configuration exactly as defined. Only when Traigent creates the
+   missing baseline does it generate a credible small sweep of six distinct standard parameter
+   combinations, including the generated current configuration.
+2. One broader Traigent optimization that contains the baseline values, adds meaningful knobs,
+   and targets 10-13 trials (12 by default) from a materially larger search space.
 
-Then compare the current and selected configurations on the untouched holdout; this is validation,
-not another optimization search. Include those calls in the combined approval.
+Then compare the two selected configurations on the untouched holdout; this is validation, not
+another optimization search. Include all calls in the combined approval. Trial counts and knob
+selection are assistant-owned implementation choices, not new user questions.
 
-Do not add an offline baseline rerun, a manual-sweep baseline, or a mandatory second optimization
-pass. Another iteration is optional after the first result identifies a specific hypothesis.
+Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
+shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
+the user actually defined. When Traigent generates the walkthrough agent and its missing baseline,
+generate enough real controls for the six-row baseline and add further controls to the enhanced
+run. Another iteration is optional only after the result identifies a specific hypothesis.
 
 ## Result interpretation
 
