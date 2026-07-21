@@ -1,0 +1,38 @@
+{
+  "id": "partial-missing-dataset",
+  "user_request": "Optimize the existing support-intent agent without replacing its evaluator.",
+  "starting_state": {
+    "agent": "real",
+    "dataset": "missing",
+    "evaluation": "real"
+  },
+  "allowed_writes": [
+    ".gitignore",
+    "traigent-runs",
+    "traigent-runs/**"
+  ],
+  "forbidden_actions": [
+    "environment_create",
+    "optimization",
+    "package_install",
+    "paid_work",
+    "portal_result",
+    "provider_call",
+    "traigent_backend_call"
+  ],
+  "expected_stop_reason": "offline_contract_complete_connected_run_required",
+  "preserve": [
+    "agent.py",
+    "evaluator.py",
+    "task-contract.md"
+  ],
+  "assertions": {
+    "dataset_rows": 24,
+    "tuning_rows": 18,
+    "holdout_rows": 6,
+    "rows_per_difficulty": 6,
+    "semantic_review": "sufficient",
+    "calibration": "pass",
+    "provenance": "synthetic-walkthrough"
+  }
+}

@@ -5,7 +5,49 @@ on:
   push:
 
 jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Acquire pinned Python runner outside the evidence boundary
+        run: >-
+          docker pull
+          python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+      - name: Run hermetic pre-network contract scenarios
+        run: |
+          mkdir -p "$RUNNER_TEMP/traigent-offline-evidence"
+          chmod 0777 "$RUNNER_TEMP/traigent-offline-evidence"
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 128 \
+            --user 65534:65534 \
+            -e TRAIGENT_OFFLINE_ISOLATED=1 \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/traigent-offline-evidence:/evidence" \
+            --tmpfs /work:rw,exec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
+            -w /repo \
+            python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de \
+            python tests/behavioral/harness.py --all --evidence-dir /evidence
+
+      - name: Upload offline contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-contract-evidence
+          path: ${{ runner.temp }}/traigent-offline-evidence
+          if-no-files-found: error
+          retention-days: 14
+
   validate:
+    needs: offline-contract
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
