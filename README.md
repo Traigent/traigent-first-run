@@ -7,7 +7,8 @@ method it finds, and checks whether those components can support a meaningful co
 real dataset or evaluator is too small, corrupted, narrow, trivial, or logically mismatched, the
 assistant explains the evidence and offers to repair a working copy and revalidate it. If Traigent
 generates temporary walkthrough material, it remains clearly marked so a demonstration is never
-mistaken for production evidence.
+mistaken for production evidence. When a real optimization does not beat your existing baseline,
+that no-lift result is reported plainly rather than dressed up as a win.
 
 ## Start with one prompt
 
@@ -29,7 +30,8 @@ Traigent generates a coherent substitute around everything that already exists.
 
 ## Install as an Agent Skill
 
-The complete guide, references, scripts, and compact internal run record are packaged together:
+The complete guide, references, scripts, and compact internal run record are packaged together as
+the same self-contained workflow the cloned-repository path runs:
 
 ```bash
 npx skills add Traigent/traigent-first-run
@@ -55,6 +57,11 @@ Node.js is needed only for this optional installation command, not for the Traig
    configurations.
 7. Retains the connected experiments and reports the result, limitations, artifacts, and verified
    portal links so they remain available for comparison.
+
+Everything before that approval - inspecting the project, setting up any missing components, and
+validating them locally - makes no provider calls and spends nothing, so the full setup is visible
+before you decide to pay. Once you approve, the run first confirms your experiments are actually
+recording to the portal and stops rather than spend on trials it cannot track.
 
 The default generated comparison is two connected optimization experiments: six standard
 parameter combinations in the first, then 10-13 trials from a materially broader space with added
