@@ -7,8 +7,12 @@ method it finds, and checks whether those components can support a meaningful co
 real dataset or evaluator is too small, corrupted, narrow, trivial, or logically mismatched, the
 assistant explains the evidence and offers to repair a working copy and revalidate it. If Traigent
 generates temporary walkthrough material, it remains clearly marked so a demonstration is never
-mistaken for production evidence. When a real optimization does not beat your existing baseline,
-that no-lift result is reported plainly rather than dressed up as a win.
+mistaken for production evidence. When an optimization does not beat your existing baseline, that
+no-lift result is reported plainly rather than dressed up as a win - together with the likely
+reason, such as a ceiling effect, an over-strict or too-easy evaluator, or generated walkthrough
+data with no real headroom, where every configuration scores the same in both runs. A flat result
+on demonstration data shows the workflow ran honestly, not that your production workload has
+nothing to gain - on real data the same run would likely look different.
 
 ## Start with one prompt
 
