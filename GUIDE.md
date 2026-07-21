@@ -47,15 +47,16 @@ discovery. Stop only for:
 
 - A genuine choice between multiple agent candidates.
 - One task-intent question when nothing anchors the walkthrough.
-- Secrets that must be pasted into a local `.env`.
+- Secrets that must be pasted into a preserved or newly created owner-only local `.env`.
 - Paid/provider calls or private-data egress.
 - Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
 
 Creating the isolated environment and minimal `.env` is separate from installing dependencies.
 A dependency install may proceed without another approval only when it is confined to that
-environment, uses the exact packages and versions already declared for the run, fetches package
-artifacts only, and permits no project/provider/Traigent code execution or private-data transfer.
+environment, uses the exact packages and versions declared at the top level plus their
+package-declared dependencies, fetches package artifacts only, and permits no
+project/provider/Traigent code execution or private-data transfer.
 A project without compatible exact declarations uses the skill's pinned first-run requirements;
 never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,

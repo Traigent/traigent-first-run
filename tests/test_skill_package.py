@@ -545,6 +545,23 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("every allowed upstream inference provider/route", skill_text)
         self.assertIn("disable fallbacks", safety_text)
 
+    def test_secret_file_is_preserved_and_owner_only_before_entry(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().casefold().split()
+        )
+        readme_text = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for phrase in (
+            "preserve existing values",
+            "comments",
+            "append only missing",
+            "0600",
+            "before opening",
+        ):
+            self.assertIn(phrase, skill_text)
+            self.assertIn(phrase, safety_text)
+        self.assertIn("owner-only local `.env`", readme_text)
+
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -701,6 +718,8 @@ class SkillPackageTests(unittest.TestCase):
         text = SDK_EXECUTION.read_text()
         for phrase in (
             "RUN_DIR = Path(__file__).resolve().parent",
+            'SDK_RESULTS_DIR = RUN_DIR / "sdk-results"',
+            'os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(SDK_RESULTS_DIR))',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
             'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
             "save_to=BASELINE_RESULTS",
@@ -773,17 +792,17 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized)
         self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
         self.assertIn('HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")', text)
+        self.assertIn("def holdout_agent_input(input_data)", text)
 
         holdout_node = functions["evaluate_holdout"]
         holdout_module = ast.fix_missing_locations(
-            ast.Module(body=[holdout_node], type_ignores=[])
+            ast.Module(
+                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
+            )
         )
         examples = [
             SimpleNamespace(
-                input_data={
-                    "message": "classify this",
-                    "account_tier": "enterprise",
-                },
+                input_data="classify this",
                 expected_output="urgent",
                 metadata={
                     "id": "case-1",
@@ -797,7 +816,6 @@ class SkillPackageTests(unittest.TestCase):
             SimpleNamespace(
                 input_data={
                     "message": "classify that",
-                    "account_tier": "standard",
                 },
                 expected_output="normal",
                 metadata={},
@@ -845,7 +863,7 @@ class SkillPackageTests(unittest.TestCase):
                 (
                     "urgent",
                     examples[0].expected_output,
-                    examples[0].input_data,
+                    "classify this",
                 ),
                 (
                     "normal",

@@ -90,6 +90,8 @@ from dotenv import load_dotenv
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
+os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(SDK_RESULTS_DIR))
 
 import litellm
 import traigent
@@ -334,9 +336,22 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 Evaluate the unchanged current configuration and selected best configuration on the untouched
 holdout with the same agent path and evaluator. A holdout check is not another optimization
-search:
+search. Generate `holdout_agent_input` from the installed public loader's observed `input_data`
+shape and the inspected agent signature. The canonical `input`/`output` JSONL shape loads a scalar;
+the mapping branch below is only for the example agent's explicit `message` input contract, not an
+SDK alias:
 
 ```python
+def holdout_agent_input(input_data) -> str:
+    if isinstance(input_data, str):
+        return input_data
+    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
+        return input_data["message"]
+    raise TypeError(
+        "Holdout input does not match the inspected agent(message: str) contract"
+    )
+
+
 def evaluate_holdout(config: dict) -> tuple[float, float]:
     scores = []
     tracked_cost = 0.0
@@ -344,7 +359,7 @@ def evaluate_holdout(config: dict) -> tuple[float, float]:
     for example in holdout.examples:
         input_data = example.input_data
         expected = example.expected_output
-        output, call_cost = call_agent(input_data["message"], config)
+        output, call_cost = call_agent(holdout_agent_input(input_data), config)
         scores.append(task_score(output, expected, input_data))
         tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost

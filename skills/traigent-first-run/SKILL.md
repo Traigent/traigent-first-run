@@ -60,7 +60,7 @@ approval.
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
-| Create a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run; include only the selected provider and Traigent key names, leave both blank, and stop once for local secret entry. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any stricter permissions; append only missing selected-provider and Traigent key names with blank values. Before opening it, require owner-only permissions (`0600` on POSIX), then stop once for local secret entry. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -217,7 +217,8 @@ Follow this order:
    ambiguity remains and proceed without a generic review pause. A clarification does not
    authorize changing real labels, expected answers, examples, or rubric policy; show any exact
    judgment-dependent change and obtain the explicit approval required by the action table.
-3. Run the bundled static preflight with the dataset argument so local structure and quality
+3. Run the bundled static preflight with `--defer-missing-sdk` and the combined dataset argument
+   so local structure and quality
    problems are checked without importing user modules. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
@@ -227,8 +228,9 @@ Follow this order:
    is local-only, has no external side effects, and needs no unavailable third-party package.
    Execute it in the isolated subprocess with provider credentials removed.
 
-A missing Traigent SDK or optional provider package may make the preflight report its SDK check as
-deferred or failed, but it must not block independent dataset-quality or safe
+A missing Traigent SDK is `SKIP` in this explicitly deferred pre-install pass; an installed but
+unsupported SDK remains a failure. A missing optional provider package may defer its own check.
+Neither condition may block independent dataset-quality or safe
 deterministic-calibration results. Record those component results separately. Do not reproduce
 SDK dataset normalization, injection, agent-binding, or evaluator-callback rules in this skill.
 
@@ -274,17 +276,23 @@ Only after the standard-library-only component checks:
    normalization, injection, agent-call, and evaluator-callback decisions. If the installed SDK
    exposes a public no-execution evaluation-contract validator, use it. Otherwise do not claim
    exhaustive static compatibility; finish the check with the safe mock plumbing step below. Never
-   recreate SDK binding or callback fallbacks in first-run code. A missing SDK may block only these
+   recreate SDK binding or callback fallbacks in first-run code. Normalize dataset paths to
+   resolved absolute paths before passing them to SDK 0.25.0's public validator; its nested-relative
+   path defect is tracked upstream. A missing SDK may block only these
    SDK and mock checks, not the component checks already recorded.
 5. Run any safe deterministic calibration that was deferred solely for an installed local
    dependency. Then run a fresh-process Traigent mock plumbing check only when every model call is
    known to be intercepted. Raw provider clients, external evaluators, subprocesses, HTTP
    services, tools, and custom judges are not free merely because mock mode is enabled. Exit the
    mock process and never reuse it for a real run.
-6. After every applicable free check is complete, create the minimal `.env` with blank entries for
-   the selected provider key and Traigent portal key. Stop once and ask the user to enter both
-   locally, never in chat. If the portal key is not yet available, provide only the required
-   account/key destination and resume from this step afterward.
+6. After every applicable free check is complete, create the minimal `.env` when none exists, or
+   append only missing selected-provider and Traigent key names to the existing file. Leave new
+   entries blank; never replace existing values, comments, unrelated keys, or blank alternate
+   provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; preserve
+   a stricter existing mode and correct any group/world-readable mode before opening the file.
+   Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
+   yet available, provide only the required account/key destination and resume from this step
+   afterward.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed

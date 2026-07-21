@@ -66,8 +66,8 @@ pass is optional, not required.
 - One supported LLM-provider key with a small amount of credit for the real run.
 - A Traigent portal key for connected optimization and portal results.
 
-Your assistant creates a minimal `.env` for the chosen provider and asks you to paste keys there.
-Never paste secrets into chat.
+Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the
+chosen provider and Traigent, and asks you to paste the values there. Never paste secrets into chat.
 
 ## Privacy
 
