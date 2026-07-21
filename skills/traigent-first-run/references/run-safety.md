@@ -319,7 +319,14 @@ Before claiming success, verify:
 11. Tuning and holdout results are separated.
 
 An optimized winner that does not beat the baseline is a valid no-boost result. Report it
-honestly; do not invent improvement.
+honestly and name the likely cause instead of a bare flat delta: an uninformative or too-small
+search space, a dataset ceiling or too-easy data, an over-strict or mismatched evaluator, controls
+the search never varied (the winning knob was absent from the space), reasoning-model output
+truncation (`finish_reason == "length"`), or generated walkthrough data with no real headroom where
+every configuration scores the same in both runs. Do not invent improvement. A flat result on
+demonstration data shows the workflow ran honestly, not that the production workload cannot improve;
+on real data the same run would likely look different. Show that cause to the user beside the
+number, never a bare delta the user must interpret alone.
 
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
