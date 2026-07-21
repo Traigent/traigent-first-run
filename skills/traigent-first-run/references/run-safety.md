@@ -165,6 +165,10 @@ Mock results may contain a positive estimated `total_cost`. That is pricing meta
 that a provider billed the account. Real billing evidence requires a real provider call plus the
 provider/SDK usage record.
 
+The converse also holds: OpenRouter `:free`-suffixed model ids genuinely cost `$0`, so judge a real
+run by trials executing and nonzero token usage, not by a zero cost - do not misflag a legitimate
+free-tier run as mocked.
+
 ## Approval and budgets
 
 Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
@@ -296,7 +300,11 @@ count and stop reason. Fewer than 10
 enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
 present a two-row generated run as the intended comparison.
 
-Reasoning models need sufficient output-token headroom; scan for `finish_reason == "length"`.
+Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
+(at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
+answer text, so a tight cap truncates the answer to `finish_reason == "length"`, scores it 0, and
+silently crowns a weaker model the winner. Scan every trial for `finish_reason == "length"`, and do
+not sweep low `max_tokens` values in any space that contains a reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
@@ -319,7 +327,28 @@ Before claiming success, verify:
 11. Tuning and holdout results are separated.
 
 An optimized winner that does not beat the baseline is a valid no-boost result. Report it
-honestly; do not invent improvement.
+honestly and name the likely cause instead of a bare flat delta: an uninformative or too-small
+search space, a dataset ceiling or too-easy data, an over-strict or mismatched evaluator, controls
+the search never varied (the winning knob - repair, self-consistency, or similarity-selected
+retrieval - was absent from the space), reasoning-model output truncation
+(`finish_reason == "length"`), generated walkthrough data with no real headroom where every
+configuration scores the same in both runs, or a base model that is not capable enough for a
+genuinely hard task - where a stronger (SOTA) model or a higher reasoning-effort level, not more
+config search, is the lever (keep the user's capable model in the enhanced space; if none was tried,
+name "did not try a stronger model" as the candidate reason). Rule these out in order before calling
+it a ceiling: re-run the semantic-equivalence probe, then widen to the structural knobs above, then
+raise the model tier or reasoning effort. Only once all are ruled out is a low number the honest
+difficulty ceiling of a genuinely hard task - many top out well below 100% even for the best systems
+- and it is reported plainly, not as a broken agent. Sharply separate a genuinely-hard item (a
+correct reference the model cannot yet match - a stronger model or higher reasoning effort is the
+lever) from a misleading one (an ambiguous, wrong, or degenerate reference that no correct answer
+matches, or that only rewards a less-correct answer for reproducing the reference's own mistake).
+Attribute a misleading item to the misleading question itself, not to model capability or
+reasoning-effort level - a stronger model will not, and should not, reproduce a misleading reference
+- and never "fix" a validated metric to reward it. Do not invent improvement. A flat result on demonstration data shows the workflow
+ran honestly, not that the production workload cannot improve; on real data the same run would
+likely look different. Show that cause to the user beside the number, never a bare delta the user
+must interpret alone.
 
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
@@ -337,10 +366,23 @@ can look identical to a production one.
   further paid work at once, surface the backend reason verbatim, and report the degradation. Do not
   keep spending on trials that no longer reach the portal.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
+- Cost limit reached with completed trials: show the best partial result and name the cost cap as
+  the stop reason; do not report it as a failure or silently drop the paid trials.
+- SDK or optimizer exception mid-run, including a Rust/pyo3 panic during result serialization (a
+  known class): surface the error in plain language with one recommended recovery, never a raw
+  traceback. Completed trials were already paid and written to `TRAIGENT_RESULTS_FOLDER` under
+  `traigent-runs/`; recover them and, for a connected run, upload the partial session with
+  `traigent sync <session_id>` before reporting - never present already-paid work as a total loss. A
+  foreground command timeout (harnesses often kill at about five minutes) can kill `optimize_sync`
+  mid-run without rolling back its spend, so run a long paid optimization detached and poll its log
+  rather than letting the tool timeout abandon paid trials.
 - Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
   classification; do not add a duplicate retry loop.
 - Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
-  do not retry or describe every case as "no tokens."
+  do not retry or describe every case as "no tokens." An unfunded OpenRouter key returns HTTP 402 and
+  silently fails trials - verify funding before paid work; a free-tier optimization-sample quota
+  rejection means shrink the run, not retry blindly. For an uncategorized provider error, surface the
+  provider's message verbatim rather than guessing a category.
 - Timeout with completed trials: show the best partial result before offering one additional
   bounded pass with its extra approximate time and cost.
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before

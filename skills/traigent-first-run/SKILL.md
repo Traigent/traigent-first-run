@@ -431,6 +431,15 @@ Report:
 - Holdout result separately, when a valid holdout exists.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
+- When the enhanced run does not beat the baseline, name the likely cause and show it beside the
+  number - an uninformative search space, a dataset ceiling, an over-strict evaluator, controls the
+  search never varied, generated data with no headroom, or a base model not capable enough for a
+  genuinely hard task where a stronger model or higher reasoning effort is the lever (rule-out order
+  and full list in `references/run-safety.md`) - never a bare flat delta. Only after ruling those out
+  is a low number the honest difficulty ceiling, reported plainly, not a broken agent. And when the
+  reference itself is misleading (ambiguous, wrong, or degenerate), say the question is misleading -
+  do not blame the model or reasoning-effort level for failing to match it. A flat result on
+  demonstration data shows the workflow ran honestly, not that the production workload cannot improve.
 
 Retain the customer's baseline and optimization experiments in the Traigent portal so the user can
 open and compare them after the walkthrough. Never delete portal experiments as automatic teardown
