@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 ---
 
 # Traigent Guided First Run
@@ -345,6 +345,17 @@ conservative estimate when cost is untracked. Before the next phase, compare its
 remaining total ceiling. Stop before exceeding it and ask only if more paid work is required.
 Never call the walkthrough ceiling a hard provider-billing cap.
 
+After approval and before the first paid trial, run a zero-LLM portal-tracking probe with a trivial
+stub agent that makes no provider call: confirm the whole connected path in one pass - the portal
+key is present and authenticated, is scoped for `experiment.write`, a session is created, the first
+trial is accepted, and a `cloud_url` comes back. A present-but-unscoped key (HTTP 403 without
+`experiment.write`) and a rejected config (HTTP 400) both otherwise degrade silently to local-only
+tracking while paid trials keep running and never reach the portal. If any rung fails, surface the
+backend reason verbatim and stop before any paid trial. Treat any degradation to local-only tracking
+that appears later in the connected run the same way: halt further paid work at once and report it in
+the result, never discovered afterward. The connected-run readiness detail is in
+`references/run-safety.md`.
+
 After the approved live probe, derive internal request and optimization time bounds from observed
 latency, rows, trials, calls per example, and concurrency. Do not show or ask the user to choose
 those implementation values. If the measured runtime no longer fits the approved estimate,
@@ -409,6 +420,9 @@ Before saying the run succeeded, verify:
 - The optimized result has a best configuration and non-degenerate measures.
 - No trial silently truncated.
 - Portal persistence completed or a precise degraded/failed state is reported.
+- The pre-paid portal-tracking probe passed, and connected tracking never silently fell back to
+  local-only during the run; any such degradation halted further paid work rather than surfacing
+  only at the end.
 - Any portal link is present before claiming the result is visible there.
 
 Report:

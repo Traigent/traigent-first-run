@@ -7,9 +7,10 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 1. Environment and privacy
 2. Static and mock validation
 3. Approval and budgets
-4. Baseline and optimization
-5. Post-run verification
-6. Recovery
+4. Connected-run readiness
+5. Baseline and optimization
+6. Post-run verification
+7. Recovery
 
 ## Environment and privacy
 
@@ -108,7 +109,9 @@ Use this gate order:
     the existing one securely as described above, then stop once for both local secret pastes.
 11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-12. After approval, run the live check first. Continue only if it passes.
+12. After approval, run the live check first, starting with the zero-LLM portal-tracking probe (see
+    Connected-run readiness below), then the smallest live provider/key check. Continue only if both
+    pass.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
@@ -219,6 +222,36 @@ already billed the call. If the response has no usable provider-reported cost, s
 the paid run and use only the conservative approved deduction; the SDK result remains authoritative
 for SDK-managed baseline/search cost.
 
+## Connected-run readiness
+
+The connected run's most damaging failure is not a missing key - it is a present key that silently
+stops tracking. A permanent trial rejection (HTTP 400 for a config the backend will not accept) or a
+present-but-unscoped key (HTTP 403 when the key lacks the `experiment.write` scope) can drop the run
+to local-only tracking: `results.cloud_url` is `None`, no experiment reaches the portal, yet paid
+trials keep running and a results table still prints - so a user with a valid key reasonably believes
+the run reached the portal when it did not.
+
+Prove the tracking path before spending, with a zero-LLM probe:
+
+1. Build a trivial stub agent that returns a constant and makes no provider call, so the probe costs
+   `$0` in LLM spend.
+2. Run the smallest possible connected optimization through the installed SDK's public path (one or
+   two trials) and confirm each rung in order: the portal key is present, it authenticates, it is
+   scoped for `experiment.write`, a session is created, the first trial is accepted, and a
+   `cloud_url` is returned.
+3. If any rung fails, surface the backend's reason verbatim and stop before any paid trial. On the
+   pinned SDK the client already prints the backend's precise `details.reason` inline - for example a
+   config value "outside the declared categorical domain" - and no longer substitutes a hardcoded
+   metric-name guess; report that reason as-is rather than paraphrasing or guessing at it.
+
+This probe is general readiness, not a workaround for any single validation rule: the installed SDK
+owns the local pre-checks (config-in-space, numeric-type, `example_id` uniqueness) and the loud
+local-only signal; the skill's job is only to confirm at `$0` that tracking actually attaches before
+paying, and to keep confirming it during the run. If tracking degrades to local-only at any later
+point in the connected run - a missing `cloud_url`, a `rejected` persistence state, or a mid-run
+403/400 - halt further paid work at once and report the degradation in the consolidated result. Never
+let a connected run finish spending and only then reveal that nothing reached the portal.
+
 ## Baseline and optimization
 
 Use one honest comparison:
@@ -281,7 +314,9 @@ Before claiming success, verify:
 7. No output was truncated.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
-10. Tuning and holdout results are separated.
+10. The pre-paid portal-tracking probe passed and tracking did not silently drop to local-only during
+    the run; any such degradation halted further paid work rather than surfacing only at the end.
+11. Tuning and holdout results are separated.
 
 An optimized winner that does not beat the baseline is a valid no-boost result. Report it
 honestly; do not invent improvement.
@@ -297,6 +332,10 @@ can look identical to a production one.
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface the precise backend reason; do
   not replace it with a guessed explanation or claim portal success.
+- Tracking degraded to local-only during a connected run - missing `cloud_url`, a `rejected`
+  persistence state, HTTP 403 without the `experiment.write` scope, or a permanent HTTP 400: halt
+  further paid work at once, surface the backend reason verbatim, and report the degradation. Do not
+  keep spending on trials that no longer reach the portal.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
   classification; do not add a duplicate retry loop.

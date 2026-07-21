@@ -33,6 +33,7 @@ The coding assistant maintains this concise internal record at
 
 ## Running state
 
+- Portal-tracking probe (zero-LLM): pass/fail and backend reason if failed:
 - Tracked spend, or conservative deduction where untracked:
 - Remaining total ceiling:
 - Baseline run ID, result, and portal link:
