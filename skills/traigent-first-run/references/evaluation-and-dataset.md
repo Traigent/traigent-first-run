@@ -300,6 +300,13 @@ Run quality checks:
   inspect common label/category fields and pass `--outcome-field result.label` to the static
   preflight when the task's discrete outcome uses a nonstandard or nested field.
 
+When a scorer compares against gold references, run every real reference through it before trusting
+an aggregate score: count references that are degenerate (empty, constant, or that score a right and
+a wrong answer identically), tell the user what fraction is unscoreable, and quote accuracy on the
+reliably-scoreable subset with that caveat rather than the raw aggregate. Even authentic benchmark
+data carries some - for example empty or case-sensitive golds - and a small random slice can land on
+a cluster of them.
+
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
