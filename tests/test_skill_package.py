@@ -242,9 +242,9 @@ class SkillPackageTests(unittest.TestCase):
         for paid_phase in (
             "smallest live provider/key check",
             "llm-judge calibration",
-            "current-configuration baseline",
-            "one bounded optimization",
-            "current-versus-winner holdout",
+            "preserved baseline or a generated six-row sweep",
+            "one broader bounded optimization",
+            "baseline winner versus enhanced winner holdout comparison",
         ):
             self.assertIn(paid_phase, skill_text)
 
@@ -691,7 +691,139 @@ class SkillPackageTests(unittest.TestCase):
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
         self.assertIn("def build_prompt(", text)
         self.assertIn('if style == "direct":', text)
-        self.assertIn('if style == "structured":', text)
+        self.assertIn('elif style == "structured":', text)
+        self.assertIn('elif style == "criteria_first":', text)
+        self.assertIn("if self_check:", text)
+        self.assertIn('"self_check": [False, True]', text)
+
+    def test_sdk_comparison_uses_six_rows_then_added_knobs_and_twelve_trials(
+        self,
+    ) -> None:
+        text = SDK_EXECUTION.read_text()
+        normalized = " ".join(text.casefold().split())
+
+        for phrase in (
+            "BASELINE_TRIALS = positive_int(",
+            '"TRAIGENT_FIRST_RUN_BASELINE_TRIALS",',
+            "default=6,",
+            "ENHANCED_MAX_TRIALS = positive_int(",
+            '"TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS",',
+            "default=12,",
+            "assert configuration_count(BASELINE_SPACE) == 6",
+            "assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)",
+            "assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)",
+            "configuration_space=BASELINE_SPACE",
+            "max_trials=BASELINE_TRIALS",
+            "configuration_space=ENHANCED_SPACE",
+            "max_trials=ENHANCED_MAX_TRIALS",
+        ):
+            self.assertIn(phrase, text)
+
+        for phrase in (
+            "six baseline rows and a 12-trial enhanced cap",
+            "adds two real one-call controls",
+            "target is 10-13 visible enhanced rows",
+            "max_trials` is a cap rather than an sdk-enforced minimum",
+        ):
+            self.assertIn(phrase, normalized)
+
+        baseline_block = text.split("BASELINE_SPACE = {", 1)[1].split(
+            "ENHANCED_SPACE = {", 1
+        )[0]
+        enhanced_block = text.split("ENHANCED_SPACE = {", 1)[1].split(
+            "def configuration_count", 1
+        )[0]
+        self.assertIn(
+            '"prompt_style": [BASELINE_CONFIG["prompt_style"]]', baseline_block
+        )
+        self.assertIn('"self_check": [BASELINE_CONFIG["self_check"]]', baseline_block)
+        self.assertIn('"structured"', enhanced_block)
+        self.assertIn('"criteria_first"', enhanced_block)
+        self.assertIn('"self_check": [False, True]', enhanced_block)
+
+        code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        module = ast.parse(code)
+        wanted_assignments = {
+            "BASELINE_CONFIG",
+            "BASELINE_SPACE",
+            "ENHANCED_SPACE",
+        }
+        selected_nodes = []
+        for node in module.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {
+                "configuration_count",
+                "build_prompt",
+            }:
+                selected_nodes.append(node)
+            elif isinstance(node, ast.Assert):
+                selected_nodes.append(node)
+            elif isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in wanted_assignments
+                for target in node.targets
+            ):
+                selected_nodes.append(node)
+
+        executable = ast.fix_missing_locations(
+            ast.Module(body=selected_nodes, type_ignores=[])
+        )
+        namespace = {
+            "math": __import__("math"),
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "BASELINE_TRIALS": 4,
+            "ENHANCED_MAX_TRIALS": 10,
+        }
+        exec(compile(executable, "<sdk-spaces-and-knobs>", "exec"), namespace)
+
+        count = namespace["configuration_count"]
+        self.assertEqual(count(namespace["BASELINE_SPACE"]), 6)
+        self.assertEqual(count(namespace["ENHANCED_SPACE"]), 36)
+        self.assertLessEqual(4, count(namespace["BASELINE_SPACE"]))
+        self.assertLess(10, count(namespace["ENHANCED_SPACE"]))
+
+        build_prompt = namespace["build_prompt"]
+        self.assertEqual(build_prompt("task", style="direct", self_check=False), "task")
+        structured = build_prompt("task", style="structured", self_check=False)
+        criteria = build_prompt("task", style="criteria_first", self_check=False)
+        checked = build_prompt("task", style="direct", self_check=True)
+        self.assertIn("Task:\ntask", structured)
+        self.assertIn("decision criteria", criteria)
+        self.assertIn("silently check", checked)
+        self.assertNotEqual(structured, criteria)
+
+        invalid_namespace = {
+            "math": __import__("math"),
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "BASELINE_TRIALS": 7,
+            "ENHANCED_MAX_TRIALS": 10,
+        }
+        with self.assertRaises(AssertionError):
+            exec(
+                compile(executable, "<sdk-invalid-reduced-plan>", "exec"),
+                invalid_namespace,
+            )
+
+    def test_user_owned_baseline_is_not_padded_to_generated_row_target(self) -> None:
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        self.assertIn(
+            "user's existing baseline/configuration exactly as defined", guide
+        )
+        self.assertIn(
+            "one row is correct when that is what the user actually defined", guide
+        )
+        self.assertIn("preserve the user's existing baseline", skill)
+        self.assertIn("including its original row count", skill)
+        self.assertIn("preserve a user-owned baseline space unchanged", safety)
+        self.assertIn("its row count exactly; do not expand it to six", sdk)
+        self.assertIn("real one-row fixed configuration remains one row", sdk)
+        self.assertIn(
+            "matched an explicitly approved and disclosed reduced target", skill
+        )
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()

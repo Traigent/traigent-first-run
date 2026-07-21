@@ -167,8 +167,9 @@ provider/SDK usage record.
 Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
 paid/provider work, show one concise approval for the full planned first run:
 
-- The smallest live provider/key check, any required LLM-judge calibration, baseline, one
-  optimization, and current-versus-winner holdout.
+- The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
+  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced
+  winner holdout.
 - Dataset rows, maximum trials, and approximate total agent/evaluator calls.
 - Approximate runtime and estimated spend.
 - One total walkthrough ceiling, defaulting to `$5.00`.
@@ -222,28 +223,45 @@ for SDK-managed baseline/search cost.
 
 Use one honest comparison:
 
-1. Baseline: the current configuration exactly.
-2. Optimization: one bounded search containing that current configuration.
+1. Baseline: the user's existing baseline or fixed configuration exactly as defined. Only when
+   Traigent creates the missing configuration, use a credible six-row manual-style sweep that
+   includes the generated initial configuration.
+2. Optimization: one broader search containing all baseline values plus meaningful added knobs,
+   targeting 10-13 visible trials with an internal default cap of 12.
 
 Use the same tuning slice, evaluator, objective definitions, and call path for both. Run both
 connected once if portal comparison matters. Do not:
 
-- Create a 4-8 configuration "manual baseline" unless that sweep is genuinely the current
-  production selection process.
 - Run a local baseline and then pay to repeat it only for portal appearance.
-- Intentionally weaken the baseline.
-- Require a second optimization pass before showing the first result.
+- Intentionally weaken the baseline or replace user-defined values with strawman choices.
+- Add a variable that does not affect the agent merely to manufacture portal rows.
+- Require a third optimization pass before showing the result.
 - Compare different datasets or evaluators.
 
-Keep the configuration space tied to observed failure modes. A knob that does not influence the
-agent code is not a real optimization variable. Pin temperature to 0 for frail exact/case-sensitive
-metrics unless the evaluator explicitly tolerates surface variation.
+Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
+space unchanged, even when it contains one row. For a generated walkthrough, the default small
+space is two credible models by three safe temperature values, with prompt policy and self-check
+fixed to ordinary/off values. The enhanced space retains those values and adds multiple prompt
+policies plus a native boolean self-check branch, producing dozens of possible configurations
+while Traigent tests 12 by default. For preserved agents, add task-relevant controls only to the
+enhanced space, such as context format, retrieval depth, few-shot count, tool policy, or repair
+behavior; do not force the generated example's controls onto an unrelated task.
 
-Managed `auto` is a guided search, not an exhaustive grid: it may revisit a configuration and may
-not try every combination within a small trial budget. The separate one-point baseline run
-guarantees the current configuration was measured. If the user specifically needs every
-combination in a small space, use connected `grid` only after the installed SDK confirms that
-local proposal execution still syncs results; otherwise state that the search is non-exhaustive.
+A knob that does not influence the agent code is not a real optimization variable. Native boolean
+knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
+sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
+controls to keep the baseline meaningful in that case. Multi-call composite controls multiply
+cost and require a concrete failure-mode justification; the generated default's self-check stays
+within one provider call.
+
+Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
+so the service can stop with fewer trials. For a generated baseline, use connected `grid` so all
+six distinct rows are predictable. For a user-owned baseline, preserve its space and behavior
+exactly while using a connected execution path compatible with the portal comparison. Use
+connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
+count and stop reason. Fewer than 10
+enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
+present a two-row generated run as the intended comparison.
 
 Reasoning models need sufficient output-token headroom; scan for `finish_reason == "length"`.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed

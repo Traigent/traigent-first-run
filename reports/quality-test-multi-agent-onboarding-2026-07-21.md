@@ -73,6 +73,21 @@ Total tracked cost was **`$0.00052335`**. The result demonstrated the workflow b
 measured lift, and all three generated components remain walkthrough substitutes rather than
 production evidence.
 
+### Follow-up acceptance correction
+
+The one-row baseline and two-row enhanced experiment above are retained as the actual field-test
+evidence, but they are not the intended customer comparison. They exposed a regression from the
+repository's original goal: the portal should show a credible small parameter sweep beside a
+materially broader optimization, not two nearly empty tables.
+
+Because this field case had no user-owned configuration, the corrected generated default uses six
+distinct baseline combinations, including its initial configuration, then lets Traigent test up to
+12 configurations from a larger space that adds real prompt-policy and self-check controls. A
+user-owned baseline remains unchanged, even when it has one row. The intended enhanced display is
+10-13 rows; any smaller result now requires a concrete stop, cost, timeout, or failure explanation.
+This correction was validated statically and with the package test suite; this report does not
+claim another paid portal-dev run occurred.
+
 The customer-facing experiments were retained:
 
 - [Current baseline](https://portal-dev.traigent.ai/experiments/view/580e975e-1254-47f7-92bf-6eb982ad6330?run_id=b81e8dc4-5698-4499-ac4b-d3c30f0815b4)
