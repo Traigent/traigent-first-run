@@ -333,15 +333,19 @@ the search never varied (the winning knob - repair, self-consistency, or similar
 retrieval - was absent from the space), reasoning-model output truncation
 (`finish_reason == "length"`), generated walkthrough data with no real headroom where every
 configuration scores the same in both runs, or a base model that is not capable enough for a
-genuinely hard task - where a stronger model, not more config search, is the lever (keep the user's
-capable model in the enhanced space; if none was tried, name "did not try a stronger model" as the
-candidate reason). Rule these out in order before calling it a ceiling: re-run the
-semantic-equivalence probe, then widen to the structural knobs above, then add a stronger model.
-Only once all are ruled out is a low number the honest difficulty ceiling of a genuinely hard task -
-many top out well below 100% even for the best systems - and it is reported plainly, not as a broken
-agent. Distinguish a genuinely-hard item (a correct reference the model cannot match) from a quirky
-one (a degenerate reference no correct answer matches), and never "fix" a validated metric to reward
-the quirky kind. Do not invent improvement. A flat result on demonstration data shows the workflow
+genuinely hard task - where a stronger (SOTA) model or a higher reasoning-effort level, not more
+config search, is the lever (keep the user's capable model in the enhanced space; if none was tried,
+name "did not try a stronger model" as the candidate reason). Rule these out in order before calling
+it a ceiling: re-run the semantic-equivalence probe, then widen to the structural knobs above, then
+raise the model tier or reasoning effort. Only once all are ruled out is a low number the honest
+difficulty ceiling of a genuinely hard task - many top out well below 100% even for the best systems
+- and it is reported plainly, not as a broken agent. Sharply separate a genuinely-hard item (a
+correct reference the model cannot yet match - a stronger model or higher reasoning effort is the
+lever) from a misleading one (an ambiguous, wrong, or degenerate reference that no correct answer
+matches, or that only rewards a less-correct answer for reproducing the reference's own mistake).
+Attribute a misleading item to the misleading question itself, not to model capability or
+reasoning-effort level - a stronger model will not, and should not, reproduce a misleading reference
+- and never "fix" a validated metric to reward it. Do not invent improvement. A flat result on demonstration data shows the workflow
 ran honestly, not that the production workload cannot improve; on real data the same run would
 likely look different. Show that cause to the user beside the number, never a bare delta the user
 must interpret alone.
