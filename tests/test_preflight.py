@@ -133,6 +133,19 @@ class StaticPreflightTests(unittest.TestCase):
         )
         self.assertEqual(result.status, MODULE.PASS)
 
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_env_permissions_reject_owner_execute_bits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.chmod(0o700)
+            MODULE.check_env_permissions(env_path)
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "env-permissions"
+        )
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("0700", result.detail)
+
     def test_sdk_check_rejects_obsolete_and_unvalidated_versions(self) -> None:
         for installed in ("0.0.1", "0.24.0", "0.25.1"):
             with self.subTest(installed=installed):

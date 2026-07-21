@@ -91,7 +91,8 @@ RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
-os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(SDK_RESULTS_DIR))
+if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
+    os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
 
 import litellm
 import traigent

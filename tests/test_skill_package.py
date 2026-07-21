@@ -719,7 +719,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "RUN_DIR = Path(__file__).resolve().parent",
             'SDK_RESULTS_DIR = RUN_DIR / "sdk-results"',
-            'os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(SDK_RESULTS_DIR))',
+            'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
+            'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
             'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
             "save_to=BASELINE_RESULTS",
@@ -733,6 +734,7 @@ class SkillPackageTests(unittest.TestCase):
             "llm_provider-x-litellm-response-cost",
         ):
             self.assertIn(phrase, text)
+        self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
 
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(

@@ -60,7 +60,7 @@ approval.
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any stricter permissions; append only missing selected-provider and Traigent key names with blank values. Before opening it, require owner-only permissions (`0600` on POSIX), then stop once for local secret entry. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, and unrelated keys; append only missing selected-provider and Traigent key names with blank values. Before opening it, require mode `0600` on POSIX, then stop once for local secret entry. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -288,8 +288,8 @@ Only after the standard-library-only component checks:
 6. After every applicable free check is complete, create the minimal `.env` when none exists, or
    append only missing selected-provider and Traigent key names to the existing file. Leave new
    entries blank; never replace existing values, comments, unrelated keys, or blank alternate
-   provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; preserve
-   a stricter existing mode and correct any group/world-readable mode before opening the file.
+   provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; correct
+   any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
    afterward.

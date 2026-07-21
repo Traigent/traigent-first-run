@@ -89,9 +89,9 @@ experiment-specific deletion; no rerun or destructive recovery was attempted.
 1. The holdout example now adapts both the canonical scalar input returned by the public loader
    and the example agent's explicit `message` mapping contract. It no longer blindly indexes a
    string as `input_data["message"]`.
-2. `.env` creation/update now preserves existing values, comments, unrelated keys, and stricter
-   modes, appends only missing blank key names, and requires owner-only permissions before secret
-   entry. The static preflight detects unsafe POSIX modes.
+2. `.env` creation/update now preserves existing values, comments, and unrelated keys, appends only
+   missing blank key names, and requires mode `0600` before secret entry on POSIX. The static
+   preflight detects any other POSIX mode.
 3. The mandatory pre-install static pass can use `--defer-missing-sdk`, so the intentionally absent
    SDK is a non-blocking `SKIP`; installed unsupported versions still fail.
 4. Combined-dataset preflight now reports the actual tuning count and holdout score resolution, so

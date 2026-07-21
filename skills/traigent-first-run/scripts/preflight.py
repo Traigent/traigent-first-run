@@ -140,14 +140,14 @@ def check_env_permissions(path: Path) -> None:
         )
         return
     mode = stat.S_IMODE(path.stat().st_mode)
-    if mode & 0o077:
+    if mode != 0o600:
         emit(
             "env-permissions",
             FAIL,
             f"{path} mode is {mode:04o}; set owner-only mode 0600 before entering secrets",
         )
     else:
-        emit("env-permissions", PASS, f"{path} mode is owner-only ({mode:04o})")
+        emit("env-permissions", PASS, f"{path} mode is 0600")
 
 
 def check_python() -> None:

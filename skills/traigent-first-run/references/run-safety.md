@@ -37,9 +37,8 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   "today."
 - After every applicable free component, capability, and safe mock check, build one minimal `.env`
   with blank selected-provider and Traigent key entries. If it exists, preserve existing values,
-  comments, unrelated keys, and stricter permissions and append only missing blank entries. Before
-  opening it, require owner-only permissions (`0600` on POSIX). Stop once for both local secret
-  pastes.
+  comments and unrelated keys and append only missing blank entries. Before opening it, require
+  mode `0600` on POSIX. Stop once for both local secret pastes.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
