@@ -1,0 +1,957 @@
+#!/usr/bin/env python3
+"""Hermetic contract checks for the pre-network first-run behavior.
+
+This is an internal test harness. It deliberately stops before SDK, provider,
+backend, optimization, or portal work and cannot produce a customer result.
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
+SCENARIOS = HERE / "scenarios"
+SKILL = ROOT / "skills" / "traigent-first-run" / "SKILL.md"
+READINESS = ROOT / "skills" / "traigent-first-run" / "scripts" / "readiness.py"
+PREFLIGHT = ROOT / "skills" / "traigent-first-run" / "scripts" / "preflight.py"
+CALIBRATE = (
+    ROOT / "skills" / "traigent-first-run" / "scripts" / "calibrate_evaluator.py"
+)
+REQUIRED_CONTRACT_KEYS = {
+    "id",
+    "user_request",
+    "starting_state",
+    "allowed_writes",
+    "forbidden_actions",
+    "expected_stop_reason",
+    "preserve",
+    "assertions",
+}
+FORBIDDEN_ACTIONS = {
+    "environment_create",
+    "package_install",
+    "provider_call",
+    "traigent_backend_call",
+    "optimization",
+    "portal_result",
+    "paid_work",
+}
+ALLOWED_SCRIPTS = {path.resolve() for path in (READINESS, PREFLIGHT, CALIBRATE)}
+CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|\x1b")
+MAX_CAPTURE = 100_000
+
+
+class ContractError(RuntimeError):
+    """Raised when a scenario violates the offline contract."""
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def safe_relative(value: str) -> str:
+    path = PurePosixPath(value)
+    if not value or path.is_absolute() or ".." in path.parts or "." in path.parts:
+        raise ContractError(f"unsafe relative path: {value!r}")
+    return path.as_posix()
+
+
+def tree_manifest(root: Path) -> list[dict[str, Any]]:
+    """Return a canonical, symlink-rejecting tree manifest."""
+    if not root.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            raise ContractError(f"symlinks are forbidden in scenario trees: {relative}")
+        if stat.S_ISDIR(info.st_mode):
+            entries.append({"path": relative, "type": "directory", "mode": mode})
+        elif stat.S_ISREG(info.st_mode):
+            content = path.read_bytes()
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "file",
+                    "mode": mode,
+                    "size": len(content),
+                    "sha256": sha256_bytes(content),
+                }
+            )
+        else:
+            raise ContractError(
+                f"special files are forbidden in scenario trees: {relative}"
+            )
+    return entries
+
+
+def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
+    skill_root = root / "skills" / "traigent-first-run"
+    behavior_paths = [Path("GUIDE.md")]
+    behavior_paths.extend(
+        path.relative_to(root)
+        for path in sorted(skill_root.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
+    )
+    entries = []
+    for relative in behavior_paths:
+        path = root / relative
+        content = path.read_bytes()
+        entries.append(
+            {
+                "path": relative.as_posix(),
+                "size": len(content),
+                "sha256": sha256_bytes(content),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "paths": entries,
+        "digest": sha256_bytes(canonical_json(entries).encode()),
+    }
+
+
+def load_contract(scenario_dir: Path) -> dict[str, Any]:
+    try:
+        value = json.loads((scenario_dir / "scenario.json").read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContractError(
+            f"cannot load scenario contract at {scenario_dir}: {error}"
+        ) from error
+    if not isinstance(value, dict):
+        raise ContractError(f"scenario contract must be an object: {scenario_dir}")
+    return value
+
+
+def minimal_contract(*, allowed_writes: list[str]) -> dict[str, Any]:
+    return {
+        "id": "minimal",
+        "user_request": "Try Traigent",
+        "starting_state": {
+            "agent": "missing",
+            "dataset": "missing",
+            "evaluation": "missing",
+        },
+        "allowed_writes": allowed_writes,
+        "forbidden_actions": sorted(FORBIDDEN_ACTIONS),
+        "expected_stop_reason": "awaiting_task_intent",
+        "preserve": [],
+        "assertions": {},
+    }
+
+
+def validate_contract_shape(contract: dict[str, Any], scenario_dir: Path) -> None:
+    missing = REQUIRED_CONTRACT_KEYS - set(contract)
+    if missing:
+        raise ContractError(
+            f"scenario {scenario_dir} is missing keys: {sorted(missing)}"
+        )
+    if contract["id"] != scenario_dir.name and scenario_dir.name != "scenario":
+        raise ContractError(f"scenario id does not match directory: {scenario_dir}")
+    if (
+        not isinstance(contract["user_request"], str)
+        or not contract["user_request"].strip()
+    ):
+        raise ContractError("user_request must be a non-empty string")
+    if set(contract["starting_state"]) != {"agent", "dataset", "evaluation"}:
+        raise ContractError(
+            "starting_state must declare agent, dataset, and evaluation"
+        )
+    if set(contract["forbidden_actions"]) != FORBIDDEN_ACTIONS:
+        raise ContractError(
+            "every offline scenario must forbid all external/result actions"
+        )
+    if not isinstance(contract["expected_stop_reason"], str):
+        raise ContractError("expected_stop_reason must be a string")
+    for collection in ("allowed_writes", "preserve"):
+        if not isinstance(contract[collection], list):
+            raise ContractError(f"{collection} must be a list")
+        for value in contract[collection]:
+            safe_relative(value.rstrip("/**"))
+    if not isinstance(contract["assertions"], dict):
+        raise ContractError("assertions must be an object")
+
+
+def verify_fixture_lock(scenario_dir: Path) -> None:
+    try:
+        expected = json.loads((scenario_dir / "fixture.lock.json").read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContractError(
+            f"cannot load fixture lock for {scenario_dir.name}: {error}"
+        ) from error
+    actual = {
+        "schema_version": 1,
+        "seed": tree_manifest(scenario_dir / "seed"),
+        "generated": tree_manifest(scenario_dir / "generated"),
+    }
+    if expected != actual:
+        raise ContractError(f"fixture lock mismatch for {scenario_dir.name}")
+
+
+def copy_scenario(source: Path, destination: Path) -> None:
+    if destination.exists():
+        raise ContractError(f"copy destination already exists: {destination}")
+    shutil.copytree(source, destination)
+
+
+def path_allowed(relative: str, patterns: list[str]) -> bool:
+    return any(
+        relative == pattern or fnmatch.fnmatchcase(relative, pattern)
+        for pattern in patterns
+    )
+
+
+def validate_writes(contract: dict[str, Any], changed: list[str]) -> None:
+    forbidden = [
+        path for path in changed if not path_allowed(path, contract["allowed_writes"])
+    ]
+    if forbidden:
+        raise ContractError(f"forbidden write(s): {', '.join(forbidden)}")
+
+
+def manifest_changes(
+    before: list[dict[str, Any]], after: list[dict[str, Any]]
+) -> list[str]:
+    before_map = {entry["path"]: entry for entry in before}
+    after_map = {entry["path"]: entry for entry in after}
+    return sorted(
+        path
+        for path in set(before_map) | set(after_map)
+        if before_map.get(path) != after_map.get(path)
+    )
+
+
+def command_environment(audit_log: Path) -> dict[str, str]:
+    python_dir = str(Path(sys.executable).resolve().parent)
+    home = audit_log.parent / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    return {
+        "HOME": str(home),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": f"{python_dir}:/usr/bin:/bin",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "PIP_NO_INDEX": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
+        "PYTHONPATH": str(HERE / "guard"),
+        "TMPDIR": "/tmp",
+        "TRAIGENT_AUDIT_LOG": str(audit_log),
+    }
+
+
+def validate_command(argv: list[str]) -> None:
+    if len(argv) < 2 or Path(argv[0]).name not in {
+        "python",
+        "python3",
+        Path(sys.executable).name,
+    }:
+        raise ContractError(f"command is not allowlisted: {argv!r}")
+    try:
+        script = Path(argv[1]).resolve()
+    except OSError as error:
+        raise ContractError(f"command is not allowlisted: {argv!r}") from error
+    if script not in ALLOWED_SCRIPTS:
+        raise ContractError(f"command is not allowlisted: {argv!r}")
+
+
+def clean_capture(value: str) -> str:
+    if len(value.encode()) > MAX_CAPTURE:
+        raise ContractError("command output exceeded the evidence limit")
+    if CONTROL_CHARACTER.search(value):
+        raise ContractError("command output contained control characters")
+    return value
+
+
+def normalize_text(value: str, project: Path) -> str:
+    return value.replace(str(project), "<PROJECT>").replace(str(ROOT), "<REPO>")
+
+
+def run_command(argv: list[str], project: Path, audit_log: Path) -> dict[str, Any]:
+    validate_command(argv)
+    process = subprocess.Popen(
+        argv,
+        cwd=project,
+        env=command_environment(audit_log),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        close_fds=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=30)
+    except subprocess.TimeoutExpired as error:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        raise ContractError(f"allowlisted command timed out: {argv[1]}") from error
+    stdout = normalize_text(clean_capture(stdout), project)
+    stderr = normalize_text(clean_capture(stderr), project)
+    record = {
+        "argv": [
+            "<PYTHON>" if index == 0 else normalize_text(value, project)
+            for index, value in enumerate(argv)
+        ],
+        "cwd": "<PROJECT>",
+        "env_keys": sorted(command_environment(audit_log)),
+        "exit_code": process.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_sha256": sha256_bytes(stdout.encode()),
+        "stderr_sha256": sha256_bytes(stderr.encode()),
+    }
+    if process.returncode != 0:
+        raise ContractError(f"allowlisted command failed: {record}")
+    return record
+
+
+def kernel_network_probe() -> dict[str, str]:
+    results: dict[str, str] = {}
+    probes = (
+        ("ipv4", socket.AF_INET, ("1.1.1.1", 443)),
+        ("ipv6", socket.AF_INET6, ("2606:4700:4700::1111", 443, 0, 0)),
+    )
+    for name, family, address in probes:
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.settimeout(0.25)
+        try:
+            sock.connect(address)
+        except OSError as error:
+            if error.errno not in {
+                errno.ENETUNREACH,
+                errno.EHOSTUNREACH,
+                errno.EACCES,
+                errno.EPERM,
+                errno.EADDRNOTAVAIL,
+            }:
+                raise ContractError(
+                    f"{name} isolation probe failed ambiguously: {error}"
+                ) from error
+            results[name] = f"blocked:{error.errno}"
+        else:
+            raise ContractError(
+                f"{name} external network is reachable; refusing offline qualification"
+            )
+        finally:
+            sock.close()
+    return results
+
+
+def append_event(events: list[dict[str, Any]], event_type: str, **details: Any) -> None:
+    events.append({"sequence": len(events) + 1, "type": event_type, **details})
+
+
+def readiness_command(
+    project: Path, states: dict[str, str], audit_log: Path
+) -> dict[str, Any]:
+    argv = [sys.executable, str(READINESS)]
+    for component in ("agent", "dataset", "evaluation"):
+        argv.extend((f"--{component}", states[component]))
+    argv.append("--json")
+    result = run_command(argv, project, audit_log)
+    result["parsed"] = json.loads(result["stdout"])
+    return result
+
+
+def enforce_project_permissions(project: Path, allowed_writes: list[str]) -> None:
+    if any(
+        pattern == "traigent-runs" or pattern.startswith("traigent-runs/")
+        for pattern in allowed_writes
+    ):
+        (project / "traigent-runs").mkdir(exist_ok=True)
+    for path in sorted(project.rglob("*"), reverse=True):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    project.chmod(0o555)
+    if ".gitignore" in allowed_writes and (project / ".gitignore").exists():
+        (project / ".gitignore").chmod(0o644)
+    if any(
+        pattern == "traigent-runs" or pattern.startswith("traigent-runs/")
+        for pattern in allowed_writes
+    ):
+        run_dir = project / "traigent-runs"
+        run_dir.chmod(0o755)
+
+
+def zero_anchor(
+    contract: dict[str, Any], project: Path, audit_log: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    del audit_log
+    text = SKILL.read_text()
+    section = text.split("#### Zero-anchor intent gate", 1)[1].split(
+        "### 2. Show readiness once", 1
+    )[0]
+    question = "What should the walkthrough agent do?"
+    if section.count(question) != 1 or section.count("?") != 1:
+        raise ContractError(
+            "zero-anchor package contract must contain exactly one task-intent question"
+        )
+    events: list[dict[str, Any]] = []
+    append_event(
+        events,
+        "readiness",
+        real={"agent": "missing", "dataset": "missing", "evaluation": "missing"},
+        markers={"agent": "❗", "dataset": "❗", "evaluation": "❗"},
+    )
+    append_event(events, "walkthrough_scope", synthetic_is_production_evidence=False)
+    append_event(events, "question", category="task_intent", text=question)
+    append_event(events, "stop", reason=contract["expected_stop_reason"])
+    return events, [], contract["expected_stop_reason"]
+
+
+def dataset_invariants(path: Path) -> dict[str, Any]:
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    ids = [row["id"] for row in rows]
+    inputs = [" ".join(row["input"].casefold().split()) for row in rows]
+    tuning = [row for row in rows if row["split"] == "tune"]
+    holdout = [row for row in rows if row["split"] == "holdout"]
+    difficulty_counts = {
+        name: sum(row["difficulty"] == name for row in rows)
+        for name in ("easy", "medium", "hard", "very-hard")
+    }
+    if len(rows) != 24 or len(tuning) != 18 or len(holdout) != 6:
+        raise ContractError("generated dataset must contain 24 rows with an 18/6 split")
+    if len(set(ids)) != 24 or len(set(inputs)) != 24:
+        raise ContractError(
+            "generated dataset ids and normalized inputs must be unique"
+        )
+    if difficulty_counts != {name: 6 for name in difficulty_counts}:
+        raise ContractError(
+            "generated dataset must contain six rows at each difficulty"
+        )
+    if {row["id"] for row in tuning} & {row["id"] for row in holdout}:
+        raise ContractError("tuning and holdout ids overlap")
+    if any(row.get("source") != "synthetic-walkthrough" for row in rows):
+        raise ContractError("generated rows must retain walkthrough-only provenance")
+    label_for_coverage = {
+        "billing": "billing",
+        "cancel": "cancellation",
+        "technical": "technical-support",
+    }
+    allowed_labels = set(label_for_coverage.values())
+    for row in rows:
+        prefix = row["coverage"].split("-", 1)[0]
+        if (
+            row["output"] not in allowed_labels
+            or label_for_coverage.get(prefix) != row["output"]
+        ):
+            raise ContractError(
+                f"generated row {row['id']} has inconsistent label and coverage"
+            )
+    return {
+        "rows": len(rows),
+        "tuning": len(tuning),
+        "holdout": len(holdout),
+        "difficulty_counts": difficulty_counts,
+        "coverage_branches": len({row["coverage"] for row in rows}),
+        "provenance": "synthetic-walkthrough",
+    }
+
+
+def calibration_case_invariants(path: Path) -> None:
+    cases = json.loads(path.read_text())
+    expected_labels = {"billing", "cancellation", "technical-support"}
+    if {case.get("expected") for case in cases} != expected_labels:
+        raise ContractError("calibration cases must cover every declared intent label")
+    for case in cases:
+        if case.get("score_mode") != "binary":
+            raise ContractError("support-intent calibration cases must use binary mode")
+        if case.get("metadata", {}).get("branch") != case.get("expected"):
+            raise ContractError(
+                "calibration branch metadata must match the expected label"
+            )
+
+
+def partial_missing_dataset(
+    contract: dict[str, Any], project: Path, audit_log: Path, scenario_dir: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    events: list[dict[str, Any]] = []
+    commands = [readiness_command(project, contract["starting_state"], audit_log)]
+    plan = commands[0]["parsed"]
+    if plan["create"] != ["dataset"] or plan["real_ready_count"] != 2:
+        raise ContractError("partial readiness did not preserve the two real anchors")
+    append_event(events, "readiness", real_ready=2, create=["dataset"])
+
+    run_dir = project / "traigent-runs"
+    gitignore = project / ".gitignore"
+    original_gitignore = gitignore.read_text()
+    if "traigent-runs/" not in original_gitignore.splitlines():
+        separator = (
+            "" if not original_gitignore or original_gitignore.endswith("\n") else "\n"
+        )
+        gitignore.write_text(f"{original_gitignore}{separator}traigent-runs/\n")
+    generated = scenario_dir / "generated"
+    dataset = run_dir / "evaluation-dataset.jsonl"
+    cases = run_dir / "calibration-cases.json"
+    shutil.copyfile(generated / "evaluation-dataset.jsonl", dataset)
+    shutil.copyfile(generated / "calibration-cases.json", cases)
+    calibration_case_invariants(cases)
+    review = {
+        "reviewer": "coding assistant",
+        "evidence": ["task-contract.md", "agent.py", "evaluator.py"],
+        "branches": ["billing", "cancellation", "technical-support"],
+        "score_mode": "binary",
+        "threshold_rationale": "Intent labels are nominal; normalized equivalent labels pass and other labels fail.",
+        "verdict": "sufficient",
+        "known_gap": "Synthetic walkthrough cases are not customer-traffic evidence.",
+    }
+    (run_dir / "run-plan.md").write_text(
+        "# Internal first-run record\n\n"
+        "- Dataset provenance: synthetic walkthrough substitute; not production evidence.\n"
+        "- Semantic coverage reviewer: coding assistant.\n"
+        "- Evidence: task-contract.md, agent.py, evaluator.py.\n"
+        "- Branches: billing, cancellation, technical-support.\n"
+        "- Score mode: binary; normalized equivalent labels pass and other labels fail.\n"
+        "- Semantic coverage verdict: sufficient for the workflow demonstration.\n"
+        "- Known gap: synthetic cases do not represent customer traffic.\n"
+    )
+    dataset_summary = dataset_invariants(dataset)
+    append_event(events, "generated_dataset", **dataset_summary, production_ready=False)
+    append_event(events, "semantic_review", **review)
+    if not gitignore.read_text().startswith(original_gitignore):
+        raise ContractError("existing .gitignore content was not preserved")
+
+    preflight = run_command(
+        [
+            sys.executable,
+            str(PREFLIGHT),
+            "--env",
+            str(project / ".env"),
+            "--dataset",
+            str(dataset),
+            "--defer-missing-sdk",
+            "--json",
+        ],
+        project,
+        audit_log,
+    )
+    preflight["parsed"] = json.loads(preflight["stdout"])
+    commands.append(preflight)
+    if any(item["status"] == "FAIL" for item in preflight["parsed"]):
+        raise ContractError("generated dataset failed static preflight")
+    append_event(events, "static_preflight", passed=True, sdk="deferred")
+
+    calibration = run_command(
+        [
+            sys.executable,
+            str(CALIBRATE),
+            "--scorer",
+            "evaluator.py:score_intent",
+            "--cases",
+            f"@{cases}",
+            "--allow-execution",
+            "--json",
+        ],
+        project,
+        audit_log,
+    )
+    calibration["parsed"] = json.loads(calibration["stdout"])
+    commands.append(calibration)
+    if not calibration["parsed"].get("passed"):
+        raise ContractError("deterministic local evaluator calibration failed")
+    (run_dir / "calibration-results.json").write_text(
+        json.dumps(calibration["parsed"], indent=2, sort_keys=True) + "\n"
+    )
+    append_event(
+        events,
+        "local_calibration",
+        passed=True,
+        case_count=len(calibration["parsed"]["cases"]),
+        provider_access=False,
+    )
+    append_event(
+        events,
+        "connected_boundary",
+        customer_result=False,
+        requires_live_validation=["sdk", "provider", "backend", "portal"],
+    )
+    append_event(events, "stop", reason=contract["expected_stop_reason"])
+    return events, commands, contract["expected_stop_reason"]
+
+
+def weak_invalid(
+    contract: dict[str, Any], project: Path, audit_log: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    events: list[dict[str, Any]] = []
+    commands = [readiness_command(project, contract["starting_state"], audit_log)]
+    preflight = run_command(
+        [
+            sys.executable,
+            str(PREFLIGHT),
+            "--env",
+            str(project / ".env"),
+            "--dataset",
+            str(project / "dataset.jsonl"),
+            "--defer-missing-sdk",
+            "--json",
+        ],
+        project,
+        audit_log,
+    )
+    preflight["parsed"] = json.loads(preflight["stdout"])
+    commands.append(preflight)
+    rows = [
+        json.loads(line)
+        for line in (project / "dataset.jsonl").read_text().splitlines()
+    ]
+    unique_inputs = {" ".join(row["input"].casefold().split()) for row in rows}
+    evaluator_source = (project / "evaluator.py").read_text()
+    if "output.strip() == expected.strip()" not in evaluator_source:
+        raise ContractError(
+            "weak evaluator fixture no longer demonstrates exact-string grading"
+        )
+    findings = [
+        {
+            "component": "agent",
+            "evidence": "agent.py returns the same acknowledgement template with the raw message and implements no task-specific support behavior",
+            "consequence": "Optimization has no meaningful existing behavior or controls to improve.",
+        },
+        {
+            "component": "dataset",
+            "evidence": f"{len(rows)} usable rows and {len(rows) - len(unique_inputs)} duplicate input(s); no holdout split",
+            "consequence": "Each row dominates the score and repeated easy cases can hide ranking differences.",
+        },
+        {
+            "component": "evaluation",
+            "evidence": "evaluator.py requires exact free-form wording",
+            "consequence": "Equivalent valid support replies can score zero, so optimization would reward wording rather than task quality.",
+        },
+    ]
+    append_event(events, "quality_findings", findings=findings)
+    append_event(
+        events,
+        "question",
+        category="quality_decision",
+        choices=["repair", "workflow demonstration", "pause"],
+        recommended="repair",
+    )
+    append_event(events, "stop", reason=contract["expected_stop_reason"])
+    return events, commands, contract["expected_stop_reason"]
+
+
+def read_audit_events(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def protected_hashes(project: Path, paths: list[str]) -> dict[str, dict[str, Any]]:
+    return {
+        relative: (
+            tree_manifest(project / relative)
+            if (project / relative).is_dir()
+            else {
+                "sha256": sha256_bytes((project / relative).read_bytes()),
+                "mode": stat.S_IMODE((project / relative).stat().st_mode),
+            }
+        )
+        for relative in paths
+    }
+
+
+def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> None:
+    if evidence["stop_reason"] != contract["expected_stop_reason"]:
+        raise ContractError("scenario stopped at the wrong gate")
+    if evidence["network"]["attempts"]:
+        raise ContractError("scenario attempted network access")
+    if any(event["type"] in FORBIDDEN_ACTIONS for event in evidence["events"]):
+        raise ContractError("scenario emitted a forbidden external/result action")
+    stop_indexes = [
+        index
+        for index, event in enumerate(evidence["events"])
+        if event["type"] == "stop"
+    ]
+    if stop_indexes != [len(evidence["events"]) - 1]:
+        raise ContractError("scenario must emit exactly one terminal stop event")
+    if contract["id"] == "zero-anchor":
+        questions = [
+            event for event in evidence["events"] if event["type"] == "question"
+        ]
+        expected = contract["assertions"]
+        if (
+            len(questions) != expected["question_count"]
+            or questions[0].get("category") != expected["question_category"]
+        ):
+            raise ContractError("zero-anchor must ask exactly one task-intent question")
+        if evidence["writes"] or evidence["commands"]:
+            raise ContractError(
+                "zero-anchor must perform no writes or commands before the answer"
+            )
+        if len(evidence["writes"]) != expected["project_writes"]:
+            raise ContractError("zero-anchor write count violated its declaration")
+    elif contract["id"] == "partial-missing-dataset":
+        generated = next(
+            event
+            for event in evidence["events"]
+            if event["type"] == "generated_dataset"
+        )
+        expected = contract["assertions"]
+        if (
+            generated["rows"] != expected["dataset_rows"]
+            or generated["tuning"] != expected["tuning_rows"]
+            or generated["holdout"] != expected["holdout_rows"]
+            or set(generated["difficulty_counts"].values())
+            != {expected["rows_per_difficulty"]}
+        ):
+            raise ContractError(
+                "partial scenario dataset counts violated its declaration"
+            )
+        if (
+            generated["production_ready"]
+            or generated["provenance"] != expected["provenance"]
+        ):
+            raise ContractError("generated substitute was presented as real readiness")
+        semantic_review = next(
+            event for event in evidence["events"] if event["type"] == "semantic_review"
+        )
+        calibration = next(
+            event
+            for event in evidence["events"]
+            if event["type"] == "local_calibration"
+        )
+        if semantic_review["verdict"] != expected["semantic_review"]:
+            raise ContractError(
+                "partial scenario semantic review violated its declaration"
+            )
+        if calibration["passed"] != (expected["calibration"] == "pass"):
+            raise ContractError("partial scenario calibration violated its declaration")
+        if evidence["protected_before"] != evidence["protected_after"]:
+            raise ContractError("partial scenario changed an existing real component")
+    elif contract["id"] == "weak-invalid":
+        findings = next(
+            event for event in evidence["events"] if event["type"] == "quality_findings"
+        )["findings"]
+        declared_problem_components = {
+            component
+            for component, state in contract["starting_state"].items()
+            if state in {"limited", "invalid"}
+        }
+        if {
+            finding["component"] for finding in findings
+        } != declared_problem_components:
+            raise ContractError(
+                "every limited or invalid component needs a concrete quality finding"
+            )
+        event_types = {event["type"] for event in evidence["events"]}
+        assertions = contract["assertions"]
+        if ("provider_call" in event_types) != assertions["provider_work"]:
+            raise ContractError("provider-work evidence contradicted its declaration")
+        if ("paid_work" in event_types) != assertions["paid_work"]:
+            raise ContractError("paid-work evidence contradicted its declaration")
+        choices = next(
+            event for event in evidence["events"] if event["type"] == "question"
+        )
+        if choices["choices"] != contract["assertions"]["quality_choices"]:
+            raise ContractError(
+                "weak/invalid scenario must offer the three quality choices"
+            )
+
+
+def write_evidence_bundle(
+    evidence: dict[str, Any], directory: Path, project: Path
+) -> None:
+    directory.mkdir(parents=True, exist_ok=False)
+    for name, values in (
+        ("events.jsonl", evidence["events"]),
+        ("commands.jsonl", evidence["commands"]),
+    ):
+        (directory / name).write_text(
+            "".join(canonical_json(value) + "\n" for value in values)
+        )
+    (directory / "evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+    )
+    transcript = []
+    for event in evidence["events"]:
+        summary = event.get("reason") or event.get("category") or event["type"]
+        transcript.append(f"{event['sequence']:02d} {event['type']}: {summary}")
+    (directory / "transcript.txt").write_text("\n".join(transcript) + "\n")
+    artifacts = directory / "artifacts"
+    for relative in evidence["writes"]:
+        source = project / relative
+        if source.is_file():
+            destination = artifacts / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+
+
+def run_once(
+    scenario_dir: Path,
+    pass_number: int,
+    work_root: Path,
+    evidence_root: Path,
+    network_probe: dict[str, str],
+) -> dict[str, Any]:
+    contract = load_contract(scenario_dir)
+    validate_contract_shape(contract, scenario_dir)
+    verify_fixture_lock(scenario_dir)
+    fixture_before = tree_manifest(scenario_dir / "seed")
+    project = work_root / f"pass-{pass_number}" / contract["id"]
+    project.parent.mkdir(parents=True, exist_ok=True)
+    seed = scenario_dir / "seed"
+    if seed.exists():
+        shutil.copytree(seed, project)
+    else:
+        project.mkdir()
+    enforce_project_permissions(project, contract["allowed_writes"])
+    before = tree_manifest(project)
+    protected_before = protected_hashes(project, contract["preserve"])
+    audit_log = work_root / f"audit-{contract['id']}-{pass_number}.jsonl"
+
+    if contract["id"] == "zero-anchor":
+        events, commands, stop_reason = zero_anchor(contract, project, audit_log)
+    elif contract["id"] == "partial-missing-dataset":
+        events, commands, stop_reason = partial_missing_dataset(
+            contract, project, audit_log, scenario_dir
+        )
+    elif contract["id"] == "weak-invalid":
+        events, commands, stop_reason = weak_invalid(contract, project, audit_log)
+    else:
+        raise ContractError(f"unknown scenario: {contract['id']}")
+
+    after = tree_manifest(project)
+    writes = manifest_changes(before, after)
+    validate_writes(contract, writes)
+    protected_after = protected_hashes(project, contract["preserve"])
+    fixture_after = tree_manifest(scenario_dir / "seed")
+    if fixture_before != fixture_after:
+        raise ContractError("immutable source fixture changed during the run")
+    evidence = {
+        "schema_version": 1,
+        "kind": "offline-behavioral-contract",
+        "scenario": contract["id"],
+        "claim_scope": "pre-network orchestration only; not a customer optimization result",
+        "behavior_digest": behavior_manifest()["digest"],
+        "fixture_manifest": fixture_before,
+        "events": events,
+        "commands": commands,
+        "network": {
+            "kernel_probe": network_probe,
+            "attempts": read_audit_events(audit_log),
+        },
+        "writes": writes,
+        "artifacts": {
+            entry["path"]: entry for entry in after if entry["path"] in writes
+        },
+        "protected_before": protected_before,
+        "protected_after": protected_after,
+        "stop_reason": stop_reason,
+        "live_validation_required": [
+            "coding-assistant interpretation",
+            "installed SDK",
+            "provider and backend",
+            "cost and quota",
+            "portal persistence and links",
+            "visible baseline, enhanced, and holdout results",
+        ],
+    }
+    validate_semantics(contract, evidence)
+    write_evidence_bundle(
+        evidence, evidence_root / contract["id"] / f"pass-{pass_number}", project
+    )
+    return evidence
+
+
+def require_isolation() -> dict[str, str]:
+    if os.environ.get("TRAIGENT_OFFLINE_ISOLATED") != "1":
+        raise ContractError(
+            "refusing to run behavioral qualification without the isolated-container sentinel"
+        )
+    for name in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "TRAIGENT_API_KEY",
+    ):
+        if os.environ.get(name):
+            raise ContractError(
+                f"provider credential leaked into isolated harness: {name}"
+            )
+    return kernel_network_probe()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run internal offline first-run contract scenarios."
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="run all committed scenarios twice"
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(path.name for path in SCENARIOS.iterdir() if path.is_dir()),
+    )
+    parser.add_argument("--evidence-dir", type=Path, default=Path("/work/evidence"))
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if not args.all and not args.scenario:
+        raise ContractError("select --all or --scenario")
+    network_probe = require_isolation()
+    selected = sorted(path for path in SCENARIOS.iterdir() if path.is_dir())
+    if args.scenario:
+        selected = [SCENARIOS / args.scenario]
+    with tempfile.TemporaryDirectory(prefix="traigent-contract-") as directory:
+        work_root = Path(directory)
+        summaries = []
+        for scenario_dir in selected:
+            first = run_once(
+                scenario_dir, 1, work_root, args.evidence_dir, network_probe
+            )
+            second = run_once(
+                scenario_dir, 2, work_root, args.evidence_dir, network_probe
+            )
+            if first != second:
+                raise ContractError(
+                    f"scenario is not reproducible: {scenario_dir.name}"
+                )
+            summaries.append(
+                {
+                    "scenario": scenario_dir.name,
+                    "stop_reason": first["stop_reason"],
+                    "writes": first["writes"],
+                    "evidence_sha256": sha256_bytes(canonical_json(first).encode()),
+                }
+            )
+    print(
+        json.dumps(
+            {"passed": True, "scope": "offline contract only", "scenarios": summaries},
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except ContractError as error:
+        print(f"OFFLINE CONTRACT FAILURE: {error}", file=sys.stderr)
+        raise SystemExit(1)

@@ -1,0 +1,34 @@
+{
+  "id": "weak-invalid",
+  "user_request": "Use my current support assistant and examples for a first optimization.",
+  "starting_state": {
+    "agent": "limited",
+    "dataset": "limited",
+    "evaluation": "invalid"
+  },
+  "allowed_writes": [],
+  "forbidden_actions": [
+    "environment_create",
+    "optimization",
+    "package_install",
+    "paid_work",
+    "portal_result",
+    "provider_call",
+    "traigent_backend_call"
+  ],
+  "expected_stop_reason": "awaiting_quality_decision",
+  "preserve": [
+    "agent.py",
+    "dataset.jsonl",
+    "evaluator.py"
+  ],
+  "assertions": {
+    "quality_choices": [
+      "repair",
+      "workflow demonstration",
+      "pause"
+    ],
+    "provider_work": false,
+    "paid_work": false
+  }
+}

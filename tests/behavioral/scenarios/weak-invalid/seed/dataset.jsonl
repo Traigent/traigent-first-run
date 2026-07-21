@@ -1,0 +1,4 @@
+{"id":"case-1","input":"How do I reset my password?","output":"Use the password reset link."}
+{"id":"case-2","input":"How do I reset my password?","output":"Open settings and choose reset password."}
+{"id":"case-3","input":"Where is my invoice?","output":"Open Billing and select Invoices."}
+{"id":"case-4","input":"How can I cancel?","output":"Open Billing and choose Cancel plan."}

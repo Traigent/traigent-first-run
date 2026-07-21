@@ -1,0 +1,9 @@
+{
+  "generated": [],
+  "schema_version": 1,
+  "seed": [
+    {"mode": 420, "path": "agent.py", "sha256": "06fc147b598ee1992e74b83c78a337728daf4cd1d1d0d008ec135a2e9f5cbfae", "size": 94, "type": "file"},
+    {"mode": 420, "path": "dataset.jsonl", "sha256": "ad980de202459d4676af982a8417621fa9be81deed897adae6399d55e200e226", "size": 384, "type": "file"},
+    {"mode": 420, "path": "evaluator.py", "sha256": "052561322601c6868d83fc1f18067f0a7d0ca95f1d5e68e9ea8b5f0d215efe52", "size": 148, "type": "file"}
+  ]
+}

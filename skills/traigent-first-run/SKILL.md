@@ -376,6 +376,11 @@ Every knob must change real behavior, native booleans must stay booleans, and th
 must be materially larger than its trial cap so Traigent is choosing what to test rather than
 replaying the same tiny grid.
 
+If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
+failure and one recommended recovery. Never fall back automatically to mock or synthetic results,
+and never present offline checks as a completed optimization. Resume the connected path after the
+failure is resolved.
+
 Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
 one-row before and stays unchanged. A Traigent-generated walkthrough must not proceed with a one-
 row baseline; generate enough real controls for the six-configuration default.

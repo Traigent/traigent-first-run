@@ -1026,6 +1026,17 @@ class SkillPackageTests(unittest.TestCase):
             "portal experiment deletion is never walkthrough teardown", sdk_text
         )
 
+    def test_connection_failure_never_becomes_offline_customer_success(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "provider, traigent backend, or portal connectivity is unavailable",
+            "stop with the concrete failure and one recommended recovery",
+            "never fall back automatically to mock or synthetic results",
+            "never present offline checks as a completed optimization",
+            "resume the connected path after the failure is resolved",
+        ):
+            self.assertIn(phrase, skill_text)
+
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
         for phrase in (
@@ -1039,6 +1050,26 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("black==26.5.1", workflow)
         self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
+
+    def test_ci_runs_offline_contract_in_a_fail_closed_container(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
+        offline_job = workflow.split("  offline-contract:", 1)[1].split(
+            "  validate:", 1
+        )[0]
+        for phrase in (
+            "--network none",
+            "--read-only",
+            "--cap-drop ALL",
+            "--security-opt no-new-privileges",
+            "--user 65534:65534",
+            "$GITHUB_WORKSPACE:/repo:ro",
+            "$RUNNER_TEMP/traigent-offline-evidence:/evidence",
+            "python tests/behavioral/harness.py --all",
+            "actions/upload-artifact@v4",
+        ):
+            self.assertIn(phrase, offline_job)
+        self.assertNotIn("pip install", offline_job)
+        self.assertNotIn("setup-python", offline_job)
 
 
 if __name__ == "__main__":

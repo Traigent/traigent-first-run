@@ -1,0 +1,26 @@
+[
+  {
+    "name": "billing refund",
+    "score_mode": "binary",
+    "expected": "billing",
+    "input_data": {"message": "Where is my refund?"},
+    "metadata": {"branch": "billing"},
+    "probes": {"good": "billing", "equivalent_good": " BILLING ", "partial": "technical-support", "bad": "cancellation"}
+  },
+  {
+    "name": "account cancellation",
+    "score_mode": "binary",
+    "expected": "cancellation",
+    "input_data": {"message": "Close my account after this cycle"},
+    "metadata": {"branch": "cancellation"},
+    "probes": {"good": "cancellation", "equivalent_good": "CANCELLATION", "partial": "billing", "bad": "technical-support"}
+  },
+  {
+    "name": "technical login",
+    "score_mode": "binary",
+    "expected": "technical-support",
+    "input_data": {"message": "The sign-in page loops"},
+    "metadata": {"branch": "technical-support"},
+    "probes": {"good": "technical-support", "equivalent_good": " Technical-Support ", "partial": "cancellation", "bad": "billing"}
+  }
+]

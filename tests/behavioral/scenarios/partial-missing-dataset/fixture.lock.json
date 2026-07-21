@@ -1,0 +1,13 @@
+{
+  "generated": [
+    {"mode": 420, "path": "calibration-cases.json", "sha256": "14f4e1ba91e9a425ee2c1a87c93cae01188ea6aa945984fde49c5c2a777e7306", "size": 994, "type": "file"},
+    {"mode": 420, "path": "evaluation-dataset.jsonl", "sha256": "30ae537b92c0bae0bd2efc177d0b53ecba1a99caf48882a6f6acc1bbeff99849", "size": 5007, "type": "file"}
+  ],
+  "schema_version": 1,
+  "seed": [
+    {"mode": 420, "path": ".gitignore", "sha256": "08239aadebf9a9b105e2efecca3129f9198067993418529ddc8117d41997b7ec", "size": 7, "type": "file"},
+    {"mode": 420, "path": "agent.py", "sha256": "5e3ca5410b25a219766043ceee18df0b84b5f596672536cdfa5cc1b7891d0d92", "size": 360, "type": "file"},
+    {"mode": 420, "path": "evaluator.py", "sha256": "fcf7cb9ec27c193a00d28941101fd10628f4294efe761fb7c776b291b2262137", "size": 231, "type": "file"},
+    {"mode": 420, "path": "task-contract.md", "sha256": "9abee0b67b0e770209873c63f0d936e9896089b8213f94e467c3fb55360cb142", "size": 181, "type": "file"}
+  ]
+}
