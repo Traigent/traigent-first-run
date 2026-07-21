@@ -16,6 +16,11 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 - Reuse an existing compatible isolated environment. When none exists, use the conventional
   `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
+- Create and then activate the environment before installing: `source .venv/bin/activate` on
+  macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows PowerShell (a first run there may need
+  `Set-ExecutionPolicy -Scope Process RemoteSigned`). Confirm `sys.prefix` points inside the
+  environment before `pip install`, or the install silently lands in global Python and the run
+  cannot find `traigent`.
 - Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
   `.venv-traigent` with a supported interpreter, for example
   `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
@@ -41,6 +46,10 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   comments and unrelated keys and append only missing blank entries. Before opening it, require
   mode `0600` on POSIX. Stop once for both local secret pastes.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
+- Hand the file off unambiguously: open `.env` for the user (`xdg-open`/`open`/`notepad`) and, on a
+  headless box, print its absolute path; name the target line by key prefix - the `sk-`/`sk-or-`
+  provider key after its `..._API_KEY=` line, the `uk_` portal key after `TRAIGENT_API_KEY=` - so two
+  blank `KEY=` lines cannot be swapped.
 - Prompts, examples, and outputs are not sent to Traigent by the optimization service.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
   model calls.
@@ -49,6 +58,9 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
   fallbacks can change that upstream recipient.
 - Connected Traigent runs transmit configuration identifiers, numeric measures, run state, and
   content-free metadata needed for optimization and portal history.
+- Encode prompt variants as short labels mapped to the text inside the agent function; never put raw
+  prompt text as configuration-space values. Configuration choices are synced to Traigent's
+  optimizer, so labels keep the actual prompts on the machine.
 
 Ask before any private content leaves the machine, even when the provider key already exists.
 
@@ -287,12 +299,23 @@ behavior; do not force the generated example's controls onto an unrelated task.
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
 knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
 sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
-controls to keep the baseline meaningful in that case. Multi-call composite controls multiply
+controls to keep the baseline meaningful in that case. A provider's default temperature is about 1.0
+(random), not 0, so a preserved agent that never sets temperature is non-deterministic; set
+`temperature=0` explicitly rather than assuming an unset value is deterministic when diagnosing score
+wobble. Multi-call composite controls multiply
 cost and require a concrete failure-mode justification; the generated default's self-check stays
 within one provider call.
 
+Match each knob to how the agent actually fails: repair (re-prompt once on a malformed or erroring
+output), self-consistency (sample N and vote, for unstable answers), similarity-selected retrieval
+(for unseen patterns), and chain-of-thought or plan-then-act (for multi-step reasoning). A knob only
+helps if it targets the observed failure mode; wired in blind it adds cost and can even lower the
+score.
+
 Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
-so the service can stop with fewer trials. For a generated baseline, use connected `grid` so all
+so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
+not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `auto`, `grid`, or
+`random` unless a named selector is confirmed to run consistently on the installed SDK. For a generated baseline, use connected `grid` so all
 six distinct rows are predictable. For a user-owned baseline, preserve its space and behavior
 exactly while using a connected execution path compatible with the portal comparison. Use
 connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
