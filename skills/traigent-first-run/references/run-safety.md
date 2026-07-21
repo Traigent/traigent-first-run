@@ -296,6 +296,11 @@ while Traigent tests 12 by default. For preserved agents, add task-relevant cont
 enhanced space, such as context format, retrieval depth, few-shot count, tool policy, or repair
 behavior; do not force the generated example's controls onto an unrelated task.
 
+This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
+levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
+more configurations than the trial cap, but from a handful of meaningful levers, never a wall of
+knobs added just to manufacture a visible improvement.
+
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
 knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
 sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
@@ -372,6 +377,11 @@ reasoning-effort level - a stronger model will not, and should not, reproduce a 
 ran honestly, not that the production workload cannot improve; on real data the same run would
 likely look different. Show that cause to the user beside the number, never a bare delta the user
 must interpret alone.
+
+Frame no-lift for a first run too: a bounded getting-familiar pass deliberately searches a few
+relevant knobs on a small budget, so a flat result can simply be a normal first look rather than a
+fault. The honest next step is one deliberate iteration adding a single structural knob where the
+evidence points, not piling on knobs or spend to force a win.
 
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
