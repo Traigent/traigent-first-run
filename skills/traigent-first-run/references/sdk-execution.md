@@ -347,6 +347,13 @@ stop before baseline/search instead of scaling an untracked path.
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
 
+Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
+(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
+contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
+onto its own resolved parent by dataset validation and doubles into
+`.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
+time. Never shorten these to a relative path. Tracked upstream as Traigent/Traigent issue 1993.
+
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
 contract. Do not infer aliases or positional fallbacks from SDK internals. When grading requires

@@ -402,6 +402,14 @@ and explain the likely ceiling effect. Recommend adding realistic boundary, fail
 cases, then revalidate. Continue only if the user accepts that the run is a workflow
 demonstration and may have no measurable room to improve.
 
+One exception pivots that decision: when the objectives include cost, saturated accuracy caps
+only the accuracy axis, not the run. An equal-accuracy configuration at materially lower cost is
+a legitimate, reportable win - the accuracy-versus-cost Pareto choice - so if cost has headroom,
+run the search rather than stopping before it, and report the cheapest configuration that holds
+the accuracy, plainly stating that the models are capable and the gain is on cost, not accuracy.
+When the dataset is `🛠️` generated, add that synthetic data can be easier than production data,
+so real, harder cases are still needed to reveal any accuracy headroom.
+
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
 
