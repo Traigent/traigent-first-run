@@ -35,6 +35,26 @@ After decorating the function, inspect `agent.optimize_sync` the same way. If th
 signatures or public dataset loader do not support the usage below, adapt from the installed
 public API. Do not invent arguments or reproduce SDK internals.
 
+Start that inspection at these public locations instead of searching the whole package. Treat the
+map as navigation, not fixed signatures: confirm each on the installed version, never hardcode a
+signature you have not inspected, and treat an absent name as unavailable rather than assumed.
+
+| Need | Import from |
+| --- | --- |
+| `optimize` decorator, `EvaluationOptions`, `InjectionOptions` | `traigent.api.decorators` |
+| `get_config()` - read the trial's chosen values inside the agent body | `traigent` (`traigent.get_config`) |
+| `ObjectiveDefinition`, `ObjectiveSchema` | `traigent.core.objectives` |
+| Dataset loader and example fields (`.input_data` / `.expected_output` / `.metadata`) | `traigent.Dataset` (`Dataset.from_jsonl`) |
+| `optimize_sync(...)` and its result object | the decorated function (`agent.optimize_sync`) |
+| Knob recommendations - `recommend_configuration_space(agent_type)`, agent_type `rag` or `code_gen` | `traigent.config_generator.recommendations` |
+
+Read outcomes from attributes on the result object rather than parsing the printed table; inspect
+it once and reuse the names: `cloud_url` (direct portal link), `best_config`, `best_score`,
+`total_cost`, `trials`, `failed_trials`, `stop_reason`, `run_label`. Confirm the exact names on the
+installed version and treat any that are absent as not available. For the scorer argument contract,
+use the installed public `metric_functions` shape shown under "Decorator contract" below rather than
+inferring aliases or positional fallbacks from SDK internals.
+
 The installed SDK owns:
 
 - The default per-optimization cost limit and its in-run enforcement.
