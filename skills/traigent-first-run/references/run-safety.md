@@ -67,13 +67,22 @@ Ask before any private content leaves the machine, even when the provider key al
 At the secret-entry gate, show only the URL needed for the selected service:
 
 - Traigent registration: `https://portal.traigent.ai/register`
-- Traigent API keys: `https://portal.traigent.ai/management/api-keys`
+- Traigent API keys: `https://portal.traigent.ai/management/api-keys` - the key must have experiment
+  write access, not read-only
 - OpenRouter keys: `https://openrouter.ai/keys`
 - OpenAI keys: `https://platform.openai.com/api-keys`
 - Anthropic keys: `https://console.anthropic.com/settings/keys`
 
 These account/key links are necessary actions, not educational detours. Do not show every provider
 link; show only the selected provider and Traigent when each key becomes necessary.
+
+The Traigent key must be able to write experiments, not only read them. A connected run records the
+baseline and optimization to the portal, so a read-only key is rejected and the run silently drops to
+local-only tracking - real money is spent but nothing appears in the portal UI. The simplest correct
+path is the portal's one-click optimization-key issuance, which grants exactly the `experiments` read
+and write scopes; a manually created key defaults to read-only, so grant it experiment write
+(`experiments:write`) or full access before using it. This is the proactive counterpart to the
+pre-paid portal-tracking probe, which otherwise catches the same read-only key only after approval.
 
 Use this gate order:
 

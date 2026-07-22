@@ -292,7 +292,8 @@ Only after the standard-library-only component checks:
    any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
-   afterward.
+   afterward. Tell the user the Traigent key needs experiment write access, not read-only, or the
+   connected run cannot record to the portal; see `references/run-safety.md`.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
