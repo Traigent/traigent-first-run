@@ -86,13 +86,19 @@ assistant selects the exact internal values and places them in the current proce
 not fill them in. If the observed estimate becomes materially longer than the approved estimate,
 offer a smaller representative run or state the additional approximate time and cost.
 
-Do not put a wall-clock cap on the enhanced optimization. Pass `timeout=OPTIMIZATION_TIMEOUT_SECONDS`
-where that value is `None` by default, so a legitimately progressing search is never cut off
-mid-run. Its bounds are the trial cap, the total cost ceiling, and the per-model-request timeout
-below - a stuck provider call is caught by the request timeout and total spend by the ceiling. The
-runtime estimate above is still used for the up-front time/cost disclosure and for the baseline
-phase timeout (`timeout=BASELINE_TIMEOUT_SECONDS`, a small fixed grid). Set
-`TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only to add an optional enhanced-phase limit.
+Do not bound the enhanced optimization with a mid-run wall-clock cap. Pass
+`timeout=OPTIMIZATION_TIMEOUT_SECONDS` where that value is `None` by default, so a legitimately
+progressing search is never cut off partway and forced to report a partial result - and so a large
+run is not truncated wholesale by a fixed clock. Its real bounds are the trial cap, the total cost
+ceiling, and the per-model-request timeout below: a stuck provider call is caught by the request
+timeout and total spend by the ceiling. Keep a first run from taking too long by sizing it up
+front, not by cutting it: if the runtime estimate is too high, reduce the run before starting - a
+smaller representative tuning slice, fewer trials, or a smaller model set - and disclose the
+revised estimate; a large *preserved* baseline (never shrink a user-owned one) then runs to
+completion under the cost ceiling rather than being truncated. The estimate above still drives the
+up-front time/cost disclosure and the baseline phase timeout (`timeout=BASELINE_TIMEOUT_SECONDS`, a
+small fixed grid). Set `TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only for the rare case that
+genuinely needs a hard wall-clock stop.
 
 Keep an individual model-request timeout so one stuck provider call cannot hang the walkthrough.
 Reuse the real agent's existing value when present. Generated LiteLLM walkthrough code may use a
