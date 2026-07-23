@@ -86,6 +86,14 @@ assistant selects the exact internal values and places them in the current proce
 not fill them in. If the observed estimate becomes materially longer than the approved estimate,
 offer a smaller representative run or state the additional approximate time and cost.
 
+Do not put a wall-clock cap on the enhanced optimization. Pass `timeout=OPTIMIZATION_TIMEOUT_SECONDS`
+where that value is `None` by default, so a legitimately progressing search is never cut off
+mid-run. Its bounds are the trial cap, the total cost ceiling, and the per-model-request timeout
+below - a stuck provider call is caught by the request timeout and total spend by the ceiling. The
+runtime estimate above is still used for the up-front time/cost disclosure and for the baseline
+phase timeout (`timeout=BASELINE_TIMEOUT_SECONDS`, a small fixed grid). Set
+`TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only to add an optional enhanced-phase limit.
+
 Keep an individual model-request timeout so one stuck provider call cannot hang the walkthrough.
 Reuse the real agent's existing value when present. Generated LiteLLM walkthrough code may use a
 reasonable internal fallback such as 120 seconds, adjusted automatically after the live probe.
@@ -162,6 +170,18 @@ def positive_int(name: str, *, default: int | None = None) -> int:
     return value
 
 
+def optional_positive_number(name: str) -> float | None:
+    """Return a positive float from the environment, or None when unset - used
+    for bounds that are intentionally uncapped by default."""
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return None
+    value = float(raw_value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return value
+
+
 MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS",
     default=120.0,
@@ -169,7 +189,10 @@ MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
 BASELINE_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
 )
-OPTIMIZATION_TIMEOUT_SECONDS = positive_number(
+# No wall-clock cap on the enhanced optimization by default (None): the search
+# runs to its trial cap, bounded by the total cost ceiling and the per-model-
+# request timeout above. Set the env var only to add an optional wall-clock limit.
+OPTIMIZATION_TIMEOUT_SECONDS = optional_positive_number(
     "TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS"
 )
 BASELINE_TRIALS = positive_int(
@@ -432,7 +455,9 @@ enhanced rows with a cap of 12; report the actual count and stop reason. Fewer t
 a concrete backend stop, timeout, cost-limit, or failure explanation rather than being presented as
 the intended first-run comparison.
 
-When `stop_reason == "timeout"` and trials completed, retain and report the best partial result.
+If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
+retain and report the best partial result (the enhanced run is uncapped by default, so this is
+defensive handling rather than the normal path).
 Offer another bounded pass only when the search was still improving or left a specific worthwhile
 hypothesis, and state its additional approximate time and cost. If zero trials completed,
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
