@@ -288,6 +288,17 @@ class StaticPreflightTests(unittest.TestCase):
             integrity.detail,
         )
 
+    def test_dataset_normalization_contract_violation_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text('{"input": "case", "output": "answer"}\n')
+            with mock.patch.object(
+                MODULE, "normalize_dataset_row", return_value=(None, None)
+            ), self.assertRaisesRegex(
+                RuntimeError, "dataset normalization returned no row without an error"
+            ):
+                MODULE.check_dataset(dataset)
+
     def test_default_local_fields_do_not_infer_sdk_aliases(self) -> None:
         row = {
             "input_data": {"message": "same"},
