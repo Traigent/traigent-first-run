@@ -1086,13 +1086,43 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(text.casefold().split())
         for phrase in (
             'pass `algorithm="grid"` explicitly',
-            "silently degrades to a local `random` sweep",
+            "falls back to a local `random` sweep",
             "fallback_reason=no_api_key",
             "grid also cannot enumerate a continuous parameter",
             "state which algorithm actually ran",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
+        """Pinning the connected search to a local algorithm would gut it.
+
+        Verified on installed traigent 0.25.0: `auto` resolves to a cloud-brain
+        execution intent, while naming `grid` or `random` resolves to a
+        local-only intent. So pinning the enhanced run does not merely choose a
+        weaker search - it bypasses a valid key entirely and the second run stops
+        being a Traigent optimization, which is the whole comparison the first
+        run exists to show.
+        """
+        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        for phrase in (
+            "this applies to the local baseline only",
+            'the connected search under "broader optimization" must stay on `auto`',
+            'keep `algorithm="auto"` here, and never pin `grid` or `random`',
+            "it resolves to a local-only intent, so a valid key is bypassed",
+            "the pinning rule is therefore per phase, not global",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_enhanced_run_code_block_still_uses_auto(self) -> None:
+        """Guard the code itself, not only the prose around it."""
+        text = SDK_EXECUTION.read_text()
+        enhanced = text[text.index("## Broader optimization") :]
+        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        self.assertIn('algorithm="auto"', enhanced)
+        self.assertNotIn('algorithm="grid"', enhanced)
+        self.assertNotIn('algorithm="random"', enhanced)
 
     def test_absent_cost_is_never_reported_as_zero(self) -> None:
         """A stated $0.00 reads as "this was free", which is a false claim."""
