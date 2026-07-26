@@ -427,15 +427,19 @@ baseline_results = agent.optimize_sync(
 )
 ```
 
-Pass `algorithm="grid"` explicitly, and never leave the baseline on the default `algorithm="auto"`.
-Locally the SDK offers exactly two searches, `grid` and `random`; the managed algorithms are cloud
-side and are not registered locally. `auto` is not a third option - without a Traigent key it
-silently degrades to a local `random` sweep and reports `fallback_reason=no_api_key`, so a run that
-looks like Traigent's managed search is really random sampling. At baseline size that difference is
-visible: the same six-point space returns the first grid cell every time under `grid`, and a
-different winner between runs under the fallback. A first result the user can reproduce in front of
-someone else is worth more than one they cannot, so state which algorithm actually ran rather than
-implying the managed one did.
+Pass `algorithm="grid"` explicitly for this baseline sweep. **This applies to the local baseline
+only; the connected search under "Broader optimization" must stay on `auto`.** The two runs are
+deliberately different, and that difference is the comparison the first run exists to show.
+
+The reason to pin the baseline is that `auto` means different things depending on whether a key is
+present. With no Traigent key it does not fail and does not run managed search: it falls back to a
+local `random` sweep and reports `fallback_reason=no_api_key`, so a run that looks like Traigent's
+managed search is really random sampling. Locally the SDK registers exactly two searches, `grid` and
+`random`; the managed family is cloud side and is not registered locally. At baseline size the
+difference is visible - the same six-point space returns the first grid cell every time under
+`grid`, and a different winner between runs under the fallback. A first result the user can
+reproduce in front of someone else is worth more than one they cannot, so state which algorithm
+actually ran rather than implying the managed one did.
 
 Grid also cannot enumerate a continuous parameter, so every baseline knob stays an explicit list of
 values. If a preserved user space is far larger than its trial cap - more than roughly twenty
@@ -472,6 +476,19 @@ optimized_results = agent.optimize_sync(
     save_to=OPTIMIZED_RESULTS,
 )
 ```
+
+Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is
+the managed path: it resolves to a cloud-brain execution intent and lets Traigent pick the method,
+which is the entire point of the second run. Naming a local algorithm explicitly does the opposite
+of an optimization - it resolves to a local-only intent, so a valid key is bypassed, the search
+drops back to the same exhaustive or random sweep the baseline already ran, and the enhanced run
+stops being a Traigent optimization at all. The managed methods are not registered in the local
+SDK, so they are only reachable through `auto` on a connected run.
+
+The pinning rule is therefore per phase, not global: pin the baseline so it is reproducible, leave
+the enhanced run on `auto` so it is actually optimized. If a connected search reports a local
+fallback reason, treat that as a failure to investigate rather than a result to present - the run
+did not do what the report will claim it did.
 
 Do not enable mock mode in this process. The optimization space must include the current
 configuration and every baseline value, plus meaningful added knobs that the function consumes.
