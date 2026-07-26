@@ -62,6 +62,52 @@ class BehavioralContractUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(harness.ContractError, "fixture lock mismatch"):
                 harness.verify_fixture_lock(copied)
 
+    def test_umask_only_mode_difference_does_not_break_the_fixture_lock(self) -> None:
+        """A group-write bit must not read as fixture tampering.
+
+        Git tracks only the owner-execute bit, so a checkout under `umask 0002`
+        produces 0664 where a lock written under `umask 022` recorded 0644. That
+        is not a content change and must not fail - it previously failed both CI
+        jobs for any contributor with a group-write umask.
+        """
+        source = SCENARIOS / "weak-invalid"
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / source.name
+            harness.copy_scenario(source, copied)
+            for path in sorted((copied / "seed").rglob("*")):
+                if path.is_file():
+                    path.chmod(0o664)
+            harness.verify_fixture_lock(copied)
+
+    def test_executable_bit_change_is_still_detected(self) -> None:
+        """The one permission bit git *does* track must stay locked."""
+        source = SCENARIOS / "weak-invalid"
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / source.name
+            harness.copy_scenario(source, copied)
+            (copied / "seed" / "agent.py").chmod(0o755)
+            with self.assertRaisesRegex(harness.ContractError, "fixture lock mismatch"):
+                harness.verify_fixture_lock(copied)
+
+    def test_world_writable_fixture_is_rejected(self) -> None:
+        source = SCENARIOS / "weak-invalid"
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / source.name
+            harness.copy_scenario(source, copied)
+            (copied / "seed" / "agent.py").chmod(0o666)
+            with self.assertRaisesRegex(harness.ContractError, "world-writable"):
+                harness.verify_fixture_lock(copied)
+
+    def test_fixture_lock_mismatch_names_the_offending_entry(self) -> None:
+        """A bare 'mismatch' gave no way to tell content from permissions."""
+        source = SCENARIOS / "weak-invalid"
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / source.name
+            harness.copy_scenario(source, copied)
+            (copied / "seed" / "agent.py").write_text("tampered = True\n")
+            with self.assertRaisesRegex(harness.ContractError, "seed/agent.py"):
+                harness.verify_fixture_lock(copied)
+
     def test_provider_credentials_are_not_forwarded_to_commands(self) -> None:
         environment = harness.command_environment(Path("/tmp/audit.jsonl"))
         for name in (

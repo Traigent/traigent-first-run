@@ -196,6 +196,84 @@ def validate_contract_shape(contract: dict[str, Any], scenario_dir: Path) -> Non
         raise ContractError("assertions must be an object")
 
 
+def git_tracked_mode(mode: int) -> int:
+    """Return only the permission bits git can reproduce on checkout.
+
+    Git records exactly one permission bit, owner-execute; every other bit comes
+    from the checking-out user's umask. A lock storing the full mode therefore
+    fails for any contributor whose umask differs from the one that generated it
+    - 0664 under `umask 0002` against a lock written as 0644 under `umask 022` -
+    even when the content is byte-identical. Comparing the reproducible subset
+    keeps the lock a statement about content and the executable bit, which is
+    all it can honestly assert.
+    """
+    return 0o755 if mode & stat.S_IXUSR else 0o644
+
+
+def comparable_fixture_entries(
+    entries: list[dict[str, Any]], scenario_name: str
+) -> list[dict[str, Any]]:
+    """Normalize umask-dependent modes and reject genuinely unsafe bits."""
+    normalized: list[dict[str, Any]] = []
+    for entry in entries:
+        mode = entry.get("mode")
+        if not isinstance(mode, int):
+            normalized.append(entry)
+            continue
+        if mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+            raise ContractError(
+                f"setuid/setgid/sticky bit is forbidden in scenario trees: "
+                f"{scenario_name}/{entry.get('path')}"
+            )
+        if mode & stat.S_IWOTH:
+            raise ContractError(
+                f"world-writable fixture entry is forbidden: "
+                f"{scenario_name}/{entry.get('path')}"
+            )
+        normalized.append({**entry, "mode": git_tracked_mode(mode)})
+    return normalized
+
+
+def describe_fixture_mismatch(expected: dict[str, Any], actual: dict[str, Any]) -> str:
+    """Name what actually differs, so a mismatch is diagnosable at a glance."""
+    details: list[str] = []
+    for section in ("seed", "generated"):
+        expected_by_path = {
+            entry.get("path"): entry for entry in expected.get(section, [])
+        }
+        actual_by_path = {entry.get("path"): entry for entry in actual.get(section, [])}
+        for path in sorted(set(expected_by_path) | set(actual_by_path)):
+            before = expected_by_path.get(path)
+            after = actual_by_path.get(path)
+            if before == after:
+                continue
+            if before is None:
+                details.append(f"{section}/{path}: unexpected extra entry")
+            elif after is None:
+                details.append(f"{section}/{path}: missing")
+            else:
+                fields = sorted(
+                    key
+                    for key in set(before) | set(after)
+                    if before.get(key) != after.get(key)
+                )
+                changed = ", ".join(
+                    f"{key} {before.get(key)!r} != {after.get(key)!r}" for key in fields
+                )
+                details.append(f"{section}/{path}: {changed}")
+    if expected.get("schema_version") != actual.get("schema_version"):
+        details.append(
+            f"schema_version {expected.get('schema_version')!r} != "
+            f"{actual.get('schema_version')!r}"
+        )
+    if not details:
+        return "no per-entry difference found"
+    shown = details[:5]
+    if len(details) > len(shown):
+        shown.append(f"... and {len(details) - len(shown)} more")
+    return "; ".join(shown)
+
+
 def verify_fixture_lock(scenario_dir: Path) -> None:
     try:
         expected = json.loads((scenario_dir / "fixture.lock.json").read_text())
@@ -208,8 +286,23 @@ def verify_fixture_lock(scenario_dir: Path) -> None:
         "seed": tree_manifest(scenario_dir / "seed"),
         "generated": tree_manifest(scenario_dir / "generated"),
     }
-    if expected != actual:
-        raise ContractError(f"fixture lock mismatch for {scenario_dir.name}")
+    comparable_expected = {
+        "schema_version": expected.get("schema_version"),
+        "seed": comparable_fixture_entries(expected.get("seed", []), scenario_dir.name),
+        "generated": comparable_fixture_entries(
+            expected.get("generated", []), scenario_dir.name
+        ),
+    }
+    comparable_actual = {
+        "schema_version": actual["schema_version"],
+        "seed": comparable_fixture_entries(actual["seed"], scenario_dir.name),
+        "generated": comparable_fixture_entries(actual["generated"], scenario_dir.name),
+    }
+    if comparable_expected != comparable_actual:
+        raise ContractError(
+            f"fixture lock mismatch for {scenario_dir.name}: "
+            f"{describe_fixture_mismatch(comparable_expected, comparable_actual)}"
+        )
 
 
 def copy_scenario(source: Path, destination: Path) -> None:
