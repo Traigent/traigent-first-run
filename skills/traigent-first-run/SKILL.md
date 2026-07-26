@@ -480,11 +480,32 @@ If any substitute was used, lead the interpretation with:
 Do not promote a configuration from a fully synthetic run. For real components, promotion still
 requires the untouched holdout and explicit user approval.
 
+Close the loop on the readiness score the run opened with. Restate what was weak, what Traigent
+filled in, and what that costs in the real world - a dataset of a dozen generated examples measures
+the workflow, not the product, however good the number looks. The opening score and the closing
+recap are the same conversation: the user should leave knowing which gap to close first and why it
+matters, not just what the run produced.
+
+Two local, free reads make that concrete rather than generic, and both come from the completed runs
+without another call. The per-example audit names specific examples that no configuration ever got
+right, and the optimization insights name which control actually moved the result. Report those by
+example and by knob; see `references/sdk-execution.md` for what the installed SDK exposes. Say
+plainly that this is what the SDK alone can see.
+
+Then, and only as what comes next rather than what was withheld, name what Traigent adds on top of a
+connected run: it scores every example from the run to show which are informative, which are
+redundant, and which look mislabelled, and it audits the evaluator itself. Describe those as signals
+and curation advice, not as numbers - do not promise a numeric dataset-quality score, and never
+imply the platform can grade a dataset that has not been run.
+
 Only after the result, offer optional next steps:
 
 - Connect the production agent.
 - Replace synthetic examples with reviewed real examples.
 - Align the evaluation method with the product's grading policy.
+- Install the Traigent optimization skills with `npx skills add Traigent/traigent-skills` for a
+  stronger enhanced run, telling the user first and reminding them to restart the session so the
+  new skills load.
 - Continue into the advanced Traigent lifecycle.
 
 ## Completion criteria
