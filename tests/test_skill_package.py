@@ -1071,6 +1071,47 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install", offline_job)
         self.assertNotIn("setup-python", offline_job)
 
+    def test_baseline_pins_grid_and_warns_about_the_auto_fallback(self) -> None:
+        """Verified against installed traigent 0.25.0.
+
+        Locally the SDK registers only `grid` and `random`; the managed
+        algorithms are not registered. With no Traigent key, `algorithm="auto"`
+        degrades to a local random sweep and logs `fallback_reason=no_api_key` -
+        so a run that looks like managed search is really random sampling. The
+        same six-point space returns the first grid cell every time under `grid`
+        and a different winner under the fallback, which is why the baseline
+        pins the algorithm rather than inheriting the default.
+        """
+        text = SDK_EXECUTION.read_text()
+        normalized = " ".join(text.casefold().split())
+        for phrase in (
+            'pass `algorithm="grid"` explicitly',
+            "silently degrades to a local `random` sweep",
+            "fallback_reason=no_api_key",
+            "grid also cannot enumerate a continuous parameter",
+            "state which algorithm actually ran",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_absent_cost_is_never_reported_as_zero(self) -> None:
+        """A stated $0.00 reads as "this was free", which is a false claim."""
+        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        self.assertIn("report cost as not measured", normalized)
+        self.assertIn("`total_cost` as absent rather than zero", normalized)
+
+    def test_local_baseline_is_free_of_traigent_not_free_of_spend(self) -> None:
+        """The preview needs no Traigent key but still spends real provider money."""
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "needs only the user's own provider credential",
+            "before any traigent account exists",
+            "free of traigent, not free of spend",
+            "the same combined approval and the same running total",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_first_python_fence_is_the_decorator_contract(self) -> None:
         """Guard the positional dependency in the exec'd-fence tests.
 
