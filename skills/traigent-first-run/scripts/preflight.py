@@ -475,7 +475,8 @@ def check_dataset(
         if normalization_error is not None:
             invalid_rows.append((line_number, normalization_error))
             continue
-        assert normalized_row is not None
+        if normalized_row is None:
+            raise RuntimeError("dataset normalization returned no row without an error")
         rows.append(normalized_row)
 
     if invalid_rows:
