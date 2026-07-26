@@ -380,9 +380,16 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
    context format, few-shot count, tool policy, or repair behavior.
 
-Run both connected once when the user wants portal comparison. Do not run an offline baseline and
-then pay to repeat it merely to populate the portal. Do not ask the user to choose trial counts or
-knobs; select them from the inspected agent and include their calls in the combined approval.
+The baseline needs only the user's own provider credential. It runs locally as an explicit grid, so
+it produces a first real result before any Traigent account exists - deliberately the shortest path
+from "nothing set up" to "a number I can see". Say plainly that this first measurement is the
+local half of the SDK: a fixed grid over a small space, not Traigent choosing what to test. It is
+free of Traigent, not free of spend - the provider calls are real money and stay inside the same
+combined approval and the same running total as everything else.
+
+Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
+the user to choose trial counts or knobs; select them from the inspected agent and include their
+calls in the combined approval.
 Every knob must change real behavior, native booleans must stay booleans, and the enhanced space
 must be materially larger than its trial cap so Traigent is choosing what to test rather than
 replaying the same tiny grid.

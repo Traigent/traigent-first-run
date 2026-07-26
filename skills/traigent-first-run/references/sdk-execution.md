@@ -427,6 +427,21 @@ baseline_results = agent.optimize_sync(
 )
 ```
 
+Pass `algorithm="grid"` explicitly, and never leave the baseline on the default `algorithm="auto"`.
+Locally the SDK offers exactly two searches, `grid` and `random`; the managed algorithms are cloud
+side and are not registered locally. `auto` is not a third option - without a Traigent key it
+silently degrades to a local `random` sweep and reports `fallback_reason=no_api_key`, so a run that
+looks like Traigent's managed search is really random sampling. At baseline size that difference is
+visible: the same six-point space returns the first grid cell every time under `grid`, and a
+different winner between runs under the fallback. A first result the user can reproduce in front of
+someone else is worth more than one they cannot, so state which algorithm actually ran rather than
+implying the managed one did.
+
+Grid also cannot enumerate a continuous parameter, so every baseline knob stays an explicit list of
+values. If a preserved user space is far larger than its trial cap - more than roughly twenty
+configurations per allowed trial - grid would only ever reach a corner of it; use `random` there
+instead and say why.
+
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
 truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
 appears in the returned trials. If the combined approval explicitly reduced that default, verify
@@ -438,6 +453,10 @@ real one-row fixed configuration remains one row; never manufacture variants aro
 After the baseline, add its tracked cost to the single running total. If cost is unavailable,
 deduct the conservative estimate. Do not start the search if it cannot fit the remaining total
 ceiling.
+
+Read cost as a number only when the SDK reports one. A run with no captured provider spend returns
+`total_cost` as absent rather than zero, so report cost as not measured instead of printing `$0.00`
+- a stated zero reads as "this was free", which is a different and false claim.
 
 ## Broader optimization
 
