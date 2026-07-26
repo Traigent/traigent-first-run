@@ -1071,6 +1071,49 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install", offline_job)
         self.assertNotIn("setup-python", offline_job)
 
+    def test_first_python_fence_is_the_decorator_contract(self) -> None:
+        """Guard the positional dependency in the exec'd-fence tests.
+
+        `test_sdk_comparison_uses_six_rows_then_added_knobs_and_twelve_trials`
+        executes `re.findall(r"```python...")[0]` - the FIRST python fence in
+        sdk-execution.md. Inserting any python fence above it silently changes
+        which block is executed, and that test then fails with a confusing
+        NameError or AssertionError that names neither ordering nor the new
+        fence. This turns that into a failure that says what actually happened.
+        """
+        fences = re.findall(r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.S)
+        self.assertTrue(fences, "sdk-execution.md must contain a python fence")
+        self.assertIn(
+            "BASELINE_SPACE = {",
+            fences[0],
+            "the first ```python fence in sdk-execution.md is no longer the "
+            "decorator-contract block; a fence was inserted above it, which "
+            "silently changes what the exec'd-fence tests run",
+        )
+
+    def test_first_json_fence_is_the_calibration_matrix(self) -> None:
+        """Guard the same positional dependency for the calibration example.
+
+        `test_calibration_matrix_example_has_per_case_modes` parses the FIRST
+        ```json fence in evaluation-and-dataset.md.
+        """
+        text = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        match = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
+        self.assertIsNotNone(
+            match, "evaluation-and-dataset.md must contain a json fence"
+        )
+        cases = json.loads(match.group(1))
+        self.assertIsInstance(
+            cases,
+            list,
+            "the first ```json fence in evaluation-and-dataset.md is no longer "
+            "the calibration-case matrix; a fence was inserted above it",
+        )
+        self.assertTrue(
+            all(isinstance(case, dict) and "probes" in case for case in cases),
+            "the first ```json fence must still be the calibration-case matrix",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
