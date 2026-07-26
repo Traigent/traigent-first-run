@@ -58,13 +58,22 @@ class Result:
     check: str
     status: str
     detail: str
+    metrics: dict[str, Any] | None = None
 
 
 RESULTS: list[Result] = []
 
 
-def emit(check: str, status: str, detail: str) -> None:
-    RESULTS.append(Result(check, status, detail))
+def emit(
+    check: str, status: str, detail: str, metrics: dict[str, Any] | None = None
+) -> None:
+    """Record one check.
+
+    `detail` is prose for a human. `metrics` carries the same facts as data so a
+    downstream reader (the readiness scorer) can consume them without parsing
+    the sentence - a wording change should never alter a score.
+    """
+    RESULTS.append(Result(check, status, detail, metrics))
 
 
 def key_present(value: str | None) -> bool:
@@ -395,11 +404,24 @@ def token_set(value: Any) -> set[str]:
     return set(normalized_text(value).split())
 
 
+SYNTHETIC_SOURCE_PREFIXES = ("synthetic", "generated", "walkthrough", "mock")
+
+
 def is_synthetic(row: dict[str, Any]) -> bool:
+    """Report whether a row's declared provenance is generated, not collected.
+
+    Prefix matching, not equality: the walkthrough dataset this skill generates
+    declares `"source": "synthetic-walkthrough"`, so an exact `== "synthetic"`
+    test returned False for our own generated rows and silently disabled every
+    escalation below that depends on it.
+    """
     source = row.get("source")
     if source is None and isinstance(row.get("metadata"), dict):
         source = row["metadata"].get("source")
-    return str(source).casefold() == "synthetic"
+    if source is None:
+        return False
+    normalized = str(source).casefold().strip()
+    return normalized.startswith(SYNTHETIC_SOURCE_PREFIXES)
 
 
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
@@ -518,6 +540,30 @@ def check_dataset(
         )
 
     synthetic = any(is_synthetic(row) for row in rows)
+    labelled = sum(
+        1 for row in rows if str(row.get("output", "")).strip() not in ("", "None")
+    )
+    declared_sources = {
+        str(
+            row.get("source") or (row.get("metadata") or {}).get("source") or "unknown"
+        ).casefold()
+        for row in rows
+    }
+    emit(
+        "dataset-provenance",
+        WARN if synthetic else PASS,
+        (
+            "every row declares generated provenance"
+            if synthetic
+            else f"declared sources: {sorted(declared_sources)}"
+        ),
+        {
+            "rows": len(rows),
+            "labelled_rows": labelled,
+            "synthetic": synthetic,
+            "sources": sorted(declared_sources),
+        },
+    )
     raw_ids = [row_metadata_value(row, "id") for row in rows]
     missing_ids = [
         index + 1 for index, value in enumerate(raw_ids) if value in (None, "")
@@ -657,14 +703,21 @@ def check_dataset(
                 "dataset-tuning-size",
                 WARN,
                 f"{tuning_count} tuning rows is a wiring check, not a credible optimization score",
+                {"tuning_rows": tuning_count},
             )
         else:
-            emit("dataset-tuning-size", PASS, f"{tuning_count} tuning rows")
+            emit(
+                "dataset-tuning-size",
+                PASS,
+                f"{tuning_count} tuning rows",
+                {"tuning_rows": tuning_count},
+            )
         emit(
             "dataset-holdout-resolution",
             WARN if holdout_count < 10 else PASS,
             f"{holdout_count} holdout rows; one example changes the score by "
             f"{(100 / holdout_count):.1f} percentage points",
+            {"holdout_rows": holdout_count},
         )
     else:
         emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
@@ -675,6 +728,20 @@ def check_dataset(
         if row_metadata_value(row, "difficulty")
     ]
     difficulties = set(difficulty_values)
+    emit(
+        "dataset-difficulty-coverage",
+        PASS if EXPECTED_DIFFICULTIES <= difficulties else WARN,
+        (
+            f"{len(difficulty_values)} of {len(rows)} rows carry a difficulty tag; "
+            f"bands present: {sorted(difficulties) or 'none'}"
+        ),
+        {
+            "tagged_rows": len(difficulty_values),
+            "total_rows": len(rows),
+            "bands": sorted(difficulties),
+            "missing_bands": sorted(EXPECTED_DIFFICULTIES - difficulties),
+        },
+    )
     if difficulty_values and difficulties == {"easy"}:
         emit(
             "dataset-difficulty",
