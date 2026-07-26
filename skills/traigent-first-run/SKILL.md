@@ -387,6 +387,13 @@ local half of the SDK: a fixed grid over a small space, not Traigent choosing wh
 free of Traigent, not free of spend - the provider calls are real money and stay inside the same
 combined approval and the same running total as everything else.
 
+Only after that first result is on screen, ask for the Traigent key. The order is the point: the
+user has already seen the tool work before being asked to create an account. Tell them the key needs
+full access rather than the read-only default, because a read-only key still spends on the run and
+then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
+repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
+own link, name which is which, and never present one link as though it covered both.
+
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the combined approval.

@@ -462,6 +462,33 @@ Read cost as a number only when the SDK reports one. A run with no captured prov
 `total_cost` as absent rather than zero, so report cost as not measured instead of printing `$0.00`
 - a stated zero reads as "this was free", which is a different and false claim.
 
+## Carrying the local baseline into the portal
+
+A baseline that ran before the Traigent key existed is logged locally and can be uploaded
+afterwards, so the portal ends up holding both runs without paying for the baseline twice. Re-running
+it connected would spend the user's money a second time to produce a result they already have.
+
+Upload exactly one run, by its session id:
+
+```bash
+traigent sync "$SESSION_ID" --dry-run   # confirm the right run, no upload, no key needed
+traigent sync "$SESSION_ID"             # upload it
+```
+
+Never use `--all`. It pushes every optimization ever logged on that machine, not this walkthrough's
+baseline - on a developer box that can be thousands of unrelated runs, including work from other
+projects. `--dry-run` first; it names the run and its trial count so the wrong session is caught
+before anything leaves the machine.
+
+Finding the session id needs care, because the result object does not carry it. `optimization_id` is
+a different identifier and `traigent sync` rejects it with `Session ... not found`. The id is the
+`session_id` field inside the locally stored session record, which is also that file's name. Resolve
+it by reading the session records under the SDK's local storage path, selecting the newest whose
+`function_name` matches the decorated agent, and confirming its trial count equals the baseline's
+before syncing. Verify against the installed version and treat this as a lookup, not a fixed layout;
+if the id cannot be resolved with confidence, say so and leave the baseline local rather than
+uploading a run that might be someone else's.
+
 ## Broader optimization
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:

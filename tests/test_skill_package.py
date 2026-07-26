@@ -1094,6 +1094,56 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_traigent_key_must_have_write_access_not_read_only(self) -> None:
+        """A read-only key spends on the run and records nothing.
+
+        Verified in the portal service: a manually created key defaults to
+        read-only, so the connected run is rejected at submit time and silently
+        drops to local-only tracking. The warning has to land while the user is
+        creating the key, because by the time the symptom appears the money is
+        already spent.
+        """
+        normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "must be able to write experiments, not only read them",
+            "a manually created key defaults to read-only",
+            "grant it full access",
+            "do not add a backend or api url",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_baseline_is_synced_by_session_id_and_never_with_all(self) -> None:
+        """Verified against installed traigent 0.25.0.
+
+        `traigent sync --all` pushes every optimization ever logged on the
+        machine - thousands of unrelated runs on a developer box, including other
+        projects' work. And the result object does not expose the id sync needs:
+        `optimization_id` is rejected with `Session ... not found`, while the
+        accepted id is the `session_id` inside the local session record.
+        """
+        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        for phrase in (
+            "never use `--all`",
+            "every optimization ever logged on that machine",
+            "the result object does not carry it",
+            "`optimization_id` is a different identifier",
+            "leave the baseline local rather than uploading a run that might be someone else's",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_both_runs_are_reported_with_their_own_link(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "only after that first result is on screen, ask for the traigent key",
+            "full access rather than the read-only default",
+            "upload the baseline that already ran instead of paying to repeat it",
+            "never present one link as though it covered both",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
         """Pinning the connected search to a local algorithm would gut it.
 
