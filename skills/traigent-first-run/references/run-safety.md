@@ -75,6 +75,17 @@ At the secret-entry gate, show only the URL needed for the selected service:
 These account/key links are necessary actions, not educational detours. Do not show every provider
 link; show only the selected provider and Traigent when each key becomes necessary.
 
+The Traigent key must be able to write experiments, not only read them. A connected run records the
+baseline and the optimization, so a read-only key is rejected at submit time and the run silently
+drops to local-only tracking - real money is spent and nothing appears in the portal. A manually
+created key defaults to read-only, so grant it full access rather than accepting the default. Say
+this at the moment the user creates the key, not afterwards: the failure is cheap to prevent and
+expensive to discover, because by the time it shows up the spend has already happened.
+
+Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
+at the production service, and a stray override silently sends a paid run somewhere the user cannot
+see it.
+
 Use this gate order:
 
 1. After component creation, define the calibration matrix and thresholds, then have the coding

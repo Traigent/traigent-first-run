@@ -462,6 +462,24 @@ Read cost as a number only when the SDK reports one. A run with no captured prov
 `total_cost` as absent rather than zero, so report cost as not measured instead of printing `$0.00`
 - a stated zero reads as "this was free", which is a different and false claim.
 
+## Carrying the local baseline into the portal
+
+A baseline that ran before the Traigent key existed is logged locally, so it can be uploaded
+afterwards instead of being paid for a second time:
+
+```bash
+traigent sync "$SESSION_ID" --dry-run   # names the run and its trial count; no upload, no key
+traigent sync "$SESSION_ID"             # upload that one run
+```
+
+Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
+baseline. Always dry-run first so the wrong session is caught before anything leaves the machine.
+
+Take `SESSION_ID` from whatever the installed SDK exposes for it. If the installed version offers no
+supported way to obtain the id for the run just completed, leave the baseline local and report it
+from the local results - do not go looking through the SDK's private storage layout, and do not
+substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
+
 ## Broader optimization
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
