@@ -464,30 +464,21 @@ Read cost as a number only when the SDK reports one. A run with no captured prov
 
 ## Carrying the local baseline into the portal
 
-A baseline that ran before the Traigent key existed is logged locally and can be uploaded
-afterwards, so the portal ends up holding both runs without paying for the baseline twice. Re-running
-it connected would spend the user's money a second time to produce a result they already have.
-
-Upload exactly one run, by its session id:
+A baseline that ran before the Traigent key existed is logged locally, so it can be uploaded
+afterwards instead of being paid for a second time:
 
 ```bash
-traigent sync "$SESSION_ID" --dry-run   # confirm the right run, no upload, no key needed
-traigent sync "$SESSION_ID"             # upload it
+traigent sync "$SESSION_ID" --dry-run   # names the run and its trial count; no upload, no key
+traigent sync "$SESSION_ID"             # upload that one run
 ```
 
-Never use `--all`. It pushes every optimization ever logged on that machine, not this walkthrough's
-baseline - on a developer box that can be thousands of unrelated runs, including work from other
-projects. `--dry-run` first; it names the run and its trial count so the wrong session is caught
-before anything leaves the machine.
+Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
+baseline. Always dry-run first so the wrong session is caught before anything leaves the machine.
 
-Finding the session id needs care, because the result object does not carry it. `optimization_id` is
-a different identifier and `traigent sync` rejects it with `Session ... not found`. The id is the
-`session_id` field inside the locally stored session record, which is also that file's name. Resolve
-it by reading the session records under the SDK's local storage path, selecting the newest whose
-`function_name` matches the decorated agent, and confirming its trial count equals the baseline's
-before syncing. Verify against the installed version and treat this as a lookup, not a fixed layout;
-if the id cannot be resolved with confidence, say so and leave the baseline local rather than
-uploading a run that might be someone else's.
+Take `SESSION_ID` from whatever the installed SDK exposes for it. If the installed version offers no
+supported way to obtain the id for the run just completed, leave the baseline local and report it
+from the local results - do not go looking through the SDK's private storage layout, and do not
+substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
 
 ## Broader optimization
 

@@ -1113,22 +1113,22 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_baseline_is_synced_by_session_id_and_never_with_all(self) -> None:
+    def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
         """Verified against installed traigent 0.25.0.
 
-        `traigent sync --all` pushes every optimization ever logged on the
-        machine - thousands of unrelated runs on a developer box, including other
-        projects' work. And the result object does not expose the id sync needs:
-        `optimization_id` is rejected with `Session ... not found`, while the
-        accepted id is the `session_id` inside the local session record.
+        `--all` pushes every optimization ever logged on the machine - 1042
+        sessions on the box used to check this, including unrelated projects.
+        Separately, the SDK exposes no supported id for the run just completed
+        (Traigent/Traigent#2020), and the fix for that belongs upstream: this
+        repo must not work around it by reading the SDK's private storage
+        layout.
         """
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for phrase in (
             "never use `--all`",
-            "every optimization ever logged on that machine",
-            "the result object does not carry it",
-            "`optimization_id` is a different identifier",
-            "leave the baseline local rather than uploading a run that might be someone else's",
+            "every optimization ever logged on the machine",
+            "do not go looking through the sdk's private storage layout",
+            "traigent/traigent issue 2020",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
