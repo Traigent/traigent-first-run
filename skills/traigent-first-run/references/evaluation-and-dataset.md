@@ -236,6 +236,17 @@ decision boundaries, realistic noise, edge cases, or known failure modes are abs
 cannot be established from project evidence, say difficulty is unverified rather than declaring
 the dataset easy.
 
+When a per-example signal flags high response variance (the same example scoring differently
+across trials), separate three causes before acting - a generic "add repetitions" only fixes the
+first: (1) sampling noise from a nonzero agent temperature - pin temperature 0 for exact-match or
+deterministic scoring, open it only when the scorer tolerates surface variation, and add
+repetitions for genuinely stochastic configurations; (2) a configuration that structurally fails
+on some models - a prompt or knob value that returns empty or erroring outputs (watch the
+empty-output rate) drags every example's score and inflates variance, so exclude that
+configuration rather than repeating it; (3) a brittle exact-match scorer that grades a
+correct-but-differently-phrased answer inconsistently - robustify the ruler with an
+equivalence-aware match or a calibrated judge. Repetitions do not fix causes (2) or (3).
+
 When a material limitation is found, offer:
 
 1. **Repair and re-evaluate (recommended)** - create a working copy under `traigent-runs/`, preserve

@@ -35,6 +35,26 @@ After decorating the function, inspect `agent.optimize_sync` the same way. If th
 signatures or public dataset loader do not support the usage below, adapt from the installed
 public API. Do not invent arguments or reproduce SDK internals.
 
+Start that inspection at these public locations instead of searching the whole package. Treat the
+map as navigation, not fixed signatures: confirm each on the installed version, never hardcode a
+signature you have not inspected, and treat an absent name as unavailable rather than assumed.
+
+| Need | Import from |
+| --- | --- |
+| `optimize` decorator, `EvaluationOptions`, `InjectionOptions` | `traigent.api.decorators` |
+| `get_config()` - read the trial's chosen values inside the agent body | `traigent` (`traigent.get_config`) |
+| `ObjectiveDefinition`, `ObjectiveSchema` | `traigent.core.objectives` |
+| Dataset loader and example fields (`.input_data` / `.expected_output` / `.metadata`) | `traigent.Dataset` (`Dataset.from_jsonl`) |
+| `optimize_sync(...)` and its result object | the decorated function (`agent.optimize_sync`) |
+| Knob recommendations - `recommend_configuration_space(agent_type)`, agent_type `rag` or `code_gen` | `traigent.config_generator.recommendations` |
+
+Read outcomes from attributes on the result object rather than parsing the printed table; inspect
+it once and reuse the names: `cloud_url` (direct portal link), `best_config`, `best_score`,
+`total_cost`, `trials`, `failed_trials`, `stop_reason`, `run_label`. Confirm the exact names on the
+installed version and treat any that are absent as not available. For the scorer argument contract,
+use the installed public `metric_functions` shape shown under "Decorator contract" below rather than
+inferring aliases or positional fallbacks from SDK internals.
+
 The installed SDK owns:
 
 - The default per-optimization cost limit and its in-run enforcement.
@@ -65,6 +85,20 @@ Use a positive floor so setup overhead does not make a small run fail immediatel
 assistant selects the exact internal values and places them in the current process; the user does
 not fill them in. If the observed estimate becomes materially longer than the approved estimate,
 offer a smaller representative run or state the additional approximate time and cost.
+
+Do not bound the enhanced optimization with a mid-run wall-clock cap. Pass
+`timeout=OPTIMIZATION_TIMEOUT_SECONDS` where that value is `None` by default, so a legitimately
+progressing search is never cut off partway and forced to report a partial result - and so a large
+run is not truncated wholesale by a fixed clock. Its real bounds are the trial cap, the total cost
+ceiling, and the per-model-request timeout below: a stuck provider call is caught by the request
+timeout and total spend by the ceiling. Keep a first run from taking too long by sizing it up
+front, not by cutting it: if the runtime estimate is too high, reduce the run before starting - a
+smaller representative tuning slice, fewer trials, or a smaller model set - and disclose the
+revised estimate; a large *preserved* baseline (never shrink a user-owned one) then runs to
+completion under the cost ceiling rather than being truncated. The estimate above still drives the
+up-front time/cost disclosure and the baseline phase timeout (`timeout=BASELINE_TIMEOUT_SECONDS`, a
+small fixed grid). Set `TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only for the rare case that
+genuinely needs a hard wall-clock stop.
 
 Keep an individual model-request timeout so one stuck provider call cannot hang the walkthrough.
 Reuse the real agent's existing value when present. Generated LiteLLM walkthrough code may use a
@@ -142,6 +176,18 @@ def positive_int(name: str, *, default: int | None = None) -> int:
     return value
 
 
+def optional_positive_number(name: str) -> float | None:
+    """Return a positive float from the environment, or None when unset - used
+    for bounds that are intentionally uncapped by default."""
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return None
+    value = float(raw_value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return value
+
+
 MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS",
     default=120.0,
@@ -149,7 +195,10 @@ MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
 BASELINE_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
 )
-OPTIMIZATION_TIMEOUT_SECONDS = positive_number(
+# No wall-clock cap on the enhanced optimization by default (None): the search
+# runs to its trial cap, bounded by the total cost ceiling and the per-model-
+# request timeout above. Set the env var only to add an optional wall-clock limit.
+OPTIMIZATION_TIMEOUT_SECONDS = optional_positive_number(
     "TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS"
 )
 BASELINE_TRIALS = positive_int(
@@ -347,6 +396,13 @@ stop before baseline/search instead of scaling an untracked path.
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
 
+Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
+(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
+contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
+onto its own resolved parent by dataset validation and doubles into
+`.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
+time. Never shorten these to a relative path. Tracked upstream as Traigent/Traigent issue 1993.
+
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
 contract. Do not infer aliases or positional fallbacks from SDK internals. When grading requires
@@ -405,7 +461,9 @@ enhanced rows with a cap of 12; report the actual count and stop reason. Fewer t
 a concrete backend stop, timeout, cost-limit, or failure explanation rather than being presented as
 the intended first-run comparison.
 
-When `stop_reason == "timeout"` and trials completed, retain and report the best partial result.
+If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
+retain and report the best partial result (the enhanced run is uncapped by default, so this is
+defensive handling rather than the normal path).
 Offer another bounded pass only when the search was still improving or left a specific worthwhile
 hypothesis, and state its additional approximate time and cost. If zero trials completed,
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
