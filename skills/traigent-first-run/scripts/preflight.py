@@ -407,6 +407,30 @@ def token_set(value: Any) -> set[str]:
 SYNTHETIC_SOURCE_PREFIXES = ("synthetic", "generated", "walkthrough", "mock")
 
 
+def row_provenance(row: dict[str, Any]) -> Any:
+    """Return a row's declared provenance token, or None if it declares none.
+
+    Rows declare where their data came from under either `provenance` or the
+    older `source` name, at the top level or nested in `metadata`. Reading only
+    `source` (the historical name) meant a row that declared
+    `metadata.provenance` read as `unknown` - it never earned the production
+    band, and a row whose synthetic origin was declared only under `provenance`
+    was scored as if it were collected. Both names are read here so the two
+    scripts agree on one field.
+    """
+    metadata = row.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for candidate in (
+        row.get("provenance"),
+        metadata.get("provenance"),
+        row.get("source"),
+        metadata.get("source"),
+    ):
+        if candidate not in (None, ""):
+            return candidate
+    return None
+
+
 def is_synthetic(row: dict[str, Any]) -> bool:
     """Report whether a row's declared provenance is generated, not collected.
 
@@ -415,9 +439,7 @@ def is_synthetic(row: dict[str, Any]) -> bool:
     test returned False for our own generated rows and silently disabled every
     escalation below that depends on it.
     """
-    source = row.get("source")
-    if source is None and isinstance(row.get("metadata"), dict):
-        source = row["metadata"].get("source")
+    source = row_provenance(row)
     if source is None:
         return False
     normalized = str(source).casefold().strip()
@@ -464,6 +486,40 @@ def structured_outcomes(
     return None
 
 
+def emit_dataset_provenance(
+    present_rows: list[dict[str, Any]], *, labelled: int
+) -> bool:
+    """Emit the provenance metric and report whether the data is synthetic.
+
+    `present_rows` are every row that carries an input, whether or not it also
+    carries an expected output, so the reported row count reflects the data that
+    exists rather than only the fully-labelled subset. `labelled` is the count
+    that additionally carries a non-empty expected output. Emitting this even
+    when no row is labelled is what lets the readiness scorer tell an unlabelled
+    dataset (a partial score) apart from an absent one.
+    """
+    synthetic = any(is_synthetic(row) for row in present_rows)
+    declared_sources = {
+        str(row_provenance(row) or "unknown").casefold() for row in present_rows
+    }
+    emit(
+        "dataset-provenance",
+        WARN if synthetic else PASS,
+        (
+            "every row declares generated provenance"
+            if synthetic
+            else f"declared sources: {sorted(declared_sources)}"
+        ),
+        {
+            "rows": len(present_rows),
+            "labelled_rows": labelled,
+            "synthetic": synthetic,
+            "sources": sorted(declared_sources),
+        },
+    )
+    return synthetic
+
+
 def check_dataset(
     path: Path,
     outcome_field: str | None = None,
@@ -475,7 +531,9 @@ def check_dataset(
         return None
 
     rows: list[dict[str, Any]] = []
+    present_rows: list[dict[str, Any]] = []
     invalid_rows: list[tuple[int, str]] = []
+    unlabelled_present = 0
     candidate_count = 0
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         if not raw_line.strip():
@@ -496,11 +554,22 @@ def check_dataset(
         )
         if normalization_error is not None:
             invalid_rows.append((line_number, normalization_error))
+            # A row that carries an input but only lacks its expected output is a
+            # present-but-unlabelled data point, not malformed data. It is still
+            # unusable for scoring, but tracking it lets the readiness adapter
+            # tell "rows exist, none labelled" apart from "no dataset at all".
+            input_found, _ = dataset_field_value(row, input_field)
+            expected_found, _ = dataset_field_value(row, expected_field)
+            if input_found and not expected_found and input_field != expected_field:
+                present_rows.append(row)
+                unlabelled_present += 1
             continue
         if normalized_row is None:
             raise RuntimeError("dataset normalization returned no row without an error")
         rows.append(normalized_row)
+        present_rows.append(row)
 
+    malformed_rows = len(invalid_rows) - unlabelled_present
     if invalid_rows:
         invalid_percentage = len(invalid_rows) / candidate_count * 100
         examples = "; ".join(
@@ -512,8 +581,28 @@ def check_dataset(
             FAIL,
             f"{len(invalid_rows)}/{candidate_count} rows ({invalid_percentage:.1f}%) "
             f"are unusable; {examples}",
+            {
+                "invalid_rows": len(invalid_rows),
+                "malformed_rows": malformed_rows,
+                "unlabelled_rows": unlabelled_present,
+                "candidate_rows": candidate_count,
+            },
         )
     if not rows:
+        if present_rows:
+            # Rows carry inputs but none carry an expected output: a
+            # present-but-unlabelled dataset, not an absent one. Emit provenance
+            # so the readiness adapter reaches the "no expected outputs" branch
+            # (a partial score) instead of "no dataset at all", then stop - there
+            # are no labelled rows to run the remaining quality checks against.
+            emit_dataset_provenance(present_rows, labelled=0)
+            emit(
+                "dataset-shape",
+                FAIL,
+                f"{len(present_rows)} rows carry inputs but none carry an "
+                "expected output",
+            )
+            return None
         emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None
     if not invalid_rows:
@@ -539,31 +628,10 @@ def check_dataset(
             f"all inputs use the same {next(iter(input_types))} shape",
         )
 
-    synthetic = any(is_synthetic(row) for row in rows)
     labelled = sum(
         1 for row in rows if str(row.get("output", "")).strip() not in ("", "None")
     )
-    declared_sources = {
-        str(
-            row.get("source") or (row.get("metadata") or {}).get("source") or "unknown"
-        ).casefold()
-        for row in rows
-    }
-    emit(
-        "dataset-provenance",
-        WARN if synthetic else PASS,
-        (
-            "every row declares generated provenance"
-            if synthetic
-            else f"declared sources: {sorted(declared_sources)}"
-        ),
-        {
-            "rows": len(rows),
-            "labelled_rows": labelled,
-            "synthetic": synthetic,
-            "sources": sorted(declared_sources),
-        },
-    )
+    synthetic = emit_dataset_provenance(present_rows, labelled=labelled)
     raw_ids = [row_metadata_value(row, "id") for row in rows]
     missing_ids = [
         index + 1 for index, value in enumerate(raw_ids) if value in (None, "")
