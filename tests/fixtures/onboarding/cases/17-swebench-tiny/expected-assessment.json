@@ -1,0 +1,21 @@
+{
+  "case_id": "17",
+  "slug": "swebench-tiny",
+  "title": "SWE-bench repair (tiny)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "limited",
+    "evaluation": "real"
+  },
+  "dataset_items": 3,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 5,
+  "evaluator": "unittest",
+  "expected_band": "Partial",
+  "expected_caps": [
+    "tiny power"
+  ],
+  "expected_action": "Warn the dataset is far too small; expand before trusting numbers.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

@@ -1,0 +1,21 @@
+{
+  "case_id": "19",
+  "slug": "banking77-flat",
+  "title": "Banking77 intents (flat)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "real",
+    "evaluation": "real"
+  },
+  "dataset_items": 120,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 2,
+  "evaluator": "exact",
+  "expected_band": "Workable",
+  "expected_caps": [
+    "thin difficulty spread"
+  ],
+  "expected_action": "Proceed; note the narrow difficulty, suggest harder cases.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

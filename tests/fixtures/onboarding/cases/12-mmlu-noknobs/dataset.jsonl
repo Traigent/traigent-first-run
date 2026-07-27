@@ -1,0 +1,100 @@
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}
+{"input": "2+2 = ? (A) 3 (B) 4 (C) 5 (D) 6", "output": "B", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "The largest planet is: (A) Earth (B) Mars (C) Jupiter (D) Venus", "output": "C", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "H2O is commonly called: (A) salt (B) water (C) acid (D) base", "output": "B", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Which is a prime? (A) 9 (B) 15 (C) 17 (D) 21", "output": "C", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "real"}}

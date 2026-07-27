@@ -1,0 +1,51 @@
+{
+  "knobs": [
+    {
+      "name": "model",
+      "values": [
+        "gpt-4o-mini",
+        "gpt-4o"
+      ]
+    },
+    {
+      "name": "temperature",
+      "values": [
+        0.0,
+        0.3,
+        0.7
+      ]
+    },
+    {
+      "name": "prompt_style",
+      "values": [
+        "plain",
+        "step_by_step",
+        "expert"
+      ]
+    },
+    {
+      "name": "output_format",
+      "values": [
+        "raw",
+        "json",
+        "fenced"
+      ]
+    },
+    {
+      "name": "fewshot_k",
+      "values": [
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "retrieval",
+      "values": [
+        "off",
+        "bm25",
+        "dense"
+      ]
+    }
+  ]
+}

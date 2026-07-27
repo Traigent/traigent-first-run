@@ -1,0 +1,50 @@
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The human body has four lungs.", "output": "REFUTES", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Mount Everest is the tallest mountain above sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Claim: The Great Wall of China is visible from the Moon with the naked eye.", "output": "REFUTES", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "real"}}
+{"input": "Claim: Water boils at 100 degrees Celsius at sea level.", "output": "SUPPORTS", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "real"}}

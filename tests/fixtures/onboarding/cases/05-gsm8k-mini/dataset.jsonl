@@ -1,0 +1,15 @@
+{"input": "Sam has 4 apples and buys 28 more. How many now?", "output": "32", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "A box holds 34 pens. How many pens in 31 boxes?", "output": "1054", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Ann had 60 candies and shared them equally among 5 friends. How many each?", "output": "12", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "real"}}
+{"input": "A tank has 130 L; it leaks 20 L/hour. After 3 hours, how many liters remain?", "output": "70", "metadata": {"difficulty": "very_hard", "split": "holdout", "provenance": "real"}}
+{"input": "Sam has 35 apples and buys 25 more. How many now?", "output": "60", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "A box holds 20 pens. How many pens in 15 boxes?", "output": "300", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Ann had 407 candies and shared them equally among 37 friends. How many each?", "output": "11", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "real"}}
+{"input": "A tank has 330 L; it leaks 2 L/hour. After 3 hours, how many liters remain?", "output": "324", "metadata": {"difficulty": "very_hard", "split": "holdout", "provenance": "real"}}
+{"input": "Sam has 31 apples and buys 25 more. How many now?", "output": "56", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "A box holds 27 pens. How many pens in 24 boxes?", "output": "648", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Ann had 672 candies and shared them equally among 24 friends. How many each?", "output": "28", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "real"}}
+{"input": "A tank has 370 L; it leaks 16 L/hour. After 3 hours, how many liters remain?", "output": "322", "metadata": {"difficulty": "very_hard", "split": "holdout", "provenance": "real"}}
+{"input": "Sam has 27 apples and buys 5 more. How many now?", "output": "32", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "real"}}
+{"input": "A box holds 38 pens. How many pens in 5 boxes?", "output": "190", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "real"}}
+{"input": "Ann had 320 candies and shared them equally among 8 friends. How many each?", "output": "40", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "real"}}

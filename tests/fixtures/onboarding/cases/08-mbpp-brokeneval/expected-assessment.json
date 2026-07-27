@@ -1,0 +1,21 @@
+{
+  "case_id": "08",
+  "slug": "mbpp-brokeneval",
+  "title": "MBPP code (broken eval)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "real",
+    "evaluation": "invalid"
+  },
+  "dataset_items": 30,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 3,
+  "evaluator": "broken",
+  "expected_band": "Blocked",
+  "expected_caps": [
+    "evaluator-broken (25)"
+  ],
+  "expected_action": "Replace the verifier before trusting any number.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

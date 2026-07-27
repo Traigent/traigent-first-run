@@ -1,0 +1,27 @@
+{
+  "knobs": [
+    {
+      "name": "model",
+      "values": [
+        "gpt-4o-mini",
+        "gpt-4o"
+      ]
+    },
+    {
+      "name": "retrieval",
+      "values": [
+        "off",
+        "bm25",
+        "dense"
+      ]
+    },
+    {
+      "name": "prompt_style",
+      "values": [
+        "plain",
+        "step_by_step",
+        "expert"
+      ]
+    }
+  ]
+}

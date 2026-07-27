@@ -1,0 +1,21 @@
+{
+  "case_id": "21",
+  "slug": "multiwoz-malformed",
+  "title": "MultiWOZ dialogue (malformed)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "invalid",
+    "evaluation": "missing"
+  },
+  "dataset_items": 30,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 3,
+  "evaluator": "none",
+  "expected_band": "Partial",
+  "expected_caps": [
+    "structural-check (35)"
+  ],
+  "expected_action": "Repair the structure first, then stand up a turn-level judge.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

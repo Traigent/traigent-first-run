@@ -1,0 +1,21 @@
+{
+  "case_id": "24",
+  "slug": "clinc150-leak",
+  "title": "CLINC150 intents (leakage)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "limited",
+    "evaluation": "real"
+  },
+  "dataset_items": 120,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 2,
+  "evaluator": "exact",
+  "expected_band": "Partial",
+  "expected_caps": [
+    "shared-splits (50)"
+  ],
+  "expected_action": "Re-split so the check is honest; warn about leakage.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

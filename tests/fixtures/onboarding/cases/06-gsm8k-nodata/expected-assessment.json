@@ -1,0 +1,21 @@
+{
+  "case_id": "06",
+  "slug": "gsm8k-nodata",
+  "title": "GSM8K math (no data)",
+  "component_states": {
+    "agent": "limited",
+    "dataset": "missing",
+    "evaluation": "missing"
+  },
+  "dataset_items": 0,
+  "labeled": false,
+  "provenance": "none",
+  "knob_count": 1,
+  "evaluator": "none",
+  "expected_band": "Not ready",
+  "expected_caps": [
+    "no-dataset (20)"
+  ],
+  "expected_action": "Synthesize ~18 seeded questions easy->very hard, then build an evaluator.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

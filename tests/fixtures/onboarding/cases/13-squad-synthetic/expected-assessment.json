@@ -1,0 +1,21 @@
+{
+  "case_id": "13",
+  "slug": "squad-synthetic",
+  "title": "SQuAD reading-comp (synthetic)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "demo",
+    "evaluation": "real"
+  },
+  "dataset_items": 100,
+  "labeled": true,
+  "provenance": "synthetic",
+  "knob_count": 4,
+  "evaluator": "judge",
+  "expected_band": "Workable",
+  "expected_caps": [
+    "generated-data (65)"
+  ],
+  "expected_action": "Proceed but flag synthetic; recommend a small real holdout.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

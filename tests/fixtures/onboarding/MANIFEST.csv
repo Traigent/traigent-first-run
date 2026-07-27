@@ -1,0 +1,26 @@
+case_id,slug,title,task,dataset_rows,labeled,knobs,evaluator,expected_band,caps
+01,spider-full,SPIDER text2SQL (control),sql,300,yes,6,set,Excellent,none
+02,spider-mini30,SPIDER text2SQL (mini),sql,30,yes,4,set,Strong,none
+03,spider-nolabels,SPIDER text2SQL (no labels),sql,40,no,4,set,Partial,rows-no-outputs (30)
+04,spider-noeval,SPIDER text2SQL (no eval),sql,50,yes,4,none,Partial,no-eval (40)
+05,gsm8k-mini,GSM8K math (mini),math,15,yes,1,numeric,Partial,no-knob-varies (45)
+06,gsm8k-nodata,GSM8K math (no data),math,0,no,1,none,Not ready,no-dataset (20)
+07,humaneval-mini,HumanEval code (mini),code,20,yes,3,unittest,Strong,none
+08,mbpp-brokeneval,MBPP code (broken eval),code,30,yes,3,broken,Blocked,evaluator-broken (25)
+09,hotpotqa-fewlogs,HotpotQA multi-hop (few logs),qa,7,no,2,none,Not ready,rows-no-outputs (30); no-eval (40)
+10,hotpotqa-wrongruler,HotpotQA multi-hop (wrong ruler),qa_long,50,yes,3,exact_on_freetext,Partial,evaluator task-fit fail
+11,triviaqa-100,TriviaQA short QA,qa,120,yes,2,judge,Workable,power band capped
+12,mmlu-noknobs,MMLU multiple-choice,mcq,100,yes,1,exact,Partial,no-knob-varies (45)
+13,squad-synthetic,SQuAD reading-comp (synthetic),qa,100,yes,4,judge,Workable,generated-data (65)
+14,cnn-summ-slowjudge,CNN summarization (slow judge),summ,30,no,3,judge_slow,Partial,eval-timeout (45)
+15,billsum-noeval,BillSum legal summ (no eval),summ,20,yes,3,none,Partial,no-eval (40)
+16,fever-factcheck,FEVER fact-check,factcheck,50,yes,3,exact,Strong,none
+17,swebench-tiny,SWE-bench repair (tiny),code,3,yes,5,unittest,Partial,tiny power
+18,toolbench-fc,ToolBench tool-use,tool,30,yes,4,exact,Workable,none
+19,banking77-flat,Banking77 intents (flat),intent_flat,120,yes,2,exact,Workable,thin difficulty spread
+20,wikisql-dupes,WikiSQL text2SQL (dupes),sql,50,yes,3,set,Partial,diversity deductions
+21,multiwoz-malformed,MultiWOZ dialogue (malformed),dialogue,30,yes,3,none,Partial,structural-check (35)
+22,supportemail-realprod,Support-email agent (real prod),qa_long,150,no,2,none,Partial,rows-no-outputs (30)
+23,rag-math-none,RAG-over-docs math (nothing),math,0,no,2,none,Not ready,no-dataset (20); would-be generated (65)
+24,clinc150-leak,CLINC150 intents (leakage),intent,120,yes,2,exact,Partial,shared-splits (50)
+25,nl2bash-badknobs,NL2Bash command-gen (bad knobs),bash,30,yes,8,set,Workable,knob-count decays at 7+; low variation quality

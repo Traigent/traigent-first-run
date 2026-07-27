@@ -1,0 +1,21 @@
+{
+  "case_id": "10",
+  "slug": "hotpotqa-wrongruler",
+  "title": "HotpotQA multi-hop (wrong ruler)",
+  "component_states": {
+    "agent": "real",
+    "dataset": "real",
+    "evaluation": "limited"
+  },
+  "dataset_items": 50,
+  "labeled": true,
+  "provenance": "real",
+  "knob_count": 3,
+  "evaluator": "exact_on_freetext",
+  "expected_band": "Partial",
+  "expected_caps": [
+    "evaluator task-fit fail"
+  ],
+  "expected_action": "Swap exact match for a calibrated judge.",
+  "grading_note": "The onboarding run PASSES this fixture if its readiness card reports this band and these caps (or a superset that still yields this band) and recommends this action, on all three coding agents."
+}

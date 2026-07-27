@@ -1,0 +1,100 @@
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "tuning", "provenance": "generated"}}
+{"input": "What is the capital of France?", "output": "Paris", "metadata": {"difficulty": "easy", "split": "holdout", "provenance": "generated"}}
+{"input": "Who wrote the play Hamlet?", "output": "William Shakespeare", "metadata": {"difficulty": "easy", "split": "tuning", "provenance": "generated"}}
+{"input": "In what year did the Apollo 11 mission land on the Moon?", "output": "1969", "metadata": {"difficulty": "medium", "split": "holdout", "provenance": "generated"}}
+{"input": "Which element has the chemical symbol Fe?", "output": "Iron", "metadata": {"difficulty": "medium", "split": "tuning", "provenance": "generated"}}
+{"input": "What river runs through Budapest and Vienna?", "output": "The Danube", "metadata": {"difficulty": "hard", "split": "holdout", "provenance": "generated"}}
