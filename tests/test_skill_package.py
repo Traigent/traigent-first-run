@@ -1094,6 +1094,52 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "close the loop on the readiness score the run opened with",
+            "the opening score and the closing recap are the same conversation",
+            "npx skills add traigent/traigent-skills",
+            "restart the session so the new skills load",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_cloud_insight_is_described_as_signals_not_numbers(self) -> None:
+        """The backend withholds numeric dataset-quality scores from clients.
+
+        Coarse buckets, counts and curation advice are client-visible; the
+        underlying quality/coverage/diversity numbers are not. And the analysis
+        is run-scoped, so promising to grade a dataset that has not been run
+        would be a second false claim.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "describe those as signals and curation advice, not as numbers",
+            "do not promise a numeric dataset-quality score",
+            "never imply the platform can grade a dataset that has not been run",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_post_run_insight_avoids_the_plugin_only_analyze_method(self) -> None:
+        """Verified on installed traigent 0.25.0.
+
+        `result.analyze()` raises ImportError without the traigent-tuned-variables
+        plugin, which this run does not install - calling it would turn a
+        finished, already-paid run into a crash at the reporting step. The audit
+        and insights helpers, by contrast, are available and free.
+        """
+        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        for phrase in (
+            "do not call the result's `analyze()` method",
+            "raises `importerror` without it",
+            "neither is meaningful under mock mode",
+            "suspect the expectation before the agent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_traigent_key_must_have_write_access_not_read_only(self) -> None:
         """A read-only key spends on the run and records nothing.
 

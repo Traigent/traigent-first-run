@@ -462,6 +462,28 @@ Read cost as a number only when the SDK reports one. A run with no captured prov
 `total_cost` as absent rather than zero, so report cost as not measured instead of printing `$0.00`
 - a stated zero reads as "this was free", which is a different and false claim.
 
+## Reading the result for insight
+
+Two post-run reads cost nothing, need no key, and turn a flat "it improved by N points" into
+something the user can act on. Confirm both on the installed version before relying on them, and
+treat an absent name as unavailable rather than assumed.
+
+- A per-example audit on the result object flags examples that no configuration ever scored
+  correctly, and can carry a suggested answer where several unrelated models agreed on the same
+  non-gold output. Those flags are the fastest route to a mislabelled reference: when every
+  configuration fails one example, suspect the expectation before the agent.
+- An optimization-insights helper summarizes which controls actually moved the score and which did
+  not. A knob that never changed the outcome is worth reporting - it tells the user where not to
+  spend effort next time.
+
+Both need at least two completed configurations to say anything, which the baseline already
+provides. Neither is meaningful under mock mode: canned responses make every configuration score
+identically, so a flag there describes the mock, not the dataset.
+
+Do not call the result's `analyze()` method. It requires a separate plugin that this run does not
+install and raises `ImportError` without it, so calling it turns a finished run into a crash at the
+reporting step.
+
 ## Carrying the local baseline into the portal
 
 A baseline that ran before the Traigent key existed is logged locally, so it can be uploaded
