@@ -1,28 +1,44 @@
-# Traigent Onboarding Glossary
+# Glossary - shared vocabulary for talking with the user
 
-Canonical, unambiguous definitions for the customer's coding agent to use when explaining concepts to a user (or asking the user to confirm a choice) during a Traigent first run. Keep wording consistent with these.
+Canonical definitions for the coding agent to use when explaining a concept to
+the user or phrasing a confirmation question during a first run. Load this on
+demand at those moments; it is a communication reference, not a stage of the
+run. Decision rules (when to ask, when to proceed, what needs approval) are
+owned by `SKILL.md` and its authorization table - this file only fixes what the
+words mean and how to say them.
 
-===============================================================================
+## How to use this vocabulary
 
-Purpose. During onboarding the customer's coding agent has to explain concepts
-to a user who may be new to evaluation and optimization, and sometimes ask the
-user to confirm a choice. If the words are used loosely, the user gets confused
-or agrees to the wrong thing. This glossary is the single source of truth for
-what each term means and how to say it.
-
-HOW THE CODING AGENT SHOULD USE THIS
 - Define a term the first time it appears in the conversation, in one plain
   sentence, then use it consistently. Do not switch synonyms mid-run (pick
   "evaluator", not sometimes "scorer", sometimes "judge", sometimes "grader").
 - Prefer the "plain" wording with the user; keep the "precise" wording for your
   own reasoning and for the report.
-- Never assume the user knows an acronym. Expand it once (BE = backend).
+- Never assume the user knows an acronym. Expand it once
+  (RAG = retrieval-augmented generation).
 - When a term maps to a decision the user must make, use the "ask like this"
   line rather than inventing your own phrasing.
-- If the user's setup is ambiguous, resolve it with the rule in the last section
-  ("When to ask vs. when to proceed") - do not guess silently.
 
-CORE TERMS
+## Calibrating depth
+
+Do not ask the user how experienced they are, and never classify or announce
+their expertise level (see the operating contract in `SKILL.md`). Calibrate
+from evidence instead:
+
+- What inspection found: a project with a real evaluator, dataset splits, or an
+  eval harness needs terse definitions or none; a project with none of these
+  usually needs the plain wording and one-sentence definitions throughout.
+- How the user talks: if they say "holdout", "F1", or "LLM-as-judge"
+  unprompted, stop defining those terms; if they ask what a term means, shift
+  to the plain wording for the rest of the run.
+- Default when there is no signal yet: one plain sentence at first use, then
+  move on. That costs an experienced reader nothing and quietly carries
+  everyone else.
+- Depth on request only: answer a "what does that mean?" with the plain and,
+  if asked further, the precise wording. Do not front-load teaching material,
+  and do not link educational resources during the active run.
+
+## Core terms
 
 Agent
   Plain: the AI program we are trying to make better - it takes an input and
@@ -30,7 +46,7 @@ Agent
   Precise: the model plus all the code, prompts, retrieval and tools around it
   that together turn an input into an output.
 
-Coding agent (the C-Agent, "your agent")
+Coding agent ("your agent" in conversation)
   Plain: the assistant running in your editor or terminal (Claude Code, Codex,
   Gemini CLI, etc.) that is doing this setup with you.
   Note: keep this distinct from "agent" above. The coding agent builds and
@@ -100,14 +116,16 @@ Optimization (optimization run)
   by the evaluator, that returns the best non-dominated candidates.
 
 Baseline run vs enhanced run
-  Plain: the baseline is a small first search you run locally to see it work;
-  the enhanced run is the fuller, cloud-assisted search that finds better agents.
+  Plain: the baseline measures your current configuration (or a small standard
+  sweep when Traigent had to generate one); the enhanced run is the broader,
+  cloud-assisted search that looks for better configurations.
 
 Tuning split vs holdout (validation) split
   Plain: the tuning part is what we optimize against; the holdout is kept aside
   and only used at the end to check we did not just memorize the tuning part.
   Note: if the same examples appear in both, the result is optimistic and cannot
-  be trusted (this is "leakage").
+  be trusted (this is "leakage"). When Traigent generates walkthrough data, the
+  default is 24 rows split 18 tuning / 6 holdout.
 
 Provenance
   Plain: where the data came from - real production data, real inputs with
@@ -126,36 +144,44 @@ Pareto frontier (optimal frontier)
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
   to be optimized, broken into three parts: your dataset, your evaluator, and
-  your agent's knobs. It shapes what we explain and what we fix; it never stops
-  the run.
+  your agent's knobs. It shapes what we explain and what we fix; by default it
+  never stops the run.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
-  Blocked: a separate flag meaning one specific thing is broken (for example a
-  broken evaluator) even if the rest is good.
   Cap: a rule that holds the score down when something essential is missing or
-  broken, so a high average cannot hide it.
+  broken (for example a broken evaluator), so a high average cannot hide it.
+  Blocked: the flag the card shows whenever at least one cap fired - it names
+  the specific broken thing even when the rest looks good.
 
 .env file
   Plain: a small text file in your project that holds settings and secrets -
-  most importantly your Traigent API key - so the tools can run. It stays on
-  your machine and should not be shared or committed to git.
+  most importantly your keys - so the tools can run. It stays on your machine
+  and should not be shared or committed to git.
 
-API key / access token
-  Plain: your personal key that lets the tools talk to Traigent's cloud. The
-  onboarding key is time-limited (about 10 days) and one per account.
+Provider key vs Traigent portal key
+  Plain: two different keys live in your `.env`. The provider key (OpenAI,
+  Anthropic, OpenRouter, ...) pays for the model calls your agent makes. The
+  Traigent portal key (it starts with `uk_`) connects the run to your Traigent
+  account so the experiments and results appear in the portal.
+  Ask like this: "Two keys go into your local .env - your model provider's key
+  and your Traigent portal key. Paste them into the file directly, not into
+  chat."
 
-Portal (backend, BE, the cloud)
-  Plain: the Traigent website where you register, generate your API key, and
-  view your optimization runs and their results.
+Portal
+  Plain: the Traigent website where you register, generate your Traigent API
+  key, and view your optimization runs and their results.
+  Note: if the user signed up with an invitation access code, the limited-time
+  window applies to that code, not to the API key they generate afterwards.
 
 Traigent SDK
   Plain: the library your coding agent uses to wrap your agent and run
   optimizations.
 
-Traigent Skills (traigent-skills / agents-skills)
-  Plain: the installable instructions that teach your coding agent how to do the
-  full, advanced Traigent workflow - the "enhanced" capabilities beyond the first
-  run.
+Traigent Skills
+  Plain: installable instructions that teach your coding agent the full,
+  advanced Traigent workflow beyond the first run.
+  Note: offer these only after the user has seen their first result - never
+  mid-run.
 
 Quality gate
   Plain: a pass/fail check on whether the agent is good enough to ship.
@@ -164,20 +190,11 @@ Trusted agent
   Plain: an agent that has been measured, improved and validated on held-back
   data - one you can ship with evidence, not hope.
 
-WHEN TO ASK THE USER vs. WHEN TO PROCEED (ambiguity rules)
-- Inputs but no expected outputs: proceed - synthesize expected outputs so the
-  first run can happen, but tell the user you did, and at the end ask them to
-  review the synthesized answers. Do not ask them to hand-write answers up front
-  (that kills "seamless").
-- No dataset at all: proceed - synthesize a small seeded set (about 18 items,
-  easy to very hard) on the agent's subject; tell the user it is synthetic.
-- More than ~100 items: proceed on a seeded random subset of about 18, chosen to
-  span easy / medium / hard / very hard, and print the seed so it reproduces.
-- No evaluator: proceed - propose an evaluator that fits the output type
-  (execution/unit-test for code and SQL, exact match for short factual answers,
-  a calibrated judge for free text) and say which you chose and why.
-- Evaluator looks broken (passes everything, or scores a wrong answer as right):
-  do not silently proceed on it - tell the user it cannot be trusted and propose
-  a replacement.
-- Anything that changes cost, downloads code, or edits their files: ask for a
-  one-click confirmation first, in plain language.
+## Ambiguity
+
+When the user's setup is ambiguous, do not guess silently and do not invent an
+ask/proceed rule from this file: the authorization table in `SKILL.md` and the
+stop-list in the run doctrine own those decisions. What this file adds is only
+the phrasing - when those rules say to ask, ask in the plain wording above, and
+when they say to proceed with a generated substitute, say so in one sentence
+and mark it `🛠️`.
