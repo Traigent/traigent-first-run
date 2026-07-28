@@ -130,7 +130,9 @@ enhanced space keeps the identical model list and grows along the other axes: on
 result is in, refine the swept values around its top rows - the one added temperature becomes a
 close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a farther point - while
 keeping every baseline value, so the comparison stays contained and the configuration count is
-unchanged; then add the prompt-policy and self-check controls.
+unchanged; then add the prompt-policy and self-check controls. The coding assistant performs this
+refinement itself between the two runs; the user is never asked to pick values or edit the
+wrapper.
 Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
 Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
 
@@ -596,9 +598,10 @@ substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
 
 ## Broader optimization
 
-Before this call, replace the enhanced space's placeholder temperature with the winner-bracketing
-neighbor chosen from the baseline result per the ladder section, so the search reflects the
-baseline evidence rather than the pre-baseline guess.
+Before this call, the coding assistant replaces the enhanced space's placeholder temperature with
+the winner-bracketing neighbor chosen from the baseline result per the ladder section, so the
+search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
+internal step - never a user task, an edit the user is asked to make, or another question.
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 
