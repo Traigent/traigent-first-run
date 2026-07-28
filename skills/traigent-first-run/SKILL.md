@@ -27,11 +27,18 @@ Load each reference when its stage begins:
    how experienced they are.
 
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
-[`scripts/readiness.py`](scripts/readiness.py) to verify the readiness-state transition when
-helpful. Use [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
+[`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
+useful: score all three pillars at the start of every guided run before any creation or repair,
+again as a required step of local validation, and again after each repair or creation, so the
+closing report can show the recorded opening score beside the closing one. Supply whichever
+preflight, calibration, and config-space evidence exists; an absent input scores its pillar from
+absent evidence and is never a reason to skip the score. Use
+[`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
-discovered evidence. Keep it concise and internal; do not ask the user to complete or review it.
+discovered evidence. Record every readiness result there: overall score, band, and binding caps.
+Update the latest result in place and never overwrite the recorded opening score.
+Keep it concise and internal; do not ask the user to complete or review it.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
 unversioned `traigent` package.
@@ -128,12 +135,39 @@ Perform safe, read-only discovery without asking for approval:
 
 Only ask which agent to use if multiple credible candidates remain.
 
+#### Opening readiness gate
+
+After the read-only inventory and before any component creation or repair, score readiness from
+what actually exists: run the bundled static preflight with `--defer-missing-sdk` over whatever
+dataset was discovered, then run `scripts/readiness.py` on that preflight JSON plus any
+calibration or config-space evidence already present. Every guided run does this, the zero-anchor
+walkthrough included, and this opening score is not skippable. It always reports all three
+pillars; a project with no dataset, no calibration, and no config-space document still scores -
+typically 0 and `NOT READY` - and that capped baseline is the honest opening the closing report is
+measured against. Always show that opening score to the user before anything is created or
+repaired, so the user knows the state they are starting from.
+
+Present the overall score, band, and the plain-language reason behind each cap beside the
+readiness board, and keep the internal cap condition ids out of those user-facing lines. Caps
+select the branches in stage 4; they do not stop the run by themselves. When a cap fires on a
+component that does exist but has not been measured yet, say so in your own words instead of
+repeating the card's reason, which is phrased for the component being absent.
+
+The score grades measured evidence, not declared existence. A real evaluator that has not been
+calibrated yet, and a real agent with no config-space document yet, both score from absent
+evidence: report them as not yet measured, never as "no evaluator connected" or "nothing to tune".
+Read-only preflight and readiness runs are static local validation; they authorize no project
+write.
+
 #### Zero-anchor intent gate
 
 When the read-only inventory finds no agent, dataset, evaluation, product documentation, tests,
 fixtures, or other component that anchors task intent, follow this exact order:
 
-1. Present the three real-world gaps:
+The opening readiness gate has already scored the empty project. Keep that result in the
+conversation; recording it is a write and waits for the answer.
+
+1. Present the opening readiness score and band, then the three real-world gaps:
    - ❗ **Agent** - no production agent is connected.
    - ❗ **Dataset** - no real examples are connected.
    - ❗ **Evaluation** - no validated grading method is connected.
@@ -154,13 +188,15 @@ Before that answer, make zero writes:
 - Do not generate components.
 
 Once the user answers, create the run record before generating the coherent trio, then continue
-with the remaining stages.
+with the remaining stages. Record the unchanged opening score in that run record as its first
+entry, before any substitute exists.
 
 ### 2. Show readiness once
 
 For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
 render it again before the user answers. For every other starting state, render the initial
-real-world readiness board after inspection. State what Traigent will create for the walkthrough.
+real-world readiness board after inspection. Show the opening readiness score and band beside that
+board. State what Traigent will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
 changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
 instead of replacing the initial board with a green one.
@@ -231,6 +267,12 @@ Follow this order:
    `sufficient` and the complete inspected import and call path
    is local-only, has no external side effects, and needs no unavailable third-party package.
    Execute it in the isolated subprocess with provider credentials removed.
+5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus the calibration results and
+   config-space document, whichever exist by this point. This is a required step of local
+   validation, not an optional aid, and it runs even when a low score or a cap is expected. Record
+   the overall score, band, and every binding cap in `traigent-runs/run-plan.md` beside the
+   recorded opening score. If calibration was deferred for an installed local dependency, record
+   the preflight-only result now and re-run the score right after that deferred calibration.
 
 A missing Traigent SDK is `SKIP` in this explicitly deferred pre-install pass; an installed but
 unsupported SDK remains a failure. A missing optional provider package may defer its own check.
@@ -254,6 +296,28 @@ For an invalid evaluator, incompatible schema, corrupted required rows, or unver
 do not run paid optimization against it. Offer to repair and revalidate it, pause for a
 user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
 "continue as is" as permission to optimize against a broken grading signal.
+
+Route every active dataset cap to the branch this flow already defines, and present the reason
+rather than the condition id:
+
+- `dataset-absent` - treat Dataset as missing and enter the creation dependency matrix in
+  `references/component-creation.md`.
+- `dataset-no-expected-outputs` - the rows are `limited` and stay `❗`; recommend repairing a
+  labelled working copy. Adding or changing expected outputs is judgment-dependent and needs the
+  explicit approval the action table already requires. Do not optimize against the unchanged
+  input-only data.
+- `dataset-integrity-fail` - treat the dataset as invalid: repair and revalidate a working copy,
+  or use a clearly labeled `🛠️` substitute; do not optimize against the unrepaired file.
+- `dataset-tune-holdout-overlap` - repair a disjoint split in the working copy and revalidate;
+  until then make no holdout or generalization claim.
+- `dataset-fully-synthetic` - continue only under the walkthrough labeling rules: keep the real
+  Dataset gap `❗`, mark the substitute `🛠️`, and never read the score gain as production
+  readiness.
+
+Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
+paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
+or substitute creation, re-run the affected checks, the applicable calibration, and the score,
+then update the latest recorded result without overwriting the opening one.
 
 ### 5. Prepare the environment and finish free checks
 
@@ -491,6 +555,8 @@ Report:
 - Holdout result separately, when a valid holdout exists.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
+- The readiness transition: the recorded opening score and band, the closing score and band, and
+  which caps cleared and which remain.
 - When the enhanced run does not beat the baseline, name the likely cause and show it beside the
   number - an uninformative search space, a dataset ceiling, an over-strict evaluator, controls the
   search never varied, generated data with no headroom, or a base model not capable enough for a
@@ -515,11 +581,14 @@ If any substitute was used, lead the interpretation with:
 Do not promote a configuration from a fully synthetic run. For real components, promotion still
 requires the untouched holdout and explicit user approval.
 
-Close the loop on the readiness score the run opened with. Restate what was weak, what Traigent
-filled in, and what that costs in the real world - a dataset of a dozen generated examples measures
-the workflow, not the product, however good the number looks. The opening score and the closing
-recap are the same conversation: the user should leave knowing which gap to close first and why it
-matters, not just what the run produced.
+Close the loop on the readiness score the run opened with: re-run `scripts/readiness.py` on the
+post-repair, post-creation evidence and show the recorded opening score beside the closing one,
+naming the caps that cleared and the caps that remain. Any gain earned by a `🛠️` substitute is
+walkthrough setup and is never presented as real-world readiness. Restate what was weak, what
+Traigent filled in, and what that costs in the real world - a dataset of a dozen generated
+examples measures the workflow, not the product, however good the number looks. The opening score
+and the closing recap are the same conversation: the user should leave knowing which gap to close
+first and why it matters, not just what the run produced.
 
 Two local, free reads make that concrete rather than generic, and both come from the completed runs
 without another call. The per-example audit names specific examples that no configuration ever got
@@ -555,6 +624,8 @@ The first run is complete only when:
 - The starting state and provenance of all three components are recorded.
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.
+- The opening readiness score was computed before any creation or repair, recorded with its band
+  and caps, and closed with the later score in the final report.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
 - The evaluator passes the recorded semantic mode for every case: graded tasks distinguish

@@ -384,13 +384,18 @@ def normalize_text(value: str, project: Path) -> str:
     return value.replace(str(project), "<PROJECT>").replace(str(ROOT), "<REPO>")
 
 
-def run_command(argv: list[str], project: Path, audit_log: Path) -> dict[str, Any]:
+def run_command(
+    argv: list[str],
+    project: Path,
+    audit_log: Path,
+    stdin_text: str | None = None,
+) -> dict[str, Any]:
     validate_command(argv)
     process = subprocess.Popen(
         argv,
         cwd=project,
         env=command_environment(audit_log),
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -399,7 +404,7 @@ def run_command(argv: list[str], project: Path, audit_log: Path) -> dict[str, An
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(timeout=30)
+        stdout, stderr = process.communicate(input=stdin_text, timeout=30)
     except subprocess.TimeoutExpired as error:
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
@@ -419,6 +424,9 @@ def run_command(argv: list[str], project: Path, audit_log: Path) -> dict[str, An
         "stdout_sha256": sha256_bytes(stdout.encode()),
         "stderr_sha256": sha256_bytes(stderr.encode()),
     }
+    if stdin_text is not None:
+        record["stdin_bytes"] = len(stdin_text.encode())
+        record["stdin_sha256"] = sha256_bytes(stdin_text.encode())
     if process.returncode != 0:
         raise ContractError(f"allowlisted command failed: {record}")
     return record
@@ -472,6 +480,65 @@ def readiness_command(
     return result
 
 
+def opening_preflight_command(project: Path, audit_log: Path) -> dict[str, Any]:
+    """Run the free static preflight that opens a guided run.
+
+    `--dataset` is deliberately omitted rather than pointed at a path that does
+    not exist yet: the absent-dataset form exits 0 and still yields the
+    `dataset-absent` cap, while a nonexistent `--dataset` exits 1 and would
+    force this harness to stop treating a non-zero exit as a contract failure.
+    """
+    result = run_command(
+        [sys.executable, str(PREFLIGHT), "--defer-missing-sdk", "--json"],
+        project,
+        audit_log,
+    )
+    result["parsed"] = json.loads(result["stdout"])
+    return result
+
+
+def score_command(
+    project: Path,
+    audit_log: Path,
+    preflight_stdout: str,
+    calibration: Path | None = None,
+) -> dict[str, Any]:
+    """Score readiness from preflight JSON on stdin, plus calibration if present.
+
+    `preflight_stdout` must be the *normalized* capture, not the raw one. Every
+    scenario runs twice and `main()` compares the two evidence bundles byte for
+    byte; raw preflight output embeds the per-pass temporary project path, so a
+    raw-stdin digest would report a reproducible scenario as nondeterministic.
+    """
+    argv = [sys.executable, str(READINESS), "--preflight", "-"]
+    if calibration is not None:
+        argv.extend(("--calibration", str(calibration)))
+    argv.append("--json")
+    result = run_command(argv, project, audit_log, stdin_text=preflight_stdout)
+    score = json.loads(result["stdout"])
+    if sorted(pillar["name"] for pillar in score["pillars"]) != [
+        "agent",
+        "dataset",
+        "evaluation",
+    ]:
+        raise ContractError("readiness score must report all three pillars")
+    result["parsed"] = score
+    return result
+
+
+def cap_conditions(score: dict[str, Any]) -> list[str]:
+    return [cap["condition"] for cap in score["caps"]]
+
+
+def score_event_fields(score: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "overall": score["overall"],
+        "band": score["band"],
+        "caps": cap_conditions(score),
+        "pillars": {pillar["name"]: pillar["score"] for pillar in score["pillars"]},
+    }
+
+
 def enforce_project_permissions(project: Path, allowed_writes: list[str]) -> None:
     if any(
         pattern == "traigent-runs" or pattern.startswith("traigent-runs/")
@@ -494,7 +561,6 @@ def enforce_project_permissions(project: Path, allowed_writes: list[str]) -> Non
 def zero_anchor(
     contract: dict[str, Any], project: Path, audit_log: Path
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
-    del audit_log
     text = SKILL.read_text()
     section = text.split("#### Zero-anchor intent gate", 1)[1].split(
         "### 2. Show readiness once", 1
@@ -504,7 +570,26 @@ def zero_anchor(
         raise ContractError(
             "zero-anchor package contract must contain exactly one task-intent question"
         )
+    expected = contract["assertions"]
     events: list[dict[str, Any]] = []
+
+    # The opening readiness gate is mandatory in every guided run, the empty
+    # project included. Both commands are read-only static validation: they
+    # write nothing into the project and are not the run record, which still
+    # waits for the task-intent answer.
+    preflight = opening_preflight_command(project, audit_log)
+    opening = score_command(project, audit_log, preflight["stdout"])
+    score = opening["parsed"]
+    if (
+        score["overall"] != expected["opening_score"]
+        or score["band"] != expected["opening_band"]
+    ):
+        raise ContractError("zero-anchor opening score violated its declaration")
+    if not set(expected["opening_caps"]) <= set(cap_conditions(score)):
+        raise ContractError("zero-anchor opening score lost its required caps")
+    append_event(events, "opening_readiness_score", **score_event_fields(score))
+    append_event(events, "record_deferred", reason="task intent not anchored")
+
     append_event(
         events,
         "readiness",
@@ -514,7 +599,7 @@ def zero_anchor(
     append_event(events, "walkthrough_scope", synthetic_is_production_evidence=False)
     append_event(events, "question", category="task_intent", text=question)
     append_event(events, "stop", reason=contract["expected_stop_reason"])
-    return events, [], contract["expected_stop_reason"]
+    return events, [preflight, opening], contract["expected_stop_reason"]
 
 
 def dataset_invariants(path: Path) -> dict[str, Any]:
@@ -584,11 +669,25 @@ def partial_missing_dataset(
     contract: dict[str, Any], project: Path, audit_log: Path, scenario_dir: Path
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     events: list[dict[str, Any]] = []
+    expected = contract["assertions"]
     commands = [readiness_command(project, contract["starting_state"], audit_log)]
     plan = commands[0]["parsed"]
     if plan["create"] != ["dataset"] or plan["real_ready_count"] != 2:
         raise ContractError("partial readiness did not preserve the two real anchors")
     append_event(events, "readiness", real_ready=2, create=["dataset"])
+
+    # Opening readiness gate: scored before anything is created or repaired, so
+    # the closing score has an honest baseline to be measured against.
+    opening_preflight = opening_preflight_command(project, audit_log)
+    opening = score_command(project, audit_log, opening_preflight["stdout"])
+    commands.extend((opening_preflight, opening))
+    opening_score = opening["parsed"]
+    opening_caps = cap_conditions(opening_score)
+    if opening_score["overall"] != expected["opening_score"]:
+        raise ContractError("partial scenario opening score violated its declaration")
+    if not set(expected["opening_caps"]) <= set(opening_caps):
+        raise ContractError("partial scenario opening score lost its required caps")
+    append_event(events, "opening_readiness_score", **score_event_fields(opening_score))
 
     run_dir = project / "traigent-runs"
     gitignore = project / ".gitignore"
@@ -613,16 +712,21 @@ def partial_missing_dataset(
         "verdict": "sufficient",
         "known_gap": "Synthetic walkthrough cases are not customer-traffic evidence.",
     }
-    (run_dir / "run-plan.md").write_text(
-        "# Internal first-run record\n\n"
-        "- Dataset provenance: synthetic walkthrough substitute; not production evidence.\n"
-        "- Semantic coverage reviewer: coding assistant.\n"
-        "- Evidence: task-contract.md, agent.py, evaluator.py.\n"
-        "- Branches: billing, cancellation, technical-support.\n"
-        "- Score mode: binary; normalized equivalent labels pass and other labels fail.\n"
-        "- Semantic coverage verdict: sufficient for the workflow demonstration.\n"
-        "- Known gap: synthetic cases do not represent customer traffic.\n"
-    )
+    # The run record is written once, at the end, so it can carry the recorded
+    # opening score beside the closing one without overwriting either.
+    run_plan_lines = [
+        "# Internal first-run record\n",
+        "\n",
+        "- Dataset provenance: synthetic walkthrough substitute; not production evidence.\n",
+        "- Semantic coverage reviewer: coding assistant.\n",
+        "- Evidence: task-contract.md, agent.py, evaluator.py.\n",
+        "- Branches: billing, cancellation, technical-support.\n",
+        "- Score mode: binary; normalized equivalent labels pass and other labels fail.\n",
+        "- Semantic coverage verdict: sufficient for the workflow demonstration.\n",
+        "- Known gap: synthetic cases do not represent customer traffic.\n",
+        f"- Opening readiness score: {opening_score['overall']} "
+        f"({opening_score['band']}); caps: {', '.join(opening_caps)}.\n",
+    ]
     dataset_summary = dataset_invariants(dataset)
     append_event(events, "generated_dataset", **dataset_summary, production_ready=False)
     append_event(events, "semantic_review", **review)
@@ -677,6 +781,46 @@ def partial_missing_dataset(
         case_count=len(calibration["parsed"]["cases"]),
         provider_access=False,
     )
+
+    # Closing readiness gate: re-scored on the post-creation, post-calibration
+    # evidence, then reported beside the recorded opening score.
+    closing = score_command(
+        project,
+        audit_log,
+        preflight["stdout"],
+        calibration=run_dir / "calibration-results.json",
+    )
+    commands.append(closing)
+    closing_score = closing["parsed"]
+    closing_caps = cap_conditions(closing_score)
+    if not set(expected["closing_caps"]) <= set(closing_caps):
+        raise ContractError("partial scenario closing score lost its required caps")
+    if "evaluator-absent" in closing_caps or "evaluator-absent" not in opening_caps:
+        raise ContractError(
+            "the calibrated evaluator must clear the evaluator-absent cap it opened with"
+        )
+    if expected["closing_beats_opening"] != (
+        closing_score["overall"] > opening_score["overall"]
+    ):
+        raise ContractError("readiness transition direction violated its declaration")
+    run_plan_lines.append(
+        f"- Latest revalidated readiness score: {closing_score['overall']} "
+        f"({closing_score['band']}); caps: {', '.join(closing_caps)}.\n"
+    )
+    run_plan_lines.append(
+        "- Readiness transition: the gain came from a `🛠️` synthetic substitute, "
+        "not from real-world readiness.\n"
+    )
+    (run_dir / "run-plan.md").write_text("".join(run_plan_lines))
+    append_event(
+        events,
+        "readiness_transition",
+        opening=score_event_fields(opening_score),
+        closing=score_event_fields(closing_score),
+        caps_cleared=sorted(set(opening_caps) - set(closing_caps)),
+        caps_remaining=sorted(set(closing_caps)),
+        production_evidence=False,
+    )
     append_event(
         events,
         "connected_boundary",
@@ -708,6 +852,17 @@ def weak_invalid(
     )
     preflight["parsed"] = json.loads(preflight["stdout"])
     commands.append(preflight)
+
+    # The opening readiness gate runs here too. This scenario stops at the
+    # quality choice before any run record exists, so the score is held in the
+    # conversation rather than written: `allowed_writes` stays empty.
+    opening = score_command(project, audit_log, preflight["stdout"])
+    commands.append(opening)
+    opening_score = opening["parsed"]
+    if opening_score["band"] != contract["assertions"]["opening_band"]:
+        raise ContractError("weak/invalid opening band violated its declaration")
+    append_event(events, "opening_readiness_score", **score_event_fields(opening_score))
+
     rows = [
         json.loads(line)
         for line in (project / "dataset.jsonl").read_text().splitlines()
@@ -791,10 +946,35 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
             or questions[0].get("category") != expected["question_category"]
         ):
             raise ContractError("zero-anchor must ask exactly one task-intent question")
-        if evidence["writes"] or evidence["commands"]:
+        if evidence["writes"]:
             raise ContractError(
-                "zero-anchor must perform no writes or commands before the answer"
+                "zero-anchor must perform no project writes before the answer"
             )
+        # The opening readiness gate is mandatory even here, so the blanket
+        # no-commands rule is replaced by an exact allowlist: the read-only
+        # preflight/readiness pair, in that order, and nothing else.
+        scripts = [Path(command["argv"][1]).name for command in evidence["commands"]]
+        if scripts != expected["opening_commands"]:
+            raise ContractError(
+                "zero-anchor may run only the opening preflight/readiness pair "
+                "before the answer"
+            )
+        if any("--report" in command["argv"] for command in evidence["commands"]):
+            raise ContractError(
+                "the opening readiness pair must not write a report file"
+            )
+        score = next(
+            event
+            for event in evidence["events"]
+            if event["type"] == "opening_readiness_score"
+        )
+        if (
+            score["overall"] != expected["opening_score"]
+            or score["band"] != expected["opening_band"]
+        ):
+            raise ContractError("zero-anchor opening score violated its declaration")
+        if not set(expected["opening_caps"]) <= set(score["caps"]):
+            raise ContractError("zero-anchor opening score lost its required caps")
         if len(evidence["writes"]) != expected["project_writes"]:
             raise ContractError("zero-anchor write count violated its declaration")
     elif contract["id"] == "partial-missing-dataset":

@@ -1429,6 +1429,91 @@ class SkillPackageTests(unittest.TestCase):
             "the first ```json fence must still be the calibration-case matrix",
         )
 
+    def test_readiness_score_is_a_mandatory_gate(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        self.assertNotIn("when helpful", normalized)
+        for phrase in (
+            "as a mandatory gate",
+            "#### opening readiness gate",
+            "before any component creation or repair",
+            "the zero-anchor walkthrough included",
+            "this opening score is not skippable",
+            "it always reports all three pillars",
+            "a required step of local validation, not an optional aid",
+            "the score grades measured evidence, not declared existence",
+            # the opening score must reach the USER, not merely be computed
+            "so the user knows the state they are starting from",
+            # a cap phrased for an absent component must not be read aloud at a
+            # component that exists but is only unmeasured
+            "say so in your own words instead of repeating the card's reason",
+            # the two sentences that reconcile a mandatory opening score with the
+            # zero-anchor zero-writes ban - without these the doctrine reads as
+            # licensing a pre-answer write
+            "they authorize no project write",
+            "recording it is a write and waits for the answer",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        body = source.split("def score_dataset(", 1)[1].split("\ndef ", 1)[0]
+        conditions = set(re.findall(r'Cap\(\s*"([a-z0-9-]+)"', body))
+        # A sixth dataset cap must be routed too, so pin the count rather than
+        # spot-checking the five that exist today.
+        self.assertEqual(len(conditions), 5)
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split("route every active dataset cap", 1)[1]
+        for condition, branch in (
+            ("dataset-absent", "creation dependency matrix"),
+            ("dataset-no-expected-outputs", "repairing a labelled working copy"),
+            ("dataset-integrity-fail", "repair and revalidate a working copy"),
+            ("dataset-tune-holdout-overlap", "repair a disjoint split"),
+            ("dataset-fully-synthetic", "walkthrough labeling rules"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, conditions)
+                self.assertLess(routing.index(condition), routing.index(branch))
+        self.assertIn("present the reason rather than the condition id", normalized)
+
+    def test_run_record_keeps_the_readiness_transition(self) -> None:
+        text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
+        for phrase in (
+            "opening readiness score before any creation or repair",
+            "latest revalidated readiness score",
+            "readiness transition",
+            "`🛠️` substitute",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_final_report_shows_the_readiness_transition(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "the recorded opening score beside the closing one",
+            "the caps that cleared and the caps that remain",
+            "never presented as real-world readiness",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_references_require_the_score_on_the_repair_path(self) -> None:
+        def norm(name: str) -> str:
+            return " ".join(
+                (SKILL_ROOT / "references" / name).read_text().casefold().split()
+            )
+
+        evaluation = norm("evaluation-and-dataset.md")
+        glossary = norm("glossary.md")
+        self.assertIn("the applicable calibration, and the readiness score", evaluation)
+        self.assertIn("because a file changed or because the score rose", evaluation)
+        self.assertIn(
+            "branch on each active cap before continuing", norm("run-safety.md")
+        )
+        self.assertIn("never real-world readiness", norm("component-creation.md"))
+        self.assertNotIn("by default it never stops the run", glossary)
+        self.assertIn("it decides what the run does next", glossary)
+
 
 if __name__ == "__main__":
     unittest.main()

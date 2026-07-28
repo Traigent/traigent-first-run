@@ -109,6 +109,11 @@ before changing `limited` or `invalid` to `real`.
 Walkthrough setup changes to `🛠️` when a generated substitute passes compatibility. Preserve the
 corresponding `❗` real-world gap until real material replaces it.
 
+The numeric readiness score follows the same rule. The opening score is computed before any
+creation or repair, the score is re-run after each revalidation, and a rise earned by a `🛠️`
+substitute is walkthrough setup, never real-world readiness. A `dataset-absent` cap on the opening
+score is what sends the run into the dependency matrix above.
+
 Examples:
 
 - Real agent + generated dataset + generated evaluator:
