@@ -323,7 +323,9 @@ or repair behavior; do not force the generated example's controls onto an unrela
 This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
 levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
 more configurations than the trial cap, but from a handful of meaningful levers, never a wall of
-knobs added just to manufacture a visible improvement.
+knobs added just to manufacture a visible improvement. Present it that way too: a deliberately small
+enhancement for the first look, a small slice of what Traigent can drive rather than its full
+capability.
 
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
 knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-

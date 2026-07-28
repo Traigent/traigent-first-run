@@ -889,6 +889,8 @@ class SkillPackageTests(unittest.TestCase):
             "faster and cheaper by searching down the ladder",
             "never auto-select the flagship itself",
             "never to a quietly upgraded model",
+            "a deliberately small enhancement",
+            "a small slice of what traigent can drive, not its full capability",
         ):
             with self.subTest(document="skill", phrase=phrase):
                 self.assertIn(phrase, skill)
@@ -1243,6 +1245,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "close the loop on the readiness score the run opened with",
             "the opening score and the closing recap are the same conversation",
+            "shows its full power only once the enhanced run has finished",
+            "grows with the readiness score",
             "npx skills add traigent/traigent-skills",
             "restart the session so the new skills load",
         ):

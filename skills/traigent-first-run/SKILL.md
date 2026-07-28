@@ -408,6 +408,13 @@ flagship, that choice is preserved exactly - it is the baseline being measured -
 adds the tiers below it; never remove or swap the user's model, and give the same one-line
 explanation before the approval so the cheaper added tiers read as deliberate, not as a downgrade.
 
+Frame the enhanced run the same honest way in the plan and in the report: a deliberately small
+enhancement for a first look - a few added knobs plus swept values refined from the baseline's own
+top rows - and say in one line that this is a small slice of what Traigent can drive, not its full
+capability. The deeper layers - richer task-specific spaces and the recommendation and insight
+system - come after this run, so the small scope reads as a deliberate first taste rather than the
+product's limit.
+
 The baseline needs only the user's own provider credential. It runs locally as an explicit grid, so
 it produces a first real result before any Traigent account exists - deliberately the shortest path
 from "nothing set up" to "a number I can see". Say plainly that this first measurement is the
@@ -524,7 +531,12 @@ Then, and only as what comes next rather than what was withheld, name what Traig
 connected run: it scores every example from the run to show which are informative, which are
 redundant, and which look mislabelled, and it audits the evaluator itself. Describe those as signals
 and curation advice, not as numbers - do not promise a numeric dataset-quality score, and never
-imply the platform can grade a dataset that has not been run.
+imply the platform can grade a dataset that has not been run. Say plainly that this layer is
+run-scoped and shows its full power only once the enhanced run has finished - and that what it can
+honestly recommend grows with the readiness score: over real components it advises about the
+product, over walkthrough substitutes it can only describe the walkthrough. That ties the small
+first run to the next one: readier components and a finished enhanced run are what unlock stronger
+recommendations.
 
 Only after the result, offer optional next steps:
 
