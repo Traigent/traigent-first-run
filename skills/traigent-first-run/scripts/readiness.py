@@ -1157,9 +1157,19 @@ def bar(score: int, *, width: int = 20, unicode_ok: bool = True) -> str:
     return full * filled + empty * (width - filled)
 
 
+def marker_unmeasured(unicode_ok: bool) -> str:
+    """The glyph for a check that did not run.
+
+    Defined once because the card's summary line points the reader back at these
+    rows by name; a second literal would drift the two apart on an ASCII
+    terminal, where the summary would cite a glyph the rows never printed.
+    """
+    return "•" if unicode_ok else "?"
+
+
 def marker(sub: SubScore, unicode_ok: bool) -> str:
     if not sub.measured:
-        return "?" if not unicode_ok else "•"
+        return marker_unmeasured(unicode_ok)
     if sub.value >= sub.maximum * 0.8:
         return "OK" if not unicode_ok else "✅"
     return "!!" if not unicode_ok else "❗"
@@ -1186,11 +1196,10 @@ def render_card(
         if pillar.confidence < MIN_CONFIDENCE_FOR_TOP_BANDS:
             # A renormalized score over half the checks is not the same claim as
             # a full one. Saying so on the same line stops "100/100" from reading
-            # as "verified perfect" when most of it was never observed.
-            headline_suffix += (
-                f"  {palette.dim}({pillar.confidence:.0%} of checks"
-                f" measured){palette.reset}"
-            )
+            # as "verified perfect" when most of it was never observed. The share
+            # itself is an internal weight ratio and means nothing to the reader,
+            # so the plain fact is shown here and the marked rows below say which.
+            headline_suffix += f"  {palette.dim}(partly checked){palette.reset}"
         lines.append(
             f"  {pillar.name.upper():<11} {colour}{bar(pillar.score, unicode_ok=unicode_ok)}"
             f"{palette.reset}{headline_suffix}"
@@ -1203,9 +1212,15 @@ def render_card(
             lines.append(f"  {palette.bad}BLOCKED{palette.reset} {cap.reason}")
         lines.append("")
     if score.band_limited_by_confidence:
+        # Grounded in the rows above rather than in a percentage: the reader can
+        # see which checks did not run and why. Direction matters - skipping a
+        # check *raises* the renormalized score, so the honest plain sentence is
+        # "a partial check can read better", never "your real score is higher".
+        unchecked = marker_unmeasured(unicode_ok)
         lines.append(
-            f"  {palette.dim}Band held at {score.band}: only "
-            f"{score.confidence:.0%} of the checks could be measured.{palette.reset}"
+            f"  {palette.dim}Some checks could not run (marked {unchecked} above). "
+            f"A partial check can read better than a full one, so this stays "
+            f"at {score.band}.{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Approximate, from what runs on this machine. Traigent "
