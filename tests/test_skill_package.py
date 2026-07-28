@@ -770,6 +770,7 @@ class SkillPackageTests(unittest.TestCase):
             "math": __import__("math"),
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
             "BASELINE_TRIALS": 4,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -777,7 +778,15 @@ class SkillPackageTests(unittest.TestCase):
 
         count = namespace["configuration_count"]
         self.assertEqual(count(namespace["BASELINE_SPACE"]), 6)
-        self.assertEqual(count(namespace["ENHANCED_SPACE"]), 36)
+        self.assertEqual(count(namespace["ENHANCED_SPACE"]), 54)
+        self.assertNotIn(
+            namespace["SELECTED_STRONG_MODEL"],
+            namespace["BASELINE_SPACE"]["model"],
+        )
+        self.assertIn(
+            namespace["SELECTED_STRONG_MODEL"],
+            namespace["ENHANCED_SPACE"]["model"],
+        )
         self.assertLessEqual(4, count(namespace["BASELINE_SPACE"]))
         self.assertLess(10, count(namespace["ENHANCED_SPACE"]))
 
@@ -795,6 +804,7 @@ class SkillPackageTests(unittest.TestCase):
             "math": __import__("math"),
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -824,6 +834,114 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(
             "matched an explicitly approved and disclosed reduced target", skill
         )
+
+    def test_walkthrough_model_ladder_skips_the_flagship(self) -> None:
+        """The first run never auto-selects the vendor's newest flagship.
+
+        Selected models ladder down from one step below the flagship: the
+        baseline grid takes the fast and mid tiers (it pays for every cell),
+        and the strong tier joins only the enhanced space, where the managed
+        cost-aware search decides which trials are worth its price. A user's
+        own flagship choice is preserved exactly, never swapped, and the user
+        hears the one-line faster-and-cheaper reason before approving.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        for phrase in (
+            "one fast low-cost tier, one mid-tier workhorse, and one strong tier",
+            "one step below the vendor's newest flagship",
+            "do not select the flagship itself",
+            "the baseline takes the fast and mid tiers",
+            "the strong tier joins only the enhanced space",
+            "never remove or replace the user's model choice silently",
+            "tiers are roles, not hardcoded ids",
+        ):
+            with self.subTest(document="sdk-execution", phrase=phrase):
+                self.assertIn(phrase, sdk)
+        for phrase in (
+            "never the vendor's newest flagship",
+            "faster and cheaper by searching down the ladder",
+            "never auto-select the flagship itself",
+        ):
+            with self.subTest(document="skill", phrase=phrase):
+                self.assertIn(phrase, skill)
+        for phrase in (
+            "the fast and mid rungs of the walkthrough model ladder",
+            "at high reasoning effort when it supports one",
+            "keeps the first run faster and cheaper",
+            "never remove or swap the user's model silently",
+        ):
+            with self.subTest(document="run-safety", phrase=phrase):
+                self.assertIn(phrase, safety)
+
+    def test_strong_reasoning_arm_swaps_sampling_for_effort_and_headroom(self) -> None:
+        """Reasoning-tier arms reject sampled temperature and need headroom.
+
+        Executes the fence's call path shape: the strong arm at a declared
+        reasoning effort must send reasoning kwargs instead of temperature,
+        with at least the 4096-token answer headroom the safety reference
+        requires, while ordinary arms keep the swept temperature.
+        """
+        text = SDK_EXECUTION.read_text()
+        self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
+        self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
+        code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        call_agent_node = next(
+            node
+            for node in ast.parse(code).body
+            if isinstance(node, ast.FunctionDef) and node.name == "call_agent"
+        )
+        calls = []
+
+        def fake_completion(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                usage=SimpleNamespace(cost=0.01),
+                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+            )
+
+        module = ast.fix_missing_locations(
+            ast.Module(body=[call_agent_node], type_ignores=[])
+        )
+        namespace = {
+            "litellm": SimpleNamespace(completion=fake_completion),
+            "provider_reported_cost": lambda response: 0.01,
+            "build_prompt": lambda message, *, style, self_check: message,
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": "high",
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+        }
+        exec(compile(module, "<sdk-call-agent>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+
+        call_agent(
+            "task",
+            {
+                "model": "provider/strong",
+                "temperature": 0.2,
+                "prompt_style": "direct",
+                "self_check": False,
+            },
+        )
+        strong_call = calls[-1]
+        self.assertEqual(strong_call["reasoning_effort"], "high")
+        self.assertGreaterEqual(strong_call["max_tokens"], 4096)
+        self.assertNotIn("temperature", strong_call)
+
+        call_agent(
+            "task",
+            {
+                "model": "provider/mid",
+                "temperature": 0.2,
+                "prompt_style": "direct",
+                "self_check": False,
+            },
+        )
+        ordinary_call = calls[-1]
+        self.assertEqual(ordinary_call["temperature"], 0.2)
+        self.assertNotIn("reasoning_effort", ordinary_call)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()

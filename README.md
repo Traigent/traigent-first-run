@@ -78,7 +78,10 @@ untouched holdout check. Any later iteration is optional, not required.
 - Python 3.11-3.13 in an isolated environment.
 - The tested first-run SDK stack pinned in
   [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt).
-- One supported LLM-provider key with a small amount of credit for the real run.
+- One supported LLM-provider key with a small amount of credit for the real run. The sweep
+  ladders that provider's models - a fast tier, a mid tier, and a strong tier one step below its
+  newest flagship - and deliberately skips the flagship itself so the first run stays quick and
+  cheap; the flagship remains the natural next rung for a later, deeper run.
 - A Traigent portal key for connected optimization and portal results.
 
 Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the
