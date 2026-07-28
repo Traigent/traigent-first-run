@@ -6,10 +6,11 @@ Use this reference after component creation and before writing the run wrapper.
 
 1. Capability discovery
 2. Automatic run bounds
-3. Decorator contract
-4. Small baseline sweep
-5. Broader optimization
-6. Holdout and result checks
+3. Walkthrough model ladder
+4. Decorator contract
+5. Small baseline sweep
+6. Broader optimization
+7. Holdout and result checks
 
 ## Capability discovery
 
@@ -110,6 +111,66 @@ at its installed default unless it exceeds the remaining total ceiling; then low
 installed public API or a process-only setting. Keep one running total across paid phases, not a
 phase ledger.
 
+## Walkthrough model ladder
+
+Select the models Traigent chooses as a ladder within the selected provider route, from model ids
+the route currently lists: one fast low-cost tier, one mid-tier workhorse, and one strong tier one
+step below the vendor's newest flagship. Do not select the flagship itself - the newest, most
+expensive model the vendor currently markets as its best. A first run exists to show the workflow
+and the cost-accuracy tradeoff quickly, and the flagship makes every trial slower and more
+expensive without teaching more about either; say that in one line when presenting the plan.
+Capping the ladder one step down is also what keeps the comparison honest and affordable: every
+selected model must run in the baseline grid, so every selected model has to be quick and cheap
+enough to grid.
+
+Both runs use the same three models. The baseline grids them against two evaluator-safe
+temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
+generated initial configuration - and it keeps the pre-account first result quick and cheap. The
+enhanced space keeps the identical model list and grows along the other axes: once the baseline
+result is in, refine the swept values around its top rows - the one added temperature becomes a
+close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a farther point - while
+keeping every baseline value, so the comparison stays contained and the configuration count is
+unchanged; then add the prompt-policy and self-check controls. The coding assistant performs this
+refinement itself between the two runs; the user is never asked to pick values or edit the
+wrapper.
+Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
+Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
+
+Sweep only knobs that are real for every model in the space. When one model ignores a knob the
+others honor, the winner comparison is confounded - a configuration can win on a prompt or
+setting the other models were never given on equal terms, and no report footnote untangles that;
+when every model faces exactly the same variations, the winner is clear and the enhanced run's
+insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
+identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
+least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
+parameters such a model rejects - and, since temperature is then
+inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
+the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
+prompt-policy plus self-check controls in the enhanced space.
+
+When the inspected agent already calls the vendor's flagship, keep it exactly where it is: it is
+the current configuration, so it anchors the baseline being measured and stays in the enhanced
+space. Add the cheaper ladder tiers below it instead of more flagship-tier models - in that shape
+the three models are the preserved flagship plus the mid and strong rungs below it - and tell the
+user why before the approval: the first run stays fast and cheap by searching down the ladder,
+and the interesting first question becomes whether a cheaper tier holds the flagship's accuracy, a
+legitimate cost-side win. Never remove or replace the user's model choice silently. The
+pinned-calling-convention rule for reasoning models applies to every reasoning model in the
+space, the preserved flagship included, not only the strong slot in the generated fence.
+
+Build the ladder inside one model family. One family keeps the result readable - "the mid tier
+held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
+keeps a single company receiving the user's prompts, and keeps one bill. When several direct
+provider credentials exist, pick one family, name it and the reason in the plan, and let the
+combined approval - which already lists every data recipient - be the user's moment to switch. On
+the OpenRouter route one key reaches every family; still ladder within one family by default, and
+borrow a missing rung from a second family only when the chosen family lacks it, naming that
+extra upstream recipient in the approval.
+
+Tiers are roles, not hardcoded ids: pick concrete model ids from what the selected route lists at
+run time, then verify each id is live and cost-tracked before scaling, as `run-safety.md` already
+requires.
+
 ## Decorator contract
 
 Use one production-compatible function for baseline and optimization:
@@ -139,6 +200,11 @@ BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
+SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
+# Set only when the strong tier is a reasoning model; blank means no reasoning kwargs.
+STRONG_REASONING_EFFORT = (
+    os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
+)
 SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
 PROVIDER_KEY_NAMES = {
     "openrouter": "OPENROUTER_API_KEY",
@@ -233,19 +299,25 @@ BASELINE_CONFIG = {
     "self_check": False,
 }
 BASELINE_SPACE = {
+    # The same three ladder models run in both phases, so the enhanced run
+    # never gets a model the baseline did not measure.
     "model": [
         BASELINE_CONFIG["model"],
         SELECTED_ALTERNATIVE_MODEL,
+        SELECTED_STRONG_MODEL,
     ],
     # Nonzero values are safe only when the evaluator tolerates valid surface variation.
     # Otherwise pin 0.0 and substitute other real controls to retain the planned row count.
-    "temperature": [BASELINE_CONFIG["temperature"], 0.2, 0.4],
+    "temperature": [BASELINE_CONFIG["temperature"], 0.2],
     "prompt_style": [BASELINE_CONFIG["prompt_style"]],
     "self_check": [BASELINE_CONFIG["self_check"]],
 }
 ENHANCED_SPACE = {
     "model": BASELINE_SPACE["model"],
-    "temperature": BASELINE_SPACE["temperature"],
+    # 0.4 is the pre-baseline placeholder: after the baseline, replace it with
+    # one close neighbor of the winning temperature (0.1 or 0.3 for a 0.2
+    # winner), keeping both baseline values.
+    "temperature": [*BASELINE_SPACE["temperature"], 0.4],
     "prompt_style": [
         BASELINE_CONFIG["prompt_style"],
         "structured",
@@ -259,7 +331,13 @@ def configuration_count(space: dict[str, list]) -> int:
     return math.prod(len(values) for values in space.values())
 
 
-assert SELECTED_ALTERNATIVE_MODEL != SELECTED_CURRENT_MODEL
+assert len(set(BASELINE_SPACE["model"])) == 3
+assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
+assert set(BASELINE_SPACE["temperature"]) <= set(ENHANCED_SPACE["temperature"])
+assert not STRONG_REASONING_EFFORT or (
+    len(BASELINE_SPACE["temperature"]) == 1
+    and len(ENHANCED_SPACE["temperature"]) == 1
+), "pin temperature when the strong tier runs at a reasoning effort"
 assert configuration_count(BASELINE_SPACE) == 6
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
@@ -327,10 +405,19 @@ def provider_reported_cost(response) -> float:
 
 
 def call_agent(message: str, config: dict) -> tuple[str, float]:
+    sampling_kwargs: dict = {"temperature": config["temperature"]}
+    if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
+        # Reasoning models reject sampled temperature and need answer headroom
+        # beyond their hidden reasoning tokens, so this model swaps sampling
+        # controls for effort plus headroom rather than sending both.
+        sampling_kwargs = {
+            "reasoning_effort": STRONG_REASONING_EFFORT,
+            "max_tokens": 4096,
+        }
     response = litellm.completion(
         model=config["model"],
-        temperature=config["temperature"],
         timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
+        **sampling_kwargs,
         messages=[
             {
                 "role": "user",
@@ -370,15 +457,22 @@ happen to exist. Call `require_current_route_credential()` immediately before th
 probe. If another provider's credential is present instead, stop with the mismatch; never rewrite
 the current model identifier or provider prefix silently. Keep the real current model and parameter
 values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced dimension. Select
-the alternative from the same approved provider route when generating the walkthrough; a new route
+the alternative and strong models from the same approved provider route when generating the
+walkthrough, following the walkthrough model ladder above; set
+`TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
+a reasoning-effort control, and pin the same value for both runs. A new route
 or recipient requires revised data-egress approval. Every search variable must affect the actual
-agent call.
+agent call for every model in the space; when the strong tier runs as a reasoning model,
+temperature is inert for it - follow the ladder section above and sweep uniform knobs instead of
+a knob only some models honor.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline performs a credible six-point standard
-sweep: two live models by three evaluator-safe temperatures, with the added prompt controls pinned
-to the current behavior. The enhanced space keeps all of those values and adds two real one-call
-controls: three prompt policies and a native boolean self-check branch. That creates 36 possible
+sweep: the three ladder models by two evaluator-safe temperatures, with the added prompt controls
+pinned to the current behavior. The enhanced space keeps all of those values - the same three
+models - extends the temperature range around the baseline's winner,
+and adds two real one-call controls: three prompt policies and a native
+boolean self-check branch. That creates 54 possible
 configurations, so a 12-trial managed run has meaningful choices to make.
 
 When the user already has a baseline or fixed current configuration, preserve that baseline space
@@ -503,6 +597,11 @@ from the local results - do not go looking through the SDK's private storage lay
 substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
 
 ## Broader optimization
+
+Before this call, the coding assistant replaces the enhanced space's placeholder temperature with
+the winner-bracketing neighbor chosen from the baseline result per the ladder section, so the
+search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
+internal step - never a user task, an edit the user is asked to make, or another question.
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 
