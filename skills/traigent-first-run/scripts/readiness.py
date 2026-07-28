@@ -1330,10 +1330,14 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # not malformed, so they must not trip the integrity cap - they are scored
     # through the "no expected outputs" branch instead. Read dataset-integrity
     # directly (dataset-shape now also fails for a merely-unlabelled dataset).
-    structurally_failed = (
-        statuses.get("dataset-integrity") == "FAIL"
-        and integrity.get("malformed_rows", 0) > 0
-    )
+    integrity_status = statuses.get("dataset-integrity")
+    if integrity_status == "FAIL" and "malformed_rows" not in integrity:
+        raise ValueError(
+            "dataset-integrity FAILed but carries no malformed_rows count - "
+            "this preflight JSON predates the current preflight.py; re-run "
+            "preflight.py --json from the same version as this script"
+        )
+    structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     return DatasetFacts(
         exists=True,
         rows=provenance.get("rows"),
@@ -1526,7 +1530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config_space
             else AgentFacts()
         )
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 
