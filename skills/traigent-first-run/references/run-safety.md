@@ -306,18 +306,19 @@ space is three credible models by two safe temperature values, with prompt polic
 fixed to ordinary/off values; the models are the fast, mid, and strong rungs of the walkthrough
 model ladder from the selected route - the strong rung one step below the vendor's newest
 flagship, at a pinned effort in both runs when it is a reasoning model, and never the flagship
-itself. The enhanced space keeps the identical model list, extends swept ranges around the
-baseline's top rows while retaining every baseline value, and adds multiple prompt
-policies plus a native boolean self-check branch, producing dozens of possible configurations
-while Traigent tests 12 by default - so an enhanced win is attributable to knobs and the managed
+itself. A reasoning-model strong rung also drops temperature as a swept knob for the whole
+walkthrough - two prompt styles form the baseline's second axis instead, so every knob stays real
+for every model. The enhanced space keeps the identical model list, extends swept ranges around
+the baseline's top rows while retaining every baseline value, and adds multiple prompt
+policies plus a native boolean self-check branch, keeping the space materially larger than the
+12 trials Traigent tests by default - so an enhanced win is attributable to knobs and the managed
 search, never to a model the baseline did not measure. Explain the ladder in one line before the
-approval: skipping
-the flagship keeps the first run faster and cheaper, and the flagship stays the ready next rung
-for a later run if the task proves hard enough to need it. When the preserved agent already uses
+approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
+the ready next rung for a later run if the task proves hard enough to need it. When the preserved agent already uses
 the flagship, keep that model exactly as the measured anchor and add the cheaper tiers below it;
-never remove or swap the user's model silently. For preserved agents, add task-relevant controls only to the
-enhanced space, such as context format, retrieval depth, few-shot count, tool policy, or repair
-behavior; do not force the generated example's controls onto an unrelated task.
+never remove or swap the user's model silently. For preserved agents, add task-relevant controls
+only to the enhanced space, such as context format, retrieval depth, few-shot count, tool policy,
+or repair behavior; do not force the generated example's controls onto an unrelated task.
 
 This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
 levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans

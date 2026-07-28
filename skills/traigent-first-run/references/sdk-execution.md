@@ -127,9 +127,10 @@ Both runs use the same three models. The baseline grids them against two evaluat
 temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
 generated initial configuration - and it keeps the pre-account first result quick and cheap. The
 enhanced space keeps the identical model list and grows along the other axes: once the baseline
-result is in, refine the swept values around its top rows - a winner at temperature 0.2 earns
-close neighbors such as 0.1 and 0.3, not only a farther point - while keeping every baseline
-value so the comparison stays contained, and add the prompt-policy and self-check controls.
+result is in, refine the swept values around its top rows - the one added temperature becomes a
+close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a farther point - while
+keeping every baseline value, so the comparison stays contained and the configuration count is
+unchanged; then add the prompt-policy and self-check controls.
 Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
 Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
 
@@ -138,18 +139,22 @@ others honor, the winner comparison is confounded - a configuration can win on a
 setting the other models were never given on equal terms, and no report footnote untangles that;
 when every model faces exactly the same variations, the winner is clear and the enhanced run's
 insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
-identically in both runs - a chosen reasoning effort with the answer-headroom rule (`max_tokens`
-at least 4096), and no sampling parameters such a model rejects - and, since temperature is then
+identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
+least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
+parameters such a model rejects - and, since temperature is then
 inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
 prompt-policy plus self-check controls in the enhanced space.
 
 When the inspected agent already calls the vendor's flagship, keep it exactly where it is: it is
 the current configuration, so it anchors the baseline being measured and stays in the enhanced
-space. Add the cheaper ladder tiers below it instead of more flagship-tier models, and tell the
-user why before the approval - the first run stays fast and cheap by searching down the ladder,
+space. Add the cheaper ladder tiers below it instead of more flagship-tier models - in that shape
+the three models are the preserved flagship plus the mid and strong rungs below it - and tell the
+user why before the approval: the first run stays fast and cheap by searching down the ladder,
 and the interesting first question becomes whether a cheaper tier holds the flagship's accuracy, a
-legitimate cost-side win. Never remove or replace the user's model choice silently.
+legitimate cost-side win. Never remove or replace the user's model choice silently. The
+pinned-calling-convention rule for reasoning models applies to every reasoning model in the
+space, the preserved flagship included, not only the strong slot in the generated fence.
 
 Build the ladder inside one model family. One family keeps the result readable - "the mid tier
 held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
@@ -307,9 +312,9 @@ BASELINE_SPACE = {
 }
 ENHANCED_SPACE = {
     "model": BASELINE_SPACE["model"],
-    # After the baseline, bracket its top rows with close neighbors (a winner
-    # at 0.2 earns 0.1 and 0.3) while keeping every baseline value; 0.4 below
-    # is only the pre-baseline placeholder.
+    # 0.4 is the pre-baseline placeholder: after the baseline, replace it with
+    # one close neighbor of the winning temperature (0.1 or 0.3 for a 0.2
+    # winner), keeping both baseline values.
     "temperature": [*BASELINE_SPACE["temperature"], 0.4],
     "prompt_style": [
         BASELINE_CONFIG["prompt_style"],
@@ -325,6 +330,12 @@ def configuration_count(space: dict[str, list]) -> int:
 
 
 assert len(set(BASELINE_SPACE["model"])) == 3
+assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
+assert set(BASELINE_SPACE["temperature"]) <= set(ENHANCED_SPACE["temperature"])
+assert not STRONG_REASONING_EFFORT or (
+    len(BASELINE_SPACE["temperature"]) == 1
+    and len(ENHANCED_SPACE["temperature"]) == 1
+), "pin temperature when the strong tier runs at a reasoning effort"
 assert configuration_count(BASELINE_SPACE) == 6
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
@@ -584,6 +595,10 @@ from the local results - do not go looking through the SDK's private storage lay
 substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
 
 ## Broader optimization
+
+Before this call, replace the enhanced space's placeholder temperature with the winner-bracketing
+neighbor chosen from the baseline result per the ladder section, so the search reflects the
+baseline evidence rather than the pre-baseline guess.
 
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 

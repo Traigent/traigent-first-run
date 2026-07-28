@@ -388,8 +388,8 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    trials, using 12 as the internal default cap. For the generated walkthrough, keep the model
    list identical to the baseline's, add prompt-policy
    choices and a native boolean self-check control without adding another model call, and refine
-   swept values around the baseline's top rows - bracket a winning value with close neighbors -
-   while keeping every baseline value, so an
+   swept values around the baseline's top rows - the added value hugs a winner rather than a far
+   point - while keeping every baseline value, so an
    enhanced win is attributable to the added knobs and the managed search, never to a
    quietly upgraded model. For a real
    agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
@@ -397,7 +397,9 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
 
 Both runs share the models Traigent selects: a deliberate ladder inside the selected route of one
 fast low-cost tier, one mid-tier workhorse, and one strong tier one step below the vendor's newest
-flagship, the strong tier at a pinned reasoning effort in both runs when it is a reasoning model.
+flagship, the strong tier at a pinned reasoning effort in both runs when it is a reasoning model -
+temperature is then dropped as a swept knob for the whole walkthrough and two prompt styles form
+the baseline's second axis instead, per the sdk-execution reference.
 Never auto-select the flagship itself, and say why in one line when presenting the plan:
 a first run is for seeing the workflow and the cost-accuracy tradeoff quickly, so it stays faster
 and cheaper by searching down the ladder, and the flagship remains the ready next rung for a later

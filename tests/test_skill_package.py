@@ -771,6 +771,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 4,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -807,6 +808,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -814,6 +816,21 @@ class SkillPackageTests(unittest.TestCase):
             exec(
                 compile(executable, "<sdk-invalid-reduced-plan>", "exec"),
                 invalid_namespace,
+            )
+
+        reasoning_namespace = {
+            "math": __import__("math"),
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": "high",
+            "BASELINE_TRIALS": 4,
+            "ENHANCED_MAX_TRIALS": 10,
+        }
+        with self.assertRaisesRegex(AssertionError, "pin temperature"):
+            exec(
+                compile(executable, "<sdk-reasoning-unpinned-temperature>", "exec"),
+                reasoning_namespace,
             )
 
     def test_user_owned_baseline_is_not_padded_to_generated_row_target(self) -> None:
@@ -885,13 +902,13 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(document="run-safety", phrase=phrase):
                 self.assertIn(phrase, safety)
 
-    def test_strong_reasoning_arm_swaps_sampling_for_effort_and_headroom(self) -> None:
-        """Reasoning-tier arms reject sampled temperature and need headroom.
+    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_headroom(self) -> None:
+        """A reasoning-tier model rejects sampled temperature and needs headroom.
 
-        Executes the fence's call path shape: the strong arm at a declared
+        Executes the fence's call path shape: the strong tier at a declared
         reasoning effort must send reasoning kwargs instead of temperature,
         with at least the 4096-token answer headroom the safety reference
-        requires, while ordinary arms keep the swept temperature.
+        requires, while ordinary tiers keep the swept temperature.
         """
         text = SDK_EXECUTION.read_text()
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
