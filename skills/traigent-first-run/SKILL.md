@@ -21,6 +21,10 @@ Load each reference when its stage begins:
    evaluator execution, mock checks, or any paid execution.
 4. [`references/sdk-execution.md`](references/sdk-execution.md) - only before writing the wrapper
    or running the baseline, optimization, and holdout.
+5. [`references/glossary.md`](references/glossary.md) - not a stage: consult it whenever
+   explaining a concept to the user or phrasing a confirmation question, so terms stay
+   consistent across the run and depth is calibrated from evidence, never by asking the user
+   how experienced they are.
 
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) to verify the readiness-state transition when
