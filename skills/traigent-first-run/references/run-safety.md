@@ -104,8 +104,10 @@ Use this gate order:
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
    external evaluator; keep it behind explicit combined approval.
 5. Determine the current provider route from the agent's actual model call and configuration;
-   inventory provider credential names separately. Credential presence does not select a route.
-   When no route exists, default to OpenRouter without a separate choice question; the user may
+   inventory provider credential names separately. Credential presence never changes an existing
+   route. When no route exists, prefer the one supported direct provider whose credential is
+   already present so no second account is needed; with no such single credential, default to
+   OpenRouter without a separate choice question. The user may
    request a direct provider instead. If the current route lacks its credential but another
    provider credential exists, stop with the mismatch instead of changing the route silently. If
    OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
@@ -300,17 +302,30 @@ connected once if portal comparison matters. Do not:
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
 space unchanged, even when it contains one row. For a generated walkthrough, the default small
-space is two credible models by three safe temperature values, with prompt policy and self-check
-fixed to ordinary/off values. The enhanced space retains those values and adds multiple prompt
-policies plus a native boolean self-check branch, producing dozens of possible configurations
-while Traigent tests 12 by default. For preserved agents, add task-relevant controls only to the
-enhanced space, such as context format, retrieval depth, few-shot count, tool policy, or repair
-behavior; do not force the generated example's controls onto an unrelated task.
+space is three credible models by two safe temperature values, with prompt policy and self-check
+fixed to ordinary/off values; the models are the fast, mid, and strong rungs of the walkthrough
+model ladder from the selected route - the strong rung one step below the vendor's newest
+flagship, at a pinned effort in both runs when it is a reasoning model, and never the flagship
+itself. A reasoning-model strong rung also drops temperature as a swept knob for the whole
+walkthrough - two prompt styles form the baseline's second axis instead, so every knob stays real
+for every model. The enhanced space keeps the identical model list, extends swept ranges around
+the baseline's top rows while retaining every baseline value, and adds multiple prompt
+policies plus a native boolean self-check branch, keeping the space materially larger than the
+12 trials Traigent tests by default - so an enhanced win is attributable to knobs and the managed
+search, never to a model the baseline did not measure. Explain the ladder in one line before the
+approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
+the ready next rung for a later run if the task proves hard enough to need it. When the preserved agent already uses
+the flagship, keep that model exactly as the measured anchor and add the cheaper tiers below it;
+never remove or swap the user's model silently. For preserved agents, add task-relevant controls
+only to the enhanced space, such as context format, retrieval depth, few-shot count, tool policy,
+or repair behavior; do not force the generated example's controls onto an unrelated task.
 
 This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
 levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
 more configurations than the trial cap, but from a handful of meaningful levers, never a wall of
-knobs added just to manufacture a visible improvement.
+knobs added just to manufacture a visible improvement. Present it that way too: a deliberately small
+enhancement for the first look, a small slice of what Traigent can drive rather than its full
+capability.
 
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
 knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
@@ -376,7 +391,9 @@ genuinely hard task - where a stronger (SOTA) model or a higher reasoning-effort
 config search, is the lever (keep the user's capable model in the enhanced space; if none was tried,
 name "did not try a stronger model" as the candidate reason). Rule these out in order before calling
 it a ceiling: re-run the semantic-equivalence probe, then widen to the structural knobs above, then
-raise the model tier or reasoning effort. Only once all are ruled out is a low number the honest
+raise the model tier or reasoning effort - the walkthrough ladder deliberately stopped one step
+below the vendor's flagship, so the flagship is the ready next rung for that single deliberate
+iteration. Only once all are ruled out is a low number the honest
 difficulty ceiling of a genuinely hard task - many top out well below 100% even for the best systems
 - and it is reported plainly, not as a broken agent. Sharply separate a genuinely-hard item (a
 correct reference the model cannot yet match - a stronger model or higher reasoning effort is the

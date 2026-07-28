@@ -770,6 +770,8 @@ class SkillPackageTests(unittest.TestCase):
             "math": __import__("math"),
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 4,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -777,7 +779,17 @@ class SkillPackageTests(unittest.TestCase):
 
         count = namespace["configuration_count"]
         self.assertEqual(count(namespace["BASELINE_SPACE"]), 6)
-        self.assertEqual(count(namespace["ENHANCED_SPACE"]), 36)
+        self.assertEqual(count(namespace["ENHANCED_SPACE"]), 54)
+        for space_name in ("BASELINE_SPACE", "ENHANCED_SPACE"):
+            self.assertEqual(
+                namespace[space_name]["model"],
+                [
+                    "provider/current",
+                    "provider/alternative",
+                    "provider/strong",
+                ],
+                f"{space_name} must run the identical three-model ladder",
+            )
         self.assertLessEqual(4, count(namespace["BASELINE_SPACE"]))
         self.assertLess(10, count(namespace["ENHANCED_SPACE"]))
 
@@ -795,6 +807,8 @@ class SkillPackageTests(unittest.TestCase):
             "math": __import__("math"),
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
         }
@@ -802,6 +816,21 @@ class SkillPackageTests(unittest.TestCase):
             exec(
                 compile(executable, "<sdk-invalid-reduced-plan>", "exec"),
                 invalid_namespace,
+            )
+
+        reasoning_namespace = {
+            "math": __import__("math"),
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": "high",
+            "BASELINE_TRIALS": 4,
+            "ENHANCED_MAX_TRIALS": 10,
+        }
+        with self.assertRaisesRegex(AssertionError, "pin temperature"):
+            exec(
+                compile(executable, "<sdk-reasoning-unpinned-temperature>", "exec"),
+                reasoning_namespace,
             )
 
     def test_user_owned_baseline_is_not_padded_to_generated_row_target(self) -> None:
@@ -824,6 +853,123 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(
             "matched an explicitly approved and disclosed reduced target", skill
         )
+
+    def test_walkthrough_model_ladder_skips_the_flagship(self) -> None:
+        """The first run never auto-selects the vendor's newest flagship.
+
+        Selected models ladder down from one step below the flagship, and both
+        runs share the identical three-model list: the enhanced run never gets
+        a model the baseline did not measure, so a win is attributable to the
+        added knobs and the managed search rather than to a quiet model
+        upgrade. A user's own flagship choice is preserved exactly, never
+        swapped, and the user hears the one-line faster-and-cheaper reason
+        before approving.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        for phrase in (
+            "one fast low-cost tier, one mid-tier workhorse, and one strong tier",
+            "one step below the vendor's newest flagship",
+            "do not select the flagship itself",
+            "both runs use the same three models",
+            "never gets a model the baseline did not measure",
+            "never to quietly upgrading the model",
+            "refine the swept values around its top rows",
+            "sweep only knobs that are real for every model in the space",
+            "never remove or replace the user's model choice silently",
+            "build the ladder inside one model family",
+            "tiers are roles, not hardcoded ids",
+        ):
+            with self.subTest(document="sdk-execution", phrase=phrase):
+                self.assertIn(phrase, sdk)
+        for phrase in (
+            "never the vendor's newest flagship",
+            "faster and cheaper by searching down the ladder",
+            "never auto-select the flagship itself",
+            "never to a quietly upgraded model",
+            "a deliberately small enhancement",
+            "a small slice of what traigent can drive, not its full capability",
+        ):
+            with self.subTest(document="skill", phrase=phrase):
+                self.assertIn(phrase, skill)
+        for phrase in (
+            "the fast, mid, and strong rungs of the walkthrough model ladder",
+            "keeps the identical model list",
+            "never to a model the baseline did not measure",
+            "keeps the first run faster and cheaper",
+            "never remove or swap the user's model silently",
+        ):
+            with self.subTest(document="run-safety", phrase=phrase):
+                self.assertIn(phrase, safety)
+
+    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_headroom(self) -> None:
+        """A reasoning-tier model rejects sampled temperature and needs headroom.
+
+        Executes the fence's call path shape: the strong tier at a declared
+        reasoning effort must send reasoning kwargs instead of temperature,
+        with at least the 4096-token answer headroom the safety reference
+        requires, while ordinary tiers keep the swept temperature.
+        """
+        text = SDK_EXECUTION.read_text()
+        self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
+        self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
+        code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        call_agent_node = next(
+            node
+            for node in ast.parse(code).body
+            if isinstance(node, ast.FunctionDef) and node.name == "call_agent"
+        )
+        calls = []
+
+        def fake_completion(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                usage=SimpleNamespace(cost=0.01),
+                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+            )
+
+        module = ast.fix_missing_locations(
+            ast.Module(body=[call_agent_node], type_ignores=[])
+        )
+        namespace = {
+            "litellm": SimpleNamespace(completion=fake_completion),
+            "provider_reported_cost": lambda response: 0.01,
+            "build_prompt": lambda message, *, style, self_check: message,
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": "high",
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+        }
+        exec(compile(module, "<sdk-call-agent>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+
+        call_agent(
+            "task",
+            {
+                "model": "provider/strong",
+                "temperature": 0.2,
+                "prompt_style": "direct",
+                "self_check": False,
+            },
+        )
+        strong_call = calls[-1]
+        self.assertEqual(strong_call["reasoning_effort"], "high")
+        self.assertGreaterEqual(strong_call["max_tokens"], 4096)
+        self.assertNotIn("temperature", strong_call)
+
+        call_agent(
+            "task",
+            {
+                "model": "provider/mid",
+                "temperature": 0.2,
+                "prompt_style": "direct",
+                "self_check": False,
+            },
+        )
+        ordinary_call = calls[-1]
+        self.assertEqual(ordinary_call["temperature"], 0.2)
+        self.assertNotIn("reasoning_effort", ordinary_call)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -1099,6 +1245,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "close the loop on the readiness score the run opened with",
             "the opening score and the closing recap are the same conversation",
+            "shows its full power only once the enhanced run has finished",
+            "grows with the readiness score",
             "npx skills add traigent/traigent-skills",
             "restart the session so the new skills load",
         ):
