@@ -29,8 +29,11 @@ from evidence instead:
   eval harness needs terse definitions or none; a project with none of these
   usually needs the plain wording and one-sentence definitions throughout.
 - How the user talks: if they say "holdout", "F1", or "LLM-as-judge"
-  unprompted, stop defining those terms; if they ask what a term means, shift
-  to the plain wording for the rest of the run.
+  unprompted, stop defining those terms. If they ask what a term means - or
+  why it matters ("why should I care about a dataset?") - take that as the
+  signal to explain more from here on: answer with the plain wording plus the
+  one-sentence reason the concept affects their result, and keep that fuller
+  register for the rest of the run.
 - Default when there is no signal yet: one plain sentence at first use, then
   move on. That costs an experienced reader nothing and quietly carries
   everyone else.
@@ -170,8 +173,6 @@ Provider key vs Traigent portal key
 Portal
   Plain: the Traigent website where you register, generate your Traigent API
   key, and view your optimization runs and their results.
-  Note: if the user signed up with an invitation access code, the limited-time
-  window applies to that code, not to the API key they generate afterwards.
 
 Traigent SDK
   Plain: the library your coding agent uses to wrap your agent and run
