@@ -779,14 +779,16 @@ class SkillPackageTests(unittest.TestCase):
         count = namespace["configuration_count"]
         self.assertEqual(count(namespace["BASELINE_SPACE"]), 6)
         self.assertEqual(count(namespace["ENHANCED_SPACE"]), 54)
-        self.assertNotIn(
-            namespace["SELECTED_STRONG_MODEL"],
-            namespace["BASELINE_SPACE"]["model"],
-        )
-        self.assertIn(
-            namespace["SELECTED_STRONG_MODEL"],
-            namespace["ENHANCED_SPACE"]["model"],
-        )
+        for space_name in ("BASELINE_SPACE", "ENHANCED_SPACE"):
+            self.assertEqual(
+                namespace[space_name]["model"],
+                [
+                    "provider/current",
+                    "provider/alternative",
+                    "provider/strong",
+                ],
+                f"{space_name} must run the identical three-model ladder",
+            )
         self.assertLessEqual(4, count(namespace["BASELINE_SPACE"]))
         self.assertLess(10, count(namespace["ENHANCED_SPACE"]))
 
@@ -838,12 +840,13 @@ class SkillPackageTests(unittest.TestCase):
     def test_walkthrough_model_ladder_skips_the_flagship(self) -> None:
         """The first run never auto-selects the vendor's newest flagship.
 
-        Selected models ladder down from one step below the flagship: the
-        baseline grid takes the fast and mid tiers (it pays for every cell),
-        and the strong tier joins only the enhanced space, where the managed
-        cost-aware search decides which trials are worth its price. A user's
-        own flagship choice is preserved exactly, never swapped, and the user
-        hears the one-line faster-and-cheaper reason before approving.
+        Selected models ladder down from one step below the flagship, and both
+        runs share the identical three-model list: the enhanced run never gets
+        a model the baseline did not measure, so a win is attributable to the
+        added knobs and the managed search rather than to a quiet model
+        upgrade. A user's own flagship choice is preserved exactly, never
+        swapped, and the user hears the one-line faster-and-cheaper reason
+        before approving.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -853,9 +856,11 @@ class SkillPackageTests(unittest.TestCase):
             "one fast low-cost tier, one mid-tier workhorse, and one strong tier",
             "one step below the vendor's newest flagship",
             "do not select the flagship itself",
-            "the baseline takes the fast and mid tiers",
-            "the strong tier joins only the enhanced space",
+            "both runs use the same three models",
+            "never gets a model the baseline did not measure",
+            "never to quietly upgrading the model",
             "never remove or replace the user's model choice silently",
+            "build the ladder inside one model family",
             "tiers are roles, not hardcoded ids",
         ):
             with self.subTest(document="sdk-execution", phrase=phrase):
@@ -864,12 +869,14 @@ class SkillPackageTests(unittest.TestCase):
             "never the vendor's newest flagship",
             "faster and cheaper by searching down the ladder",
             "never auto-select the flagship itself",
+            "never to a quietly upgraded model",
         ):
             with self.subTest(document="skill", phrase=phrase):
                 self.assertIn(phrase, skill)
         for phrase in (
-            "the fast and mid rungs of the walkthrough model ladder",
-            "at high reasoning effort when it supports one",
+            "the fast, mid, and strong rungs of the walkthrough model ladder",
+            "keeps the identical model list",
+            "never to a model the baseline did not measure",
             "keeps the first run faster and cheaper",
             "never remove or swap the user's model silently",
         ):

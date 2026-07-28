@@ -318,8 +318,8 @@ Prepare one concise combined approval immediately before paid work containing:
   the preserved baseline or a generated six-row sweep, one broader bounded optimization, and
   baseline winner versus enhanced winner holdout comparison.
 - Tuning/holdout sizes, trial limit, and approximate total calls.
-- The walkthrough model ladder in play: which tiers each run sweeps, and that the vendor's newest
-  flagship is deliberately not among the selected models, with the one-line reason below.
+- The walkthrough model ladder in play: the three tiers both runs share, and that the vendor's
+  newest flagship is deliberately not among the selected models, with the one-line reason below.
 - Approximate runtime and estimated spend.
 - A `$5.00` total walkthrough ceiling by default.
 - Any call path whose cost is untracked; describe the ceiling as a stop target rather than a
@@ -375,27 +375,31 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
 1. **Baseline** - preserve the user's existing baseline or fixed configuration exactly as defined,
    including its original row count. Do not add variants to make it look fuller. Only when the
    configuration is missing and Traigent creates it, generate a credible quick manual-style sweep
-   of six distinct configurations: by default, two credible models by three safe temperature
-   values, with enhanced-only controls pinned to their ordinary/off values. The two models are the
-   fast and mid rungs of the walkthrough model ladder below, never the vendor's newest flagship.
+   of six distinct configurations: by default, three credible models by two safe temperature
+   values, with enhanced-only controls pinned to their ordinary/off values. The three models are
+   the fast, mid, and strong rungs of the walkthrough model ladder below, never the vendor's
+   newest flagship.
 2. **Enhanced Traigent optimization** - a materially larger space that contains every baseline
    value and adds meaningful controls that the agent actually consumes. Target 10-13 visible
-   trials, using 12 as the internal default cap. For the generated walkthrough, add prompt-policy
-   choices and a native boolean self-check control without adding another model call, plus the
-   ladder's strong tier - one step below the flagship, at high reasoning effort when it supports
-   one - so the managed search decides when that arm is worth its price. For a real
+   trials, using 12 as the internal default cap. For the generated walkthrough, keep the model
+   list identical to the baseline's, add prompt-policy
+   choices and a native boolean self-check control without adding another model call, and extend
+   swept ranges around what the baseline's top rows rewarded while keeping every baseline value -
+   so an enhanced win is attributable to the added knobs and the managed search, never to a
+   quietly upgraded model. For a real
    agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
    context format, few-shot count, tool policy, or repair behavior.
 
-Both runs draw the models Traigent selects from a deliberate ladder inside the selected route: one
+Both runs share the models Traigent selects: a deliberate ladder inside the selected route of one
 fast low-cost tier, one mid-tier workhorse, and one strong tier one step below the vendor's newest
-flagship. Never auto-select the flagship itself, and say why in one line when presenting the plan:
+flagship, the strong tier at a pinned reasoning effort in both runs when it is a reasoning model.
+Never auto-select the flagship itself, and say why in one line when presenting the plan:
 a first run is for seeing the workflow and the cost-accuracy tradeoff quickly, so it stays faster
 and cheaper by searching down the ladder, and the flagship remains the ready next rung for a later
 run if the task proves hard enough to need it. When the user's own agent already calls the
 flagship, that choice is preserved exactly - it is the baseline being measured - and the ladder
 adds the tiers below it; never remove or swap the user's model, and give the same one-line
-explanation before the approval so the cheaper added arms read as deliberate, not as a downgrade.
+explanation before the approval so the cheaper added tiers read as deliberate, not as a downgrade.
 
 The baseline needs only the user's own provider credential. It runs locally as an explicit grid, so
 it produces a first real result before any Traigent account exists - deliberately the shortest path

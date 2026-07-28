@@ -81,7 +81,9 @@ untouched holdout check. Any later iteration is optional, not required.
 - One supported LLM-provider key with a small amount of credit for the real run. The sweep
   ladders that provider's models - a fast tier, a mid tier, and a strong tier one step below its
   newest flagship - and deliberately skips the flagship itself so the first run stays quick and
-  cheap; the flagship remains the natural next rung for a later, deeper run.
+  cheap; the flagship remains the natural next rung for a later, deeper run. Both runs use the
+  same three models, so an optimization win comes from Traigent's search and knobs, not from a
+  hidden model upgrade.
 - A Traigent portal key for connected optimization and portal results.
 
 Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the

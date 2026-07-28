@@ -119,16 +119,25 @@ step below the vendor's newest flagship. Do not select the flagship itself - the
 expensive model the vendor currently markets as its best. A first run exists to show the workflow
 and the cost-accuracy tradeoff quickly, and the flagship makes every trial slower and more
 expensive without teaching more about either; say that in one line when presenting the plan.
+Capping the ladder one step down is also what keeps the comparison honest and affordable: every
+selected model must run in the baseline grid, so every selected model has to be quick and cheap
+enough to grid.
 
-The baseline takes the fast and mid tiers: it is the sweep a user would credibly run by hand, and
-it keeps the pre-account first result quick and cheap, with the mid tier as the generated initial
-configuration. The strong tier joins only the enhanced space, where the managed search - not a
-fixed grid - decides under the cost objective which trials are worth its price. That placement is
-deliberate: the baseline grid runs every cell, so an expensive arm there multiplies the slowest
-phase, while the enhanced run samples it inside the same 12-trial, cost-ceilinged budget. When the
-strong tier is a reasoning model, run that arm at high reasoning effort with the answer-headroom
-rule (`max_tokens` at least 4096) and do not pass sampling parameters such a model rejects; the
-temperature knob then varies the non-reasoning tiers, and the report says so.
+Both runs use the same three models. The baseline grids them against two evaluator-safe
+temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
+generated initial configuration - and it keeps the pre-account first result quick and cheap. The
+enhanced space keeps the identical model list and grows along the other axes: extend swept ranges
+around what the baseline's top rows rewarded (the third temperature bracketing the winner, for
+example) while keeping every baseline value, and add the prompt-policy and self-check controls.
+Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
+Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
+
+When the strong tier is a reasoning model, pin its calling convention identically in both runs: a
+chosen reasoning effort with the answer-headroom rule (`max_tokens` at least 4096), and do not
+pass sampling parameters such a model rejects. Temperature is inert on that model, and two
+baseline grid rows that differ only by an inert knob are the same configuration twice - so in that
+case swap the baseline's second axis from temperature to two prompt styles, keep all six rows
+real, and say in the report which knobs applied to which models.
 
 When the inspected agent already calls the vendor's flagship, keep it exactly where it is: it is
 the current configuration, so it anchors the baseline being measured and stays in the enhanced
@@ -136,6 +145,15 @@ space. Add the cheaper ladder tiers below it instead of more flagship-tier model
 user why before the approval - the first run stays fast and cheap by searching down the ladder,
 and the interesting first question becomes whether a cheaper tier holds the flagship's accuracy, a
 legitimate cost-side win. Never remove or replace the user's model choice silently.
+
+Build the ladder inside one model family. One family keeps the result readable - "the mid tier
+held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
+keeps a single company receiving the user's prompts, and keeps one bill. When several direct
+provider credentials exist, pick one family, name it and the reason in the plan, and let the
+combined approval - which already lists every data recipient - be the user's moment to switch. On
+the OpenRouter route one key reaches every family; still ladder within one family by default, and
+borrow a missing rung from a second family only when the chosen family lacks it, naming that
+extra upstream recipient in the approval.
 
 Tiers are roles, not hardcoded ids: pick concrete model ids from what the selected route lists at
 run time, then verify each id is live and cost-tracked before scaling, as `run-safety.md` already
@@ -269,22 +287,24 @@ BASELINE_CONFIG = {
     "self_check": False,
 }
 BASELINE_SPACE = {
+    # The same three ladder models run in both phases, so the enhanced run
+    # never gets a model the baseline did not measure.
     "model": [
         BASELINE_CONFIG["model"],
         SELECTED_ALTERNATIVE_MODEL,
+        SELECTED_STRONG_MODEL,
     ],
     # Nonzero values are safe only when the evaluator tolerates valid surface variation.
     # Otherwise pin 0.0 and substitute other real controls to retain the planned row count.
-    "temperature": [BASELINE_CONFIG["temperature"], 0.2, 0.4],
+    "temperature": [BASELINE_CONFIG["temperature"], 0.2],
     "prompt_style": [BASELINE_CONFIG["prompt_style"]],
     "self_check": [BASELINE_CONFIG["self_check"]],
 }
 ENHANCED_SPACE = {
-    # The strong tier joins only here: the managed, cost-aware search decides
-    # which trials are worth its price, instead of the baseline grid paying for
-    # it in every cell.
-    "model": [*BASELINE_SPACE["model"], SELECTED_STRONG_MODEL],
-    "temperature": BASELINE_SPACE["temperature"],
+    "model": BASELINE_SPACE["model"],
+    # Extend swept ranges around what the baseline's top rows rewarded while
+    # keeping every baseline value, so the comparison stays contained.
+    "temperature": [*BASELINE_SPACE["temperature"], 0.4],
     "prompt_style": [
         BASELINE_CONFIG["prompt_style"],
         "structured",
@@ -298,8 +318,7 @@ def configuration_count(space: dict[str, list]) -> int:
     return math.prod(len(values) for values in space.values())
 
 
-assert SELECTED_ALTERNATIVE_MODEL != SELECTED_CURRENT_MODEL
-assert SELECTED_STRONG_MODEL not in BASELINE_SPACE["model"]
+assert len(set(BASELINE_SPACE["model"])) == 3
 assert configuration_count(BASELINE_SPACE) == 6
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
@@ -370,7 +389,7 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
     sampling_kwargs: dict = {"temperature": config["temperature"]}
     if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
         # Reasoning models reject sampled temperature and need answer headroom
-        # beyond their hidden reasoning tokens, so this arm swaps sampling
+        # beyond their hidden reasoning tokens, so this model swaps sampling
         # controls for effort plus headroom rather than sending both.
         sampling_kwargs = {
             "reasoning_effort": STRONG_REASONING_EFFORT,
@@ -422,16 +441,18 @@ values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced 
 the alternative and strong models from the same approved provider route when generating the
 walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
-a reasoning-effort control. A new route
+a reasoning-effort control, and pin the same value for both runs. A new route
 or recipient requires revised data-egress approval. Every search variable must affect the actual
-agent call; when the strong arm runs as a reasoning model, the temperature knob varies only the
-fast and mid tiers, and the report says so rather than implying it swept every arm.
+agent call; when the strong tier runs as a reasoning model, temperature is inert for it - use the
+baseline prompt-style swap from the ladder section above, and say in the report which knobs
+varied which models rather than implying every knob swept every model.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline performs a credible six-point standard
-sweep: two live models by three evaluator-safe temperatures, with the added prompt controls pinned
-to the current behavior. The enhanced space keeps all of those values, adds the ladder's
-strong-tier model arm, and adds two real one-call controls: three prompt policies and a native
+sweep: the three ladder models by two evaluator-safe temperatures, with the added prompt controls
+pinned to the current behavior. The enhanced space keeps all of those values - the same three
+models - extends the temperature range around the baseline's winner,
+and adds two real one-call controls: three prompt policies and a native
 boolean self-check branch. That creates 54 possible
 configurations, so a 12-trial managed run has meaningful choices to make.
 

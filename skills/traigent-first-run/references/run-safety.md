@@ -302,13 +302,16 @@ connected once if portal comparison matters. Do not:
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
 space unchanged, even when it contains one row. For a generated walkthrough, the default small
-space is two credible models by three safe temperature values, with prompt policy and self-check
-fixed to ordinary/off values; those two models are the fast and mid rungs of the walkthrough model
-ladder from the selected route, never the vendor's newest flagship. The enhanced space retains
-those values and adds the ladder's strong tier - one step below the flagship, at high reasoning
-effort when it supports one - plus multiple prompt
-policies and a native boolean self-check branch, producing dozens of possible configurations
-while Traigent tests 12 by default. Explain the ladder in one line before the approval: skipping
+space is three credible models by two safe temperature values, with prompt policy and self-check
+fixed to ordinary/off values; the models are the fast, mid, and strong rungs of the walkthrough
+model ladder from the selected route - the strong rung one step below the vendor's newest
+flagship, at a pinned effort in both runs when it is a reasoning model, and never the flagship
+itself. The enhanced space keeps the identical model list, extends swept ranges around the
+baseline's top rows while retaining every baseline value, and adds multiple prompt
+policies plus a native boolean self-check branch, producing dozens of possible configurations
+while Traigent tests 12 by default - so an enhanced win is attributable to knobs and the managed
+search, never to a model the baseline did not measure. Explain the ladder in one line before the
+approval: skipping
 the flagship keeps the first run faster and cheaper, and the flagship stays the ready next rung
 for a later run if the task proves hard enough to need it. When the preserved agent already uses
 the flagship, keep that model exactly as the measured anchor and add the cheaper tiers below it;
