@@ -106,8 +106,8 @@ Dimension / knob
   Common knobs: model choice, temperature, retrieval / RAG settings, prompt
   wording, output format, number of few-shot examples, reasoning style, and
   multi-model routing or cascading.
-  Ask like this, and only when inspection could not establish the tunable
-  surface (knob selection is otherwise made from inspection, not by asking):
+  Ask like this only when `SKILL.md` authorizes a question about the tunable
+  surface (knob selection itself is made from inspection, not by asking):
   "Besides the model, what else can we change in your agent - the prompt,
   retrieval, output format, examples?"
 
