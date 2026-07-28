@@ -21,6 +21,15 @@
   "assertions": {
     "question_category": "task_intent",
     "question_count": 1,
-    "project_writes": 0
+    "project_writes": 0,
+    "opening_commands": [
+      "preflight.py",
+      "readiness.py"
+    ],
+    "opening_score": 0,
+    "opening_band": "NOT READY",
+    "opening_caps": [
+      "dataset-absent"
+    ]
   }
 }

@@ -263,8 +263,10 @@ stable IDs, or a disjoint split. Do not silently delete real rows, change expect
 product policy, or broaden a rubric. For those judgment-dependent changes, propose the exact diff
 and ask first.
 
-After any repair, re-run the same checks that produced the advisory. Do not clear `❗` because a
-file changed; clear it only when new evidence resolves the limitation.
+After any repair, re-run the same checks that produced the advisory, the applicable calibration,
+and the readiness score; record the new score, band, and caps beside the opening result. Do not
+clear `❗` because a file changed or because the score rose; clear it only when new evidence
+resolves the limitation.
 
 ## Dataset construction
 

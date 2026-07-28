@@ -86,6 +86,10 @@ Nothing else belongs in `.env`. Do not add a backend or API URL - the installed 
 at the production service, and a stray override silently sends a paid run somewhere the user cannot
 see it.
 
+The opening readiness score is computed earlier, after read-only inventory and before any creation
+or repair. It is a static local action, required even when no component exists yet; in a
+zero-anchor run it is recorded only after task intent is anchored.
+
 Use this gate order:
 
 1. After component creation, define the calibration matrix and thresholds, then have the coding
@@ -103,7 +107,11 @@ Use this gate order:
    `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
    and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
    external evaluator; keep it behind explicit combined approval.
-5. Determine the current provider route from the agent's actual model call and configuration;
+5. Run `scripts/readiness.py` on the fresh preflight JSON plus the calibration results and
+   config-space document, whichever exist, and record the overall score, band, and every binding
+   cap. Branch on each active cap before continuing. This is a static local read; `--strict` is
+   not a substitute for taking the branch.
+6. Determine the current provider route from the agent's actual model call and configuration;
    inventory provider credential names separately. Credential presence never changes an existing
    route. When no route exists, prefer the one supported direct provider whose credential is
    already present so no second account is needed; with no such single credential, default to
@@ -113,12 +121,12 @@ Use this gate order:
    OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
    fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
    required.
-6. Reuse an existing compatible isolated environment, or create the conventional `.venv` with Python
+7. Reuse an existing compatible isolated environment, or create the conventional `.venv` with Python
    3.11-3.13 without fetching packages. Only if an incompatible `.venv` already exists, preserve it
    and use `.venv-traigent` as the non-destructive fallback without making its name a user choice.
-7. Install the exact declared dependencies under the narrow package-artifact authorization: use
+8. Install the exact declared dependencies under the narrow package-artifact authorization: use
    compatible exact project declarations or the skill's `assets/requirements-first-run.txt`.
-8. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
+9. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
    a public no-execution contract validator when the installed version provides one. Let those
    public paths own normalization, injection, agent-call, and evaluator-callback behavior. Never
    mirror SDK aliases or binding fallbacks in the first-run skill. Pass resolved absolute paths to
@@ -127,14 +135,14 @@ Use this gate order:
    a full no-execution contract validator, record that limitation and use the safe mock plumbing
    check for end-to-end compatibility. Run any local deterministic calibration deferred solely for
    an installed dependency.
-9. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
-   is intercepted and no external side effect can occur. Otherwise record the check as deferred;
-   do not over-prescribe execution.
-10. After every applicable free check is complete, create the minimal `.env` or minimally update
+10. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
+    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
+    do not over-prescribe execution.
+11. After every applicable free check is complete, create the minimal `.env` or minimally update
     the existing one securely as described above, then stop once for both local secret pastes.
-11. Present one combined approval covering the smallest live provider/key check, any LLM-judge
+12. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-12. After approval, run the live check first, starting with the zero-LLM portal-tracking probe (see
+13. After approval, run the live check first, starting with the zero-LLM portal-tracking probe (see
     Connected-run readiness below), then the smallest live provider/key check. Continue only if both
     pass.
 

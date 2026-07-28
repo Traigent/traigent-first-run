@@ -126,5 +126,132 @@ class BehavioralContractUnitTests(unittest.TestCase):
             harness.validate_command(["pip", "install", "traigent"])
 
 
+def zero_anchor_evidence(extra_arguments: list[str]) -> dict:
+    """Build the minimal evidence a clean zero-anchor pass would produce.
+
+    `extra_arguments` is appended to the readiness command so a test can craft
+    the one thing under examination and leave every other clause satisfied.
+    """
+    return {
+        "stop_reason": "awaiting_task_intent",
+        "network": {"attempts": []},
+        "events": [
+            {
+                "sequence": 1,
+                "type": "opening_readiness_score",
+                "overall": 0,
+                "band": "NOT READY",
+                "caps": ["dataset-absent"],
+            },
+            {"sequence": 2, "type": "question", "category": "task_intent"},
+            {"sequence": 3, "type": "stop", "reason": "awaiting_task_intent"},
+        ],
+        "commands": [
+            {"argv": ["<PYTHON>", "scripts/preflight.py", "--json"]},
+            {
+                "argv": ["<PYTHON>", "scripts/readiness.py", "--preflight", "-"]
+                + extra_arguments
+                + ["--json"]
+            },
+        ],
+        "writes": [],
+    }
+
+
+def weak_invalid_evidence(extra_arguments: list[str]) -> dict:
+    """Build evidence that satisfies every weak-invalid clause but the flag.
+
+    Complete rather than minimal on purpose: if the report ban ever stops
+    covering this scenario, the failure must be the ban not firing, not some
+    unrelated clause tripping first.
+    """
+    return {
+        "stop_reason": "awaiting_quality_decision",
+        "network": {"attempts": []},
+        "events": [
+            {
+                "sequence": 1,
+                "type": "quality_findings",
+                "findings": [
+                    {"component": "agent"},
+                    {"component": "dataset"},
+                    {"component": "evaluation"},
+                ],
+            },
+            {
+                "sequence": 2,
+                "type": "question",
+                "category": "quality_decision",
+                "choices": ["repair", "workflow demonstration", "pause"],
+            },
+            {"sequence": 3, "type": "stop", "reason": "awaiting_quality_decision"},
+        ],
+        "commands": [
+            {
+                "argv": ["<PYTHON>", "scripts/readiness.py", "--preflight", "-"]
+                + extra_arguments
+                + ["--json"]
+            }
+        ],
+        "writes": [],
+    }
+
+
+class ReportFlagBanTests(unittest.TestCase):
+    """The opening readiness gate must never be talked into writing a file.
+
+    `--report <path>` accepts an absolute path, so the file can land outside the
+    project tree - where the read-only chmod never applies and the writes
+    snapshot still reports `writes: []`. Nothing else in the harness can see it,
+    which is why the ban is asserted here rather than left to the fixtures.
+    """
+
+    def zero_anchor_contract(self) -> dict:
+        return harness.load_contract(SCENARIOS / "zero-anchor")
+
+    def test_attached_report_path_is_rejected(self) -> None:
+        """`--report=<path>` is one argv entry; a list membership test misses it."""
+        with self.assertRaisesRegex(harness.ContractError, "write a report file"):
+            harness.validate_semantics(
+                self.zero_anchor_contract(),
+                zero_anchor_evidence(["--report=/tmp/outside.md"]),
+            )
+
+    def test_separated_report_path_is_rejected(self) -> None:
+        with self.assertRaisesRegex(harness.ContractError, "write a report file"):
+            harness.validate_semantics(
+                self.zero_anchor_contract(),
+                zero_anchor_evidence(["--report", "/tmp/outside.md"]),
+            )
+
+    def test_clean_opening_pair_is_accepted(self) -> None:
+        """The ban must not fire on the pair the scenario actually runs."""
+        harness.validate_semantics(
+            self.zero_anchor_contract(), zero_anchor_evidence([])
+        )
+
+    def test_ban_applies_outside_the_zero_anchor_scenario(self) -> None:
+        """The rule is about report files, not about one scenario's allowlist.
+
+        The zero-anchor branch is the only one with an exact-command allowlist,
+        so a scenario that scores readiness without one - weak-invalid does -
+        would otherwise take a report path with nothing to stop it.
+        """
+        contract = harness.load_contract(SCENARIOS / "weak-invalid")
+        for extra in (["--report=/tmp/outside.md"], ["--report", "/tmp/outside.md"]):
+            with self.subTest(extra=extra):
+                with self.assertRaisesRegex(
+                    harness.ContractError, "write a report file"
+                ):
+                    harness.validate_semantics(contract, weak_invalid_evidence(extra))
+
+    def test_clean_weak_invalid_run_is_accepted(self) -> None:
+        """Without a report flag the same evidence must satisfy every clause."""
+        harness.validate_semantics(
+            harness.load_contract(SCENARIOS / "weak-invalid"),
+            weak_invalid_evidence([]),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

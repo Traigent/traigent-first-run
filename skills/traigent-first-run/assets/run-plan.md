@@ -18,6 +18,8 @@ The coding assistant maintains this concise internal record at
 - Calibration cases and results artifacts:
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
+- Opening readiness score before any creation or repair - overall, band, binding caps:
+- Latest revalidated readiness score - overall, band, binding caps, and what changed:
 
 ## Planned comparison
 
@@ -46,3 +48,5 @@ The coding assistant maintains this concise internal record at
 - What the result demonstrates:
 - What the result does not establish:
 - Recommended next real-world improvement:
+- Readiness transition - opening score beside the latest, caps cleared and remaining, and whether
+  the gain came from real repair or a `🛠️` substitute:

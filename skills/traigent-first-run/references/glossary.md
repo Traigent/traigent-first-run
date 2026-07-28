@@ -150,8 +150,13 @@ Pareto frontier (optimal frontier)
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
   to be optimized, broken into three parts: your dataset, your evaluator, and
-  your agent's knobs. It shapes what we explain and what we fix; by default it
-  never stops the run.
+  your agent's knobs.
+  It is computed at the start of every run - before anything is created or
+  repaired - and again after each repair or creation, so the closing report can
+  show an honest opening-to-closing change. It decides what the run does next:
+  repair, create, or continue as a clearly labeled walkthrough. A low number
+  alone does not stop a safe walkthrough, but a cap that says the grading signal
+  is broken does stop paid optimization against that signal.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a rule that holds the score down when something essential is missing or

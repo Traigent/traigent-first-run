@@ -2,7 +2,9 @@
 
 This internal test layer verifies only the deterministic, pre-network portion of the first-run
 contract. It checks the zero-anchor stop, preservation and generated-dataset invariants, local
-calibration, evidence-based quality findings, allowed writes, and external-action boundaries.
+calibration, evidence-based quality findings, allowed writes, external-action boundaries, the
+mandatory opening readiness score, cap-directed branching, and the recorded opening-to-closing
+transition.
 
 It is not a customer walkthrough, an SDK/provider/backend test, or proof that an arbitrary coding
 assistant follows the skill. It emits no optimization result, cost, or portal link. A failed live
