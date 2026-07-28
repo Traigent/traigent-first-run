@@ -1479,13 +1479,23 @@ class SkillPackageTests(unittest.TestCase):
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
-            "opening readiness score before any creation or repair",
-            "latest revalidated readiness score",
+            # both entries must keep the three fields the audited before/after
+            # transition is made of, not just their headings
+            "opening readiness score before any creation or repair - overall, "
+            "band, binding caps:",
+            "latest revalidated readiness score - overall, band, binding caps, "
+            "and what changed:",
             "readiness transition",
             "`🛠️` substitute",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+        # a transition needs a fixed baseline: without this rule the opening
+        # entry can be updated in place and the before/after becomes after/after
+        self.assertIn(
+            "never overwrite the recorded opening score",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
 
     def test_final_report_shows_the_readiness_transition(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())

@@ -922,6 +922,23 @@ def protected_hashes(project: Path, paths: list[str]) -> dict[str, dict[str, Any
     }
 
 
+def writes_a_report(commands: list[dict[str, Any]]) -> bool:
+    """Report whether any recorded command asks a script to write a report file.
+
+    Scan the arguments themselves, not the argv list: argparse also accepts
+    `--report=<path>`, and a membership test on the list misses that form
+    entirely. The report path can point outside the project, where neither the
+    read-only chmod nor the writes snapshot would catch the file, so this is the
+    only place the rule can be enforced - and it must be the only definition of
+    it, or a caller and its test can drift apart.
+    """
+    return any(
+        argument == "--report" or argument.startswith("--report=")
+        for command in commands
+        for argument in command["argv"]
+    )
+
+
 def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> None:
     if evidence["stop_reason"] != contract["expected_stop_reason"]:
         raise ContractError("scenario stopped at the wrong gate")
@@ -936,6 +953,11 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
     ]
     if stop_indexes != [len(evidence["events"]) - 1]:
         raise ContractError("scenario must emit exactly one terminal stop event")
+    # Every scenario, not only the zero-anchor one: a report flag added to any
+    # recorded command writes a file that can land outside the project tree,
+    # where the writes snapshot still certifies `writes: []`.
+    if writes_a_report(evidence["commands"]):
+        raise ContractError("recorded commands must not write a report file")
     if contract["id"] == "zero-anchor":
         questions = [
             event for event in evidence["events"] if event["type"] == "question"
@@ -958,18 +980,6 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
             raise ContractError(
                 "zero-anchor may run only the opening preflight/readiness pair "
                 "before the answer"
-            )
-        # Scan the arguments themselves, not the argv list: argparse also accepts
-        # `--report=<path>`, and a membership test on the list misses that form
-        # entirely. The report path can point outside the project, where neither
-        # the read-only chmod nor the writes snapshot would catch the file.
-        if any(
-            argument == "--report" or argument.startswith("--report=")
-            for command in evidence["commands"]
-            for argument in command["argv"]
-        ):
-            raise ContractError(
-                "the opening readiness pair must not write a report file"
             )
         score = next(
             event
