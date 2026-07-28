@@ -217,6 +217,40 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             subscore = _dataset_subscore(score, "provenance")
             self.assertEqual(subscore["value"], 10.0)
 
+    def test_old_preflight_json_without_malformed_count_fails_loudly(self) -> None:
+        """Version-skew guard: integrity FAIL without `malformed_rows` must not
+        be silently scored (the count decides whether the 35 cap fires) - the
+        scorer refuses the stale JSON and tells the user to re-run preflight.
+        """
+        stale_records = [
+            {
+                "check": "dataset-integrity",
+                "status": "FAIL",
+                "detail": "3/23 rows (13.0%) are unusable",
+                "metrics": {},
+            },
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "detail": "declared sources: ['unknown']",
+                "metrics": {
+                    "rows": 20,
+                    "labelled_rows": 20,
+                    "synthetic": False,
+                    "sources": ["unknown"],
+                },
+            },
+        ]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(stale_records),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("malformed_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
     def test_declared_synthetic_provenance_scores_three_and_is_capped(self) -> None:
         """C3: rows declaring synthetic provenance score 3/10 and are capped."""
         with tempfile.TemporaryDirectory() as raw:
