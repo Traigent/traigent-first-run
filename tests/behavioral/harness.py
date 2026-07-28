@@ -959,7 +959,15 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
                 "zero-anchor may run only the opening preflight/readiness pair "
                 "before the answer"
             )
-        if any("--report" in command["argv"] for command in evidence["commands"]):
+        # Scan the arguments themselves, not the argv list: argparse also accepts
+        # `--report=<path>`, and a membership test on the list misses that form
+        # entirely. The report path can point outside the project, where neither
+        # the read-only chmod nor the writes snapshot would catch the file.
+        if any(
+            argument == "--report" or argument.startswith("--report=")
+            for command in evidence["commands"]
+            for argument in command["argv"]
+        ):
             raise ContractError(
                 "the opening readiness pair must not write a report file"
             )

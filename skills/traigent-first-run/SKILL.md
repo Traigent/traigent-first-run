@@ -139,7 +139,8 @@ Only ask which agent to use if multiple credible candidates remain.
 
 After the read-only inventory and before any component creation or repair, score readiness from
 what actually exists: run the bundled static preflight with `--defer-missing-sdk` over whatever
-dataset was discovered, then run `scripts/readiness.py` on that preflight JSON plus any
+dataset was discovered - omitting `--dataset` entirely when no dataset exists rather than passing
+a path that does not exist yet - then run `scripts/readiness.py` on that preflight JSON plus any
 calibration or config-space evidence already present. Every guided run does this, the zero-anchor
 walkthrough included, and this opening score is not skippable. It always reports all three
 pillars; a project with no dataset, no calibration, and no config-space document still scores -
