@@ -195,6 +195,96 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("18 tuning rows", tuning.detail)
         self.assertEqual(holdout.status, MODULE.WARN)
         self.assertIn("16.7 percentage points", holdout.detail)
+        self.assertEqual(
+            tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}
+        )
+        self.assertEqual(
+            holdout.metrics, {"holdout_rows": 6, "holdout_labelled_rows": 6}
+        )
+
+    def test_split_metrics_count_labelled_rows_separately(self) -> None:
+        """A holdout whose rows carry no expected output resolves nothing.
+
+        The per-split labelled counts are what the readiness scorer clamps
+        power on, so they must be reported next to the raw split sizes rather
+        than inferred from the aggregate labelled count.
+        """
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": f"tuning case {index} token{index}",
+                "output": f"answer {index % 3}",
+                "split": "tune",
+            }
+            for index in range(8)
+        ] + [
+            {
+                "id": f"holdout-{index}",
+                "input": f"holdout case {index} othertoken{index}",
+                "output": "",
+                "split": "holdout",
+            }
+            for index in range(4)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        tuning = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
+        )
+        holdout = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-holdout-resolution"
+        )
+        self.assertEqual(tuning.metrics, {"tuning_rows": 8, "tuning_labelled_rows": 8})
+        self.assertEqual(
+            holdout.metrics, {"holdout_rows": 4, "holdout_labelled_rows": 0}
+        )
+        self.assertEqual(tuning.status, MODULE.WARN)
+        self.assertIn("8 tuning rows", tuning.detail)
+        self.assertEqual(holdout.status, MODULE.WARN)
+        self.assertIn("none scoreable", holdout.detail)
+        self.assertNotIn("percentage points", holdout.detail)
+
+    def test_holdout_resolution_quotes_only_scoreable_rows(self) -> None:
+        """Per-example resolution is 100/scoreable, not 100/total.
+
+        Quoting the total claims a precision the evaluator cannot deliver on
+        the half of the holdout it cannot score at all.
+        """
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": f"tuning case {index} token{index}",
+                "output": f"answer {index % 3}",
+                "split": "tune",
+            }
+            for index in range(20)
+        ] + [
+            {
+                "id": f"holdout-{index}",
+                "input": f"holdout case {index} othertoken{index}",
+                "output": f"answer {index % 3}" if index < 10 else "",
+                "split": "holdout",
+            }
+            for index in range(20)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        holdout = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-holdout-resolution"
+        )
+        self.assertEqual(holdout.metrics["holdout_labelled_rows"], 10)
+        self.assertEqual(holdout.metrics["holdout_rows"], 20)
+        self.assertEqual(holdout.status, MODULE.PASS)
+        self.assertIn("10.0 percentage points", holdout.detail)
+        self.assertNotIn("5.0 percentage points", holdout.detail)
 
     def test_combined_dataset_reports_a_small_tuning_split(self) -> None:
         rows = synthetic_rows()[:12]

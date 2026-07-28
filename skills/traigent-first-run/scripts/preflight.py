@@ -395,6 +395,16 @@ def normalize_dataset_row(
     return normalized, None
 
 
+def dataset_row_is_labelled(row: dict[str, Any]) -> bool:
+    """Report whether a normalized row carries a usable expected output.
+
+    One definition, used by both the aggregate `labelled_rows` count and the
+    per-split counts, so the two can never disagree about the same row.
+    """
+
+    return str(row.get("output", "")).strip() not in ("", "None")
+
+
 def normalized_text(value: Any) -> str:
     text = stable_json(value) if not isinstance(value, str) else value
     return " ".join(re.findall(r"\w+", text.casefold()))
@@ -628,9 +638,7 @@ def check_dataset(
             f"all inputs use the same {next(iter(input_types))} shape",
         )
 
-    labelled = sum(
-        1 for row in rows if str(row.get("output", "")).strip() not in ("", "None")
-    )
+    labelled = sum(1 for row in rows if dataset_row_is_labelled(row))
     synthetic = emit_dataset_provenance(present_rows, labelled=labelled)
     raw_ids = [row_metadata_value(row, "id") for row in rows]
     missing_ids = [
@@ -741,11 +749,14 @@ def check_dataset(
 
     splits: dict[str, set[str]] = {}
     split_counts: Counter[str] = Counter()
+    labelled_split_counts: Counter[str] = Counter()
     for row in rows:
         split = row_metadata_value(row, "split")
         if split:
             split_name = str(split).casefold()
             split_counts[split_name] += 1
+            if dataset_row_is_labelled(row):
+                labelled_split_counts[split_name] += 1
             splits.setdefault(split_name, set()).add(normalized_text(row["input"]))
     tune_names = {"tune", "tuning", "train", "search"}
     holdout_names = {"holdout", "test", "validation", "validate"}
@@ -766,26 +777,65 @@ def check_dataset(
         holdout_count = sum(
             count for name, count in split_counts.items() if name in holdout_names
         )
-        if tuning_count < 10:
+        tuning_labelled = sum(
+            count for name, count in labelled_split_counts.items() if name in tune_names
+        )
+        holdout_labelled = sum(
+            count
+            for name, count in labelled_split_counts.items()
+            if name in holdout_names
+        )
+        tuning_suffix = (
+            "" if tuning_labelled == tuning_count else f", {tuning_labelled} scoreable"
+        )
+        tuning_metrics = {
+            "tuning_rows": tuning_count,
+            "tuning_labelled_rows": tuning_labelled,
+        }
+        if tuning_labelled < 10:
             emit(
                 "dataset-tuning-size",
                 WARN,
-                f"{tuning_count} tuning rows is a wiring check, not a credible optimization score",
-                {"tuning_rows": tuning_count},
+                f"{tuning_count} tuning rows{tuning_suffix} is a wiring check, "
+                "not a credible optimization score",
+                tuning_metrics,
             )
         else:
             emit(
                 "dataset-tuning-size",
                 PASS,
-                f"{tuning_count} tuning rows",
-                {"tuning_rows": tuning_count},
+                f"{tuning_count} tuning rows{tuning_suffix}",
+                tuning_metrics,
+            )
+        holdout_metrics = {
+            "holdout_rows": holdout_count,
+            "holdout_labelled_rows": holdout_labelled,
+        }
+        if holdout_labelled == 0:
+            # Dividing 100 by the *total* holdout size claimed a per-example
+            # resolution the evaluator cannot deliver; with no scoreable holdout
+            # row there is no resolution to quote at all, and the old divisor
+            # would now be zero.
+            holdout_detail = (
+                f"{holdout_count} holdout rows, none scoreable; no holdout row "
+                "carries an expected output, so this split resolves nothing"
+            )
+        elif holdout_labelled == holdout_count:
+            holdout_detail = (
+                f"{holdout_count} holdout rows; one example changes the score by "
+                f"{(100 / holdout_count):.1f} percentage points"
+            )
+        else:
+            holdout_detail = (
+                f"{holdout_count} holdout rows, {holdout_labelled} scoreable; one "
+                f"scoreable example changes the score by "
+                f"{(100 / holdout_labelled):.1f} percentage points"
             )
         emit(
             "dataset-holdout-resolution",
-            WARN if holdout_count < 10 else PASS,
-            f"{holdout_count} holdout rows; one example changes the score by "
-            f"{(100 / holdout_count):.1f} percentage points",
-            {"holdout_rows": holdout_count},
+            WARN if holdout_labelled < 10 else PASS,
+            holdout_detail,
+            holdout_metrics,
         )
     else:
         emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
