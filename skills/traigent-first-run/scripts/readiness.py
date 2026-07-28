@@ -1313,6 +1313,15 @@ def _status_by_check(records: Sequence[dict[str, Any]]) -> dict[str, str]:
     }
 
 
+class PreflightInputError(ValueError):
+    """Supplied preflight JSON cannot be scored honestly.
+
+    A distinct type so the CLI can refuse bad scoring input (exit 2 with the
+    message) while a genuine bug inside the fact adapters still surfaces as a
+    traceback instead of being misreported as unreadable input.
+    """
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
@@ -1332,7 +1341,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # directly (dataset-shape now also fails for a merely-unlabelled dataset).
     integrity_status = statuses.get("dataset-integrity")
     if integrity_status == "FAIL" and "malformed_rows" not in integrity:
-        raise ValueError(
+        raise PreflightInputError(
             "dataset-integrity FAILed but carries no malformed_rows count - "
             "this preflight JSON predates the current preflight.py; re-run "
             "preflight.py --json from the same version as this script"
@@ -1530,7 +1539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config_space
             else AgentFacts()
         )
-    except (OSError, ValueError) as error:
+    except (OSError, json.JSONDecodeError, PreflightInputError) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 
