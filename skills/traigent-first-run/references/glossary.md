@@ -39,7 +39,8 @@ from evidence instead:
   everyone else.
 - Depth on request only: answer a "what does that mean?" with the plain and,
   if asked further, the precise wording. Do not front-load teaching material,
-  and do not link educational resources during the active run.
+  and do not link educational resources during the active run (an operating-
+  contract rule in `SKILL.md`; it owns that decision).
 
 ## Core terms
 
@@ -105,8 +106,10 @@ Dimension / knob
   Common knobs: model choice, temperature, retrieval / RAG settings, prompt
   wording, output format, number of few-shot examples, reasoning style, and
   multi-model routing or cascading.
-  Ask like this: "Besides the model, what else can we change in your agent -
-  the prompt, retrieval, output format, examples?"
+  Ask like this only when `SKILL.md` authorizes a question about the tunable
+  surface (knob selection itself is made from inspection, not by asking):
+  "Besides the model, what else can we change in your agent - the prompt,
+  retrieval, output format, examples?"
 
 Configuration (config, variant)
   Plain: one specific combination of knob values - one candidate version of the
@@ -171,8 +174,9 @@ Provider key vs Traigent portal key
   chat."
 
 Portal
-  Plain: the Traigent website where you register, generate your Traigent API
-  key, and view your optimization runs and their results.
+  Plain: the Traigent website where you register, generate your Traigent
+  portal key (listed there under "API keys"), and view your optimization runs
+  and their results.
 
 Traigent SDK
   Plain: the library your coding agent uses to wrap your agent and run
@@ -181,21 +185,13 @@ Traigent SDK
 Traigent Skills
   Plain: installable instructions that teach your coding agent the full,
   advanced Traigent workflow beyond the first run.
-  Note: offer these only after the user has seen their first result - never
-  mid-run.
-
-Quality gate
-  Plain: a pass/fail check on whether the agent is good enough to ship.
-
-Trusted agent
-  Plain: an agent that has been measured, improved and validated on held-back
-  data - one you can ship with evidence, not hope.
+  Note: per `SKILL.md`, offer these only after the user has seen their first
+  result - never mid-run.
 
 ## Ambiguity
 
 When the user's setup is ambiguous, do not guess silently and do not invent an
-ask/proceed rule from this file: the authorization table in `SKILL.md` and the
-stop-list in the run doctrine own those decisions. What this file adds is only
-the phrasing - when those rules say to ask, ask in the plain wording above, and
-when they say to proceed with a generated substitute, say so in one sentence
-and mark it `🛠️`.
+ask/proceed rule from this file: the authorization table in `SKILL.md` owns
+those decisions. What this file adds is only the phrasing - when those rules
+say to ask, ask in the plain wording above, and when they say to proceed with a
+generated substitute, say so in one sentence and mark it `🛠️`.
