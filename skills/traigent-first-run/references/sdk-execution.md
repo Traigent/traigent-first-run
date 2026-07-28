@@ -126,18 +126,23 @@ enough to grid.
 Both runs use the same three models. The baseline grids them against two evaluator-safe
 temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
 generated initial configuration - and it keeps the pre-account first result quick and cheap. The
-enhanced space keeps the identical model list and grows along the other axes: extend swept ranges
-around what the baseline's top rows rewarded (the third temperature bracketing the winner, for
-example) while keeping every baseline value, and add the prompt-policy and self-check controls.
+enhanced space keeps the identical model list and grows along the other axes: once the baseline
+result is in, refine the swept values around its top rows - a winner at temperature 0.2 earns
+close neighbors such as 0.1 and 0.3, not only a farther point - while keeping every baseline
+value so the comparison stays contained, and add the prompt-policy and self-check controls.
 Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
 Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
 
-When the strong tier is a reasoning model, pin its calling convention identically in both runs: a
-chosen reasoning effort with the answer-headroom rule (`max_tokens` at least 4096), and do not
-pass sampling parameters such a model rejects. Temperature is inert on that model, and two
-baseline grid rows that differ only by an inert knob are the same configuration twice - so in that
-case swap the baseline's second axis from temperature to two prompt styles, keep all six rows
-real, and say in the report which knobs applied to which models.
+Sweep only knobs that are real for every model in the space. When one model ignores a knob the
+others honor, the winner comparison is confounded - a configuration can win on a prompt or
+setting the other models were never given on equal terms, and no report footnote untangles that;
+when every model faces exactly the same variations, the winner is clear and the enhanced run's
+insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
+identically in both runs - a chosen reasoning effort with the answer-headroom rule (`max_tokens`
+at least 4096), and no sampling parameters such a model rejects - and, since temperature is then
+inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
+the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
+prompt-policy plus self-check controls in the enhanced space.
 
 When the inspected agent already calls the vendor's flagship, keep it exactly where it is: it is
 the current configuration, so it anchors the baseline being measured and stays in the enhanced
@@ -302,8 +307,9 @@ BASELINE_SPACE = {
 }
 ENHANCED_SPACE = {
     "model": BASELINE_SPACE["model"],
-    # Extend swept ranges around what the baseline's top rows rewarded while
-    # keeping every baseline value, so the comparison stays contained.
+    # After the baseline, bracket its top rows with close neighbors (a winner
+    # at 0.2 earns 0.1 and 0.3) while keeping every baseline value; 0.4 below
+    # is only the pre-baseline placeholder.
     "temperature": [*BASELINE_SPACE["temperature"], 0.4],
     "prompt_style": [
         BASELINE_CONFIG["prompt_style"],
@@ -443,9 +449,9 @@ walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
 a reasoning-effort control, and pin the same value for both runs. A new route
 or recipient requires revised data-egress approval. Every search variable must affect the actual
-agent call; when the strong tier runs as a reasoning model, temperature is inert for it - use the
-baseline prompt-style swap from the ladder section above, and say in the report which knobs
-varied which models rather than implying every knob swept every model.
+agent call for every model in the space; when the strong tier runs as a reasoning model,
+temperature is inert for it - follow the ladder section above and sweep uniform knobs instead of
+a knob only some models honor.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline performs a credible six-point standard

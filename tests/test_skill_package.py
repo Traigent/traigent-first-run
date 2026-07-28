@@ -859,6 +859,8 @@ class SkillPackageTests(unittest.TestCase):
             "both runs use the same three models",
             "never gets a model the baseline did not measure",
             "never to quietly upgrading the model",
+            "refine the swept values around its top rows",
+            "sweep only knobs that are real for every model in the space",
             "never remove or replace the user's model choice silently",
             "build the ladder inside one model family",
             "tiers are roles, not hardcoded ids",

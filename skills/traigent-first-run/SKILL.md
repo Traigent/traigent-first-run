@@ -387,9 +387,10 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    value and adds meaningful controls that the agent actually consumes. Target 10-13 visible
    trials, using 12 as the internal default cap. For the generated walkthrough, keep the model
    list identical to the baseline's, add prompt-policy
-   choices and a native boolean self-check control without adding another model call, and extend
-   swept ranges around what the baseline's top rows rewarded while keeping every baseline value -
-   so an enhanced win is attributable to the added knobs and the managed search, never to a
+   choices and a native boolean self-check control without adding another model call, and refine
+   swept values around the baseline's top rows - bracket a winning value with close neighbors -
+   while keeping every baseline value, so an
+   enhanced win is attributable to the added knobs and the managed search, never to a
    quietly upgraded model. For a real
    agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
    context format, few-shot count, tool policy, or repair behavior.
