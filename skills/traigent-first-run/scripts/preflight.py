@@ -406,9 +406,10 @@ def dataset_row_is_labelled(row: dict[str, Any]) -> bool:
     missing label from the legitimate one-word label "None", because Python
     renders the null as the same four characters. A two-class dataset whose
     negative class is literally "None" (a no-intent / none-of-the-above class,
-    or a pandas round-trip) then reported every row as unscoreable, which
-    clamped the power subscore and printed a false "N scoreable" marker. Do not
-    collapse this back into a single stringified comparison.
+    or a pandas round-trip) then had exactly the rows carrying that label - half
+    the dataset - reported as unscoreable while the other class stayed labelled,
+    which clamped the power subscore and printed a false "N scoreable" marker.
+    Do not collapse this back into a single stringified comparison.
 
     One definition, used by both the aggregate `labelled_rows` count and the
     per-split counts, so the two can never disagree about the same row.
