@@ -176,6 +176,7 @@ requires.
 Use one production-compatible function for baseline and optimization:
 
 ```python
+import json
 import math
 import os
 from pathlib import Path
@@ -198,6 +199,7 @@ TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
 HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
+CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
 SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
@@ -325,10 +327,26 @@ ENHANCED_SPACE = {
     ],
     "self_check": [False, True],
 }
+# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
+# the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
+# call_agent below actually consumes - a knob listed here that the agent ignores
+# is a false claim about the search space.
+AGENT_TYPE = "general"
+WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
 
 
 def configuration_count(space: dict[str, list]) -> int:
     return math.prod(len(values) for values in space.values())
+
+
+def config_space_document(space: dict[str, list]) -> dict:
+    """Serialize the finalized search space as readiness config-space evidence."""
+    return {
+        "agent_type": AGENT_TYPE,
+        "max_trials": ENHANCED_MAX_TRIALS,
+        "knobs": {name: list(values) for name, values in space.items()},
+        "wired": list(WIRED_KNOBS),
+    }
 
 
 assert len(set(BASELINE_SPACE["model"])) == 3
@@ -341,6 +359,9 @@ assert not STRONG_REASONING_EFFORT or (
 assert configuration_count(BASELINE_SPACE) == 6
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
+assert set(WIRED_KNOBS) <= set(ENHANCED_SPACE), (
+    "every wired knob must name a dimension of the space actually searched"
+)
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
@@ -603,10 +624,39 @@ the winner-bracketing neighbor chosen from the baseline result per the ladder se
 search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
 internal step - never a user task, an edit the user is asked to make, or another question.
 
+The config-space document is serialized after that replacement, so it records the space the search
+actually receives rather than the pre-baseline guess - but nothing is on disk while the search runs.
+Three steps in order give the file one meaning and no other, *this is the space the search that just
+completed received*:
+
+- **Serialize before the call.** The bytes are frozen from the same `ENHANCED_SPACE` object the call
+  is about to receive, so no later edit to the space can drift into them.
+- **Unlink before the call.** Ordering alone only protects a first run. A retry - the space is
+  narrowed, or the previous search failed and is resumed - starts with the earlier run's document
+  already on disk, and if this search raises, that stale file survives as evidence for a search that
+  is no longer the one being reported. Removing it makes the file's existence conditional on *this*
+  search, not on any search ever having run.
+- **Write after trials are confirmed.** A search that returns having executed nothing did not search
+  the space either, so the document is persisted after `optimized_results.trials` is checked rather
+  than merely after the call returns.
+
+A run that legitimately stops earlier, raises, or completes no trial therefore emits no document at
+all, and the closing score honestly reports the agent pillar as not yet measured. Re-write the
+document whenever the space changes. Its shape is documented in `references/run-safety.md`, and the
+finished file is passed to the closing readiness score with `--config-space`.
+
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 
 ```python
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
+# Frozen from the space this call receives; persisted only once this search has
+# returned trials of its own.
+config_space_evidence = (
+    json.dumps(config_space_document(ENHANCED_SPACE), indent=2, sort_keys=True) + "\n"
+)
+# An earlier run's document describes an earlier search. It must not survive
+# this one, whatever this one does.
+Path(CONFIG_SPACE_DOCUMENT).unlink(missing_ok=True)
 optimized_results = agent.optimize_sync(
     algorithm="auto",
     configuration_space=ENHANCED_SPACE,
@@ -614,6 +664,8 @@ optimized_results = agent.optimize_sync(
     timeout=OPTIMIZATION_TIMEOUT_SECONDS,
     save_to=OPTIMIZED_RESULTS,
 )
+assert optimized_results.trials, "optimization did not execute"
+Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 ```
 
 Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is

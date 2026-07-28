@@ -501,6 +501,14 @@ Every knob must change real behavior, native booleans must stay booleans, and th
 must be materially larger than its trial cap so Traigent is choosing what to test rather than
 replaying the same tiny grid.
 
+Once the enhanced space is final - after the placeholder swept values are refined around the
+baseline's winner and before the connected search runs - serialize it in the shape documented in
+`references/run-safety.md`, from the space object the search actually receives rather than from a
+transcription, and list under `wired` only the controls the agent call really consumes. Delete any
+earlier copy before that search starts and save `traigent-runs/config-space.json` only once the
+search has returned trials, so the document can never outlive or misdescribe the search it claims -
+a search that raises or completes nothing leaves no file. Re-write it whenever the space changes.
+
 If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
 failure and one recommended recovery. Never fall back automatically to mock or synthetic results,
 and never present offline checks as a completed optimization. Resume the connected path after the
@@ -584,7 +592,10 @@ requires the untouched holdout and explicit user approval.
 
 Close the loop on the readiness score the run opened with: re-run `scripts/readiness.py` on the
 post-repair, post-creation evidence and show the recorded opening score beside the closing one,
-naming the caps that cleared and the caps that remain. Any gain earned by a `🛠️` substitute is
+naming the caps that cleared and the caps that remain. Pass
+`--config-space traigent-runs/config-space.json` to that closing run whenever the enhanced space
+was emitted; without it the agent pillar scores from absent evidence and the transition understates
+the run's own work. Any gain earned by a `🛠️` substitute is
 walkthrough setup and is never presented as real-world readiness. Restate what was weak, what
 Traigent filled in, and what that costs in the real world - a dataset of a dozen generated
 examples measures the workflow, not the product, however good the number looks. The opening score

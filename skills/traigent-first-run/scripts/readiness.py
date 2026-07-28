@@ -28,7 +28,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Iterable, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -1375,6 +1375,17 @@ class PreflightInputError(ValueError):
     """
 
 
+class ConfigSpaceInputError(ValueError):
+    """A config-space document the scorer cannot read.
+
+    The sibling of `PreflightInputError` for `--config-space`. Preflight and
+    calibration JSON are machine-written, but this document is hand-authorable -
+    a real agent's wrapper is adapted, not copied verbatim - so a typo in it is
+    a reachable path, not a bug. It gets the same treatment: refuse with a
+    message naming the field, never score a document we cannot read.
+    """
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
@@ -1515,21 +1526,226 @@ def evaluation_facts_from_calibration(
     )
 
 
+def _reject_phantom_names(
+    field: str, names: Iterable[str], knobs: dict[str, Any], knobs_key: str
+) -> None:
+    """Refuse a `wired`/`bounds` name that is no knob of the declared space.
+
+    Both fields address knobs by name, and both are read by intersecting with
+    the space, so an unmatched name silently disappears instead of failing.
+    """
+    phantom = sorted(set(names) - set(knobs))
+    if phantom:
+        detail = ", ".join(f"'{name}'" for name in phantom)
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' names {detail}, which "
+            f"{'is' if len(phantom) == 1 else 'are'} not declared in "
+            f"'{knobs_key}': a name that matches no knob would silently shrink "
+            "the scored space instead"
+        )
+
+
 def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
-    knobs = document.get("knobs") or document.get("configuration_space") or {}
+    """Read a config-space document, or refuse it naming the field at fault.
+
+    One rule governs every field below, and it has two halves that are equally
+    binding:
+
+    * **Never coerce a value that does not fit the field's documented type.**
+      `document.get(field) or {}` reads `[]`, `null`, `0` and `""` as "absent",
+      so a malformed field became a silently narrowed space with a confident
+      evidence line printed over it - the exact failure the typed refusals
+      exist to remove, surviving in whichever spellings happen to be falsey.
+      Presence is tested with `in`, and the type is checked on whatever the
+      author actually wrote.
+    * **Never refuse a value the documented type admits.** JSON has one number
+      type and several ways to spell the same value, so the check is on the
+      *value*, not on its Python type tag: `12.0` is the same trial budget as
+      `12` and `"5"` is the same bound as `5`. Turning a document that scores
+      into a hard exit-2 failure is a worse outcome than the silence being
+      replaced, so a shape that scored before this guard existed still scores.
+
+    Cross-field claims count as shape: a `wired` or `bounds` name that is no
+    knob of the declared space is not a narrower space, it is a typo, and it is
+    refused rather than dropped.
+    """
+    if not isinstance(document, dict):
+        raise ConfigSpaceInputError(
+            "config-space document must be a JSON object with a 'knobs' key, "
+            f"not {type(document).__name__}"
+        )
+    # Both spellings are validated when present, so a malformed alias cannot
+    # hide behind a well-formed preferred key or behind its own falseyness.
+    declared = {
+        key: document[key]
+        for key in ("knobs", "configuration_space")
+        if key in document
+    }
+    if not declared:
+        raise ConfigSpaceInputError(
+            "config-space document must declare 'knobs' (or its "
+            "'configuration_space' alias) as an object mapping each knob name "
+            "to its list of candidate values"
+        )
+    for key, value in declared.items():
+        if not isinstance(value, dict):
+            raise ConfigSpaceInputError(
+                f"config-space '{key}' must be an object mapping each knob "
+                f"name to its list of candidate values, not "
+                f"{type(value).__name__}"
+            )
+    # `knobs` wins only when it is non-empty, so an empty one falls through to
+    # the alias. Name whichever key was actually read, or the message points at
+    # a key the author did not write. An explicitly empty space is a statement
+    # the scorer can read ("no knobs declared"), unlike an absent one.
+    knobs_key = next(
+        (key for key in ("knobs", "configuration_space") if declared.get(key)),
+        next(iter(declared)),
+    )
+    knobs = declared[knobs_key]
+    # A knob written as a bare scalar instead of a list of candidates used to be
+    # dropped here, which is the worst outcome available: the knob leaves the
+    # space, the score frequently goes *up* because the dropped knob was the one
+    # not varying, and the cap reason printed afterwards describes a space the
+    # author never wrote. A typo must not be scored around.
+    malformed = sorted(
+        name for name, values in knobs.items() if not isinstance(values, (list, tuple))
+    )
+    if malformed:
+        detail = ", ".join(
+            f"'{name}' is {type(knobs[name]).__name__}" for name in malformed
+        )
+        raise ConfigSpaceInputError(
+            f"config-space '{knobs_key}' entries must each be a list of "
+            f"candidate values: {detail}"
+        )
+    # An absent `wired` means "every declared knob is wired" (score_agent), so it
+    # stays an empty tuple. A present one that is not a list of names is a claim
+    # about the search space that cannot be read: a non-string entry matches no
+    # knob and would silently shrink the considered set instead.
+    wired = document.get("wired", ())
+    if not isinstance(wired, (list, tuple)) or not all(
+        isinstance(name, str) for name in wired
+    ):
+        raise ConfigSpaceInputError(
+            f"config-space 'wired' must be a list of knob names, not {wired!r}"
+        )
+    # A misspelled name is a *string*, so the type check above lets it through,
+    # and `score_agent` then intersects `wired` with the space and drops it -
+    # the same silent narrowing, with the same score-raising direction, and now
+    # with a card asserting "1 of 1 wired knobs actually vary" about a document
+    # that declared two. The template's own fence asserts this invariant before
+    # it searches (`set(WIRED_KNOBS) <= set(ENHANCED_SPACE)`); enforce it here
+    # too, because the document is read long after that assert has run.
+    _reject_phantom_names("wired", wired, knobs, knobs_key)
+    bounds_document = document.get("bounds", {})
+    if not isinstance(bounds_document, dict):
+        raise ConfigSpaceInputError(
+            "config-space 'bounds' must be an object mapping a knob name to a "
+            "low/high pair, not "
+            f"{type(bounds_document).__name__}"
+        )
+    # A bound for a knob that is not in the space is the same typo in the same
+    # direction: the declared range never reaches the knob it was meant for, so
+    # the knob is scored against the canonical range or on breadth alone, which
+    # can flip it from "collapsed" to "varying" and clear the cap on a range
+    # the author did not actually declare for it.
+    _reject_phantom_names("bounds", bounds_document, knobs, knobs_key)
+    # A half-written bound was dropped silently, so the knob was scored against
+    # the canonical range - or against no range at all - rather than the one the
+    # author declared. That flips whether the knob counts as varying, so it is
+    # refused for the same reason a scalar knob entry is.
+    for knob, spec in sorted(bounds_document.items()):
+        if not isinstance(spec, dict):
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] must be an object with 'low' "
+                f"and 'high', not {type(spec).__name__}"
+            )
+        missing = [edge for edge in ("low", "high") if edge not in spec]
+        if missing:
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] must carry both 'low' and "
+                f"'high'; {' and '.join(repr(edge) for edge in missing)} missing"
+            )
+
+    def _edge(knob: str, edge: str, value: Any) -> float:
+        # A bound sets the noise floor and the span every numeric knob is scored
+        # against, so a non-number here silently decides whether that knob
+        # counts as varying at all. bool is an int in Python and is not a bound.
+        #
+        # A numeric *string* is accepted deliberately: this adapter has always
+        # read bounds through `float()`, so `{"low": "1", "high": "5"}` scored
+        # before this guard existed. Refusing it now would turn a document that
+        # works today into a hard exit-2 failure - a worse outcome than the
+        # silence the guard replaced.
+        #
+        # `float()` also parses "inf" and "nan", which are not ranges: an
+        # infinite span makes the 2% noise floor infinite and a NaN span makes
+        # every comparison false, so either one collapses a knob that genuinely
+        # sweeps 1 -> 50 into "nothing to search". That is the same silent
+        # rewrite of the space, arriving through a value the type check admits.
+        if not isinstance(value, bool) and isinstance(value, (int, float, str)):
+            try:
+                number = float(value)
+            except ValueError:
+                number = math.nan
+            if math.isfinite(number):
+                return number
+        raise ConfigSpaceInputError(
+            f"config-space bounds['{knob}']['{edge}'] must be a finite number, "
+            f"not {value!r}"
+        )
+
+    # `max_trials` reaches arithmetic (`space_size / max_trials`) and `agent_type`
+    # reaches a dict lookup, so an unchecked value is either a raw traceback or a
+    # silently unmeasured sub-score. Both are documented fields; validate them
+    # like `wired` and `bounds` so every bad shape refuses the same way.
+    max_trials = document.get("max_trials")
+    if max_trials is not None:
+        # JSON has a single number type, so a trial budget serialized by one
+        # writer arrives as `12` and by another as `12.0`; both name the same
+        # integer and both scored before this guard existed. Judge the value,
+        # not its Python type tag - `isinstance(x, int)` refused a well-formed
+        # document outright. `1.5` still has no integral reading, `nan`/`inf`
+        # are not integers either, and bool is an int in Python but is not a
+        # trial budget.
+        integral = (
+            not isinstance(max_trials, bool)
+            and isinstance(max_trials, (int, float))
+            and float(max_trials).is_integer()
+            and max_trials >= 1
+        )
+        if not integral:
+            raise ConfigSpaceInputError(
+                "config-space 'max_trials' must be a positive integer, not "
+                f"{max_trials!r}"
+            )
+        max_trials = int(max_trials)
+    # An unrecognized *string* stays legal: it names an agent this scorer has
+    # no high-impact catalog for, which is a real situation and not a typo the
+    # scorer can detect. Coverage then goes unmeasured, and because `combine`
+    # renormalizes over the measured sub-scores that *raises* the pillar's
+    # score while dropping its confidence - the gap line "agent type not
+    # recognized" is what carries the news, not the number. A non-string cannot
+    # even be looked up in the catalog.
+    agent_type = document.get("agent_type")
+    if agent_type is not None and not isinstance(agent_type, str):
+        raise ConfigSpaceInputError(
+            "config-space 'agent_type' must be a string naming the agent type "
+            f"('general', 'rag', or 'code_gen'), not {agent_type!r}"
+        )
+
     return AgentFacts(
-        agent_type=document.get("agent_type"),
-        max_trials=document.get("max_trials"),
-        knobs={
-            name: list(values)
-            for name, values in knobs.items()
-            if isinstance(values, (list, tuple))
-        },
-        wired=tuple(document.get("wired", ())),
+        agent_type=agent_type,
+        max_trials=max_trials,
+        knobs={name: list(values) for name, values in knobs.items()},
+        wired=tuple(wired),
         bounds={
-            name: {"low": float(spec["low"]), "high": float(spec["high"])}
-            for name, spec in (document.get("bounds") or {}).items()
-            if isinstance(spec, dict) and "low" in spec and "high" in spec
+            name: {
+                "low": _edge(name, "low", spec["low"]),
+                "high": _edge(name, "high", spec["high"]),
+            }
+            for name, spec in bounds_document.items()
         },
     )
 
@@ -1647,7 +1863,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config_space
             else AgentFacts()
         )
-    except (OSError, json.JSONDecodeError, PreflightInputError) as error:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        PreflightInputError,
+        ConfigSpaceInputError,
+    ) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 

@@ -445,7 +445,394 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(matrix.probe_scores, single.probe_scores)
 
 
+# The document the walkthrough's generated wrapper writes: the enhanced space
+# after the placeholder temperature is replaced with a neighbor of the
+# baseline's winner, with the template's placeholder model ids. Kept here so the
+# consumer contract is pinned to the shape the producer actually emits.
+WALKTHROUGH_CONFIG_SPACE = {
+    "agent_type": "general",
+    "knobs": {
+        "model": ["provider/current", "provider/alternative", "provider/strong"],
+        "prompt_style": ["direct", "structured", "criteria_first"],
+        "self_check": [False, True],
+        "temperature": [0.0, 0.2, 0.1],
+    },
+    "max_trials": 12,
+    "wired": ["model", "temperature", "prompt_style", "self_check"],
+}
+
+
 class AgentScoringTests(unittest.TestCase):
+    def test_wired_varying_knobs_clear_the_no_varying_cap(self) -> None:
+        """The walkthrough's own space must not read as "nothing to search".
+
+        `agent-no-varying-knobs` holds the whole run to 45 no matter how good
+        the dataset and evaluator are, so this is the cap the config-space
+        document exists to clear.
+        """
+        facts = MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 78)
+        self.assertEqual(pillar.confidence, 1.0)
+
+    def test_reasoning_branch_document_still_clears_the_cap(self) -> None:
+        """A reasoning model pins temperature to one value; three knobs remain.
+
+        The branch loses knob-count and variation points but must still search,
+        so a change that re-caps it is visible here rather than in a run.
+        """
+        document = dict(
+            WALKTHROUGH_CONFIG_SPACE,
+            knobs=dict(WALKTHROUGH_CONFIG_SPACE["knobs"], temperature=[0.0]),
+        )
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(document)
+        )
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 64)
+
+    def test_config_space_adapter_reads_both_spellings(self) -> None:
+        aliased = MODULE.agent_facts_from_config_space(
+            {
+                "agent_type": "rag",
+                "max_trials": 8,
+                "configuration_space": {
+                    "temperature": [0.0, 1.0],
+                    "retrieval_depth": [1, 10],
+                },
+                "wired": ["temperature", "retrieval_depth"],
+                "bounds": {"retrieval_depth": {"low": 1, "high": 10}},
+            }
+        )
+        self.assertEqual(aliased.agent_type, "rag")
+        self.assertEqual(aliased.max_trials, 8)
+        self.assertEqual(
+            aliased.knobs, {"temperature": [0.0, 1.0], "retrieval_depth": [1, 10]}
+        )
+        self.assertEqual(aliased.wired, ("temperature", "retrieval_depth"))
+        self.assertEqual(
+            aliased.bounds, {"retrieval_depth": {"low": 1.0, "high": 10.0}}
+        )
+
+        both = MODULE.agent_facts_from_config_space(
+            {
+                "knobs": {"temperature": [0.0, 1.0]},
+                "configuration_space": {"ignored": [1, 2]},
+            }
+        )
+        self.assertEqual(both.knobs, {"temperature": [0.0, 1.0]})
+
+        empty_preferred = MODULE.agent_facts_from_config_space(
+            {"knobs": {}, "configuration_space": {"temperature": [0.0, 1.0]}}
+        )
+        self.assertEqual(empty_preferred.knobs, {"temperature": [0.0, 1.0]})
+
+        self.assertEqual(
+            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}}).wired, ()
+        )
+
+    def test_malformed_config_space_documents_are_typed_errors(self) -> None:
+        """A hand-edited document must be refused, never scored around.
+
+        Each of these reached the scorer as an untyped TypeError/AttributeError/
+        ValueError traceback, or - for a non-string `wired` entry - silently
+        narrowed the considered knobs to nothing.
+        """
+        for document in (
+            [{"knobs": {"a": [1, 2]}}],
+            {"knobs": "nope"},
+            {"configuration_space": 7},
+            {"knobs": {"a": [1, 2]}, "wired": None},
+            {"knobs": {"a": [1, 2]}, "wired": ["a", 3]},
+            {"knobs": {"a": [1, 2]}, "bounds": "nope"},
+            {"knobs": {"a": [1, 2]}, "bounds": {"a": {"low": "x", "high": 1}}},
+        ):
+            with self.subTest(document=document):
+                with self.assertRaises(MODULE.ConfigSpaceInputError):
+                    MODULE.agent_facts_from_config_space(document)
+
+    def test_malformed_config_space_errors_name_the_field(self) -> None:
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"a": [1, 2]}, "bounds": {"a": {"low": "x", "high": 1}}}
+            )
+        self.assertIn("bounds['a']['low']", str(raised.exception))
+
+    def test_max_trials_and_agent_type_are_validated_like_every_other_field(
+        self,
+    ) -> None:
+        """Two documented fields used to reach the scorer unchecked.
+
+        `max_trials` lands in `space_size / max_trials` and `agent_type` in a
+        dict lookup, so the three bad shapes below produced three different
+        behaviours: a raw TypeError traceback, a raw unhashable-type traceback,
+        and a silent exit 0 with coverage unmeasured. None of them was the
+        refusal `ConfigSpaceInputError` documents.
+        """
+        for document in (
+            {"knobs": {"a": [1, 2]}, "max_trials": "12"},
+            {"knobs": {"a": [1, 2]}, "max_trials": -5},
+            {"knobs": {"a": [1, 2]}, "max_trials": 0},
+            {"knobs": {"a": [1, 2]}, "max_trials": 1.5},
+            # bool is an int in Python; True is not a trial budget
+            {"knobs": {"a": [1, 2]}, "max_trials": True},
+            {"knobs": {"a": [1, 2]}, "agent_type": ["general"]},
+            {"knobs": {"a": [1, 2]}, "agent_type": 7},
+        ):
+            with self.subTest(document=document):
+                with self.assertRaises(MODULE.ConfigSpaceInputError):
+                    MODULE.agent_facts_from_config_space(document)
+
+    def test_absent_and_unrecognized_optional_fields_still_score(self) -> None:
+        """Validation must refuse bad *shapes*, not narrow the documented set.
+
+        An absent `max_trials`/`agent_type` and an unrecognized agent type are
+        documented as scoreable - the latter leaves coverage unmeasured rather
+        than refusing - so the guards above must not swallow them.
+        """
+        absent = MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}})
+        self.assertIsNone(absent.max_trials)
+        self.assertIsNone(absent.agent_type)
+        unrecognized = MODULE.agent_facts_from_config_space(
+            {"knobs": {"a": [1, 2]}, "agent_type": "summarizer"}
+        )
+        pillar, _, _ = MODULE.score_agent(unrecognized)
+        self.assertEqual(unrecognized.agent_type, "summarizer")
+        self.assertLess(pillar.confidence, 1.0)
+
+    def test_malformed_knob_and_bounds_entries_are_refused_not_dropped(self) -> None:
+        """Dropping a typo silently made the score *better* and the reason false.
+
+        A knob written as a bare scalar left the space, and a `bounds` entry
+        missing an edge left the knob scored against a different range than the
+        author declared. Both are refused now: `{"retrieval_depth": [1, 1.01]}`
+        with a half-written bound scored 32 with no cap, while the intended
+        `"high": 10` collapses the two values into one and scores 0 under
+        `agent-no-varying-knobs` - so the typo read as the healthier space.
+        """
+        for document in (
+            {"knobs": {"a": [1, 2], "prompt": "not a list of candidates"}},
+            {"configuration_space": {"a": [1, 2], "prompt": 7}},
+            {"knobs": {"a": [1, 2]}, "bounds": {"a": {"low": 1}}},
+            {"knobs": {"a": [1, 2]}, "bounds": {"a": {"high": 10}}},
+            {"knobs": {"a": [1, 2]}, "bounds": {"a": {}}},
+            {"knobs": {"a": [1, 2]}, "bounds": {"a": 5}},
+            {
+                "knobs": {"retrieval_depth": [1, 1.01]},
+                "wired": ["retrieval_depth"],
+                "bounds": {"retrieval_depth": {"low": 1}},
+            },
+        ):
+            with self.subTest(document=document):
+                with self.assertRaises(MODULE.ConfigSpaceInputError):
+                    MODULE.agent_facts_from_config_space(document)
+
+    def test_malformed_knob_and_bounds_errors_name_the_entry(self) -> None:
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as scalar:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"a": [1, 2], "prompt": "nope"}}
+            )
+        self.assertIn("'prompt' is str", str(scalar.exception))
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as half:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"a": [1, 2]}, "bounds": {"a": {"low": 1}}}
+            )
+        self.assertIn("bounds['a']", str(half.exception))
+        self.assertIn("'high'", str(half.exception))
+
+    def test_numeric_string_bounds_still_score(self) -> None:
+        """The bounds guard must not refuse a shape that scored before it.
+
+        This adapter has always read bounds through `float()`, so a document
+        with `{"low": "1", "high": "5"}` scored 56. A guard that turns a working
+        document into a hard exit-2 failure is worse than the silence it
+        replaced, so a numeric string stays legal while `"x"` does not.
+        """
+        document = {
+            "agent_type": "rag",
+            "knobs": {"retrieval_k": [1, 5]},
+            "wired": ["retrieval_k"],
+            "bounds": {"retrieval_k": {"low": "1", "high": "5"}},
+        }
+        facts = MODULE.agent_facts_from_config_space(document)
+        self.assertEqual(facts.bounds, {"retrieval_k": {"low": 1.0, "high": 5.0}})
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 56)
+        numeric = MODULE.agent_facts_from_config_space(
+            dict(document, bounds={"retrieval_k": {"low": 1, "high": 5}})
+        )
+        self.assertEqual(MODULE.score_agent(numeric)[0].score, pillar.score)
+
+    def test_falsey_malformed_fields_are_refused_like_truthy_ones(self) -> None:
+        """`or {}` read a malformed field as an absent one.
+
+        `document.get("bounds") or {}` cannot tell `[]`, `null`, `0` or `""`
+        from "not written", so every guard added for the truthy spellings had a
+        falsey twin that walked straight past it: `{"bounds": "nope"}` exited 2
+        while `{"bounds": []}` scored the agent pillar 32 and cleared
+        `agent-no-varying-knobs`. Presence is now tested with `in` and the type
+        is checked on whatever was written, so the two spellings agree.
+        """
+        for document in (
+            {
+                "knobs": {"retrieval_depth": [1, 1.01]},
+                "wired": ["retrieval_depth"],
+                "bounds": [],
+            },
+            {"knobs": {"a": [1, 2]}, "bounds": None},
+            {"knobs": {"a": [1, 2]}, "bounds": 0},
+            {"knobs": {"a": [1, 2]}, "bounds": ""},
+            {"knobs": []},
+            {"knobs": 0},
+            {"configuration_space": []},
+            {"knobs": None},
+            # a malformed alias must not hide behind a well-formed `knobs`
+            {"knobs": {"a": [1, 2]}, "configuration_space": []},
+            # a document that names neither key says nothing about the space
+            {},
+            {"agent_type": "general", "max_trials": 12},
+        ):
+            with self.subTest(document=document):
+                with self.assertRaises(MODULE.ConfigSpaceInputError):
+                    MODULE.agent_facts_from_config_space(document)
+
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as falsey:
+            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}, "bounds": []})
+        self.assertIn("'bounds'", str(falsey.exception))
+
+    def test_empty_declared_space_is_read_not_refused(self) -> None:
+        """Refusing an absent declaration must not refuse an empty one.
+
+        `{"knobs": {}}` states that the space has no knobs - a claim the scorer
+        reads and reports as "no knobs declared" under
+        `agent-no-varying-knobs`. Only a document that declares neither key is
+        unreadable.
+        """
+        facts = MODULE.agent_facts_from_config_space({"knobs": {}})
+        self.assertEqual(facts.knobs, {})
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertEqual(pillar.score, 0)
+
+    def test_wired_name_absent_from_the_space_is_refused(self) -> None:
+        """A typo in a `wired` name raised the score and printed a false count.
+
+        The name is a string, so the list-of-strings check passes it;
+        `score_agent` then intersects `wired` with the space and the misspelled
+        name simply disappears. The document below declares two knobs, and with
+        `temperature` misspelled it scored 38 while asserting "1 of 1 wired
+        knobs actually vary" - a higher score and a sentence the document
+        itself contradicts. `bounds` addresses knobs by name the same way and
+        is refused the same way.
+        """
+        declared = {"model": ["a", "b"], "temperature": [0.0, 0.5]}
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as typo:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": declared, "wired": ["model", "temperatur"]}
+            )
+        self.assertIn("'wired'", str(typo.exception))
+        self.assertIn("'temperatur'", str(typo.exception))
+        self.assertNotIn("'model'", str(typo.exception))
+
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as bound:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": declared,
+                    "bounds": {"temperatur": {"low": 0.0, "high": 1.0}},
+                }
+            )
+        self.assertIn("'bounds'", str(bound.exception))
+        self.assertIn("'temperatur'", str(bound.exception))
+
+        # the same names spelled correctly still score
+        spelled = MODULE.agent_facts_from_config_space(
+            {
+                "knobs": declared,
+                "wired": ["model", "temperature"],
+                "bounds": {"temperature": {"low": 0.0, "high": 1.0}},
+            }
+        )
+        self.assertEqual(spelled.wired, ("model", "temperature"))
+        # an alias-declared space is checked against the alias, not against a
+        # `knobs` key the author never wrote
+        aliased = MODULE.agent_facts_from_config_space(
+            {"configuration_space": declared, "wired": ["temperature"]}
+        )
+        self.assertEqual(aliased.wired, ("temperature",))
+
+    def test_integral_max_trials_scores_however_json_spelled_it(self) -> None:
+        """`12.0` is the same trial budget as `12`, and scored as one.
+
+        JSON has a single number type, so an integral budget can arrive as
+        either. `isinstance(max_trials, int)` refused the float spelling and
+        turned a document that scored 78 on the parent into exit 2. The check
+        is on the value now, so the fractional, zero, negative, boolean, and
+        non-numeric shapes stay refused.
+        """
+        integral = MODULE.agent_facts_from_config_space(
+            dict(WALKTHROUGH_CONFIG_SPACE, max_trials=12.0)
+        )
+        self.assertEqual(integral.max_trials, 12)
+        self.assertIsInstance(integral.max_trials, int)
+        pillar, caps, _ = MODULE.score_agent(integral)
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 78)
+        self.assertEqual(
+            pillar.score,
+            MODULE.score_agent(
+                MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
+            )[0].score,
+        )
+        # the trial cap still dampens knob-count points identically either way
+        crowded = {"knobs": {f"k{i}": [1, 2, 3, 4] for i in range(6)}}
+        self.assertEqual(
+            MODULE.score_agent(
+                MODULE.agent_facts_from_config_space(dict(crowded, max_trials=2.0))
+            )[0].score,
+            MODULE.score_agent(
+                MODULE.agent_facts_from_config_space(dict(crowded, max_trials=2))
+            )[0].score,
+        )
+        for value in (1.5, -5, 0, 0.0, -1.0, True, False, "12", float("nan"), 12.5):
+            with self.subTest(max_trials=value):
+                with self.assertRaises(MODULE.ConfigSpaceInputError):
+                    MODULE.agent_facts_from_config_space(
+                        {"knobs": {"a": [1, 2]}, "max_trials": value}
+                    )
+
+    def test_non_finite_bounds_are_refused_not_silently_collapsing(self) -> None:
+        """`float()` parses "inf" and "nan"; neither is a range.
+
+        An infinite span makes the 2% noise floor infinite and a NaN span makes
+        every comparison false, so a knob sweeping 1 -> 50 was reported as
+        "nothing to search" - the silent rewrite of the space the bounds guard
+        exists to stop, arriving through a value the type check admits.
+        """
+        sweeping = {
+            "agent_type": "general",
+            "knobs": {"widget": [1, 50]},
+            "wired": ["widget"],
+        }
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(sweeping)
+        )
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 32)
+        for edges in (
+            {"low": "-inf", "high": "inf"},
+            {"low": "nan", "high": "nan"},
+            {"low": float("inf"), "high": 1},
+            {"low": 1, "high": float("nan")},
+        ):
+            with self.subTest(edges=edges):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        dict(sweeping, bounds={"widget": edges})
+                    )
+                self.assertIn("finite", str(raised.exception))
+
     def test_no_varying_knob_is_capped(self) -> None:
         _, caps, _ = MODULE.score_agent(
             MODULE.AgentFacts(knobs={"temperature": [0.7]}, wired=("temperature",))
@@ -616,6 +1003,34 @@ class CliTests(unittest.TestCase):
     def test_unreadable_input_exits_two(self) -> None:
         code, _ = self._run(["--config-space", "/nonexistent.json"])
         self.assertEqual(code, 2)
+
+    def test_config_space_document_scores_the_agent_pillar(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "config-space.json"
+            space.write_text(json.dumps(WALKTHROUGH_CONFIG_SPACE))
+            code, output = self._run(["--config-space", str(space), "--json"])
+        self.assertEqual(code, 0)
+        score = json.loads(output)
+        agent = next(p for p in score["pillars"] if p["name"] == "agent")
+        self.assertEqual(agent["score"], 78)
+        self.assertNotIn(
+            "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
+        )
+
+    def test_malformed_config_space_exits_two(self) -> None:
+        """A typo in a hand-authored document is bad input, not a crash.
+
+        Every sibling scoring input refuses with exit 2 and a message; before
+        this, --config-space was the one path that raised a traceback.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "config-space.json"
+            space.write_text(json.dumps({"knobs": {"a": [1, 2]}, "wired": None}))
+            buffer = io.StringIO()
+            with contextlib.redirect_stderr(buffer):
+                code, _ = self._run(["--config-space", str(space), "--json"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read scoring input:", buffer.getvalue())
 
     def test_json_output_is_stable_across_runs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
