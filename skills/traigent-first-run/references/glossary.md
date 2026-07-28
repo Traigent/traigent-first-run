@@ -183,6 +183,17 @@ Portal
   portal key (listed there under "API keys"), and view your optimization runs
   and their results.
 
+Access code / lead funnel
+  Plain: some users arrive through a self-serve funnel - they get an emailed
+  Traigent access link or access code, redeem it, and land in the portal already
+  pre-verified, so the portal logs them in and issues a full-access API key for
+  them, with no second verification email and no manual key creation.
+  Note: the ten-day activation window is on the emailed access code - it
+  activates the account - not on the API key, which is a normal full-access key
+  with no special expiry. A cold-start user who self-registers at the portal
+  instead creates that key manually; the two account paths are spelled out in
+  `references/run-safety.md`.
+
 Traigent SDK
   Plain: the library your coding agent uses to wrap your agent and run
   optimizations.

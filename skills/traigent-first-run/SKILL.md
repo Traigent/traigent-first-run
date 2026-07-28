@@ -363,7 +363,10 @@ Only after the standard-library-only component checks:
    any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
-   afterward.
+   afterward. If the user arrived via the lead funnel, their Traigent account and a full-access
+   API key already exist from the emailed access link, so skip the create-account and generate-key
+   ask and have them paste the already-issued key; otherwise the existing order holds and the key
+   is created manually.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
@@ -492,7 +495,11 @@ user has already seen the tool work before being asked to create an account. Tel
 full access rather than the read-only default, because a read-only key still spends on the run and
 then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
 repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
-own link, name which is which, and never present one link as though it covered both.
+own link, name which is which, and never present one link as though it covered both. If the user
+arrived via the lead funnel, the account and a full-access key already exist from the emailed access
+link, so skip the create-account and generate-key ask - have them paste the already-issued key and
+upload the baseline as above; otherwise the order above holds and the account and full-access key are
+created here.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
@@ -607,6 +614,15 @@ honestly recommend grows with the readiness score: over real components it advis
 product, over walkthrough substitutes it can only describe the walkthrough. That ties the small
 first run to the next one: readier components and a finished enhanced run are what unlock stronger
 recommendations.
+
+Artifact-2 template B (DEEPER-INSIGHTS) is the post-optimization-run form of that layer, never a
+pre-run one: once the enhanced run has finished, surface the run-scoped analysis per question - name
+the examples that were informative, the ones that were redundant, and the ones that look mislabelled,
+and pair each with one line of curation advice (keep, drop, relabel, or add a harder sibling).
+Describe those as signals and curation advice, not as numbers - do not promise a numeric
+dataset-quality score, and never imply the platform can grade a dataset that has not been run. Carry
+no numeric pre-run dataset-quality score into this message; it reads the finished run, not an unrun
+dataset.
 
 Only after the result, offer optional next steps:
 

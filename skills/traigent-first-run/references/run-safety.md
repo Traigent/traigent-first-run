@@ -75,6 +75,25 @@ At the secret-entry gate, show only the URL needed for the selected service:
 These account/key links are necessary actions, not educational detours. Do not show every provider
 link; show only the selected provider and Traigent when each key becomes necessary.
 
+Two account paths reach this gate, and only the cold-start one registers here:
+
+- **Lead funnel** - the user redeemed an emailed Traigent access link or access
+  code, so the account is already pre-verified: the portal auto-logs them in and
+  auto-issues a full-access API key. There is no second verification email and no
+  manual key creation, so skip the registration link. The ten-day activation
+  window is on the emailed access code - it activates the account - not on the API
+  key, which is a normal full-access key with no special expiry.
+- **Cold start** - the user has no Traigent account yet. Send them to
+  `https://portal.traigent.ai/register` to self-register and then create a
+  full-access API key manually. This is the existing path and is unchanged; the
+  write-scope paragraph below governs the key they create.
+
+Artifact-2 template A (lead path only): after a lead-funnel registration lands,
+you may show one short note - "Your Traigent email is already verified, so there
+is no second confirmation email; your account is active and a full-access API key
+has been issued." Never show this note to a cold-start user, who has not been
+pre-verified and still owes the normal registration and verification step.
+
 The Traigent key must be able to write experiments, not only read them. A connected run records the
 baseline and the optimization, so a read-only key is rejected at submit time and the run silently
 drops to local-only tracking - real money is spent and nothing appears in the portal. A manually
