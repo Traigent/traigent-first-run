@@ -192,7 +192,6 @@ Traigent Skills
 
 When the user's setup is ambiguous, do not guess silently and do not invent an
 ask/proceed rule from this file: the authorization table in `SKILL.md` owns
-those decisions. What this file adds is only
-the phrasing - when those rules say to ask, ask in the plain wording above, and
-when they say to proceed with a generated substitute, say so in one sentence
-and mark it `🛠️`.
+those decisions. What this file adds is only the phrasing - when those rules
+say to ask, ask in the plain wording above, and when they say to proceed with a
+generated substitute, say so in one sentence and mark it `🛠️`.
