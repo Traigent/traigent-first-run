@@ -398,11 +398,26 @@ def normalize_dataset_row(
 def dataset_row_is_labelled(row: dict[str, Any]) -> bool:
     """Report whether a normalized row carries a usable expected output.
 
+    A row is unlabelled when the expected output is absent, JSON `null`, or a
+    blank string; anything else is a label the evaluator can score against.
+
+    The `is None` test reads the *raw* value on purpose. Stringifying first -
+    `str(row.get("output", "")).strip() not in ("", "None")` - cannot tell a
+    missing label from the legitimate one-word label "None", because Python
+    renders the null as the same four characters. A two-class dataset whose
+    negative class is literally "None" (a no-intent / none-of-the-above class,
+    or a pandas round-trip) then reported every row as unscoreable, which
+    clamped the power subscore and printed a false "N scoreable" marker. Do not
+    collapse this back into a single stringified comparison.
+
     One definition, used by both the aggregate `labelled_rows` count and the
     per-split counts, so the two can never disagree about the same row.
     """
 
-    return str(row.get("output", "")).strip() not in ("", "None")
+    value = row.get("output")
+    if value is None:
+        return False
+    return str(value).strip() != ""
 
 
 def normalized_text(value: Any) -> str:

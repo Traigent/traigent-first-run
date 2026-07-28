@@ -385,6 +385,68 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             self.assertEqual(power["value"], 5.0)
             self.assertIn("50/0 scoreable", power["evidence"])
 
+    def test_a_none_valued_class_label_does_not_clamp_power(self) -> None:
+        """C6: a fully labelled dataset must not be reported as half unscoreable.
+
+        The negative class of this two-class dataset is the literal string
+        "None" - a no-intent label, or a null that survived a pandas round-trip
+        as text. Every row carries an expected output, so the 50/50 split is
+        worth the full 50-example precision; calling half of it unscoreable is
+        the same class of false claim the clamp exists to remove, pointed the
+        other way.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"intent-{index}",
+                    "input": f"utterance {index} token{index}",
+                    "output": "None" if index % 2 else "book_flight",
+                    "split": "tune" if index < 50 else "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "none-class.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertEqual(provenance["labelled_rows"], 100)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 22.0)
+            self.assertIn("50 examples", power["evidence"])
+            self.assertNotIn("scoreable", power["evidence"])
+
+    def test_json_null_expected_outputs_still_clamp_power(self) -> None:
+        """C7: the same shape with genuine nulls stays clamped.
+
+        Only half of these rows can be scored, so the clamp C6 forbids must
+        fire here - the predicate distinguishes the two shapes rather than
+        widening what counts as a label.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"intent-{index}",
+                    "input": f"utterance {index} token{index}",
+                    "output": None if index % 2 else "book_flight",
+                    "split": "tune" if index < 50 else "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "null-class.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertEqual(provenance["labelled_rows"], 50)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 12.0)
+            self.assertIn("25/25 scoreable", power["evidence"])
+
     def test_old_preflight_json_without_labelled_split_counts_fails_loudly(
         self,
     ) -> None:
