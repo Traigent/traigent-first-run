@@ -81,12 +81,16 @@ knobs in the second. If the user already has a baseline, the first experiment pr
 instead of padding it with invented rows. Both runs use the same data and evaluator, followed by an
 untouched holdout check. Any later iteration is optional, not required.
 
-On a dataset larger than about 100 usable rows, the first run is bounded to a small subset spread
-across the difficulty range - chosen before the score is taken, drawn inside each split so it cannot
-invent an overlap, with the selected row ids recorded so the run can be repeated. The report names
-that subset size beside your full row count. A first run is meant to show the capability in one
-sitting, not to spend its way through the whole dataset; the full dataset is what a real
-optimization uses.
+On a dataset larger than about 100 usable rows, the paid comparison is bounded to a small subset
+spread across the difficulty range - drawn inside each split so it cannot invent an overlap, with
+the selected row ids recorded so the run can be repeated. The report names that subset size beside
+your full row count, and gives the run's own resolution as its own sentence.
+
+Your readiness score is never taken on that subset. Both scores read the whole dataset, because the
+score is a statement about your data and the subset is a limit on this one comparison - scoring the
+sample would report our sampling as though it were a property of your dataset, and tell someone with
+500 good rows that they have "a wiring check, not a score". A first run shows the capability in one
+sitting; the full dataset is what a real optimization uses.
 
 ## The readiness score
 

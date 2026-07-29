@@ -255,13 +255,6 @@ Follow the dependency matrix in `references/component-creation.md`:
   outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
   runtime binding is owned by the installed SDK and is verified in stage 5.
 
-When the dataset carries more than about 100 usable rows, select the bounded first-run subset
-described in `references/evaluation-and-dataset.md` - 18 rows by default, spread across the four
-difficulty bands, drawn within each split rather than across it - before the stage-4 preflight, so
-the score describes the rows the run actually uses. Record the chosen row ids, and report the
-subset size beside the full row count so a bounded run never reads as a full evaluation. A first
-run shows the capability; it does not exhaust the dataset.
-
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
 
@@ -426,6 +419,21 @@ Explain truthfully:
 - Connected runs send configuration identifiers, numeric measures, and run status to Traigent.
 
 ### 6. Ask once before paid work
+
+Scope the run before pricing it. When the dataset carries more than about 100 usable rows, select the
+bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
+least four from each difficulty band, drawn within each split rather than across it - and estimate
+runtime and spend from that subset, not from the full row count.
+
+The window matters in both directions. It comes *after* the stage-4 re-score, because the score is a
+statement about the user's dataset and a score taken on our sample would report this run's precision
+limit as though it were a property of their data. It comes *before* the approval below, because an
+estimate priced on 4,812 rows and then run on 18 asks the user to approve a run that never happens -
+and a decision made on a number that large may simply be no.
+
+Record the chosen row ids, report the subset size beside the full row count, and give the run's own
+resolution as its own sentence rather than letting it colour the dataset's score. A first run shows
+the capability; it does not exhaust the dataset.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
 Prepare one concise combined approval immediately before paid work containing:
@@ -702,6 +710,26 @@ ones still open and what each is now costing - an unlabelled half of the dataset
 difficulty spread, a substitute component still standing in for a real one - so the motivation is
 the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
 cannot close, say that plainly instead of implying a further run would fix it.
+
+Then give the one next action their *starting* state earns, not generic advice. The opening score
+already measured which gap is largest, so name the specific move and what it would buy:
+
+- Generated or mostly generated data - collect or export a real sample of the same task and re-run.
+  This is the gap that ceilings the score no matter how good everything else is, so it is first
+  whenever it applies.
+- Real inputs with model-written answers - have a person review a sample of the answer key. Until
+  then the accuracy number measures agreement with a model, not correctness.
+- Rows without expected outputs, or placeholder answers - label a slice rather than the whole set;
+  the power bands mean the first few dozen scoreable rows buy most of the resolution.
+- One difficulty band, or answers that are nearly all the same - add examples where the agent
+  currently fails, which is also where a search has room to win.
+- A substitute component still standing in for a real one - connect the production agent, dataset or
+  evaluator it replaced, and say which of the reported numbers would change.
+- A thin evaluator, or one that was never calibrated - align the method with the product's own
+  grading policy before trusting a comparison built on it.
+
+One action, named for their state, with the reason attached. A list of everything they could do is
+the same as no recommendation.
 
 Only after the result, offer optional next steps:
 
