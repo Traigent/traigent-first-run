@@ -728,14 +728,13 @@ already measured which gap is largest, so name the specific move and what it wou
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
 
-One action, named for their state, with the reason attached. A list of everything they could do is
-the same as no recommendation.
+One action, named for their state, with the reason attached. A menu offered *instead of* a
+recommendation is the same as no recommendation - so this is the recommendation, and anything else
+comes after it and says so.
 
-Only after the result, offer optional next steps:
+Those state-specific moves are the ones this run measured. Separately, and only after the result,
+these are available whenever the user wants them rather than because their state calls for them:
 
-- Connect the production agent.
-- Replace synthetic examples with reviewed real examples.
-- Align the evaluation method with the product's grading policy.
 - Install the Traigent optimization skills with `npx skills add Traigent/traigent-skills` for a
   stronger enhanced run, telling the user first and reminding them to restart the session so the
   new skills load.

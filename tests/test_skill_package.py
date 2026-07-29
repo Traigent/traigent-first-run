@@ -593,9 +593,23 @@ class SkillPackageTests(unittest.TestCase):
             "give the one next action their *starting* state earns", skill_text
         )
         self.assertIn(
-            "a list of everything they could do is the same as no recommendation",
+            "a menu offered *instead of* a recommendation is the same as no recommendation",
             skill_text,
         )
+        # The generic menu that follows must not restate the state-specific
+        # moves: offering "connect the production agent" as an undifferentiated
+        # option, one line under a block that names it as THIS project's earned
+        # next action, is the contradiction this wording exists to remove.
+        menu = skill_text.split("these are available whenever the user wants them", 1)[
+            1
+        ]
+        for restated in (
+            "connect the production agent.",
+            "replace synthetic examples with reviewed real examples.",
+            "align the evaluation method with the product's grading policy.",
+        ):
+            with self.subTest(restated=restated):
+                self.assertNotIn(restated, menu)
         for state in (
             "generated or mostly generated data",
             "real inputs with model-written answers",
@@ -609,7 +623,7 @@ class SkillPackageTests(unittest.TestCase):
         transition = skill_text.index("the readiness transition")
         motivation = skill_text.index("saying what a further run would be worth")
         next_steps = skill_text.index(
-            "only after the result, offer optional next steps"
+            "these are available whenever the user wants them"
         )
         self.assertLess(transition, motivation)
         self.assertLess(motivation, next_steps)
