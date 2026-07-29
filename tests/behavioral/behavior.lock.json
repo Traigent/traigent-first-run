@@ -1,8 +1,8 @@
 {
-  "digest": "db16ab6e2ed0d18ac6f41c96515d3fb890b1a08a42a88484a6a535e35cbb25a4",
+  "digest": "95e2a687fae23c3c81b774fc8bfabe2152f9753605c02896ef44b9d4ea03a846",
   "paths": [
     {"path": "GUIDE.md", "sha256": "47868e834b7b90faa21fec5e856bed661e9561aa5c9dc721da7a5afe40fe8cdc", "size": 5240},
-    {"path": "skills/traigent-first-run/SKILL.md", "sha256": "77666da85af72b6b0f0d0028438f402ab14657445b9165be2574052c6ff685e6", "size": 51838},
+    {"path": "skills/traigent-first-run/SKILL.md", "sha256": "1dcab0de632590c4929c06233d883ff6d7b32339ff8f7abfb5dd409fac66c41e", "size": 52411},
     {"path": "skills/traigent-first-run/agents/openai.yaml", "sha256": "87331cf2d8ccefc92ebb0501e4a52229ddef7667a1ee94dcaa13d1dfe7139bbc", "size": 249},
     {"path": "skills/traigent-first-run/assets/requirements-first-run.txt", "sha256": "d8508c0a91aa3360fb4742fe360c64700411805f398fb682c98831424eb3de45", "size": 54},
     {"path": "skills/traigent-first-run/assets/run-plan.md", "sha256": "ec2c2e57940da40e3d78c313e910603ec38153190252226eda621229d5ff4bc2", "size": 2001},

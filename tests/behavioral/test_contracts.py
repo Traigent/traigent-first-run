@@ -13,10 +13,22 @@ SCENARIOS = Path(__file__).parent / "scenarios"
 
 
 class BehavioralContractUnitTests(unittest.TestCase):
-    def test_all_three_starting_states_are_declared(self) -> None:
+    def test_every_declared_scenario_is_the_expected_set(self) -> None:
+        """Pinned so a new scenario is a deliberate addition, not a stray directory.
+
+        `stub-agent-no-anchor` is the quality-based twin of `zero-anchor`: the
+        empty project is the case that always worked, and a project holding an
+        importable stub that performs no task is the one that could walk past the
+        intent gate on a file-presence reading (#61).
+        """
         self.assertEqual(
             {path.name for path in SCENARIOS.iterdir() if path.is_dir()},
-            {"zero-anchor", "partial-missing-dataset", "weak-invalid"},
+            {
+                "zero-anchor",
+                "stub-agent-no-anchor",
+                "partial-missing-dataset",
+                "weak-invalid",
+            },
         )
 
     def test_scenario_contracts_are_well_formed(self) -> None:
