@@ -1682,10 +1682,13 @@ def _read_knob_space(field: str, value: Any) -> dict[str, list[Any]]:
 def _read_name_list(field: str, value: Any) -> tuple[str, ...]:
     """`wired`: the knob names the agent call actually consumes.
 
-    An absent `wired` means "every declared knob is wired" (`score_agent`), so
-    it stays an empty tuple. A present one that is not a list of names is a
-    claim about the search space that cannot be read: a non-string entry
-    matches no knob and would silently shrink the considered set instead.
+    This reader only parses the field; what an ABSENT `wired` means is
+    `score_agent`'s call, not this function's, and the two must not restate
+    each other (traigent-first-run#78). Producers should always emit the list -
+    stating what the agent consumes is the document's purpose. A present one
+    that is not a list of names is a claim about the search space that cannot
+    be read: a non-string entry matches no knob and would silently shrink the
+    considered set instead.
     """
     if not isinstance(value, (list, tuple)) or not all(
         isinstance(name, str) for name in value
@@ -1882,7 +1885,7 @@ CONFIG_SPACE_FIELDS: tuple[ConfigSpaceField, ...] = (
     ConfigSpaceField(
         "wired",
         "list of knob names",
-        "no, but always emit it",
+        "**yes - always emit it**",
         _read_name_list,
     ),
     ConfigSpaceField(
