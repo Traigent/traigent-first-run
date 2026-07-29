@@ -88,7 +88,12 @@ see it.
 
 The opening readiness score is computed earlier, after read-only inventory and before any creation
 or repair. It is a static local action, required even when no component exists yet; in a
-zero-anchor run it is recorded only after task intent is anchored.
+zero-anchor run it is recorded only after task intent is anchored. It uses the host `python3`
+interpreter as a narrow bootstrap for every bundled script that runs before the isolated
+environment exists - the standard-library-only static checks and the calibration adapter alike;
+nothing is installed into the host interpreter. Every `python-version` result from those
+pre-environment passes therefore describes that host bootstrap interpreter and is provisional; the
+environment selected or created for the connected run is the interpreter that run is judged on.
 
 Use this gate order:
 
@@ -99,7 +104,9 @@ Use this gate order:
 2. If unresolved product-grading ambiguity would materially change correctness or candidate
    ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
    that no material ambiguity remains and continue without a generic semantic-review stop.
-3. Run the bundled static preflight with `--defer-missing-sdk` and the combined dataset argument.
+3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
+   containing the combined tuning and holdout rows, so local structure and quality problems are
+   checked without importing user modules.
    Record local structure, per-split size/resolution, and quality findings independently of
    SDK/package findings. This pass does not claim exact SDK compatibility, and a missing Traigent
    SDK cannot block it.
