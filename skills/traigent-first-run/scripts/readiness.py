@@ -400,6 +400,9 @@ class DatasetFacts:
     # wrote rather than a person observing them.
     answerable_rows: int = 0
     generated_answer_rows: int = 0
+    # Rows whose expected output carries no word characters ("-", "?", "..."):
+    # labelled by the one oracle, but not an answer anyone can score against.
+    placeholder_rows: int = 0
     sources: tuple[str, ...] = ()
 
 
@@ -834,6 +837,26 @@ def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
     return mixture
 
 
+def labels_evidence(labelled: int, rows: int, placeholders: int) -> str:
+    """Name placeholder answers on the line that claims the rows are labelled.
+
+    A punctuation-only output is a label by the one oracle - deliberately, so the
+    checks stop contradicting each other - but it is not an answer the evaluator
+    can score against. Without this clause the card printed "100/100 rows carry an
+    expected output" and a confident precision band over a set where half the
+    answers were "-" (traigent-first-run#70). It qualifies the sentence rather
+    than changing the number: reclassifying those rows would move the score for
+    every dataset that uses a symbol as a legitimate label.
+    """
+    base = f"{labelled}/{rows} rows carry an expected output"
+    if not placeholders:
+        return base
+    return (
+        f"{base}, but {placeholders} of them are placeholders with no word "
+        "characters - not answers a scorer can compare against"
+    )
+
+
 def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -877,7 +900,7 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
                 round(30.0 * ratio, 2),
                 30.0,
                 True,
-                f"{labelled}/{rows} rows carry an expected output",
+                labels_evidence(labelled, rows, facts.placeholder_rows),
             )
         )
 
@@ -1806,6 +1829,10 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),
+        placeholder_rows=_row_count(
+            metrics.get("dataset-output-placeholders", {}).get("placeholder_rows"),
+            "placeholder_rows",
+        ),
         collected_rows=_row_count(provenance.get("collected_rows"), "collected_rows"),
         synthesised_rows=_row_count(
             provenance.get("synthesised_rows"), "synthesised_rows"

@@ -1111,6 +1111,15 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             )
             self.assertEqual(placeholders["metrics"]["placeholder_rows"], 50)
 
+            # #70's second criterion: the card may not print a confident band
+            # over rows whose "answer" is punctuation. The count reaches the
+            # scorer and qualifies the sentence that claims they are labelled -
+            # without reclassifying them, which would move the score for every
+            # dataset using a symbol as a legitimate label.
+            labels = _dataset_subscore(_score(dataset), "labels")
+            self.assertIn("50 of them are placeholders", labels["evidence"])
+            self.assertEqual(labels["value"], 30.0)
+
     def test_unlabelled_rows_do_not_trip_the_ceiling_risk(self) -> None:
         """#68: `normalized_text(None)` -> "null" became a dominant value.
 
