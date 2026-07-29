@@ -65,6 +65,20 @@ class BehavioralContractUnitTests(unittest.TestCase):
         finally:
             stray.unlink()
 
+    def test_the_git_and_walk_file_lists_agree(self) -> None:
+        """The hermetic fallback must lock the same package git would.
+
+        The offline-contract job has no git, so it takes the walk. If the two
+        ever disagree the lock means one thing in CI and another locally, which
+        is the whole failure this pair was written to end - so they are compared
+        directly rather than trusted to stay in step. A new `.gitignore` rule
+        that matters to the skill tree fails here first.
+        """
+        self.assertEqual(
+            harness.behavior_files(ROOT),
+            harness._walk_behavior_files(ROOT),
+        )
+
     def test_forbidden_write_is_rejected(self) -> None:
         contract = {"allowed_writes": ["traigent-runs/**"]}
         with self.assertRaisesRegex(harness.ContractError, "forbidden write"):
