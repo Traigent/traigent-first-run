@@ -286,15 +286,57 @@ For a fully generated walkthrough, create 24 examples by default:
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
-When the inputs are real but the expected answers were written by a model rather than observed,
-declare that on the row as `output_provenance: "generated"` (`output_source` is read too, at the top
-level or under `metadata`). It scores 6 of the 10 provenance points - below collected production
-data, above a fully generated set - because the ruler those rows are graded against is the model's
-opinion, not a fact anyone recorded. Do not express it in the row's own `provenance`/`source` token
-instead: anything starting with `synthetic`, `generated`, `walkthrough`, or `mock` marks the entire
-row generated, scoring 3 and capping the whole readiness score at 65. The band also requires the
-inputs to be declared and non-synthetic - a dataset that says nothing about where its inputs came
-from has not earned "real inputs", and scores the undeclared 6 with that reason instead.
+### Declaring provenance
+
+Provenance answers one question twice: was the question observed, and was the answer? Declare the
+first on the row as `provenance` (or `source`), the second as `output_provenance` (or
+`output_source`) - either at the top level or under `metadata`.
+
+Each row earns its own share of the 10 provenance points, and the sub-score is their average:
+
+| The row | Points |
+|---|---|
+| Observed question, observed answer | 10 |
+| Observed question, answer written by a model | 6 |
+| Says nothing about where it came from | 6 |
+| Neither was observed | 3 |
+
+Because it is a per-row average, a mixture scores like a mixture: 99 collected rows and one
+generated one score 9.93, not 3. What a mixture cannot do is escape a ceiling - see the cap ladder
+below.
+
+Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough` both land where you
+would expect. `synthetic`, `generated`, `llm`, `gpt`, `claude`, `model-written`, `ai-`,
+`walkthrough`, `mock`, `fake`, `dummy`, `simulated` and `template` all mean the same thing - nobody
+observed this - and are not different classes. `production`, `real`, `collected`, `logged`,
+`customer`, `human`, `curated`, `annotated`, `benchmark` and `gold` mean it was.
+
+A word on neither list keeps the collected score, so a project's own vocabulary (`crm-export`) is
+not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
+unknown word quietly earning the production band is the failure that check exists to prevent. If the
+data is generated, say so with a word from the first list.
+
+Do not express a generated answer in the row's own `provenance` token: that marks the whole row
+generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
+
+### Provenance ceilings
+
+Points alone cannot keep a score honest here. Provenance is 10 points inside a pillar worth 40% of
+the total, so the whole 10-to-3 range moves the overall score by under 3 points - a fully generated
+dataset that was perfect on every other dimension still reported 93 and read as production-ready.
+So how much of the data was invented also sets a ceiling on the entire run:
+
+| The dataset | Ceiling |
+|---|---|
+| Every row generated | 65 |
+| More than half generated | 70 |
+| Real questions, but every expected answer written by a model | 75 |
+
+The ladder is ordered by how much of the result is the model talking to itself. The last rung is the
+highest because the questions are still real - but an accuracy number computed against an answer key
+a model wrote reports agreement with that model, not correctness, and nothing inside the run can
+falsify it. A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average
+stays in the output, and the number simply cannot claim more than the data supports.
 
 Every generated row must:
 

@@ -430,7 +430,63 @@ def token_set(value: Any) -> set[str]:
     return set(normalized_text(value).split())
 
 
-SYNTHETIC_SOURCE_PREFIXES = ("synthetic", "generated", "walkthrough", "mock")
+# One question, two answers: was this written, or was it collected? Every token
+# below is a spelling of one of those - "synthetic", "generated", "walkthrough"
+# (the dataset this skill writes for its own demo) and "mock" are not different
+# kinds of data, they are different words for data nobody observed.
+#
+# Prefix matching, not equality, because real tokens carry qualifiers:
+# `synthetic-walkthrough`, `production-2026-q1`. An exact `== "synthetic"` test
+# once returned False for this skill's own generated rows, which scored them as
+# collected production data and disabled every escalation below.
+SYNTHESISED_SOURCE_PREFIXES = (
+    "synthetic",
+    "synthesis",
+    "synthesised",
+    "synthesized",
+    "generated",
+    "generative",
+    "llm",
+    "gpt",
+    "claude",
+    "model-written",
+    "model-generated",
+    "machine-generated",
+    "ai-",
+    "ai_",
+    "walkthrough",
+    "mock",
+    "fake",
+    "dummy",
+    "simulated",
+    "template",
+)
+COLLECTED_SOURCE_PREFIXES = (
+    "production",
+    "prod",
+    "real",
+    "collected",
+    "observed",
+    "logged",
+    "log",
+    "customer",
+    "user",
+    "field",
+    "human",
+    "curated",
+    "reviewed",
+    "annotated",
+    "benchmark",
+    "gold",
+)
+UNDECLARED_SOURCE_TOKENS = {"unknown", "n/a", "na", "none", "null", "tbd", "?"}
+
+# Kept as the historical name so an existing caller/reader keeps working.
+SYNTHETIC_SOURCE_PREFIXES = SYNTHESISED_SOURCE_PREFIXES
+
+PROVENANCE_SYNTHESISED = "synthesised"
+PROVENANCE_COLLECTED = "collected"
+PROVENANCE_UNDECLARED = "undeclared"
 
 
 def row_provenance(row: dict[str, Any]) -> Any:
@@ -490,18 +546,35 @@ def has_generated_output(row: dict[str, Any]) -> bool:
 
 
 def is_synthetic(row: dict[str, Any]) -> bool:
-    """Report whether a row's declared provenance is generated, not collected.
+    """Report whether one row's declared provenance is written, not collected.
 
-    Prefix matching, not equality: the walkthrough dataset this skill generates
-    declares `"source": "synthetic-walkthrough"`, so an exact `== "synthetic"`
-    test returned False for our own generated rows and silently disabled every
-    escalation below that depends on it.
+    A single row's answer to the one question in {@link classify_provenance}.
+    Whether the *dataset* is synthetic is a question about shares, not about any
+    one row, and is answered in `emit_dataset_provenance`.
     """
-    source = row_provenance(row)
-    if source is None:
-        return False
-    normalized = str(source).casefold().strip()
-    return normalized.startswith(SYNTHETIC_SOURCE_PREFIXES)
+    return classify_provenance(row_provenance(row))[0] == PROVENANCE_SYNTHESISED
+
+
+def classify_provenance(token: Any) -> tuple[str, bool]:
+    """Classify one provenance token, and report whether it was recognised.
+
+    Returns `(class, recognised)`. An unrecognised non-empty token is classified
+    `collected` so that a project using its own vocabulary (`crm-export`) keeps
+    the score it has today rather than being silently demoted by a word list -
+    but `recognised=False` is reported so the caller can say out loud which
+    tokens it had to take on trust. Silently reading an unknown word as
+    collected production data is the failure this pair exists to make visible.
+    """
+    if token in (None, ""):
+        return PROVENANCE_UNDECLARED, True
+    normalized = str(token).casefold().strip()
+    if not normalized or normalized in UNDECLARED_SOURCE_TOKENS:
+        return PROVENANCE_UNDECLARED, True
+    if normalized.startswith(SYNTHESISED_SOURCE_PREFIXES):
+        return PROVENANCE_SYNTHESISED, True
+    if normalized.startswith(COLLECTED_SOURCE_PREFIXES):
+        return PROVENANCE_COLLECTED, True
+    return PROVENANCE_COLLECTED, False
 
 
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
@@ -559,44 +632,93 @@ def emit_dataset_provenance(
     when no row is labelled is what lets the readiness scorer tell an unlabelled
     dataset (a partial score) apart from an absent one.
     """
-    synthetic = any(is_synthetic(row) for row in present_rows)
-    declared_sources = {
-        str(row_provenance(row) or "unknown").casefold() for row in present_rows
+    counts = {
+        PROVENANCE_COLLECTED: 0,
+        PROVENANCE_SYNTHESISED: 0,
+        PROVENANCE_UNDECLARED: 0,
     }
-    # Reported independently of `synthetic`: a row whose own token is generated
-    # is already fully synthetic, so the interesting case this answers is the
-    # other one - collected inputs whose expected answers were written by a
-    # model. The scorer credits that below production and above generated.
-    #
-    # Scanned over rows that actually carry an expected output, through the same
-    # `dataset_row_is_labelled` predicate the aggregate and per-split counts use.
-    # A row with no answer cannot have a generated one, and answering "does this
-    # row have an output" with a private test here is how the checks in this file
-    # came to disagree about the same row (traigent-first-run#68, #70).
-    generated_outputs = any(
-        has_generated_output(row) for row in scored_rows if dataset_row_is_labelled(row)
+    unrecognised: set[str] = set()
+    declared_sources: set[str] = set()
+    for row in present_rows:
+        token = row_provenance(row)
+        declared_sources.add(str(token or "unknown").casefold())
+        provenance_class, recognised = classify_provenance(token)
+        counts[provenance_class] += 1
+        if not recognised:
+            unrecognised.add(str(token).casefold().strip())
+
+    total = len(present_rows)
+    # Counted, not `any()`. One generated row in a thousand collected ones used
+    # to mark the whole dataset generated - scoring 3 of 10 and capping the run
+    # at 65 - while the detail line said "every row declares generated
+    # provenance", which was false for every mixture. The scorer needs the
+    # shares to answer "how much of this is invented", so they are reported here
+    # and `synthetic` keeps its name meaning what it says: all of it.
+    synthetic = total > 0 and counts[PROVENANCE_SYNTHESISED] == total
+
+    # A row whose own token is synthesised is already counted there; this is the
+    # other shape - collected inputs whose expected answers were written by a
+    # model. Scanned over rows that actually carry an expected output, through
+    # the same `dataset_row_is_labelled` predicate the aggregate and per-split
+    # counts use: a row with no answer cannot have a generated one, and
+    # answering "does this row have an output" with a private test here is how
+    # the checks in this file came to disagree about the same row (#68, #70).
+    answerable = [row for row in scored_rows if dataset_row_is_labelled(row)]
+    generated_answer_rows = sum(
+        1
+        for row in answerable
+        if has_generated_output(row)
+        and classify_provenance(row_provenance(row))[0] != PROVENANCE_SYNTHESISED
     )
+    generated_outputs = generated_answer_rows > 0
+
+    def _share(count: int, of: int) -> float:
+        return round(count / of, 4) if of else 0.0
+
+    synthesised_share = _share(counts[PROVENANCE_SYNTHESISED], total)
     if synthetic:
-        detail = "every row declares generated provenance"
+        detail = f"all {total} rows declare generated provenance"
+    elif counts[PROVENANCE_SYNTHESISED]:
+        detail = (
+            f"{counts[PROVENANCE_SYNTHESISED]} of {total} rows declare generated "
+            f"provenance ({synthesised_share:.0%}); declared sources: "
+            f"{sorted(declared_sources)}"
+        )
     elif generated_outputs:
         detail = (
             f"declared sources: {sorted(declared_sources)}; "
-            "one or more expected outputs declare generated provenance"
+            f"{generated_answer_rows} of {len(answerable)} expected outputs "
+            "declare generated provenance"
         )
     else:
         detail = f"declared sources: {sorted(declared_sources)}"
     emit(
         "dataset-provenance",
-        WARN if synthetic else PASS,
+        WARN if counts[PROVENANCE_SYNTHESISED] else PASS,
         detail,
         {
-            "rows": len(present_rows),
+            "rows": total,
             "labelled_rows": labelled,
             "synthetic": synthetic,
             "generated_outputs": generated_outputs,
+            "collected_rows": counts[PROVENANCE_COLLECTED],
+            "synthesised_rows": counts[PROVENANCE_SYNTHESISED],
+            "undeclared_rows": counts[PROVENANCE_UNDECLARED],
+            "generated_answer_rows": generated_answer_rows,
+            "answerable_rows": len(answerable),
             "sources": sorted(declared_sources),
         },
     )
+    if unrecognised:
+        # Scored as collected, so say so rather than let an unknown word quietly
+        # earn the production band.
+        emit(
+            "dataset-provenance-vocabulary",
+            WARN,
+            f"{sorted(unrecognised)} is not a recognised provenance word and was "
+            "read as collected real data; declare generated data with a "
+            "'synthetic'/'generated' token if that is wrong",
+        )
     return synthetic
 
 

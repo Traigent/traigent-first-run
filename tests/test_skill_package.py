@@ -461,6 +461,34 @@ class SkillPackageTests(unittest.TestCase):
         key_ask_position = skill_text.index("only after that first result is on screen")
         self.assertLess(baseline_position, key_ask_position)
 
+    def test_provenance_is_documented_as_a_per_row_average_with_ceilings(self) -> None:
+        """Points and ceilings answer different questions; the guide says both.
+
+        The per-row average is what stops one demo row condemning a collected
+        dataset; the ceilings are what stop an average hiding how much of the
+        result was invented. Documenting one without the other reads as either
+        "generated data is fine" or "one bad row ruins it", and both are wrong.
+        """
+        dataset_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "was the question observed, and was the answer",
+            "a mixture scores like a mixture",
+            "99 collected rows and one generated one score 9.93, not 3",
+            "provenance ceilings",
+            "a ceiling is not a deduction and not a refusal",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset_text)
+
+        # An unknown word keeps its score but must never do so silently.
+        self.assertIn("dataset-provenance-vocabulary", dataset_text)
+        self.assertIn("is not silently demoted", dataset_text)
+
     def test_large_dataset_is_bounded_to_a_reproducible_stratified_subset(self) -> None:
         """A first run shows the capability; it does not exhaust the dataset.
 
@@ -1789,11 +1817,18 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
-        body = source.split("def score_dataset(", 1)[1].split("\ndef ", 1)[0]
-        conditions = set(re.findall(r'Cap\(\s*"([a-z0-9-]+)"', body))
-        # A sixth dataset cap must be routed too, so pin the count rather than
-        # spot-checking the five that exist today.
-        self.assertEqual(len(conditions), 5)
+        # Scanned over the whole module, not one function body: the dataset caps
+        # were split across `score_dataset` and `score_provenance`, and a scan
+        # scoped to the first silently stopped seeing the provenance ones - the
+        # guard went green while covering less.
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("dataset-")
+        }
+        # An eighth dataset cap must be routed too, so pin the count rather
+        # than spot-checking the seven that exist today.
+        self.assertEqual(len(conditions), 7)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -1802,6 +1837,11 @@ class SkillPackageTests(unittest.TestCase):
             ("dataset-integrity-fail", "repair and revalidate a working copy"),
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),
             ("dataset-fully-synthetic", "walkthrough labeling rules"),
+            ("dataset-mostly-synthetic", "name the split out loud"),
+            (
+                "dataset-generated-answer-key",
+                "a person reviews a sample of the answers",
+            ),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)

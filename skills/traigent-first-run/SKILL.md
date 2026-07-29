@@ -339,6 +339,13 @@ rather than the condition id:
 - `dataset-fully-synthetic` - continue only under the walkthrough labeling rules: keep the real
   Dataset gap `❗`, mark the substitute `🛠️`, and never read the score gain as production
   readiness.
+- `dataset-mostly-synthetic` - the same walkthrough labeling rules apply to the generated majority.
+  Name the split out loud ("62 of 100 rows are generated"), and when reporting the result, say which
+  side of the mixture the claim rests on. Adding real examples is the cheapest way to clear it.
+- `dataset-generated-answer-key` - the questions are real but every expected answer was written by a
+  model, so the score measures agreement with that model rather than correctness. Recommend that a
+  person reviews a sample of the answers before any accuracy claim leaves the run, and make no
+  correctness claim on the unreviewed key.
 
 Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
 paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
