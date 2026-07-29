@@ -977,6 +977,43 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 _dataset_subscore(_score(dataset), "provenance")["value"], 10.0
             )
 
+    def test_an_impossible_provenance_count_is_refused_not_absorbed(self) -> None:
+        """A negative count must not quietly change the denominator.
+
+        Zeroing it kept the score plausible while every share was computed over
+        the wrong total, and -1 synthesised rows against 50 collected scored
+        10.14 on a sub-score whose maximum is 10. Driven through the real CLI so
+        the refusal is what a user actually sees. An absent key still falls back
+        to 0 - that is a payload predating the field, not a broken one.
+        """
+        metrics = {
+            "rows": 50,
+            "labelled_rows": 50,
+            "collected_rows": 50,
+            "synthesised_rows": -1,
+        }
+        record = [{"check": "dataset-provenance", "status": "PASS", "metrics": metrics}]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(record),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("synthesised_rows", process.stderr)
+        self.assertIn("re-run preflight.py --json", process.stderr)
+
+        # Absent counts are the version-skew case and must still be accepted.
+        metrics.pop("synthesised_rows")
+        metrics.pop("collected_rows")
+        accepted = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(record),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

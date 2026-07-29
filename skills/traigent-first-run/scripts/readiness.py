@@ -684,15 +684,28 @@ MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
 
-def _row_count(value: Any) -> int:
-    """Read a row count, refusing anything that is not a whole non-negative one.
+def _row_count(value: Any, name: str) -> int:
+    """Read one provenance row count, refusing a present-but-impossible one.
 
-    Same reasoning as the split-count guard: a negative or non-integer count
-    reaches the arithmetic and prints a nonsense share. A bad value here reads
-    as "not reported" and falls back, rather than dividing by a fiction.
+    An absent key means the preflight JSON predates the field, and falls back to
+    0 so an older payload keeps scoring as it did. A key that IS present and
+    carries a negative or non-integer count is a different thing: it reaches the
+    arithmetic, shifts the denominator every share is computed over, and can
+    push the sub-score past its own 10-point maximum (`-1` synthesised rows
+    against 50 collected scores 10.14). Refused for the same reason, and with
+    the same message, as the declared-split counts a few lines below - a guard
+    that checks four counts and waves three through is the odd-one-out this
+    file already has an issue open about (traigent-first-run#69).
     """
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if value is None:
         return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PreflightInputError(
+            f"dataset-provenance carries no usable {name} count - row counts "
+            "are whole and non-negative, so this preflight JSON was edited or "
+            "predates the current preflight.py; re-run preflight.py --json "
+            "from the same version as this script"
+        )
     return value
 
 
@@ -1755,11 +1768,19 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),
-        collected_rows=_row_count(provenance.get("collected_rows")),
-        synthesised_rows=_row_count(provenance.get("synthesised_rows")),
-        undeclared_rows=_row_count(provenance.get("undeclared_rows")),
-        answerable_rows=_row_count(provenance.get("answerable_rows")),
-        generated_answer_rows=_row_count(provenance.get("generated_answer_rows")),
+        collected_rows=_row_count(provenance.get("collected_rows"), "collected_rows"),
+        synthesised_rows=_row_count(
+            provenance.get("synthesised_rows"), "synthesised_rows"
+        ),
+        undeclared_rows=_row_count(
+            provenance.get("undeclared_rows"), "undeclared_rows"
+        ),
+        answerable_rows=_row_count(
+            provenance.get("answerable_rows"), "answerable_rows"
+        ),
+        generated_answer_rows=_row_count(
+            provenance.get("generated_answer_rows"), "generated_answer_rows"
+        ),
         sources=tuple(provenance.get("sources", ())),
     )
 
