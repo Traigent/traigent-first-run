@@ -400,6 +400,9 @@ class DatasetFacts:
     # wrote rather than a person observing them.
     answerable_rows: int = 0
     generated_answer_rows: int = 0
+    # Rows whose expected output carries no word characters ("-", "?", "..."):
+    # labelled by the one oracle, but not an answer anyone can score against.
+    placeholder_rows: int = 0
     sources: tuple[str, ...] = ()
 
 
@@ -834,6 +837,26 @@ def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
     return mixture
 
 
+def labels_evidence(labelled: int, rows: int, placeholders: int) -> str:
+    """Name placeholder answers on the line that claims the rows are labelled.
+
+    A punctuation-only output is a label by the one oracle - deliberately, so the
+    checks stop contradicting each other - but it is not an answer the evaluator
+    can score against. Without this clause the card printed "100/100 rows carry an
+    expected output" and a confident precision band over a set where half the
+    answers were "-" (traigent-first-run#70). It qualifies the sentence rather
+    than changing the number: reclassifying those rows would move the score for
+    every dataset that uses a symbol as a legitimate label.
+    """
+    base = f"{labelled}/{rows} rows carry an expected output"
+    if not placeholders:
+        return base
+    return (
+        f"{base}, but {placeholders} of them are placeholders with no word "
+        "characters - not answers a scorer can compare against"
+    )
+
+
 def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -877,7 +900,7 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
                 round(30.0 * ratio, 2),
                 30.0,
                 True,
-                f"{labelled}/{rows} rows carry an expected output",
+                labels_evidence(labelled, rows, facts.placeholder_rows),
             )
         )
 
@@ -1751,6 +1774,44 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 "edited; re-run preflight.py --json from the same version as "
                 "this script"
             )
+        # #69: the same guard, applied to the aggregates and to the coherence
+        # between the two. Checking type and sign on four counts while waving the
+        # aggregates through invites a reader to trust numbers nothing validated,
+        # and its own rationale - a negative count "arithmetically reaches the
+        # scorer and prints a nonsense band" - applies verbatim to them.
+        for name, value in (
+            ("rows", provenance.get("rows")),
+            ("labelled_rows", provenance.get("labelled_rows")),
+        ):
+            if value is not None and not _usable_count(value):
+                raise PreflightInputError(
+                    f"dataset-provenance carries no usable {name} count - row "
+                    "counts are whole and non-negative, so this preflight JSON "
+                    "was edited or predates the current preflight.py; re-run "
+                    "preflight.py --json from the same version as this script"
+                )
+        # No row is counted twice: `tune_names` and `holdout_names` are disjoint
+        # and a row carries one split tag, so the two split-labelled counts
+        # cannot legitimately exceed the aggregate. A shape that says otherwise
+        # (100 split labels against 1 aggregate label) was accepted and scored
+        # 22.0 power beside "1/100 rows carry an expected output".
+        aggregate_labelled = provenance.get("labelled_rows")
+        split_labelled = (
+            tuning_metrics.get("tuning_labelled_rows"),
+            holdout_metrics.get("holdout_labelled_rows"),
+        )
+        if aggregate_labelled is not None and all(
+            _usable_count(count) for count in split_labelled
+        ):
+            if sum(split_labelled) > aggregate_labelled:
+                raise PreflightInputError(
+                    f"declared split metrics report {sum(split_labelled)} labelled "
+                    f"rows across tuning and holdout, more than the "
+                    f"{aggregate_labelled} the dataset declares in total - the "
+                    "splits are disjoint, so this cannot describe one dataset; "
+                    "re-run preflight.py --json from the same version as this "
+                    "script"
+                )
     return DatasetFacts(
         exists=True,
         rows=provenance.get("rows"),
@@ -1768,6 +1829,10 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),
+        placeholder_rows=_row_count(
+            metrics.get("dataset-output-placeholders", {}).get("placeholder_rows"),
+            "placeholder_rows",
+        ),
         collected_rows=_row_count(provenance.get("collected_rows"), "collected_rows"),
         synthesised_rows=_row_count(
             provenance.get("synthesised_rows"), "synthesised_rows"

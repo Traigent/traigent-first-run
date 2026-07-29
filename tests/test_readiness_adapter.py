@@ -33,7 +33,7 @@ def _write_jsonl(directory: Path, name: str, rows: list[dict]) -> Path:
     return path
 
 
-def _preflight_records(dataset: Path) -> list[dict]:
+def _preflight_records(dataset: Path, *extra: str) -> list[dict]:
     """Run the real preflight and return its `--json` records."""
     process = subprocess.run(
         [
@@ -43,6 +43,7 @@ def _preflight_records(dataset: Path) -> list[dict]:
             str(dataset),
             "--defer-missing-sdk",
             "--json",
+            *extra,
         ],
         capture_output=True,
         text=True,
@@ -1013,6 +1014,196 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+    def test_a_holdout_that_omits_the_output_field_is_still_a_declared_split(
+        self,
+    ) -> None:
+        """#66: a row missing the expected-output field never reached the split loop.
+
+        `normalize_dataset_row` rejects it, so it landed only in `present_rows`
+        and preflight reported "no explicit tuning/holdout split was found" about
+        a dataset where all 100 rows declare one.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"tune-{index}",
+                    "input": f"tuning question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "split": "tune",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(50)
+            ] + [
+                {
+                    "id": f"holdout-{index}",
+                    "input": f"holdout question {index} token{index}",
+                    "split": "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(50)
+            ]
+            dataset = _write_jsonl(directory, "missing-holdout-output.jsonl", rows)
+
+            records = _preflight_records(dataset)
+            split = next(r for r in records if r["check"] == "dataset-split")
+            self.assertNotEqual(
+                split["status"], "WARN", "the split must no longer read as absent"
+            )
+            sizes = next(
+                (r for r in records if r["check"] == "dataset-tuning-size"), None
+            )
+            self.assertIsNotNone(sizes, "per-split size records must be emitted")
+            self.assertEqual(sizes["metrics"]["tuning_rows"], 50)
+            # The holdout rows exist but none of them can be scored.
+            self.assertEqual(sizes["metrics"]["tuning_labelled_rows"], 50)
+
+    def test_a_custom_expected_field_still_counts_split_labels(self) -> None:
+        """The one labelled-row oracle has to work on a raw row too.
+
+        The split loop reads `present_rows`, which are raw, so a predicate
+        hard-coded to `row["output"]` would count every answered row as
+        unlabelled under `--expected-field`.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "question": f"question {index} token{index}",
+                    "answer": f"answer {index % 4}",
+                    "split": "tune" if index < 30 else "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(60)
+            ]
+            dataset = _write_jsonl(directory, "custom-fields.jsonl", rows)
+            records = _preflight_records(
+                dataset, "--input-field", "question", "--expected-field", "answer"
+            )
+            sizes = next(r for r in records if r["check"] == "dataset-tuning-size")
+            self.assertEqual(sizes["metrics"]["tuning_rows"], 30)
+            self.assertEqual(sizes["metrics"]["tuning_labelled_rows"], 30)
+
+    def test_a_punctuation_placeholder_is_not_both_labelled_and_empty(self) -> None:
+        """#70: one dataset reported both claims about the same rows."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}" if index % 2 else "-",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "placeholders.jsonl", rows)
+            records = _preflight_records(dataset)
+            statuses = {r["check"]: r["status"] for r in records}
+
+            # A "-" IS a label by the one oracle, so emptiness must not be claimed.
+            self.assertNotEqual(statuses.get("dataset-outputs"), "FAIL")
+            # But the placeholder signal is kept, as its own separate question.
+            placeholders = next(
+                r for r in records if r["check"] == "dataset-output-placeholders"
+            )
+            self.assertEqual(placeholders["metrics"]["placeholder_rows"], 50)
+
+            # #70's second criterion: the card may not print a confident band
+            # over rows whose "answer" is punctuation. The count reaches the
+            # scorer and qualifies the sentence that claims they are labelled -
+            # without reclassifying them, which would move the score for every
+            # dataset using a symbol as a legitimate label.
+            labels = _dataset_subscore(_score(dataset), "labels")
+            self.assertIn("50 of them are placeholders", labels["evidence"])
+            self.assertEqual(labels["value"], 30.0)
+
+    def test_unlabelled_rows_do_not_trip_the_ceiling_risk(self) -> None:
+        """#68: `normalized_text(None)` -> "null" became a dominant value.
+
+        The card docked the same 90 rows twice - once on power, once as a false
+        "one expected output dominates" - and called them both unlabelled and
+        identically-answered.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 5}" if index < 10 else None,
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "mostly-unlabelled.jsonl", rows)
+            statuses = {r["check"]: r["status"] for r in _preflight_records(dataset)}
+            self.assertNotIn("dataset-ceiling-risk", statuses)
+
+    def test_split_labels_exceeding_the_aggregate_are_refused(self) -> None:
+        """#69: the guard checked four split counts and no aggregate.
+
+        100 split labels against 1 aggregate label was accepted and scored 22.0
+        power beside "1/100 rows carry an expected output". The splits are
+        disjoint, so no dataset can be both.
+        """
+        payload = [
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "metrics": {"rows": 100, "labelled_rows": 1},
+            },
+            {"check": "dataset-split", "status": "PASS", "metrics": {}},
+            {
+                "check": "dataset-tuning-size",
+                "status": "PASS",
+                "metrics": {"tuning_rows": 50, "tuning_labelled_rows": 50},
+            },
+            {
+                "check": "dataset-holdout-resolution",
+                "status": "PASS",
+                "metrics": {"holdout_rows": 50, "holdout_labelled_rows": 50},
+            },
+        ]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("more than the 1", process.stderr)
+
+    def test_a_negative_aggregate_count_is_refused(self) -> None:
+        """#69: the same rationale the split guard gives, applied to aggregates."""
+        payload = [
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "metrics": {"rows": 100, "labelled_rows": -5},
+            },
+            {"check": "dataset-split", "status": "PASS", "metrics": {}},
+            {
+                "check": "dataset-tuning-size",
+                "status": "PASS",
+                "metrics": {"tuning_rows": 50, "tuning_labelled_rows": 25},
+            },
+            {
+                "check": "dataset-holdout-resolution",
+                "status": "PASS",
+                "metrics": {"holdout_rows": 50, "holdout_labelled_rows": 25},
+            },
+        ]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("labelled_rows", process.stderr)
 
 
 if __name__ == "__main__":
