@@ -638,6 +638,82 @@ def enforce_project_permissions(project: Path, allowed_writes: list[str]) -> Non
         run_dir.chmod(0o755)
 
 
+def stub_agent_no_anchor(
+    contract: dict[str, Any], project: Path, audit_log: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """The quality-based twin of {@link zero_anchor} (#61).
+
+    `zero-anchor` proves the gate fires on an EMPTY project, which is the case
+    that always worked. This one proves it fires when a file the inventory would
+    call "an agent" exists but performs no identifiable task - the shape that
+    could walk past a presence-based reading of the trigger, invent a task, and
+    carry it to a spend approval.
+
+    Asserted here rather than in prose: the guide must state the quality rule at
+    the gate itself, because SKILL.md loads `component-creation.md` only after
+    this gate has been evaluated.
+    """
+    text = SKILL.read_text()
+    # Whitespace-normalised before matching: the guide hard-wraps its prose, so a
+    # phrase that reads as one line in the document can carry a newline in the
+    # middle. Matching the raw text makes this gate fail on a reflow rather than
+    # on a meaning change.
+    trigger = " ".join(
+        text.split("#### Zero-anchor intent gate", 1)[1]
+        .split("### 2. Show readiness once", 1)[0]
+        .split()
+    )
+    for phrase in (
+        "that performs an identifiable task",
+        "not by whether the file exists",
+        "counts as **missing** for anchoring intent",
+    ):
+        if phrase not in trigger:
+            raise ContractError(
+                "the zero-anchor trigger must be quality-based in its own words; "
+                f"missing: {phrase!r}"
+            )
+
+    stub = project / "agent.py"
+    if not stub.exists():
+        raise ContractError("stub-agent-no-anchor seed must carry an agent.py")
+
+    expected = contract["assertions"]
+    events: list[dict[str, Any]] = []
+
+    preflight = opening_preflight_command(project, audit_log)
+    opening = score_command(project, audit_log, preflight["stdout"])
+    score = opening["parsed"]
+    if (
+        score["overall"] != expected["opening_score"]
+        or score["band"] != expected["opening_band"]
+    ):
+        raise ContractError("stub-agent opening score violated its declaration")
+    if not set(expected["opening_caps"]) <= set(cap_conditions(score)):
+        raise ContractError("stub-agent opening score lost its required caps")
+    append_event(events, "opening_readiness_score", **score_event_fields(score))
+    append_event(events, "record_deferred", reason="task intent not anchored")
+
+    # The stub is reported as an INVALID agent, not a real one: it exists, so it
+    # is not "missing" to the user, and it anchors nothing, so it cannot be an
+    # anchor. Both facts have to survive into the board.
+    append_event(
+        events,
+        "readiness",
+        real={"agent": "invalid", "dataset": "missing", "evaluation": "missing"},
+        markers={"agent": "❗", "dataset": "❗", "evaluation": "❗"},
+    )
+    append_event(events, "walkthrough_scope", synthetic_is_production_evidence=False)
+    append_event(
+        events,
+        "question",
+        category="task_intent",
+        text="What should the walkthrough agent do?",
+    )
+    append_event(events, "stop", reason=contract["expected_stop_reason"])
+    return events, [preflight, opening], contract["expected_stop_reason"]
+
+
 def zero_anchor(
     contract: dict[str, Any], project: Path, audit_log: Path
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -1196,6 +1272,10 @@ def run_once(
 
     if contract["id"] == "zero-anchor":
         events, commands, stop_reason = zero_anchor(contract, project, audit_log)
+    elif contract["id"] == "stub-agent-no-anchor":
+        events, commands, stop_reason = stub_agent_no_anchor(
+            contract, project, audit_log
+        )
     elif contract["id"] == "partial-missing-dataset":
         events, commands, stop_reason = partial_missing_dataset(
             contract, project, audit_log, scenario_dir
