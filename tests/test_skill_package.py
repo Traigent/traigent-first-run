@@ -772,6 +772,8 @@ class SkillPackageTests(unittest.TestCase):
             "ENHANCED_SPACE",
             "AGENT_TYPE",
             "WIRED_KNOBS",
+            "PROBE_INPUTS",
+            "PROBE_VERDICTS",
             "WIRED_OUTSIDE_THE_REQUEST",
             "UNPROVEN_WIRED_KNOBS",
         }
@@ -782,7 +784,7 @@ class SkillPackageTests(unittest.TestCase):
                 "config_space_document",
                 "build_prompt",
                 "build_request",
-                "demonstrably_wired",
+                "probe_wiring",
             }:
                 selected_nodes.append(node)
             elif isinstance(node, ast.Assert):
@@ -1998,17 +2000,8 @@ class SkillPackageTests(unittest.TestCase):
             "fence's wiring assert guards code the agent no longer calls",
         )
 
-    def test_the_wiring_assert_catches_a_knob_the_prompt_builder_ignores(self) -> None:
-        """Regression-test the guard itself, not merely its presence.
-
-        `demonstrably_wired` is only worth its assert if it actually goes red.
-        This re-executes the fence with `build_prompt` swapped for one that
-        ignores `style` - exactly the `style="direct"` no-op the wiring test
-        above was written against - and requires `prompt_style` to drop out of
-        the proven list, leaving the fence's own assert with something to fail
-        on. It also pins the escape list empty: seeding it with a name would
-        silently re-admit the unverified claim the probe exists to expose.
-        """
+    def _wiring_probe_namespace(self, **overrides) -> dict:
+        """Execute the fence's wiring probe with pieces of it swapped out."""
         code = re.findall(
             r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
         )[0]
@@ -2018,6 +2011,7 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
             "WIRED_KNOBS",
+            "PROBE_INPUTS",
             "WIRED_OUTSIDE_THE_REQUEST",
         }
         selected = [
@@ -2025,7 +2019,7 @@ class SkillPackageTests(unittest.TestCase):
             for node in module.body
             if (
                 isinstance(node, ast.FunctionDef)
-                and node.name in {"build_prompt", "build_request", "demonstrably_wired"}
+                and node.name in {"build_prompt", "build_request", "probe_wiring"}
             )
             or (
                 isinstance(node, ast.Assign)
@@ -2040,64 +2034,243 @@ class SkillPackageTests(unittest.TestCase):
                 and node.target.id in wanted_assignments
             )
         ]
+        namespace = {
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                "<sdk-wiring-probe>",
+                "exec",
+            ),
+            namespace,
+        )
+        namespace.update(overrides)
+        return namespace
 
-        def namespace_for(build_prompt=None) -> dict:
-            namespace = {
-                "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
-                "SELECTED_CURRENT_MODEL": "provider/current",
-                "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
-                "SELECTED_STRONG_MODEL": "provider/strong",
-                "STRONG_REASONING_EFFORT": None,
-            }
-            exec(
-                compile(
-                    ast.fix_missing_locations(
-                        ast.Module(body=selected, type_ignores=[])
-                    ),
-                    "<sdk-wiring-probe>",
-                    "exec",
-                ),
-                namespace,
-            )
-            if build_prompt is not None:
-                namespace["build_prompt"] = build_prompt
-            return namespace
+    def test_the_wiring_assert_catches_a_knob_the_prompt_builder_ignores(self) -> None:
+        """Regression-test the guard itself, not merely its presence.
 
-        honest = namespace_for()
+        `probe_wiring` is only worth its assert if it actually goes red. This
+        re-executes the fence with `build_prompt` swapped for one that ignores
+        `style` - exactly the `style="direct"` no-op the wiring test above was
+        written against - and requires `prompt_style` to lose its `visible`
+        verdict, leaving the fence's own assert with something to fail on. It
+        also pins the escape mapping empty: seeding it with a name would
+        silently re-admit the unverified claim the probe exists to expose.
+        """
+        honest = self._wiring_probe_namespace()
         self.assertEqual(
             honest["WIRED_OUTSIDE_THE_REQUEST"],
-            [],
+            {},
             "the shipped walkthrough wires every knob into the request, so its "
-            "escape list must stay empty",
+            "escape mapping must stay empty",
         )
-        proven = honest["demonstrably_wired"](
+        verdicts = honest["probe_wiring"](
             honest["ENHANCED_SPACE"], honest["BASELINE_CONFIG"]
         )
         self.assertEqual(
-            sorted(proven),
+            sorted(verdicts),
             sorted(honest["WIRED_KNOBS"]),
+            "the probe must return a verdict for every wired knob",
+        )
+        self.assertEqual(
+            {knob for knob, verdict in verdicts.items() if verdict == "visible"},
+            set(honest["WIRED_KNOBS"]),
             "every knob the shipped template calls wired must be provable "
             "from build_request alone",
         )
 
-        no_op = namespace_for(
+        no_op = self._wiring_probe_namespace(
             build_prompt=lambda message, *, style, self_check: message
             + ("\n\ncheck" if self_check else "")
         )
-        proven_with_no_op = no_op["demonstrably_wired"](
+        with_no_op = no_op["probe_wiring"](
             no_op["ENHANCED_SPACE"], no_op["BASELINE_CONFIG"]
         )
-        self.assertNotIn(
-            "prompt_style",
-            proven_with_no_op,
+        self.assertEqual(
+            with_no_op["prompt_style"],
+            "invisible",
             "a prompt builder that ignores `style` makes prompt_style a no-op; "
-            "demonstrably_wired must stop vouching for it",
+            "probe_wiring must stop vouching for it",
         )
-        self.assertIn(
-            "self_check",
-            proven_with_no_op,
+        self.assertEqual(
+            with_no_op["self_check"],
+            "visible",
             "the probe must still credit the knobs that do reach the request",
         )
+
+    def test_the_probe_reads_every_model_not_only_the_base_configs(self) -> None:
+        """A knob one model consumes and another drops is dead for half the space.
+
+        The probe used to build every request from `BASELINE_CONFIG`, so a knob
+        the base model consumes came back proven while the *other* models in the
+        ladder produced identical requests for every value of it. The search
+        then spends trials on a dimension that cannot move two thirds of its
+        own space, and the config-space document claims it as a real one.
+        """
+        namespace = self._wiring_probe_namespace()
+        real_build_request = namespace["build_request"]
+
+        def model_dependent(message: str, config: dict) -> dict:
+            request = real_build_request(message, config)
+            if config["model"] != namespace["BASELINE_CONFIG"]["model"]:
+                # This model ignores self_check: same request for either value.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        namespace["build_request"] = model_dependent
+        verdicts = namespace["probe_wiring"](
+            namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            verdicts["self_check"],
+            "partial",
+            "a knob only the base model consumes must not read as proven",
+        )
+        self.assertEqual(
+            verdicts["temperature"],
+            "visible",
+            "a knob every model consumes must still be proven",
+        )
+
+    def test_the_probe_reads_more_than_one_input(self) -> None:
+        """A knob that acts on real input only must not block a paying run.
+
+        The probe tested the single literal `"probe"`, so a knob keyed on the
+        shape of the input - a `sql_mode` applied when the message starts
+        `SQL:` - produced identical requests, landed in UNPROVEN_WIRED_KNOBS,
+        and failed the module import. That is a legitimate run blocked at
+        generation time, so the probe reads several representative inputs and
+        the template says to replace them with real ones.
+        """
+        namespace = self._wiring_probe_namespace()
+        self.assertGreater(
+            len(namespace["PROBE_INPUTS"]),
+            1,
+            "one probe string cannot exercise an input-dependent knob",
+        )
+        real_build_request = namespace["build_request"]
+        trigger = namespace["PROBE_INPUTS"][-1]
+
+        def input_dependent(message: str, config: dict) -> dict:
+            request = real_build_request(message, config)
+            if message == trigger and config["self_check"]:
+                request["messages"] = [{"role": "user", "content": "rewritten"}]
+            else:
+                # Every other input ignores self_check entirely.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        namespace["build_request"] = input_dependent
+        verdicts = namespace["probe_wiring"](
+            namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            verdicts["self_check"],
+            "visible",
+            "a knob that acts only on one of the probed inputs is wired, and "
+            "refusing to load is a false refusal that blocks a paid run",
+        )
+
+    def test_the_escape_list_cannot_be_a_blanket_waiver(self) -> None:
+        """`WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silenced the guard.
+
+        As a bare list of names, one assignment excused every knob at once
+        while still passing every check. As a mapping of knob to where it acts,
+        each entry is a reviewable claim: the list spelling no longer type-
+        checks, and an entry naming a knob that is not wired, or carrying an
+        empty description, fails the fence's own assert.
+        """
+        text = SDK_EXECUTION.read_text()
+        self.assertIn("WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}", text)
+        namespace = self._wiring_probe_namespace()
+        guard = next(
+            node
+            for node in ast.parse(
+                re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+            ).body
+            if isinstance(node, ast.Assert)
+            and "WIRED_OUTSIDE_THE_REQUEST" in ast.dump(node.test)
+        )
+        block = ast.fix_missing_locations(ast.Module(body=[guard], type_ignores=[]))
+
+        for waiver, why in (
+            (list(namespace["WIRED_KNOBS"]), "a bare list is a blanket waiver"),
+            ({"model": ""}, "an empty description records no claim"),
+            ({"not_a_knob": "somewhere"}, "an entry must name a wired knob"),
+        ):
+            with self.subTest(waiver=waiver):
+                scope = dict(namespace, WIRED_OUTSIDE_THE_REQUEST=waiver)
+                with self.assertRaises((AssertionError, AttributeError), msg=why):
+                    exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
+
+        scope = dict(
+            namespace,
+            WIRED_OUTSIDE_THE_REQUEST={"model": "chosen inside the retrieval step"},
+        )
+        exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
+
+    def test_the_documented_schema_table_is_read_from_the_declaration(self) -> None:
+        """The table and the validator must not be two hand-written artifacts.
+
+        They were, and they drifted: every round of fixes closed a field in the
+        code and left the prose describing the shape that had just stopped
+        being accepted. The table is now welded to `CONFIG_SPACE_FIELDS` - same
+        fields, same order, same declared type and requirement - so a field
+        cannot be added, retyped, or removed on one side alone.
+        """
+        text = RUN_SAFETY.read_text()
+        section = text[text.index("### Config-space document") :]
+        table = re.search(
+            r"^\| Field \| Type \| Required \|.*?\n\|[-| ]+\|\n((?:\|.*\n)+)",
+            section,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(table, "the config-space schema table is gone")
+        rows = []
+        for line in table.group(1).strip().splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            rows.append((cells[0].strip("`"), cells[1], cells[2]))
+        self.assertEqual(
+            rows,
+            [
+                (spec.name, spec.type_label, spec.requirement)
+                for spec in READINESS.CONFIG_SPACE_FIELDS
+            ],
+            "the documented schema table no longer matches CONFIG_SPACE_FIELDS",
+        )
+
+    def test_the_documented_schema_refusals_hold_through_the_real_consumer(
+        self,
+    ) -> None:
+        """Prose claims about refusal, checked against the adapter that refuses.
+
+        Each shape below is one the section promises is refused rather than
+        scored around. They are run through the real adapter so the promise
+        cannot outlive the behaviour.
+        """
+        base = {"agent_type": "general", "knobs": {"widget": [1, 50]}}
+        for description, document in (
+            ("a bare scalar knob", {"knobs": {"widget": 5}}),
+            ("an empty candidate list", {"knobs": {"widget": []}}),
+            ("a container candidate", {"knobs": {"widget": [{"a": 1}]}}),
+            ("a non-finite candidate", {"knobs": {"widget": [1, float("inf")]}}),
+            (
+                "a range with no width",
+                dict(base, bounds={"widget": {"low": 3, "high": 3}}),
+            ),
+            ("an inverted range", dict(base, bounds={"widget": {"low": 5, "high": 1}})),
+            ("a phantom wired name", dict(base, wired=["widgets"])),
+            ("a fractional trial budget", dict(base, max_trials=1.5)),
+        ):
+            with self.subTest(shape=description):
+                with self.assertRaises(READINESS.ConfigSpaceInputError):
+                    READINESS.agent_facts_from_config_space(document)
 
     def test_config_space_producer_and_consumer_are_both_instructed(self) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())

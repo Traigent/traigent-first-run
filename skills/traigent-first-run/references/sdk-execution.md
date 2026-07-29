@@ -334,6 +334,16 @@ ENHANCED_SPACE = {
 # so the assert under `demonstrably_wired` below checks it here at load time.
 AGENT_TYPE = "general"
 WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
+# Inputs the wiring probe below re-builds requests over. A knob that acts only
+# on some inputs - a `sql_mode` applied when the message starts "SQL:", say -
+# produces identical requests under a single literal, so probing one string
+# reports a genuinely wired knob as unproven and blocks the run before it
+# starts. Replace these with two or three real inputs from tuning.jsonl,
+# covering the shapes the task actually contains.
+PROBE_INPUTS = [
+    "probe",
+    "Probe: a longer request that states an explicit output constraint.",
+]
 
 
 def configuration_count(space: dict[str, list]) -> int:
@@ -465,41 +475,104 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
     return response.choices[0].message.content or "", cost
 
 
-def demonstrably_wired(space: dict[str, list], base: dict) -> list[str]:
-    """Wired knobs a pure probe can prove actually reach the provider request."""
-    proven = []
-    baseline = build_request("probe", base)
+def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
+    """Classify each wired knob by what a pure request diff can actually prove.
+
+    What this proves and nothing more: **request visibility** - that changing
+    the knob changes the dict `build_request` returns. It does not prove the
+    provider behaves differently, or at all: a provider that silently ignores a
+    parameter it accepts produces two different requests and one behaviour.
+    Only the run itself can show effect; this only rules out the dimension that
+    could not possibly have one.
+
+    It probes every model in the space, not just the base's, because request
+    construction branches on the model - a knob consumed under one model and
+    dropped under another is dead for part of the space, and probing from a
+    single base reports it as proven. It probes several inputs, because a knob
+    that acts only on some inputs is invisible under one literal string.
+
+    Verdicts:
+
+    - `visible`     - under every model in the space, some alternative value
+                      changes the request for some probed input.
+    - `partial`     - it changes the request under some models but never under
+                      others: proven dead for part of the space.
+    - `invisible`   - no model and no probed input ever changes the request.
+                      The probe cannot tell "acts outside request construction"
+                      from "the agent ignores it"; it says so and refuses to
+                      guess, which is what WIRED_OUTSIDE_THE_REQUEST records.
+    - `not-searched`- fewer than two distinct values, so it claims no dimension.
+    """
+    models = list(dict.fromkeys(space.get("model", [base["model"]])))
+    verdicts: dict[str, str] = {}
     for knob in WIRED_KNOBS:
-        for value in space.get(knob, []):
-            if build_request("probe", {**base, knob: value}) != baseline:
-                proven.append(knob)
-                break
-    return proven
+        values = space.get(knob, [])
+        if len(set(map(repr, values))) < 2:
+            verdicts[knob] = "not-searched"
+            continue
+        moved = set()
+        for model in models:
+            model_base = {**base, "model": model}
+            for message in PROBE_INPUTS:
+                baseline = build_request(message, model_base)
+                if any(
+                    build_request(message, {**model_base, knob: value}) != baseline
+                    for value in values
+                ):
+                    moved.add(model)
+                    break
+        if len(moved) == len(models):
+            verdicts[knob] = "visible"
+        elif moved:
+            verdicts[knob] = "partial"
+        else:
+            verdicts[knob] = "invisible"
+    return verdicts
 
 
 # Knobs that genuinely act outside request construction - a RAG retrieval depth,
 # a tool policy, a repair loop - are invisible to the probe above, so they are
-# named here instead. An entry is an explicit, reviewable claim, NOT evidence:
-# nothing verifies it. Add a knob only when you can say where in the agent it
-# acts; if you cannot, it is not a real search dimension - drop it from
-# WIRED_KNOBS rather than parking it here. Empty for this walkthrough: all four
-# of its knobs are visible in the request `build_request` returns.
-WIRED_OUTSIDE_THE_REQUEST: list[str] = []
+# recorded here instead. This is a MAPPING, knob -> where it acts, because a
+# bare list of names was a blanket waiver: `WIRED_OUTSIDE_THE_REQUEST =
+# list(WIRED_KNOBS)` silenced the guard entirely while still passing. An entry
+# is an explicit, reviewable claim, NOT evidence: nothing verifies it, and the
+# load prints it so a reader can challenge it. Add a knob only when you can say
+# where in the agent it acts; if you cannot, it is not a real search dimension -
+# drop it from WIRED_KNOBS rather than parking it here. Empty for this
+# walkthrough: all four of its knobs are visible in the request.
+WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}
 
-UNPROVEN_WIRED_KNOBS = [
-    knob
-    for knob in WIRED_KNOBS
-    if len(set(map(repr, ENHANCED_SPACE.get(knob, [])))) >= 2
-    and knob not in demonstrably_wired(ENHANCED_SPACE, BASELINE_CONFIG)
-    and knob not in WIRED_OUTSIDE_THE_REQUEST
-]
-assert not UNPROVEN_WIRED_KNOBS, (
-    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but changing them "
-    "leaves the provider request identical, so the config-space document would "
-    "claim search dimensions the agent ignores. Wire them, name them in "
-    "WIRED_OUTSIDE_THE_REQUEST if they act outside request construction, or "
-    "remove them from WIRED_KNOBS"
+assert all(
+    knob in WIRED_KNOBS and isinstance(where, str) and where.strip()
+    for knob, where in WIRED_OUTSIDE_THE_REQUEST.items()
+), (
+    "every WIRED_OUTSIDE_THE_REQUEST entry must map a wired knob to a "
+    "non-empty description of where in the agent it acts"
 )
+
+PROBE_VERDICTS = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
+UNPROVEN_WIRED_KNOBS = {
+    knob: verdict
+    for knob, verdict in PROBE_VERDICTS.items()
+    if verdict in {"invisible", "partial"} and knob not in WIRED_OUTSIDE_THE_REQUEST
+}
+assert not UNPROVEN_WIRED_KNOBS, (
+    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but the probe could "
+    "not show them reaching the provider request: 'invisible' means changing "
+    "the knob never changed the request under any model or probed input, and "
+    "'partial' means it changed the request under some models and never under "
+    "others, so it is dead for the rest of the space. The config-space "
+    "document would claim search dimensions the agent cannot move. Wire them, "
+    "add probe inputs that exercise them, record where they act in "
+    "WIRED_OUTSIDE_THE_REQUEST, or remove them from WIRED_KNOBS"
+)
+for _knob, _where in sorted(WIRED_OUTSIDE_THE_REQUEST.items()):
+    # Say it rather than wave it through: an escaped knob is an unproven claim
+    # and the run record should show it as one.
+    print(
+        f"unverified wiring claim: '{_knob}' is declared to act at {_where}; "
+        "the request probe cannot confirm it"
+    )
 
 
 @traigent.optimize(

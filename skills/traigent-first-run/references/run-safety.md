@@ -217,23 +217,39 @@ measured - rather than describing the run's knobs as if the score had seen them.
 legitimately stops before the enhanced search, or whose search raises, emits no document and keeps
 the cap, which is the honest outcome.
 
-These are the only fields the scorer reads; anything else in the file is ignored. A field that is
-present but malformed is refused with a message naming it (exit 2), never scored around - a
-document the scorer cannot read is not a document it may guess at. Refusal turns on the *value*, not
-on how JSON spelled it: an empty list, a `null` and a `0` where an object belongs are malformed, not
-absent, and are refused rather than read as an empty object; conversely any value the documented
-type admits is accepted however it was written, so a document that scores does not become an exit 2
-because a writer emitted `12.0` instead of `12`.
+These are the only fields the scorer reads; anything else in the file is ignored whole, never
+half-read. A field that is present but malformed is refused with a message naming it (exit 2), never
+scored around - a document the scorer cannot read is not a document it may guess at. Refusal turns
+on the *value*, not on how JSON spelled it: an empty list, a `null` and a `0` where an object
+belongs are malformed, not absent, and are refused rather than read as an empty object; conversely
+any value the documented type admits is accepted however it was written, so a document that scores
+does not become an exit 2 because a writer emitted `12.0` instead of `12`.
+
+The table below is not a second description of the schema. `readiness.py` declares the field set,
+each field's type, and the domain of every value inside it once, in `CONFIG_SPACE_FIELDS`, and both
+the validator and this table are read from that declaration - `tests/test_skill_package.py` fails
+when they disagree. So a field is either declared there and validated, or it is not a field.
 
 | Field | Type | Required | What the scorer does with it |
 |---|---|---|---|
-| `knobs` | object: knob name to list of candidate values | one of the two | the preferred spelling; a non-empty `knobs` wins over `configuration_space`. A document declaring neither key says nothing about the space and is refused; `{"knobs": {}}` declares an empty one and scores 0 under the cap |
+| `knobs` | object: knob name to a non-empty list of scalar candidate values | one of the two | the preferred spelling; a non-empty `knobs` wins over `configuration_space`. A document declaring neither key says nothing about the space and is refused; `{"knobs": {}}` declares an empty one and scores 0 under the cap. Every entry's value must be a list, and a knob written as a bare scalar is **refused** - dropping it would shrink the space silently and often *raise* the score. A list with nothing in it is refused for the same reason: a knob with no candidate values is not a narrower space, and scoring it printed a wired-knob count and a combination count the document itself contradicts |
 | `configuration_space` | same shape | accepted alias | read only when `knobs` is absent or empty. Emit `knobs`; never both. Whichever key is present is type-checked, so a malformed alias cannot hide behind a well-formed preferred key |
-| *(entry check)* | - | - | every entry's value must be a list; a knob written as a bare scalar is **refused**, because dropping it would shrink the space silently and often *raise* the score |
 | `agent_type` | `"general"`, `"rag"`, or `"code_gen"` | no | selects the high-impact catalog; absent or empty means `"general"`. An unrecognized non-empty string leaves coverage unmeasured, which drops the pillar's confidence and - because the pillar renormalizes over what it measured - *raises* its score by roughly 9 points. The `agent type not recognized` gap line is what reports it; the number does not. A non-string is refused |
-| `max_trials` | positive integer | no | dampens the knob-count points when the space is far larger than the trial cap. Any integral number is read, however JSON spelled it: `12` and `12.0` are the same budget. A fractional value, zero, a negative, a boolean, or a non-number is refused |
+| `max_trials` | positive integer | no | dampens the knob-count points when the space is far larger than the trial cap. Any integral number is read, however JSON spelled it: `12` and `12.0` are the same budget, and an integer of any size is read as itself. A fractional value, zero, a negative, a boolean, or a non-number is refused |
 | `wired` | list of knob names | no, but always emit it | when non-empty, only these names are scored; omitted or empty means every declared knob counts as wired. Every name must be a knob of the declared space - a misspelled one is **refused**, because it matches nothing, silently shrinks the scored set, and makes the card print a wired-knob count the document contradicts |
-| `bounds` | object: knob name to `{"low": number, "high": number}` | no | per-knob override of the scorer's canonical numeric ranges; an entry missing `low` or `high`, carrying a non-numeric or non-finite edge (`"inf"` or `"nan"`, either of which would collapse a genuinely sweeping knob), or naming a knob absent from the space, is refused. It sets the noise floor, span, and endpoint coverage - it does not add search values. A numeric string (`"5"`) is accepted for either edge |
+| `bounds` | object: knob name to `{"low": number, "high": number}`, low below high | no | per-knob override of the scorer's canonical numeric ranges; an entry missing `low` or `high`, carrying a non-numeric or non-finite edge (`"inf"` or `"nan"`, either of which would collapse a genuinely sweeping knob), naming a knob absent from the space, or declaring a range with no width (`low` above or equal to `high`) is refused. A zero-width range divides the span by zero and zeroes the noise floor, so two nearly-identical values read as a full sweep. It sets the noise floor, span, and endpoint coverage - it does not add search values. A numeric string (`"5"`) is accepted for either edge |
+
+Candidate values are scalars: a string, a number, a boolean, or `null`. The scorer deduplicates,
+compares and counts them, so an object or an array inside a candidate list is refused rather than
+reaching the comparison as an unhashable value, and a non-finite number (`Infinity`, `NaN`) is
+refused rather than scored - a knob is measured against the span its values cover, and an infinite
+or undefined span is not a sweep.
+
+`prompt_policy` and `prompt_style` are two spellings of one search dimension. The scorer collapses
+them onto the canonical `prompt_style` before it counts anything, so either spelling scores
+identically, and reports the dimension under the canonical name. Declaring **both** over different
+candidate lists is refused: that is two names for one dimension with two answers, and scoring it
+counted one dimension twice and multiplied the reported size of the space.
 
 `agent-no-varying-knobs` clears as soon as one wired knob carries two effective values. What counts
 as "effective" depends on whether the knob has a range at all:
@@ -255,14 +271,31 @@ Three honesty rules govern the file:
   claim it **cannot verify**: it reads the document, never the agent code. Naming a knob the
   agent ignores - a config key read into a variable the prompt never uses, say - inflates the agent
   pillar by scoring a dimension the search cannot actually move. A knob that does not influence the
-  agent code is not a real optimization variable. The generated wrapper therefore asserts the claim
-  where the scorer cannot: `demonstrably_wired` re-builds the provider request under each
-  alternative value, and the assert below it fails the load when a wired knob carrying two or more
-  values leaves that request identical. A knob that acts *outside* request construction - a
-  retrieval depth, a tool policy, a repair loop - is invisible to that probe and stays unverified:
-  name it in the wrapper's `WIRED_OUTSIDE_THE_REQUEST` escape list, which records the claim for a
-  reader to challenge rather than proving it. If you cannot say where such a knob acts, drop it
-  from `wired`.
+  agent code is not a real optimization variable. The generated wrapper therefore probes the claim
+  where the scorer cannot: `probe_wiring` re-builds the provider request under each alternative
+  value and returns one verdict per knob.
+
+  State the probe's limits exactly, because they are narrow. It proves **request visibility** -
+  that changing the knob changes the request dict - and never provider *effect*: a provider that
+  accepts a parameter and ignores it yields two different requests and one behaviour. Only the run
+  can show effect; the probe only rules out the dimension that could not have one. It probes every
+  model in the space rather than one base, since request construction branches on the model and a
+  knob consumed under one model and dropped under another is dead for part of the space. It probes
+  several representative inputs rather than one literal string, since a knob that acts only on some
+  inputs (a `sql_mode` applied when the message starts `SQL:`) is invisible under a single probe
+  string - which used to block a legitimately wired run before it started. Replace the wrapper's
+  `PROBE_INPUTS` placeholders with real inputs from the tuning dataset.
+
+  A `partial` verdict - visible under some models, never under others - fails the load: it is a
+  proven dead dimension for part of the space, not an unknown. An `invisible` verdict is the case
+  the probe genuinely cannot decide, because it cannot tell "acts outside request construction"
+  from "the agent ignores it". It says so rather than guessing either way: a knob that acts outside
+  request construction - a retrieval depth, a tool policy, a repair loop - is recorded in the
+  wrapper's `WIRED_OUTSIDE_THE_REQUEST` mapping of knob to *where it acts*, which the load prints as
+  an unverified claim for a reader to challenge rather than proving it. It is a mapping and not a
+  list of names precisely so that each entry states something reviewable; a bare list let
+  `WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silence the guard completely while still passing.
+  If you cannot say where such a knob acts, drop it from `wired`.
 - `bounds` is likewise self-declared and unverified. It changes the noise floor and the span a knob
   is measured against, so a narrow declared range can turn two nearly-identical values into a
   "varying" knob and clear `agent-no-varying-knobs` on bounds alone. Declare the range the knob

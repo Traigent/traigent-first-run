@@ -932,6 +932,297 @@ class AgentScoringTests(unittest.TestCase):
         self.assertNotIn("max_tokens", without.evidence)
 
 
+class ConfigSpaceSchemaTests(unittest.TestCase):
+    """The declaration is the schema, so these test it as one.
+
+    Three review cycles produced nineteen findings against this validator and
+    every one was the same defect: validation was a sequence of independent
+    per-field checks, so each round closed the field just reported and the next
+    round arrived through the field nobody had written a check for. These tests
+    are deliberately not per-field. They assert the properties that make the
+    next instance impossible rather than merely unlisted: the adapter reads no
+    field the declaration does not name, and every field the declaration does
+    name refuses an unreadable value with the typed error.
+    """
+
+    def test_the_adapter_reads_no_document_key_outside_the_declaration(self) -> None:
+        """A field is declared and validated, or it is not a field.
+
+        This is the property the per-field checks never had. Reading a key
+        directly - `document.get("wired")` - is how a field acquired a
+        behaviour without acquiring a validator, so the adapter is not allowed
+        to name one.
+        """
+        tree = ast.parse(SCRIPT.read_text())
+        adapter = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "agent_facts_from_config_space"
+        )
+        read_keys = set()
+        for node in ast.walk(adapter):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "document"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                read_keys.add(node.args[0].value)
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "document"
+                and isinstance(node.slice, ast.Constant)
+            ):
+                read_keys.add(node.slice.value)
+        self.assertEqual(
+            read_keys,
+            set(),
+            "the adapter must reach every field through CONFIG_SPACE_FIELDS; a "
+            "literal key here is a field with a behaviour and no validator",
+        )
+
+    def test_every_declared_field_refuses_an_unreadable_value_by_name(self) -> None:
+        """No field can be declared without also being validated."""
+        self.assertTrue(MODULE.CONFIG_SPACE_FIELDS)
+        for spec in MODULE.CONFIG_SPACE_FIELDS:
+            with self.subTest(field=spec.name):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    spec.read(spec.name, object())
+                self.assertIn(spec.name, str(raised.exception))
+
+    def test_a_key_the_declaration_does_not_name_is_ignored_whole(self) -> None:
+        """The documented behaviour for an unknown key: ignored, not half-read."""
+        facts = MODULE.agent_facts_from_config_space(
+            {
+                "knobs": {"temperature": [0.0, 1.0]},
+                "wired": ["temperature"],
+                "notes": {"anything": [object]},
+                "seed_policy": "whatever",
+            }
+        )
+        self.assertEqual(facts.knobs, {"temperature": [0.0, 1.0]})
+
+    def test_candidate_values_are_scalars_not_containers(self) -> None:
+        """A nested value crashed where the schema promised a named refusal.
+
+        `{"model": [{"a": 1}, {"b": 2}]}` and `[["a"], ["b"]]` are documents the
+        documented type admitted - the entry is a list of candidate values -
+        and both reached `dict.fromkeys(values)` as unhashable keys, exiting 1
+        with a bare `TypeError` instead of the exit-2 refusal every other
+        malformed shape gets.
+        """
+        for candidates in ([{"a": 1}, {"b": 2}], [["a"], ["b"]], [{"a": 1}, "b"]):
+            with self.subTest(candidates=candidates):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        {"knobs": {"model": candidates}, "wired": ["model"]}
+                    )
+                self.assertIn("knobs['model']", str(raised.exception))
+        # the scalars stay legal, including null and a large integer
+        facts = MODULE.agent_facts_from_config_space(
+            {"knobs": {"stop": [None, "\n", 1, 1.5, True, 10**400]}}
+        )
+        self.assertEqual(facts.knobs["stop"], [None, "\n", 1, 1.5, True, 10**400])
+
+    def test_non_finite_candidates_are_refused_not_scored(self) -> None:
+        """`[0.0, Infinity]` scored 72 and cleared every cap; `[nan, nan]` 59.
+
+        Neither is a set of runs. A knob is scored against the span its values
+        cover, so an infinite span makes the noise floor infinite and a NaN
+        span makes every comparison false - both of which the scorer reported
+        as a confident number over a sweep that cannot exist.
+        """
+        for values in (
+            [0.0, float("inf")],
+            [float("nan"), float("nan")],
+            [0.0, float("-inf")],
+        ):
+            with self.subTest(values=values):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        {
+                            "agent_type": "general",
+                            "knobs": {"temperature": values},
+                            "wired": ["temperature"],
+                        }
+                    )
+                self.assertIn("temperature", str(raised.exception))
+
+    def test_a_knob_with_no_candidates_is_refused_not_counted(self) -> None:
+        """Both numbers in the evidence line were false.
+
+        `{"model": []}` scored the agent pillar 8 under
+        `0 of 1 wired knobs actually vary; 1 combinations`: the knob has no
+        values, and a space containing it has no configurations at all.
+        """
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {"agent_type": "general", "knobs": {"model": []}, "wired": ["model"]}
+            )
+        self.assertIn("knobs['model']", str(raised.exception))
+        # an empty *space* still means "no knobs declared" and still scores
+        self.assertEqual(MODULE.agent_facts_from_config_space({"knobs": {}}).knobs, {})
+
+    def test_bounds_are_validated_as_a_pair_not_only_edge_by_edge(self) -> None:
+        """Two finite edges can still be no range.
+
+        Each edge was checked alone, so `{"low": 5, "high": 1}` scored 32 with
+        every span negative, and `{"low": 3, "high": 3}` scored 32 *and* cleared
+        `agent-no-varying-knobs` by zeroing the noise floor - two values a hair
+        apart read as a full sweep of a range that admits one value.
+        """
+        sweeping = {
+            "agent_type": "general",
+            "knobs": {"widget": [1, 50]},
+            "wired": ["widget"],
+        }
+        for edges in (
+            {"low": 5, "high": 1},
+            {"low": 3, "high": 3},
+            {"low": 1.0, "high": 1.0},
+        ):
+            with self.subTest(edges=edges):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        dict(sweeping, bounds={"widget": edges})
+                    )
+                self.assertIn("bounds['widget']", str(raised.exception))
+        # a range with width still scores: the pair check must refuse only the
+        # ranges that have none
+        facts = MODULE.agent_facts_from_config_space(
+            dict(sweeping, bounds={"widget": {"low": 1, "high": 50}})
+        )
+        self.assertEqual(facts.bounds, {"widget": {"low": 1.0, "high": 50.0}})
+        self.assertEqual(MODULE.score_agent(facts)[0].score, 51)
+        self.assertEqual(
+            MODULE.score_agent(MODULE.agent_facts_from_config_space(sweeping))[0].score,
+            32,
+        )
+
+    def test_a_large_integer_trial_budget_scores_like_any_other(self) -> None:
+        """`10**309` is a positive JSON integer, and it exited 1.
+
+        The guard read it through `float(max_trials).is_integer()`, which
+        raises OverflowError - so a document the parent scored became a
+        traceback, which is the failure mode the guard was added to remove.
+        `space_size / max_trials` had the same defect from the other side.
+        """
+        document = {
+            "agent_type": "general",
+            "knobs": {"widget": [1, 50]},
+            "wired": ["widget"],
+        }
+        huge = MODULE.agent_facts_from_config_space(dict(document, max_trials=10**309))
+        self.assertEqual(huge.max_trials, 10**309)
+        self.assertEqual(
+            MODULE.score_agent(huge)[0].score,
+            MODULE.score_agent(MODULE.agent_facts_from_config_space(document))[0].score,
+        )
+        # and from the other side: a space too large to divide by anything
+        crowded = MODULE.agent_facts_from_config_space(
+            {"knobs": {f"k{index}": [1, 2] for index in range(1330)}, "max_trials": 1}
+        )
+        pillar, _, _ = MODULE.score_agent(crowded)
+        self.assertGreater(pillar.score, 0)
+
+    def test_one_dimension_earns_one_dimension_of_credit(self) -> None:
+        """The alias was normalized inside coverage, after everything counted.
+
+        Knob-count, variation and the combination count had already run, so
+        declaring `prompt_style` and `prompt_policy` over the same values
+        scored higher than declaring either alone, claimed one more varying
+        knob than the space has, and multiplied the reported combinations by
+        the alias's own value count.
+        """
+        knobs = {
+            "model": ["a", "b"],
+            "temperature": [0.0, 0.6],
+            "self_check": [False, True],
+        }
+        values = ["direct", "structured", "criteria_first"]
+
+        def score(space: dict) -> tuple:
+            pillar, _, _ = MODULE.score_agent(
+                MODULE.agent_facts_from_config_space(
+                    {
+                        "agent_type": "general",
+                        "knobs": space,
+                        "wired": sorted(space),
+                    }
+                )
+            )
+            count = next(s for s in pillar.subscores if s.name == "knob-count")
+            return pillar.score, count.evidence
+
+        style = score(dict(knobs, prompt_style=values))
+        policy = score(dict(knobs, prompt_policy=values))
+        both = score(dict(knobs, prompt_style=values, prompt_policy=values))
+        self.assertEqual(style, policy, "either spelling must score identically")
+        self.assertEqual(
+            both,
+            style,
+            "both spellings name one dimension, so declaring both must not "
+            "add a knob, add variation credit, or multiply the space size",
+        )
+        self.assertIn("4 of 4 wired knobs actually vary; 24 combinations", style[1])
+
+    def test_two_spellings_with_different_values_are_refused(self) -> None:
+        """One dimension cannot have two answers, and picking one silently is
+        exactly the narrowing every other guard here exists to stop."""
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": {
+                        "prompt_style": ["direct", "structured"],
+                        "prompt_policy": ["direct", "criteria_first"],
+                    }
+                }
+            )
+        self.assertIn("prompt_policy", str(raised.exception))
+        self.assertIn("prompt_style", str(raised.exception))
+
+    def test_the_combination_count_uses_the_same_values_the_card_counts(
+        self,
+    ) -> None:
+        """`[1, 1.0]` is one value everywhere else and was two combinations.
+
+        The count was taken over `repr`, so the same sentence reported a knob
+        that does not vary beside a space with two configurations in it.
+        """
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 1.0]}})
+        )
+        count = next(s for s in pillar.subscores if s.name == "knob-count")
+        self.assertEqual(
+            count.evidence, "0 of 1 wired knobs actually vary; 1 combinations"
+        )
+        self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
+
+
+class DocumentedSchemaTests(unittest.TestCase):
+    def test_the_walkthrough_document_still_scores_and_clears_the_cap(self) -> None:
+        """The pin the alias change could have moved, measured rather than assumed.
+
+        The shipped space declares only `prompt_style`, so collapsing the alias
+        leaves its four dimensions and 54 combinations untouched and the 90
+        stands.
+        """
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
+        )
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 90)
+        count = next(s for s in pillar.subscores if s.name == "knob-count")
+        self.assertEqual(
+            count.evidence, "4 of 4 wired knobs actually vary; 54 combinations"
+        )
+
+
 class ColorAndRenderingTests(unittest.TestCase):
     def test_piped_output_has_no_ansi(self) -> None:
         self.assertFalse(
