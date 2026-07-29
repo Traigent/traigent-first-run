@@ -1373,6 +1373,130 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_first_time_access_path_is_single_and_ordered(self) -> None:
+        """There is exactly one way a first-time user reaches the portal.
+
+        The account is created by redeeming the single-use access link that
+        arrives in the second Traigent email. Sending a user with no account
+        straight to the portal's registration page strands them: registration
+        requires that credential, so the page rejects them. The funnel stages
+        also have to appear in the order the user meets them, or the guide
+        reads as though the key can be collected before the account exists.
+        """
+        text = RUN_SAFETY.read_text()
+        pre_gate = text.split("Use this gate order:", 1)[0]
+        normalized = " ".join(pre_gate.casefold().split())
+
+        ordered_funnel_phrases = (
+            "six-digit confirmation code",
+            "single-use access link",
+            "completes portal registration",
+            "issues a full-access api key",
+        )
+        for phrase in (
+            *ordered_funnel_phrases,
+            "second email",
+            "valid for 10 days",
+            "already confirmed",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+        positions = [normalized.index(phrase) for phrase in ordered_funnel_phrases]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_account_state_is_established_before_a_destination_is_named(self) -> None:
+        """Receiving the access email and registering are separate acts.
+
+        A user who read the second email and stopped has a valid access code
+        and no account, and is the one person the registration page exists for
+        - sending them to collect a key strands them just as surely as sending
+        a user with no code to register. Registering is likewise not the same
+        as holding a key: the key is shown once and cannot be read back, so a
+        user who did not save it needs the key page, not the register page.
+        The guide has to establish which state the user is in before it names
+        a destination.
+        """
+        normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "do not assume the user walked the whole path",
+            "registering is not the same as holding a key",
+            "shown once and cannot be read back",
+            "https://portal.traigent.ai/management/api-keys",
+            "has the access code but never registered",
+            "https://portal.traigent.ai/register",
+            "has not started",
+            "it is the code, not the url, that gets a user in",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_emailed_code_and_link_are_handled_as_credentials(self) -> None:
+        """The code and the link are bearer credentials, not navigation.
+
+        The link authorizes creating the account, so pasting it into chat hands
+        that authority to the transcript. Neither it nor the six-digit code is a
+        `uk_`-shaped secret, so the existing "never paste or print secrets" rule
+        does not visibly cover them and an assistant can ask for them in good
+        faith. The guide has to name them.
+        """
+        normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "the confirmation code and the access link are credentials",
+            "never ask the user to paste either one into chat",
+            "never repeat one back",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_api_key_authenticates_but_never_grants_portal_access(self) -> None:
+        """An expired access period refuses a run that a valid key authenticates.
+
+        The failure looks like the read-only-key failure - the run is refused
+        after the money is spent - but the remedy is the opposite. Re-registering
+        or minting a second key cannot restore access, and swapping to another
+        address to collect a second access period is exactly what the one-period
+        rule exists to prevent, so the guide has to name the distinction.
+        """
+        normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "portal access period",
+            "10 days from the moment the user registers",
+            "the key authenticates the run",
+            "does not by itself grant portal access",
+            "stop and report it",
+            "never re-register",
+            "never create another key",
+            "never switch to a different email address",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_retired_lead_funnel_vocabulary_is_absent(self) -> None:
+        """`lead_token` and the two-path framing are gone, not renamed.
+
+        A single-use access code carries the registration authorization, so
+        there is no second bearer credential and no cold-start branch beside
+        it. These phrases described the retired model; if one reappears the
+        guide has drifted back to teaching a path that no longer exists.
+        """
+        combined = "\n".join(
+            path.read_text()
+            for path in [SKILL, *sorted((SKILL_ROOT / "references").glob("*.md"))]
+        ).casefold()
+        for phrase in (
+            "self-register",
+            "cold start",
+            "cold-start",
+            "no special expiry",
+            "lead funnel",
+            "lead-funnel",
+            "lead_token",
+            "lead path",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, combined)
+
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
         """Verified against installed traigent 0.25.0.
 

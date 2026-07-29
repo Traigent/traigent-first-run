@@ -66,7 +66,8 @@ Ask before any private content leaves the machine, even when the provider key al
 
 At the secret-entry gate, show only the URL needed for the selected service:
 
-- Traigent registration: `https://portal.traigent.ai/register`
+- Traigent registration, only once the user already has their access code:
+  `https://portal.traigent.ai/register`
 - Traigent API keys: `https://portal.traigent.ai/management/api-keys`
 - OpenRouter keys: `https://openrouter.ai/keys`
 - OpenAI keys: `https://platform.openai.com/api-keys`
@@ -75,12 +76,66 @@ At the secret-entry gate, show only the URL needed for the selected service:
 These account/key links are necessary actions, not educational detours. Do not show every provider
 link; show only the selected provider and Traigent when each key becomes necessary.
 
+A first-time user reaches that key page one way. They start at the Traigent site and submit their
+email address, and Traigent sends a six-digit confirmation code that proves the mailbox and expires
+within minutes. Once they enter it, a second email arrives carrying a single-use access link, valid
+for 10 days, that authorizes one portal registration. When the user completes portal registration
+the link is spent, the portal issues a full-access API key on the page it lands them on, and the
+account's portal access period starts. Their address is already confirmed by then, so registration
+does not ask for a second confirmation.
+
+Do not assume the user walked the whole path. Getting the second email and registering are separate
+acts, and many people read the email and stop. Establish where they actually are before naming a
+destination:
+
+- **Already registered, key in hand** - they only need to paste it; nothing else is required.
+- **Already registered, no key in hand** - registering is not the same as holding a key. A
+  full-access key is issued on the page registration lands on, but it is shown once and cannot be
+  read back afterwards, so anyone who navigated away or did not save it makes a fresh one at
+  `https://portal.traigent.ai/management/api-keys`. Say the write-scope rule below at that moment,
+  because this is the case it governs.
+- **Has the access code but never registered** - send them to
+  `https://portal.traigent.ai/register` as a clickable link and tell them to register with the
+  access code from that second email. This is the case the page exists for.
+- **Has not started, or the code is older than 10 days** - they begin at the Traigent site and
+  request a fresh code; an expired one cannot be revived.
+
+Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
+user in. Never hand the registration address to someone who does not have one yet - that page will
+refuse them, and the fix is to start at the Traigent site, not to retry the link.
+
+The confirmation code and the access link are credentials, not navigation. The code proves the
+mailbox and the link authorizes creating an account, so never ask the user to paste either one into
+chat, never write either into a file or a command, and never repeat one back. Both stay between the
+user's mailbox and their browser; the only thing that reaches this machine is the API key, and it
+goes straight into `.env`.
+
+The portal access period lasts 10 days from the moment the user registers, and it is what authorizes
+product use. The API key is a separate thing: the key authenticates the run and does not by itself
+grant portal access, so a perfectly valid key is still refused once the period is over. The account,
+its data, and its keys all survive that expiry; runs resume when the user buys a plan on the same
+account.
+
+That is a second key-shaped failure whose remedy is the opposite of the read-only one below. If a
+connected run is refused for account or plan reasons rather than authentication, stop and report it
+with the refusal the service actually returned. Never re-register, never create another key, and
+never switch to a different email address to collect a second access period - none of those restore
+access, and the last one is what the one-period-per-account rule exists to prevent. Only a purchase
+on the existing account brings the run back.
+
+Artifact-2 template A: once portal registration has completed, you may show one short note - "Your
+Traigent address was already confirmed, so there is no second confirmation email; your account is
+active, a full-access API key has been issued for you, and your 10-day portal access period has
+started."
+
 The Traigent key must be able to write experiments, not only read them. A connected run records the
 baseline and the optimization, so a read-only key is rejected at submit time and the run silently
-drops to local-only tracking - real money is spent and nothing appears in the portal. A manually
-created key defaults to read-only, so grant it full access rather than accepting the default. Say
-this at the moment the user creates the key, not afterwards: the failure is cheap to prevent and
-expensive to discover, because by the time it shows up the spend has already happened.
+drops to local-only tracking - real money is spent and nothing appears in the portal. The key the
+portal issues at registration already has full access; the rule that follows governs the other
+origin. A manually created key defaults to read-only, so grant it full access rather than accepting
+the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
+to prevent and expensive to discover, because by the time it shows up the spend has already
+happened.
 
 Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
 at the production service, and a stray override silently sends a paid run somewhere the user cannot
