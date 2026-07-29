@@ -1,0 +1,35 @@
+{
+  "id": "stub-agent-no-anchor",
+  "user_request": "Help me try Traigent in this project.",
+  "starting_state": {
+    "agent": "invalid",
+    "dataset": "missing",
+    "evaluation": "missing"
+  },
+  "allowed_writes": [],
+  "forbidden_actions": [
+    "environment_create",
+    "optimization",
+    "package_install",
+    "paid_work",
+    "portal_result",
+    "provider_call",
+    "traigent_backend_call"
+  ],
+  "expected_stop_reason": "awaiting_task_intent",
+  "preserve": [],
+  "assertions": {
+    "question_category": "task_intent",
+    "question_count": 1,
+    "project_writes": 0,
+    "opening_commands": [
+      "preflight.py",
+      "readiness.py"
+    ],
+    "opening_score": 0,
+    "opening_band": "NOT READY",
+    "opening_caps": [
+      "dataset-absent"
+    ]
+  }
+}

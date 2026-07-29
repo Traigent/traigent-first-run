@@ -489,6 +489,26 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
         self.assertIn("is not silently demoted", dataset_text)
 
+    def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
+        """#61: a stub agent satisfied the trigger and anchored nothing.
+
+        The gate is the guide's only defence against inventing a whole
+        agent/dataset/evaluator trio around a task the user never chose, and its
+        binding force must not depend on the assistant having loaded
+        `component-creation.md` first - SKILL.md loads that reference AFTER this
+        gate is evaluated.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "finds no agent *that performs an identifiable task*",
+            "judge that by what the component does, not by whether the file exists",
+            "returns a constant, echoes its input, or is a fixture or placeholder "
+            "counts as **missing** for anchoring intent",
+            "this gate is evaluated before that reference is loaded",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase.casefold(), normalized)
+
     def test_large_dataset_is_bounded_to_a_reproducible_stratified_subset(self) -> None:
         """A first run shows the capability; it does not exhaust the dataset.
 

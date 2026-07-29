@@ -180,8 +180,16 @@ write.
 
 #### Zero-anchor intent gate
 
-When the read-only inventory finds no agent, dataset, evaluation, product documentation, tests,
-fixtures, or other component that anchors task intent, follow this exact order:
+When the read-only inventory finds no agent *that performs an identifiable task*, and no dataset,
+evaluation, product documentation, tests, fixtures, or other component that anchors task intent,
+follow this exact order:
+
+Judge that by what the component does, not by whether the file exists. An agent that returns a
+constant, echoes its input, or is a fixture or placeholder counts as **missing** for anchoring
+intent, however importable it is - the same invalid-component rule as
+`references/component-creation.md`, applied here because this gate is evaluated before that
+reference is loaded. A stub satisfies a file-presence test and anchors nothing, and the assistant
+that treats it as an anchor invents the task the user was supposed to choose.
 
 The opening readiness gate has already scored the empty project. Keep that result in the
 conversation; recording it is a write and waits for the answer.

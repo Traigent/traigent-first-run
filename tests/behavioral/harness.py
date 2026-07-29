@@ -638,6 +638,69 @@ def enforce_project_permissions(project: Path, allowed_writes: list[str]) -> Non
         run_dir.chmod(0o755)
 
 
+def stub_agent_no_anchor(
+    contract: dict[str, Any], project: Path, audit_log: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """The quality-based twin of {@link zero_anchor} (#61).
+
+    `zero-anchor` proves the gate fires on an EMPTY project, which is the case
+    that always worked. This one proves it fires when a file the inventory would
+    call "an agent" exists but performs no identifiable task - the shape that
+    could walk past a presence-based reading of the trigger, invent a task, and
+    carry it to a spend approval.
+
+    Why the wording matters at all - SKILL.md loads `component-creation.md` only
+    after this gate is evaluated, so the quality rule has to be stated at the gate
+    itself - is locked in `tests/test_skill_package.py`. This driver proves the
+    consequence: that the gate actually fires on the shape that could slip past it.
+    """
+    # Deliberately asserts no guide WORDING here. The wording lock for this gate
+    # lives in `tests/test_skill_package.py`, alongside every other phrase lock,
+    # and its four phrases are a superset of the three this driver used to check.
+    # Keeping a copy cost a second edit site for one intent - and it produced a
+    # CI-only red that had nothing to do with behaviour, because it matched raw
+    # text against prose the guide hard-wraps. This layer proves the RUN: the gate
+    # fires, one question is asked, nothing is written. Do not re-add prose checks.
+    stub = project / "agent.py"
+    if not stub.exists():
+        raise ContractError("stub-agent-no-anchor seed must carry an agent.py")
+
+    expected = contract["assertions"]
+    events: list[dict[str, Any]] = []
+
+    preflight = opening_preflight_command(project, audit_log)
+    opening = score_command(project, audit_log, preflight["stdout"])
+    score = opening["parsed"]
+    if (
+        score["overall"] != expected["opening_score"]
+        or score["band"] != expected["opening_band"]
+    ):
+        raise ContractError("stub-agent opening score violated its declaration")
+    if not set(expected["opening_caps"]) <= set(cap_conditions(score)):
+        raise ContractError("stub-agent opening score lost its required caps")
+    append_event(events, "opening_readiness_score", **score_event_fields(score))
+    append_event(events, "record_deferred", reason="task intent not anchored")
+
+    # The stub is reported as an INVALID agent, not a real one: it exists, so it
+    # is not "missing" to the user, and it anchors nothing, so it cannot be an
+    # anchor. Both facts have to survive into the board.
+    append_event(
+        events,
+        "readiness",
+        real={"agent": "invalid", "dataset": "missing", "evaluation": "missing"},
+        markers={"agent": "❗", "dataset": "❗", "evaluation": "❗"},
+    )
+    append_event(events, "walkthrough_scope", synthetic_is_production_evidence=False)
+    append_event(
+        events,
+        "question",
+        category="task_intent",
+        text="What should the walkthrough agent do?",
+    )
+    append_event(events, "stop", reason=contract["expected_stop_reason"])
+    return events, [preflight, opening], contract["expected_stop_reason"]
+
+
 def zero_anchor(
     contract: dict[str, Any], project: Path, audit_log: Path
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -1196,6 +1259,10 @@ def run_once(
 
     if contract["id"] == "zero-anchor":
         events, commands, stop_reason = zero_anchor(contract, project, audit_log)
+    elif contract["id"] == "stub-agent-no-anchor":
+        events, commands, stop_reason = stub_agent_no_anchor(
+            contract, project, audit_log
+        )
     elif contract["id"] == "partial-missing-dataset":
         events, commands, stop_reason = partial_missing_dataset(
             contract, project, audit_log, scenario_dir
