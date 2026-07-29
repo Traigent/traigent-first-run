@@ -193,7 +193,8 @@ nothing and makes our declarations legible to anyone who has met the standard.
 | 9 | Datasheet field names for provenance | Free legibility | S | docs |
 
 Items 2, 3, 4 and 9 are small and self-contained; 1 and 7 are the two that change the model's
-character and deserve their own before/after comparison against the fixture bank.
+character and deserve their own before/after comparison over a corpus of cases whose expected
+band is known in advance.
 
 ---
 
@@ -217,9 +218,11 @@ character and deserve their own before/after comparison against the fixture bank
 ## 6. Two honest limitations of this report
 
 1. **Nothing here is measured against our own data yet.** Every claim is about method suitability, not
-   about how much a given change would move real scores. Items 1 and 7 in particular need a before/
-   after run over the 25-case fixture bank in `agents-skills` before they land — the bank exists for
-   exactly this, and it currently has no mixed-provenance coverage either.
+   about how much a given change would move real scores. Items 1 and 7 in particular need a
+   before/after run over a corpus of cases whose expected band is known in advance, so that a change
+   of model character can be seen rather than argued. Confirm that corpus actually covers the shapes
+   a change touches — a suite with no example of the shape you changed reports "nothing broke", which
+   is not the same claim as "the new behaviour works".
 2. **The opening gate must stay free.** Several of the strongest methods (confident learning, item
    discrimination, embedding outliers) need model outputs or embeddings and therefore cost money or
    time. They are closing-report upgrades. Any proposal that quietly moves paid work before the

@@ -132,8 +132,8 @@ selection, artifact routing, and preflight modes remain assistant-owned implemen
   real achievement. Mock plumbing should not consume a real optimization achievement.
 
 No SDK issue was filed for `.traigent` placement because the SDK already exposes
-`TRAIGENT_RESULTS_FOLDER`; the generated first-run wrapper simply needed to use it. No new
-`agents-skills` defect was found.
+`TRAIGENT_RESULTS_FOLDER`; the generated first-run wrapper simply needed to use it. No new defect was
+found in our internal tooling.
 
 ## Sandbox incident
 

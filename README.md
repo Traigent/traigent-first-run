@@ -32,6 +32,13 @@ The assistant performs the technical work and asks only when it needs:
 No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
 Traigent generates a coherent substitute around everything that already exists.
 
+What it will not do is guess what your agent is *for*. If nothing in the project says what the task
+is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
+product documentation - the assistant asks a single question and waits for the answer before writing
+anything. A placeholder agent counts as nothing to go on: a file that returns a constant or echoes
+its input is judged by what it does, not by the fact that it imports. Everything downstream of an
+invented task is derived from a guess, and you would be approving real spend on it.
+
 ## Install as an Agent Skill
 
 The complete guide, references, scripts, and compact internal run record are packaged together as
@@ -98,7 +105,12 @@ Some conditions cap the whole score instead of costing a few points, because an 
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
 shares examples with the holdout, or a dataset that is entirely generated. Saying where your rows
 came from is worth the small effort for the same reason: data you collected is credited above data a
-model wrote, and a dataset that declares nothing is not credited as production data.
+model wrote, and a dataset that declares nothing is not credited as production data. A mixture is
+scored as a mixture - a few generated rows among real ones cost a little, they do not condemn the set.
+
+The card also refuses to flatter itself. If half your expected answers are `-` or `?`, it says so on
+the same line that counts them, rather than reporting a confident precision band over rows nothing can
+be scored against.
 
 ## Requirements
 
@@ -135,7 +147,7 @@ egress.
 | [`GUIDE.md`](GUIDE.md) | Entry point for a cloned-repository run |
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
-| [`reports/`](reports/) | Field-test evidence that informed the safeguards |
+| [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 
 After the first result, the assistant can offer the advanced
 [Traigent optimization skills](https://github.com/Traigent/traigent-skills) as optional next steps.
