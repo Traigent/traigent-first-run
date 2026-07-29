@@ -107,16 +107,52 @@ def tree_manifest(root: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
-    skill_root = root / "skills" / "traigent-first-run"
-    behavior_paths = [Path("GUIDE.md")]
-    behavior_paths.extend(
-        path.relative_to(root)
-        for path in sorted(skill_root.rglob("*"))
-        if path.is_file()
-        and "__pycache__" not in path.parts
-        and path.suffix not in {".pyc", ".pyo"}
+def behavior_files(root: Path) -> list[Path]:
+    """The files the behaviour lock covers, as git sees them.
+
+    Asking git rather than walking the filesystem, because the walk needed a
+    hand-maintained list of things to skip and that list can only ever name the
+    tool droppings someone already hit. `__pycache__` and `*.pyc` were on it;
+    `.ruff_cache/`, written by `ruff check skills/`, was not - so three untracked
+    cache files entered the lock, which then matched only on the machine that
+    generated it. Green locally, red in CI, same commit.
+
+    `--cached --others --exclude-standard` is tracked files plus new ones that
+    are not ignored: a reference added but not yet staged is still covered, so
+    regenerating before `git add` cannot silently under-lock the package, while
+    anything `.gitignore` excludes is excluded here for free. One rule, already
+    maintained, and the same one CI's checkout obeys.
+    """
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            "GUIDE.md",
+            "skills/traigent-first-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if result.returncode != 0:
+        # Refused rather than falling back to a walk: a quietly different path
+        # set is exactly the failure this function exists to prevent.
+        raise RuntimeError(
+            "could not list the behaviour files from git "
+            f"(exit {result.returncode}): {result.stderr.strip()}"
+        )
+    return sorted(Path(entry) for entry in result.stdout.split("\0") if entry)
+
+
+def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
+    behavior_paths = behavior_files(root)
     entries = []
     for relative in behavior_paths:
         path = root / relative
