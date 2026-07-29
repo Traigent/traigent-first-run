@@ -445,6 +445,56 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(matrix.probe_scores, single.probe_scores)
 
 
+class WiredAttestationShapeTests(unittest.TestCase):
+    """Pin the three `wired` shapes directly, through the document reader.
+
+    traigent-first-run#78: this PR and #74 assigned OPPOSITE meanings to an
+    omitted or empty `wired`, and the only test covering it ran an example that
+    names every knob explicitly - the one shape both semantics agree on. It
+    therefore passed under either, and the contradiction lived only in prose.
+
+    These assert the disputed shapes with no example fence in the way, so a
+    future change cannot flip the semantics and stay green.
+    """
+
+    def _caps_for(self, document: dict) -> list[str]:
+        facts = MODULE.agent_facts_from_config_space(document)
+        _, caps, _ = MODULE.score_agent(facts)
+        return [cap.condition for cap in caps]
+
+    def test_absent_wired_is_unattested_and_capped(self) -> None:
+        # A document that never says what the agent consumes attests nothing.
+        # Reading it as "all declared knobs" made writing a six-line JSON file
+        # the cheapest way to clear a 45-point safety cap.
+        self.assertIn(
+            "agent-no-varying-knobs",
+            self._caps_for({"knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]}}),
+        )
+
+    def test_explicit_empty_wired_is_also_capped(self) -> None:
+        # An explicit [] says "the agent consumes none of them" - the same
+        # nothing-to-search state as an absent list, never "all of them".
+        self.assertIn(
+            "agent-no-varying-knobs",
+            self._caps_for(
+                {"knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]}, "wired": []}
+            ),
+        )
+
+    def test_named_wired_knobs_clear_the_cap(self) -> None:
+        # The shape both semantics always agreed on - kept so the two failing
+        # cases above cannot be "fixed" by capping everything.
+        self.assertNotIn(
+            "agent-no-varying-knobs",
+            self._caps_for(
+                {
+                    "knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]},
+                    "wired": ["model", "temperature"],
+                }
+            ),
+        )
+
+
 class AgentScoringTests(unittest.TestCase):
     def test_no_varying_knob_is_capped(self) -> None:
         _, caps, _ = MODULE.score_agent(
