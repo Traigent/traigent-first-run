@@ -1316,6 +1316,9 @@ class SkillPackageTests(unittest.TestCase):
         requires that credential, so the page rejects them. The funnel stages
         also have to appear in the order the user meets them, or the guide
         reads as though the key can be collected before the account exists.
+        Registering does not hand over a key: the user creates one in the
+        portal afterwards, which is why the read-only default warning is the
+        main path here and not an edge case.
         """
         text = RUN_SAFETY.read_text()
         pre_gate = text.split("Use this gate order:", 1)[0]
@@ -1325,7 +1328,7 @@ class SkillPackageTests(unittest.TestCase):
             "six-digit confirmation code",
             "single-use access link",
             "completes portal registration",
-            "issues a full-access api key",
+            "create a full-access key",
         )
         for phrase in (
             *ordered_funnel_phrases,
@@ -1354,12 +1357,19 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
             "do not assume the user walked the whole path",
+            # All four state labels, so a branch cannot be dropped or merged
+            # back into an overlapping pair while the test still passes.
+            "already registered, key in hand",
+            "already registered, no key in hand",
+            "not registered, holding an access code still inside its 10 days",
+            "not registered, with no usable access code",
+            "those four are exclusive and cover every user",
             "registering is not the same as holding a key",
+            "the key is created in the portal, not issued by registering",
+            "top-bar key control",
             "shown once and cannot be read back",
             "https://portal.traigent.ai/management/api-keys",
-            "has the access code but never registered",
             "https://portal.traigent.ai/register",
-            "has not started",
             "it is the code, not the url, that gets a user in",
         ):
             with self.subTest(phrase=phrase):
@@ -1427,6 +1437,13 @@ class SkillPackageTests(unittest.TestCase):
             "lead-funnel",
             "lead_token",
             "lead path",
+            # Auto-issuance, in every phrasing that survived a previous pass.
+            # A presence-only contract let these coexist with the corrected
+            # prose, so the guide claimed both at once and CI stayed green.
+            "key has been issued for you",
+            "issues at registration",
+            "api key is issued",
+            "key is issued on",
         ):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, combined)

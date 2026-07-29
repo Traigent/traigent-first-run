@@ -381,10 +381,10 @@ Only after the standard-library-only component checks:
    any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
-   afterward. If the user has already completed portal registration, a full-access API key was
-   issued for them on the page registration landed them on, so skip the create-account and
-   generate-key ask and have them paste that key. If they have not registered yet, route them by
-   which of the three account states they are in per `references/run-safety.md` - do not assume the
+   afterward. If the user has already completed portal registration and created their key in the
+   portal, skip the create-account and generate-key ask and have
+   them paste that key. If they have not registered yet, route them by
+   which of the four account states they are in per `references/run-safety.md` - do not assume the
    emailed access code was ever used. The key authenticates the run; the account's portal access
    period is what authorizes it, so do not treat a valid key as proof the run will be accepted.
 
@@ -516,17 +516,22 @@ full access rather than the read-only default, because a read-only key still spe
 then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
 repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
 own link, name which is which, and never present one link as though it covered both. If the user has
-already completed portal registration and still has the key issued there, skip the create-account and
+already completed portal registration and still has the key created there, skip the create-account and
 generate-key ask - have them paste that key into `.env`, never into chat, and upload the baseline as
-above. Registering is not the same as holding a key: it is shown once and cannot be read back, so a
-user who registered but did not save it creates a fresh full-access one at
-`https://portal.traigent.ai/management/api-keys` rather than hunting for the original. Ask which
+above. Registering is not the same as holding a key: the key is created on the API-key page and is
+shown once, so a user who registered but did not save it creates a fresh full-access one - from the
+portal's top-bar key control, or `https://portal.traigent.ai/management/api-keys` - rather than
+hunting for the original. Ask which
 state they are in rather than assuming, because getting the
-second email and registering are separate acts and many people stop after reading the email: if they
-have the access code but never registered, give them `https://portal.traigent.ai/register` as a
-clickable link and ask them to register with that code, then resume here; if they have not started
+second email and registering are separate acts and many people stop after reading the email. For a
+user who is not registered but holds an access code still inside its 10 days, walk the remaining
+path in order rather than
+naming one destination: open the second Traigent email for the access code, register at
+`https://portal.traigent.ai/register` (a clickable link) with that code, then create a full-access
+key from the portal's top-bar key control - highlighted on a first visit - and save it as it is
+shown; only then come back and paste it. If they have not started
 at all, they begin at the Traigent site, and the registration page will refuse them until a code
-exists. `references/run-safety.md` holds the three states in full.
+exists. `references/run-safety.md` holds the four states in full.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
