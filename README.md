@@ -51,7 +51,8 @@ Node.js is needed only for this optional installation command, not for the Traig
 
 ## What the run does
 
-1. Inspects the project and reports real-world readiness.
+1. Inspects the project and scores real-world readiness out of 100, before anything is created or
+   repaired.
 2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
 4. Validates compatibility and evaluator discrimination.
@@ -73,6 +74,32 @@ knobs in the second. If the user already has a baseline, the first experiment pr
 instead of padding it with invented rows. Both runs use the same data and evaluator, followed by an
 untouched holdout check. Any later iteration is optional, not required.
 
+On a dataset larger than about 100 usable rows, the first run is bounded to a small subset spread
+across the difficulty range - chosen before the score is taken, drawn inside each split so it cannot
+invent an overlap, with the selected row ids recorded so the run can be repeated. The report names
+that subset size beside your full row count. A first run is meant to show the capability in one
+sitting, not to spend its way through the whole dataset; the full dataset is what a real
+optimization uses.
+
+## The readiness score
+
+Before anything is created or repaired, the assistant scores what your project has today: a number
+out of 100 from three pillars - dataset, evaluation, and agent - and a named band from Not ready to
+Excellent. The same score is taken again at the end, so the report shows the transition rather than
+a single number with nothing to compare it to.
+
+It is deliberately modest about itself. It runs before any optimization, from evidence on your own
+machine, so it estimates rather than measures: a check that cannot be computed is marked unmeasured
+and excluded rather than scored zero, and the card prints how much of each pillar was actually
+observed. A low score never stops the run - it decides which gaps are worth explaining and which are
+worth fixing first.
+
+Some conditions cap the whole score instead of costing a few points, because an average can hide a
+broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
+shares examples with the holdout, or a dataset that is entirely generated. Saying where your rows
+came from is worth the small effort for the same reason: data you collected is credited above data a
+model wrote, and a dataset that declares nothing is not credited as production data.
+
 ## Requirements
 
 - Python 3.11-3.13 in an isolated environment.
@@ -84,7 +111,10 @@ untouched holdout check. Any later iteration is optional, not required.
   cheap; the flagship remains the natural next rung for a later, deeper run. Both runs use the
   same three models, so an optimization win comes from Traigent's search and knobs, not from a
   hidden model upgrade.
-- A Traigent portal key for connected optimization and portal results.
+- A Traigent portal key for connected optimization and portal results. You are asked for it *after*
+  the first result is on screen, not before. The baseline runs locally on your own provider key and
+  needs no Traigent account, so you see a real number from your own project before deciding whether
+  to register.
 
 Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the
 chosen provider and Traigent, and asks you to paste the values there. Never paste secrets into chat.
