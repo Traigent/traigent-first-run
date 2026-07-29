@@ -357,6 +357,8 @@ class DatasetFacts:
     labelled_rows: int | None = None
     tuning_rows: int | None = None
     holdout_rows: int | None = None
+    tuning_labelled_rows: int | None = None
+    holdout_labelled_rows: int | None = None
     difficulty_bands: tuple[str, ...] = ()
     difficulty_tagged_rows: int | None = None
     duplicate_status: str | None = None
@@ -584,7 +586,7 @@ def knob_variation(
 
 
 def size_points(effective_n: int | None) -> tuple[float, str]:
-    """Band statistical power on the smaller split, not the row count.
+    """Band statistical power on the smaller *scoreable* split, not the row count.
 
     The question a first run answers is "can this separate config A from B",
     whose resolution comes from the smaller split. The standard error of a
@@ -654,16 +656,52 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
+    # Known limitation, recorded rather than hidden: this clamp is blind to the
+    # *evaluator*. score_dataset receives only DatasetFacts and structurally
+    # cannot read EvaluationFacts.method, so it cannot exempt a reference-free
+    # judge (llm-judge-pointwise / -pairwise / -rubric) that scores a row
+    # carrying no expected output at all.
+    #
+    # The cost is an under-statement, not merely a blind spot, and it lands
+    # exactly where the clamp does its work: 0 < labelled < rows. No cap fires
+    # there, so the clamp alone moves the number, and the card calls the
+    # unlabelled rows unscoreable on the dataset pillar's own authority. A
+    # 100-row dataset with 10 reference answers reports "10 scoreable" and a
+    # +/-16pp band; a rubric judge scores all 100 and the truthful band is
+    # +/-5pp. Against a reference-free evaluator the clamp therefore replaces an
+    # over-claim with an under-claim of the same class; it is unambiguously
+    # right only for a reference-based method. (labelled == 0 is the one regime
+    # this does not touch: the cap-30 "dataset-no-expected-outputs" above
+    # already fires there regardless of method.)
+    #
+    # Making the dataset pillar method-aware is a signature change and
+    # cross-pillar coupling - a separate, larger decision, filed as follow-up.
     if facts.tuning_rows is not None and facts.holdout_rows is not None:
-        effective = min(facts.tuning_rows, facts.holdout_rows)
+        split_floor = min(facts.tuning_rows, facts.holdout_rows)
+        if (
+            facts.tuning_labelled_rows is not None
+            and facts.holdout_labelled_rows is not None
+        ):
+            effective = min(
+                split_floor, facts.tuning_labelled_rows, facts.holdout_labelled_rows
+            )
+            marker = (
+                f"{facts.tuning_labelled_rows}/{facts.holdout_labelled_rows} scoreable"
+            )
+        else:
+            effective = min(split_floor, labelled)
+            marker = f"{labelled} scoreable"
         points, evidence = size_points(effective)
-        evidence = (
-            f"{facts.tuning_rows} tuning / {facts.holdout_rows} holdout; {evidence}"
-        )
+        prefix = f"{facts.tuning_rows} tuning / {facts.holdout_rows} holdout"
+        if effective < split_floor:
+            prefix = f"{prefix}, {marker}"
+        evidence = f"{prefix}; {evidence}"
     else:
-        effective = rows
+        effective = min(rows, labelled)
         points, evidence = size_points(effective)
         points *= 0.8
+        if effective < rows:
+            evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = f"no declared tuning/holdout split; {evidence}"
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
 
@@ -1362,12 +1400,67 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             "preflight.py --json from the same version as this script"
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
+    tuning_metrics = metrics.get("dataset-tuning-size", {})
+    holdout_metrics = metrics.get("dataset-holdout-resolution", {})
+    # A declared split whose per-split labelled counts are missing can only be
+    # scored with the aggregate clamp, which demonstrably fails to lower the
+    # score for a split whose labels sit entirely on one side. Refuse rather
+    # than under-clamp - the same call the malformed_rows guard above makes.
+    #
+    # "A split was declared" is read from two independent witnesses because
+    # either one alone has a blind spot. The metric records are what the scorer
+    # consumes, but a record that is absent altogether announces nothing - so a
+    # JSON carrying only `dataset-tuning-size` would slip past a record-only
+    # test into the no-split branch with the holdout's labelled count silently
+    # unknown. `dataset-split == PASS` covers that: every preflight version that
+    # found a disjoint tuning/holdout split emits it, including versions that
+    # emitted the two size records with no metrics at all. FAIL is deliberately
+    # *not* a witness - an overlapping split emits no split metric records by
+    # construction, so treating FAIL as a declared split would make every
+    # overlapping dataset start refusing instead of scoring through the no-split
+    # branch under its overlap cap. WARN means no split was found at all.
+    declares_split = (
+        "dataset-tuning-size" in metrics
+        or "dataset-holdout-resolution" in metrics
+        or statuses.get("dataset-split") == "PASS"
+    )
+    if declares_split:
+        # Presence is not enough: score_dataset branches on value, so a key
+        # carrying JSON null reaches the aggregate fallback exactly as an absent
+        # key would. Demand a whole non-negative number for all four counts
+        # (bool is an int in Python and is not a row count; a negative count is
+        # not one either - it arithmetically reaches the scorer and prints a
+        # nonsense band like "-5 comparable examples").
+        def _usable_count(value: Any) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+        unusable = [
+            name
+            for name, source in (
+                ("tuning_rows", tuning_metrics),
+                ("tuning_labelled_rows", tuning_metrics),
+                ("holdout_rows", holdout_metrics),
+                ("holdout_labelled_rows", holdout_metrics),
+            )
+            if not _usable_count(source.get(name))
+        ]
+        if unusable:
+            raise PreflightInputError(
+                "declared split metrics carry no usable "
+                f"{'/'.join(unusable)} count - a declared tuning/holdout split "
+                "can only be scored from all four per-split row counts, so this "
+                "preflight JSON predates the current preflight.py or was "
+                "edited; re-run preflight.py --json from the same version as "
+                "this script"
+            )
     return DatasetFacts(
         exists=True,
         rows=provenance.get("rows"),
         labelled_rows=provenance.get("labelled_rows"),
-        tuning_rows=metrics.get("dataset-tuning-size", {}).get("tuning_rows"),
-        holdout_rows=metrics.get("dataset-holdout-resolution", {}).get("holdout_rows"),
+        tuning_rows=tuning_metrics.get("tuning_rows"),
+        holdout_rows=holdout_metrics.get("holdout_rows"),
+        tuning_labelled_rows=tuning_metrics.get("tuning_labelled_rows"),
+        holdout_labelled_rows=holdout_metrics.get("holdout_labelled_rows"),
         difficulty_bands=tuple(difficulty.get("bands", ())),
         difficulty_tagged_rows=difficulty.get("tagged_rows"),
         duplicate_status=statuses.get("dataset-duplicates"),

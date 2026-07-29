@@ -1,5 +1,5 @@
 {
-  "digest": "c4056f842543aec7e021e78172e687d22f67ff89b590830a5708313d7bee3af8",
+  "digest": "53212f5575e2b507f43fc984e0116b15894eda0407d56dce6d2853962722ccb0",
   "paths": [
     {"path": "GUIDE.md", "sha256": "47868e834b7b90faa21fec5e856bed661e9561aa5c9dc721da7a5afe40fe8cdc", "size": 5240},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "9e524a2e91567d9946ef1e8fafeffcc629113c0d0c1325f171e2d16ad91d3411", "size": 47016},
@@ -12,8 +12,8 @@
     {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "877c47b27ea79f6fb78c19fafbdbc477f6defcbf77a212608ff3cc9d6dbd7ae3", "size": 37819},
     {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "8aebb86451f51034cd904a3e9ab09e8e28be1cfcd8de01e8b019eda23d25b8ab", "size": 36413},
     {"path": "skills/traigent-first-run/scripts/calibrate_evaluator.py", "sha256": "0c36e7bb0c05203a95d5bbc29efee2be76ff813eb1ed4139943972bba62853a7", "size": 20839},
-    {"path": "skills/traigent-first-run/scripts/preflight.py", "sha256": "f49d16366f0d668f995310c96ef7896d5c8fc01e141b643580b3d1b014da2a99", "size": 33275},
-    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "363ebe1e40e5420e730140b24469cd3084c24703d7d5d6e5cc3eb2b171226f48", "size": 56946}
+    {"path": "skills/traigent-first-run/scripts/preflight.py", "sha256": "8cddb94bc69f17eacce4b1c0c06f4d2f563669f3263df656601b29a27e8bd124", "size": 36231},
+    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "c63b939d485113af94aed0cfe21b0317cb9a2d5370f707466cfb9777b3f2aa0e", "size": 62171}
   ],
   "schema_version": 1
 }

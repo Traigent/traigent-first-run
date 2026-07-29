@@ -245,6 +245,127 @@ class DatasetScoringTests(unittest.TestCase):
         provenance = next(s for s in pillar.subscores if s.name == "provenance")
         self.assertEqual(provenance.value, 6.0)
 
+    def test_power_uses_labelled_rows_when_no_split_is_declared(self) -> None:
+        """90 of the 100 rows cannot be scored, so they buy no precision."""
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=100, labelled_rows=10)
+        )
+        power = next(s for s in pillar.subscores if s.name == "power")
+        self.assertEqual(power.value, 9.6)
+        self.assertIn("100 rows, 10 scoreable", power.evidence)
+        self.assertIn("+/-16pp", power.evidence)
+        self.assertNotIn("+/-5pp", power.evidence)
+
+    def test_power_uses_the_smaller_labelled_split_not_the_smaller_total_split(
+        self,
+    ) -> None:
+        """The comparison is only as sharp as the thinner *scoreable* side."""
+        lopsided = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=100,
+                labelled_rows=60,
+                tuning_rows=60,
+                holdout_rows=40,
+                tuning_labelled_rows=20,
+                holdout_labelled_rows=40,
+            )
+        )[0]
+        power = next(s for s in lopsided.subscores if s.name == "power")
+        # The smaller total split is 40 (18.0 points); the smaller labelled
+        # split is 20, which is the number that decides anything.
+        self.assertEqual(power.value, 12.0)
+        self.assertIn("20/40 scoreable", power.evidence)
+
+        one_sided = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=100,
+                labelled_rows=50,
+                tuning_rows=50,
+                holdout_rows=50,
+                tuning_labelled_rows=50,
+                holdout_labelled_rows=0,
+            )
+        )[0]
+        collapsed = next(s for s in one_sided.subscores if s.name == "power")
+        self.assertEqual(collapsed.value, 5.0)
+        self.assertEqual(
+            collapsed.evidence,
+            "50 tuning / 50 holdout, 50/0 scoreable; 0 comparable examples - "
+            "a wiring check, not a score",
+        )
+
+    def test_the_clamp_never_raises_the_power_subscore(self) -> None:
+        """Clamping is one-directional over the whole grid, not just on examples.
+
+        The counterpart facts label every row and every split fully, which
+        reproduces the pre-clamp computation exactly, so `clamped <= unclamped`
+        here is the property "a clamp can only lower the score".
+        """
+        for rows in (5, 10, 29, 30, 49, 50, 99, 100, 299, 300, 400):
+            tuning_rows = rows // 2
+            holdout_rows = rows - tuning_rows
+            half = rows // 2
+            shapes: list[tuple[int | None, int | None, int | None, int | None]] = [
+                (None, None, None, None)
+            ]
+            for tuning_labelled in (
+                v for v in (0, half // 2, half) if v <= tuning_rows
+            ):
+                for holdout_labelled in (
+                    v for v in (0, half // 2, half) if v <= holdout_rows
+                ):
+                    shapes.append(
+                        (tuning_rows, holdout_rows, tuning_labelled, holdout_labelled)
+                    )
+            for labelled in (0, 1, rows // 3, rows):
+                for tuning, holdout, tuning_labelled, holdout_labelled in shapes:
+                    clamped = MODULE.DatasetFacts(
+                        exists=True,
+                        rows=rows,
+                        labelled_rows=labelled,
+                        tuning_rows=tuning,
+                        holdout_rows=holdout,
+                        tuning_labelled_rows=tuning_labelled,
+                        holdout_labelled_rows=holdout_labelled,
+                    )
+                    unclamped = MODULE.DatasetFacts(
+                        exists=True,
+                        rows=rows,
+                        labelled_rows=rows,
+                        tuning_rows=tuning,
+                        holdout_rows=holdout,
+                        tuning_labelled_rows=tuning,
+                        holdout_labelled_rows=holdout,
+                    )
+                    with self.subTest(
+                        rows=rows,
+                        labelled=labelled,
+                        tuning_labelled=tuning_labelled,
+                        holdout_labelled=holdout_labelled,
+                    ):
+                        self.assertLessEqual(
+                            self._power(clamped), self._power(unclamped)
+                        )
+
+    def test_a_fully_labelled_dataset_keeps_its_evidence_string(self) -> None:
+        """Nothing was clamped, so nothing about the sentence may change."""
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=100, labelled_rows=100)
+        )
+        power = next(s for s in pillar.subscores if s.name == "power")
+        self.assertEqual(power.value, 18.4)
+        self.assertEqual(
+            power.evidence,
+            "no declared tuning/holdout split; 100 examples - roughly +/-5pp "
+            "of noise per result",
+        )
+
+    def _power(self, facts: object) -> float:
+        pillar, _ = MODULE.score_dataset(facts)
+        return next(s.value for s in pillar.subscores if s.name == "power")
+
 
 class EvaluationScoringTests(unittest.TestCase):
     def test_constant_scorer_is_capped_as_invalid(self) -> None:
