@@ -649,31 +649,18 @@ def stub_agent_no_anchor(
     could walk past a presence-based reading of the trigger, invent a task, and
     carry it to a spend approval.
 
-    Asserted here rather than in prose: the guide must state the quality rule at
-    the gate itself, because SKILL.md loads `component-creation.md` only after
-    this gate has been evaluated.
+    Why the wording matters at all - SKILL.md loads `component-creation.md` only
+    after this gate is evaluated, so the quality rule has to be stated at the gate
+    itself - is locked in `tests/test_skill_package.py`. This driver proves the
+    consequence: that the gate actually fires on the shape that could slip past it.
     """
-    text = SKILL.read_text()
-    # Whitespace-normalised before matching: the guide hard-wraps its prose, so a
-    # phrase that reads as one line in the document can carry a newline in the
-    # middle. Matching the raw text makes this gate fail on a reflow rather than
-    # on a meaning change.
-    trigger = " ".join(
-        text.split("#### Zero-anchor intent gate", 1)[1]
-        .split("### 2. Show readiness once", 1)[0]
-        .split()
-    )
-    for phrase in (
-        "that performs an identifiable task",
-        "not by whether the file exists",
-        "counts as **missing** for anchoring intent",
-    ):
-        if phrase not in trigger:
-            raise ContractError(
-                "the zero-anchor trigger must be quality-based in its own words; "
-                f"missing: {phrase!r}"
-            )
-
+    # Deliberately asserts no guide WORDING here. The wording lock for this gate
+    # lives in `tests/test_skill_package.py`, alongside every other phrase lock,
+    # and its four phrases are a superset of the three this driver used to check.
+    # Keeping a copy cost a second edit site for one intent - and it produced a
+    # CI-only red that had nothing to do with behaviour, because it matched raw
+    # text against prose the guide hard-wraps. This layer proves the RUN: the gate
+    # fires, one question is asked, nothing is written. Do not re-add prose checks.
     stub = project / "agent.py"
     if not stub.exists():
         raise ContractError("stub-agent-no-anchor seed must carry an agent.py")
