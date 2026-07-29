@@ -509,13 +509,17 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase.casefold(), normalized)
 
-    def test_large_dataset_is_bounded_to_a_reproducible_stratified_subset(self) -> None:
-        """A first run shows the capability; it does not exhaust the dataset.
+    def test_large_dataset_is_bounded_after_the_score_not_before_it(self) -> None:
+        """The score describes the dataset; the subset describes the run.
 
-        Above ~100 rows every trial pays for every row, so the walkthrough runs
-        long and expensive without demonstrating more. The bound is only honest
-        if it is chosen before the score is computed, drawn inside each split,
-        recorded, and reported next to the full row count.
+        A first run has to be bounded above ~100 rows, or every trial pays for
+        every row. But choosing the bound BEFORE a score makes the user's data
+        wear the run's limitation. Measured on 500 labelled, difficulty-tagged
+        production rows: the dataset pillar reads 98 with "249 examples -
+        roughly +/-5pp", and the same dataset scored as an 18-row subset reads 80
+        with "8 comparable examples - a wiring check, not a score" - a sentence
+        that is true of the run and false of the data. So the ordering is the
+        contract, not an implementation detail.
         """
         skill_text = " ".join(SKILL.read_text().casefold().split())
         dataset_text = " ".join(
@@ -529,23 +533,39 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "18 rows by default",
             "at least four from each of the four difficulty bands",
-            "select before preflight, not after",
+            "score the dataset, not the subset",
+            "report the run's own resolution separately",
             "sample within each split, never across it",
             "record what was chosen",
         ):
-            self.assertIn(phrase, dataset_text)
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset_text)
 
-        # The bound must not be sold as a data defect: 18 rows lands in the
-        # scorer's low power band by construction (size_points: < 30 -> 12.0).
-        self.assertIn("deliberate first-run trade, not a defect", dataset_text)
-        # And a bounded run may never read as a full evaluation.
+        # The inverted rule must not creep back in.
+        self.assertNotIn("select before preflight, not after", dataset_text)
+        # Both scores see the whole dataset, and the reason is stated.
+        self.assertIn("run on the **whole** dataset", dataset_text)
+        self.assertIn("a wiring check, not a score", dataset_text)
+        # A bounded run may never read as a full evaluation.
         self.assertIn("beside the full row count", dataset_text)
 
-        # SKILL.md must route to it at the stage that precedes preflight.
-        self.assertIn("bounded first-run subset", skill_text)
+        # The position is the whole point of this test, and it is bounded on BOTH
+        # sides. After the stage-4 re-score, because a score taken on our sample
+        # reports the run's limit as the dataset's. Before the spend estimate,
+        # because an estimate priced on 4,812 rows and run on 18 asks the user to
+        # approve a run that never happens - and a number that large may simply
+        # get a no.
+        self.assertIn("scope the run before pricing it", skill_text)
+        self.assertIn(
+            "estimate runtime and spend from that subset, not from the full row count",
+            skill_text,
+        )
+        subset_at = skill_text.index("scope the run before pricing it")
+        self.assertGreater(
+            subset_at, skill_text.index("### 4. validate components locally")
+        )
         self.assertLess(
-            skill_text.index("bounded first-run subset"),
-            skill_text.index("### 4. validate components locally"),
+            subset_at, skill_text.index("approximate runtime and estimated spend")
         )
 
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
@@ -565,12 +585,45 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(
             "the user's own measured evidence rather than encouragement", skill_text
         )
+
+        # And it must land on ONE action earned by their starting state, with the
+        # reason attached. A menu of everything they could do is the same as no
+        # recommendation, so the anti-pattern is pinned too.
+        self.assertIn(
+            "give the one next action their *starting* state earns", skill_text
+        )
+        self.assertIn(
+            "a menu offered *instead of* a recommendation is the same as no recommendation",
+            skill_text,
+        )
+        # The generic menu that follows must not restate the state-specific
+        # moves: offering "connect the production agent" as an undifferentiated
+        # option, one line under a block that names it as THIS project's earned
+        # next action, is the contradiction this wording exists to remove.
+        menu = skill_text.split("these are available whenever the user wants them", 1)[
+            1
+        ]
+        for restated in (
+            "connect the production agent.",
+            "replace synthetic examples with reviewed real examples.",
+            "align the evaluation method with the product's grading policy.",
+        ):
+            with self.subTest(restated=restated):
+                self.assertNotIn(restated, menu)
+        for state in (
+            "generated or mostly generated data",
+            "real inputs with model-written answers",
+            "rows without expected outputs, or placeholder answers",
+            "a substitute component still standing in for a real one",
+        ):
+            with self.subTest(state=state):
+                self.assertIn(state, skill_text)
         # It closes on the opening score, so it must follow the readiness
         # transition and precede the optional next steps.
         transition = skill_text.index("the readiness transition")
         motivation = skill_text.index("saying what a further run would be worth")
         next_steps = skill_text.index(
-            "only after the result, offer optional next steps"
+            "these are available whenever the user wants them"
         )
         self.assertLess(transition, motivation)
         self.assertLess(motivation, next_steps)

@@ -386,24 +386,35 @@ one cluster.
 
 Five rules make the subset honest:
 
-1. **Select before preflight, not after.** The bounded subset is the dataset the run actually uses,
-   so preflight and `scripts/readiness.py` must both see exactly those rows. Scoring the full set
-   and running a subset reports precision the run never had.
-2. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
+1. **Score the dataset, not the subset.** Both readiness scores - the opening gate and the
+   re-score after local validation - run on the **whole** dataset. The subset is chosen afterwards,
+   as run scoping, immediately before the paid comparison. Getting this backwards makes the user's
+   data wear the run's limitation: measured on 500 labelled, difficulty-tagged production rows, the
+   dataset pillar reads 98 with `249 examples - roughly +/-5pp`; the same dataset scored as an
+   18-row subset reads 80 with `8 comparable examples - a wiring check, not a score`. That sentence
+   is true of the run and false of the dataset, and the recorded opening-to-closing transition would
+   show an 18-point drop that is nothing but our own sampling. Difficulty and diversity survive a
+   compliant sample; it is precision that collapses, so precision is what must be attributed
+   correctly.
+2. **Report the run's own resolution separately.** The subset limits what this comparison can
+   resolve, and that belongs in the run's report, not in the dataset's score: "this run compares
+   configurations on 18 of your 4,812 rows, so it resolves differences of roughly 16 percentage
+   points; your dataset itself supports about 5, and a full optimization uses all of it." One
+   sentence, and neither fact borrows the other's authority.
+3. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
    the holdout rows from the holdout split, keeping them disjoint. A subset drawn over the combined
    set can pull the same input into both sides and fabricate a tune/holdout overlap that the
    original dataset did not have.
-3. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
+4. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
    the seed when the pick inside a band was random. The recorded ids are what makes the run
    reproducible - a seed alone does not, because the selection also depends on judgment about which
    rows are hard.
-4. **Say the power cost out loud.** Eighteen rows sit in the scorer's low power band - about
-   `+/-16pp` of noise per result, 12 of 25 points. That is a deliberate first-run trade, not a
-   defect in the data, and the readiness card will show it. Say so when presenting the score, or
-   the user reads their own good dataset as weak.
 5. **Name the bound to the user.** Report the subset size beside the full row count ("18 of 4,812
    rows for this first run"). Never let a bounded run read as though the whole dataset was
    evaluated.
+
+Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
+drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.
 
 When the rows carry no difficulty tags, spread the pick across the coverage/scenario tags instead
 and say which axis was used. When neither exists, take a random seeded sample and record that the
