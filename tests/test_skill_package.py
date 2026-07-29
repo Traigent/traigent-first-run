@@ -1662,6 +1662,27 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_absent_wiring_is_reported_as_unattested_not_untunable(self) -> None:
+        """The `wired` list is an attestation, and the skill must say so.
+
+        A cap that can only be cleared by naming the wired knobs is
+        undiagnosable unless the skill says so, and the second phrase is the
+        wording the cap reason emits - so the prose and the code drift together
+        or not at all. The last phrase is the scoping clause: the same cap id
+        fires for the zero-anchor opening, which the flow does proceed through,
+        so the restriction cannot be keyed on the id.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "declaring a knob is not a statement that the agent consumes it",
+            "does not state which of them the agent consumes",
+            "an attestation the score takes at its word and never verifies",
+            "while a document declares knobs without an attested `wired` list, "
+            "do not begin paid optimization",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         body = source.split("def score_dataset(", 1)[1].split("\ndef ", 1)[0]
