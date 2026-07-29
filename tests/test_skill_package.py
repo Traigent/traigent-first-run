@@ -772,6 +772,8 @@ class SkillPackageTests(unittest.TestCase):
             "ENHANCED_SPACE",
             "AGENT_TYPE",
             "WIRED_KNOBS",
+            "WIRED_OUTSIDE_THE_REQUEST",
+            "UNPROVEN_WIRED_KNOBS",
         }
         selected_nodes = []
         for node in module.body:
@@ -779,6 +781,8 @@ class SkillPackageTests(unittest.TestCase):
                 "configuration_count",
                 "config_space_document",
                 "build_prompt",
+                "build_request",
+                "demonstrably_wired",
             }:
                 selected_nodes.append(node)
             elif isinstance(node, ast.Assert):
@@ -787,6 +791,15 @@ class SkillPackageTests(unittest.TestCase):
                 isinstance(target, ast.Name) and target.id in wanted_assignments
                 for target in node.targets
             ):
+                selected_nodes.append(node)
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id in wanted_assignments
+            ):
+                # An annotated constant (`NAME: list[str] = []`) is an AnnAssign,
+                # not an Assign; missing it leaves the asserts below referring to
+                # a name this namespace never bound.
                 selected_nodes.append(node)
 
         executable = ast.fix_missing_locations(
@@ -800,6 +813,7 @@ class SkillPackageTests(unittest.TestCase):
             "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 4,
             "ENHANCED_MAX_TRIALS": 10,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
         exec(compile(executable, "<sdk-spaces-and-knobs>", "exec"), namespace)
 
@@ -854,6 +868,7 @@ class SkillPackageTests(unittest.TestCase):
             "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
         with self.assertRaises(AssertionError):
             exec(
@@ -959,10 +974,14 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
         self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
         code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-        call_agent_node = next(
+        call_path_nodes = [
             node
             for node in ast.parse(code).body
-            if isinstance(node, ast.FunctionDef) and node.name == "call_agent"
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {"build_request", "call_agent"}
+        ]
+        self.assertEqual(
+            [node.name for node in call_path_nodes], ["build_request", "call_agent"]
         )
         calls = []
 
@@ -974,7 +993,7 @@ class SkillPackageTests(unittest.TestCase):
             )
 
         module = ast.fix_missing_locations(
-            ast.Module(body=[call_agent_node], type_ignores=[])
+            ast.Module(body=call_path_nodes, type_ignores=[])
         )
         namespace = {
             "litellm": SimpleNamespace(completion=fake_completion),
@@ -1606,7 +1625,14 @@ class SkillPackageTests(unittest.TestCase):
         assert match is not None
         pillar, conditions = score_config_space(json.loads(match.group(1)))
         self.assertEqual(conditions, [])
-        self.assertEqual(pillar.score, 78)
+        # 90 = 35/35 knob-count + 30.4/40 variation + 25/25 coverage. It was 78
+        # while the `general` catalog spelled the prompt dimension
+        # `prompt_policy` (the template emits `prompt_style`) and still listed
+        # `max_tokens`: the walkthrough lost 12.5 of 25 coverage points to a
+        # naming mismatch and to a capacity guard run-safety.md forbids
+        # sweeping. Both are catalog defects, so the document scores higher
+        # without any change to the space it describes.
+        self.assertEqual(pillar.score, 90)
         self.assertEqual(pillar.confidence, 1.0)
 
     def test_config_space_document_is_serialized_before_but_written_after(self) -> None:
@@ -1879,6 +1905,10 @@ class SkillPackageTests(unittest.TestCase):
         every other test in this file while the document still claims the knob
         is wired. This runs the template's own `call_agent` against a recording
         stub and fails when a wired knob leaves the request identical.
+
+        It also pins `call_agent` to `build_request`: the fence's load-time
+        assert probes `build_request`, so a `call_agent` that re-inlined its own
+        request would leave that assert guarding dead code.
         """
         code = re.findall(
             r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
@@ -1890,7 +1920,7 @@ class SkillPackageTests(unittest.TestCase):
             for node in module.body
             if (
                 isinstance(node, ast.FunctionDef)
-                and node.name in {"build_prompt", "call_agent"}
+                and node.name in {"build_prompt", "build_request", "call_agent"}
             )
             or (
                 isinstance(node, ast.Assign)
@@ -1901,7 +1931,7 @@ class SkillPackageTests(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            len(selected), 5, "the template no longer defines the knobs it wires"
+            len(selected), 6, "the template no longer defines the knobs it wires"
         )
 
         requests: list[dict] = []
@@ -1955,6 +1985,119 @@ class SkillPackageTests(unittest.TestCase):
                     "the agent request identical - the config-space document "
                     "would claim a search dimension the agent ignores",
                 )
+
+        # `call_agent` must route through `build_request`, not re-inline the
+        # request: everything the fence asserts at load time is a claim about
+        # `build_request`, and an inlined `call_agent` would drift past it.
+        namespace["build_request"] = lambda message, config: {"probe": "sentinel"}
+        namespace["call_agent"]("task", base)
+        self.assertEqual(
+            requests[-1],
+            {"probe": "sentinel"},
+            "call_agent must build its request with build_request, or the "
+            "fence's wiring assert guards code the agent no longer calls",
+        )
+
+    def test_the_wiring_assert_catches_a_knob_the_prompt_builder_ignores(self) -> None:
+        """Regression-test the guard itself, not merely its presence.
+
+        `demonstrably_wired` is only worth its assert if it actually goes red.
+        This re-executes the fence with `build_prompt` swapped for one that
+        ignores `style` - exactly the `style="direct"` no-op the wiring test
+        above was written against - and requires `prompt_style` to drop out of
+        the proven list, leaving the fence's own assert with something to fail
+        on. It also pins the escape list empty: seeding it with a name would
+        silently re-admit the unverified claim the probe exists to expose.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        module = ast.parse(code)
+        wanted_assignments = {
+            "BASELINE_CONFIG",
+            "BASELINE_SPACE",
+            "ENHANCED_SPACE",
+            "WIRED_KNOBS",
+            "WIRED_OUTSIDE_THE_REQUEST",
+        }
+        selected = [
+            node
+            for node in module.body
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name in {"build_prompt", "build_request", "demonstrably_wired"}
+            )
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id in wanted_assignments
+                    for target in node.targets
+                )
+            )
+            or (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id in wanted_assignments
+            )
+        ]
+
+        def namespace_for(build_prompt=None) -> dict:
+            namespace = {
+                "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+                "SELECTED_CURRENT_MODEL": "provider/current",
+                "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+                "SELECTED_STRONG_MODEL": "provider/strong",
+                "STRONG_REASONING_EFFORT": None,
+            }
+            exec(
+                compile(
+                    ast.fix_missing_locations(
+                        ast.Module(body=selected, type_ignores=[])
+                    ),
+                    "<sdk-wiring-probe>",
+                    "exec",
+                ),
+                namespace,
+            )
+            if build_prompt is not None:
+                namespace["build_prompt"] = build_prompt
+            return namespace
+
+        honest = namespace_for()
+        self.assertEqual(
+            honest["WIRED_OUTSIDE_THE_REQUEST"],
+            [],
+            "the shipped walkthrough wires every knob into the request, so its "
+            "escape list must stay empty",
+        )
+        proven = honest["demonstrably_wired"](
+            honest["ENHANCED_SPACE"], honest["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            sorted(proven),
+            sorted(honest["WIRED_KNOBS"]),
+            "every knob the shipped template calls wired must be provable "
+            "from build_request alone",
+        )
+
+        no_op = namespace_for(
+            build_prompt=lambda message, *, style, self_check: message
+            + ("\n\ncheck" if self_check else "")
+        )
+        proven_with_no_op = no_op["demonstrably_wired"](
+            no_op["ENHANCED_SPACE"], no_op["BASELINE_CONFIG"]
+        )
+        self.assertNotIn(
+            "prompt_style",
+            proven_with_no_op,
+            "a prompt builder that ignores `style` makes prompt_style a no-op; "
+            "demonstrably_wired must stop vouching for it",
+        )
+        self.assertIn(
+            "self_check",
+            proven_with_no_op,
+            "the probe must still credit the knobs that do reach the request",
+        )
 
     def test_config_space_producer_and_consumer_are_both_instructed(self) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())

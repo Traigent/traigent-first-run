@@ -473,7 +473,10 @@ class AgentScoringTests(unittest.TestCase):
         facts = MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 78)
+        # 35/35 knob-count + 30.4/40 variation + 25/25 coverage. Was 78 while
+        # the `general` catalog spelled the prompt dimension `prompt_policy`
+        # and listed `max_tokens`; see the catalog comment in readiness.py.
+        self.assertEqual(pillar.score, 90)
         self.assertEqual(pillar.confidence, 1.0)
 
     def test_reasoning_branch_document_still_clears_the_cap(self) -> None:
@@ -490,7 +493,7 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(document)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 64)
+        self.assertEqual(pillar.score, 76)
 
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
@@ -778,7 +781,7 @@ class AgentScoringTests(unittest.TestCase):
         self.assertIsInstance(integral.max_trials, int)
         pillar, caps, _ = MODULE.score_agent(integral)
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 78)
+        self.assertEqual(pillar.score, 90)
         self.assertEqual(
             pillar.score,
             MODULE.score_agent(
@@ -866,6 +869,67 @@ class AgentScoringTests(unittest.TestCase):
         )
         coverage = next(s for s in pillar.subscores if s.name == "coverage")
         self.assertIn("retrieval_k", coverage.evidence)
+
+    def _coverage(self, **kwargs) -> object:
+        pillar, _, _ = MODULE.score_agent(MODULE.AgentFacts(**kwargs))
+        return next(s for s in pillar.subscores if s.name == "coverage")
+
+    def test_either_prompt_dimension_spelling_earns_the_same_credit(self) -> None:
+        """The catalog names one spelling; both must score the same.
+
+        The walkthrough template emits `prompt_style` while the catalog and the
+        adapter tests' healthy space use `prompt_policy`. Whichever name the
+        catalog carries, the other one is the same search dimension, so
+        crediting only one docks a correct document a quarter of its coverage
+        points for spelling. The evidence line must still name exactly one of
+        them, or "not tuning:" turns into a list of synonyms.
+        """
+        knobs = {"model": ["a", "b"], "temperature": [0.0, 0.6]}
+        for name in ("prompt_style", "prompt_policy"):
+            with self.subTest(spelling=name):
+                coverage = self._coverage(
+                    agent_type="general",
+                    knobs=dict(knobs, **{name: ["direct", "structured"]}),
+                    wired=("model", "temperature", name),
+                )
+                self.assertEqual(coverage.value, 25.0)
+                self.assertIn("every high-impact knob", coverage.evidence)
+
+        missing = self._coverage(
+            agent_type="general",
+            knobs=knobs,
+            wired=("model", "temperature"),
+        )
+        self.assertIn("not tuning: prompt_style", missing.evidence)
+        self.assertNotIn("prompt_policy", missing.evidence)
+
+    def test_not_sweeping_max_tokens_is_not_a_coverage_gap(self) -> None:
+        """`max_tokens` is a capacity guard, so omitting it must not cost points.
+
+        references/run-safety.md tells authors not to sweep low `max_tokens`
+        values in any space containing a reasoning model - a truncated answer
+        scores 0 for reasons unrelated to configuration quality. While the
+        catalog listed it, a space that obeyed that rule was docked 25% of its
+        coverage for doing so.
+        """
+        for agent_type in ("general", "code_gen"):
+            with self.subTest(agent_type=agent_type):
+                self.assertNotIn("max_tokens", MODULE.HIGH_IMPACT_KNOBS[agent_type])
+        for agent_type, catalog in MODULE.HIGH_IMPACT_KNOBS.items():
+            with self.subTest(agent_type=agent_type):
+                self.assertNotIn("max_tokens", catalog)
+
+        without = self._coverage(
+            agent_type="general",
+            knobs={
+                "model": ["a", "b"],
+                "temperature": [0.0, 0.6],
+                "prompt_style": ["direct", "structured"],
+            },
+            wired=("model", "temperature", "prompt_style"),
+        )
+        self.assertEqual(without.value, 25.0)
+        self.assertNotIn("max_tokens", without.evidence)
 
 
 class ColorAndRenderingTests(unittest.TestCase):
@@ -1012,7 +1076,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 78)
+        self.assertEqual(agent["score"], 90)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )

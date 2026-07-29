@@ -208,11 +208,24 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
+# `max_tokens` is deliberately absent from every catalog. It exists so the model
+# is not cut off mid-answer: references/run-safety.md requires at least 2048
+# (4096 at high reasoning effort) and says not to "sweep low `max_tokens` values
+# in any space that contains a reasoning model", because a tight cap truncates
+# the answer to `finish_reason == "length"`, scores it 0, and silently crowns a
+# weaker model the winner. That makes it a capacity guard, not a quality lever -
+# so a space that obeys the safety rule must not be docked for not sweeping it.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
-    "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_policy"),
-    "code_gen": ("model", "temperature", "fewshot_k", "schema_context", "max_tokens"),
-    "general": ("model", "temperature", "prompt_policy", "max_tokens"),
+    "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
+    "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
+    "general": ("model", "temperature", "prompt_style"),
 }
+
+# Accepted alternate spellings of a catalog knob, mapped onto the one canonical
+# name the catalog uses. A document earns the same coverage credit under either
+# spelling, while the "not tuning" evidence line names only the canonical one -
+# printing both would make the message harder to read for no added information.
+KNOB_ALIASES: dict[str, str] = {"prompt_policy": "prompt_style"}
 
 # Evaluation-method profiles. `fidelity` is which task kinds the method actually
 # measures well; a method can be perfectly reproducible and still be the wrong
@@ -1021,7 +1034,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
 
     catalog = HIGH_IMPACT_KNOBS.get(facts.agent_type or "general")
     if catalog:
-        present = {knob.name for knob in scoreable}
+        present = {KNOB_ALIASES.get(knob.name, knob.name) for knob in scoreable}
         missing = [name for name in catalog if name not in present]
         fraction = 1.0 - (len(missing) / len(catalog))
         subs.append(

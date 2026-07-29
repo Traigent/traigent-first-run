@@ -330,7 +330,8 @@ ENHANCED_SPACE = {
 # Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
 # the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
 # call_agent below actually consumes - a knob listed here that the agent ignores
-# is a false claim about the search space.
+# is a false claim about the search space. The scorer cannot check that claim,
+# so the assert under `demonstrably_wired` below checks it here at load time.
 AGENT_TYPE = "general"
 WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
 
@@ -425,7 +426,13 @@ def provider_reported_cost(response) -> float:
     return cost
 
 
-def call_agent(message: str, config: dict) -> tuple[str, float]:
+def build_request(message: str, config: dict) -> dict:
+    """Build the provider request from one configuration. Pure: makes no call.
+
+    Kept separate from `call_agent` so a wired-knob claim can be probed without
+    a network or a key: two configurations that differ in a real search
+    dimension must produce two different request dicts.
+    """
     sampling_kwargs: dict = {"temperature": config["temperature"]}
     if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
         # Reasoning models reject sampled temperature and need answer headroom
@@ -435,11 +442,11 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
             "reasoning_effort": STRONG_REASONING_EFFORT,
             "max_tokens": 4096,
         }
-    response = litellm.completion(
-        model=config["model"],
-        timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
+    return {
+        "model": config["model"],
+        "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
         **sampling_kwargs,
-        messages=[
+        "messages": [
             {
                 "role": "user",
                 "content": build_prompt(
@@ -449,9 +456,50 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
                 ),
             }
         ],
-    )
+    }
+
+
+def call_agent(message: str, config: dict) -> tuple[str, float]:
+    response = litellm.completion(**build_request(message, config))
     cost = provider_reported_cost(response)
     return response.choices[0].message.content or "", cost
+
+
+def demonstrably_wired(space: dict[str, list], base: dict) -> list[str]:
+    """Wired knobs a pure probe can prove actually reach the provider request."""
+    proven = []
+    baseline = build_request("probe", base)
+    for knob in WIRED_KNOBS:
+        for value in space.get(knob, []):
+            if build_request("probe", {**base, knob: value}) != baseline:
+                proven.append(knob)
+                break
+    return proven
+
+
+# Knobs that genuinely act outside request construction - a RAG retrieval depth,
+# a tool policy, a repair loop - are invisible to the probe above, so they are
+# named here instead. An entry is an explicit, reviewable claim, NOT evidence:
+# nothing verifies it. Add a knob only when you can say where in the agent it
+# acts; if you cannot, it is not a real search dimension - drop it from
+# WIRED_KNOBS rather than parking it here. Empty for this walkthrough: all four
+# of its knobs are visible in the request `build_request` returns.
+WIRED_OUTSIDE_THE_REQUEST: list[str] = []
+
+UNPROVEN_WIRED_KNOBS = [
+    knob
+    for knob in WIRED_KNOBS
+    if len(set(map(repr, ENHANCED_SPACE.get(knob, [])))) >= 2
+    and knob not in demonstrably_wired(ENHANCED_SPACE, BASELINE_CONFIG)
+    and knob not in WIRED_OUTSIDE_THE_REQUEST
+]
+assert not UNPROVEN_WIRED_KNOBS, (
+    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but changing them "
+    "leaves the provider request identical, so the config-space document would "
+    "claim search dimensions the agent ignores. Wire them, name them in "
+    "WIRED_OUTSIDE_THE_REQUEST if they act outside request construction, or "
+    "remove them from WIRED_KNOBS"
+)
 
 
 @traigent.optimize(

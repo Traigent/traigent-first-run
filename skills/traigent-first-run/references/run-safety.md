@@ -254,8 +254,15 @@ Three honesty rules govern the file:
   wired name is a knob of the declared space, but whether the *agent* reads that knob is an author
   claim it **cannot verify**: it reads the document, never the agent code. Naming a knob the
   agent ignores - a config key read into a variable the prompt never uses, say - inflates the agent
-  pillar by scoring a dimension the search cannot actually move, and no test will catch it. A knob
-  that does not influence the agent code is not a real optimization variable.
+  pillar by scoring a dimension the search cannot actually move. A knob that does not influence the
+  agent code is not a real optimization variable. The generated wrapper therefore asserts the claim
+  where the scorer cannot: `demonstrably_wired` re-builds the provider request under each
+  alternative value, and the assert below it fails the load when a wired knob carrying two or more
+  values leaves that request identical. A knob that acts *outside* request construction - a
+  retrieval depth, a tool policy, a repair loop - is invisible to that probe and stays unverified:
+  name it in the wrapper's `WIRED_OUTSIDE_THE_REQUEST` escape list, which records the claim for a
+  reader to challenge rather than proving it. If you cannot say where such a knob acts, drop it
+  from `wired`.
 - `bounds` is likewise self-declared and unverified. It changes the noise floor and the span a knob
   is measured against, so a narrow declared range can turn two nearly-identical values into a
   "varying" knob and clear `agent-no-varying-knobs` on bounds alone. Declare the range the knob
