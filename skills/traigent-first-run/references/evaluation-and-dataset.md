@@ -307,7 +307,7 @@ below.
 
 Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough` both land where you
 would expect. `synthetic`, `generated`, `llm`, `gpt`, `claude`, `model-written`, `ai-`,
-`walkthrough`, `mock`, `fake`, `dummy`, `simulated` and `template` all mean the same thing - nobody
+`walkthrough`, `mock`, `fake`, `placeholder`, `simulated` and `template` all mean the same thing - nobody
 observed this - and are not different classes. `production`, `real`, `collected`, `logged`,
 `customer`, `human`, `curated`, `annotated`, `benchmark` and `gold` mean it was.
 

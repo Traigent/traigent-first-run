@@ -457,7 +457,7 @@ SYNTHESISED_SOURCE_PREFIXES = (
     "walkthrough",
     "mock",
     "fake",
-    "dummy",
+    "placeholder",
     "simulated",
     "template",
 )
