@@ -103,14 +103,21 @@ worth fixing first.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
-shares examples with the holdout, or a dataset that is entirely generated. Saying where your rows
-came from is worth the small effort for the same reason: data you collected is credited above data a
-model wrote, and a dataset that declares nothing is not credited as production data. A mixture is
-scored as a mixture - a few generated rows among real ones cost a little, they do not condemn the set.
+shares examples with the holdout, or a dataset that is mostly or entirely generated. A cap is a
+ceiling on the result, not a deduction and not a refusal: the run continues, the pre-cap average
+stays in the report, and the number simply cannot claim more than the evidence supports.
 
-The card also refuses to flatter itself. If half your expected answers are `-` or `?`, it says so on
-the same line that counts them, rather than reporting a confident precision band over rows nothing can
-be scored against.
+Saying where your rows came from is worth the small effort for the same reason: data you collected
+is credited above data a model wrote, and a dataset that declares nothing is not credited as
+production data. A mixture is scored as a mixture - a few generated rows among real ones cost a
+little, they do not condemn the set.
+
+The card also names what it cannot use. If half your expected answers are `-` or `?`, the line that
+counts them says so - "100/100 rows carry an expected output, but 50 of them are placeholders" - so
+a row count can never be read as that many usable answers. The precision figure beside it is still
+computed from the row count rather than the usable subset: it is qualified, not withheld. Treating a
+symbol as unlabelled would change the score for every dataset that uses one as a real class label,
+so that stays a deliberate open question rather than a silent reinterpretation of your data.
 
 ## Requirements
 
