@@ -1345,12 +1345,18 @@ class SkillPackageTests(unittest.TestCase):
         A user who read the second email and stopped has a valid access code
         and no account, and is the one person the registration page exists for
         - sending them to collect a key strands them just as surely as sending
-        a user with no code to register. The guide has to establish which of
-        the three states the user is in before it names a destination.
+        a user with no code to register. Registering is likewise not the same
+        as holding a key: the key is shown once and cannot be read back, so a
+        user who did not save it needs the key page, not the register page.
+        The guide has to establish which state the user is in before it names
+        a destination.
         """
         normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
             "do not assume the user walked the whole path",
+            "registering is not the same as holding a key",
+            "shown once and cannot be read back",
+            "https://portal.traigent.ai/management/api-keys",
             "has the access code but never registered",
             "https://portal.traigent.ai/register",
             "has not started",

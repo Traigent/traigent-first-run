@@ -498,9 +498,12 @@ full access rather than the read-only default, because a read-only key still spe
 then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
 repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
 own link, name which is which, and never present one link as though it covered both. If the user has
-already completed portal registration, a full-access key was issued for them there, so skip the
-create-account and generate-key ask - have them paste that key into `.env`, never into chat, and
-upload the baseline as above. Ask which state they are in rather than assuming, because getting the
+already completed portal registration and still has the key issued there, skip the create-account and
+generate-key ask - have them paste that key into `.env`, never into chat, and upload the baseline as
+above. Registering is not the same as holding a key: it is shown once and cannot be read back, so a
+user who registered but did not save it creates a fresh full-access one at
+`https://portal.traigent.ai/management/api-keys` rather than hunting for the original. Ask which
+state they are in rather than assuming, because getting the
 second email and registering are separate acts and many people stop after reading the email: if they
 have the access code but never registered, give them `https://portal.traigent.ai/register` as a
 clickable link and ask them to register with that code, then resume here; if they have not started

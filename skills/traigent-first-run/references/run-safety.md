@@ -88,7 +88,12 @@ Do not assume the user walked the whole path. Getting the second email and regis
 acts, and many people read the email and stop. Establish where they actually are before naming a
 destination:
 
-- **Already registered** - a full-access key was issued for them; they only need to copy it.
+- **Already registered, key in hand** - they only need to paste it; nothing else is required.
+- **Already registered, no key in hand** - registering is not the same as holding a key. A
+  full-access key is issued on the page registration lands on, but it is shown once and cannot be
+  read back afterwards, so anyone who navigated away or did not save it makes a fresh one at
+  `https://portal.traigent.ai/management/api-keys`. Say the write-scope rule below at that moment,
+  because this is the case it governs.
 - **Has the access code but never registered** - send them to
   `https://portal.traigent.ai/register` as a clickable link and tell them to register with the
   access code from that second email. This is the case the page exists for.
