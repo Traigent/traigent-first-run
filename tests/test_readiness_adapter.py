@@ -79,6 +79,101 @@ def _dataset_subscore(score: dict, name: str) -> dict:
     return next(sub for sub in pillar["subscores"] if sub["name"] == name)
 
 
+def _run_readiness(records: list[dict]) -> subprocess.CompletedProcess:
+    """Feed hand-built preflight records to the scorer without asserting exit."""
+    return subprocess.run(
+        [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+        input=json.dumps(records),
+        capture_output=True,
+        text=True,
+    )
+
+
+def _declared_split_records(
+    tuning_metrics: dict | None,
+    holdout_metrics: dict | None,
+    *,
+    split_status: str | None = "PASS",
+) -> list[dict]:
+    """Minimal preflight JSON for a dataset that declares a real split.
+
+    `None` for either metrics dict drops that size record entirely, which is
+    what a truncated, filtered, or older-version JSON looks like - the record
+    itself is gone, so nothing inside it can be inspected. `split_status=None`
+    drops the `dataset-split` record too, leaving the size records as the only
+    surviving evidence that a split was declared.
+    """
+    records = [
+        {
+            "check": "dataset-provenance",
+            "status": "PASS",
+            "detail": "declared sources: ['production']",
+            "metrics": {
+                "rows": 100,
+                "labelled_rows": 50,
+                "synthetic": False,
+                "sources": ["production"],
+            },
+        },
+    ]
+    if split_status is not None:
+        records.append(
+            {
+                "check": "dataset-split",
+                "status": split_status,
+                "detail": "tuning and holdout inputs are disjoint",
+                "metrics": {},
+            }
+        )
+    if tuning_metrics is not None:
+        records.append(
+            {
+                "check": "dataset-tuning-size",
+                "status": "PASS",
+                "detail": "50 tuning rows",
+                "metrics": tuning_metrics,
+            }
+        )
+    if holdout_metrics is not None:
+        records.append(
+            {
+                "check": "dataset-holdout-resolution",
+                "status": "PASS",
+                "detail": "50 holdout rows; one example changes the score by 2.0 "
+                "percentage points",
+                "metrics": holdout_metrics,
+            }
+        )
+    return records
+
+
+def _split_rows(holdout_input: str) -> list[dict]:
+    """50 labelled tuning rows against 50 labelled holdout rows.
+
+    Passing the tuning half's own input template makes the two splits overlap,
+    which is how preflight is driven into its `dataset-split` FAIL branch.
+    """
+    return [
+        {
+            "id": f"tune-{index}",
+            "input": f"tuning question {index} token{index}",
+            "output": f"answer {index % 4}",
+            "split": "tune",
+            "metadata": {"provenance": "production"},
+        }
+        for index in range(50)
+    ] + [
+        {
+            "id": f"holdout-{index}",
+            "input": holdout_input.format(index=index),
+            "output": f"answer {index % 4}",
+            "split": "holdout",
+            "metadata": {"provenance": "production"},
+        }
+        for index in range(50)
+    ]
+
+
 # A healthy evaluator and search space so the overall score is bound by the
 # dataset cap under test rather than by an absent evaluator or agent.
 HEALTHY_CALIBRATION = {
@@ -216,6 +311,348 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset)
             subscore = _dataset_subscore(score, "provenance")
             self.assertEqual(subscore["value"], 10.0)
+
+    def test_mixed_labelled_dataset_scores_power_on_labelled_rows_only(self) -> None:
+        """C4: 10 labelled rows among 100 buy the precision of 10, not of 100.
+
+        The 90 rows that omit the expected-output field are present-but-
+        unlabelled, so `malformed_rows` stays 0 and the structural-integrity
+        cap must not fire - the honest report is a low power sub-score.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"labelled-{index}",
+                    "input": f"labelled question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(10)
+            ] + [
+                {
+                    "id": f"unlabelled-{index}",
+                    "input": f"unlabelled question {index} othertoken{index}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(90)
+            ]
+            dataset = _write_jsonl(directory, "mixed.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertEqual(provenance["rows"], 100)
+            self.assertEqual(provenance["labelled_rows"], 10)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 9.6)
+            self.assertIn("10 scoreable", power["evidence"])
+            self.assertNotIn("100 examples", power["evidence"])
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertNotIn("dataset-integrity-fail", conditions)
+
+    def test_labels_on_one_side_of_a_declared_split_collapse_power(self) -> None:
+        """C5: a holdout nothing can score is not a holdout.
+
+        50 labelled tuning rows against 50 unscoreable holdout rows compare
+        exactly zero examples, however large the split looks.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"tune-{index}",
+                    "input": f"tuning question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "split": "tune",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(50)
+            ] + [
+                {
+                    "id": f"holdout-{index}",
+                    "input": f"holdout question {index} othertoken{index}",
+                    "output": "",
+                    "split": "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(50)
+            ]
+            dataset = _write_jsonl(directory, "one-sided-split.jsonl", rows)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 5.0)
+            self.assertIn("50/0 scoreable", power["evidence"])
+
+    def test_a_none_valued_class_label_does_not_clamp_power(self) -> None:
+        """C6: a fully labelled dataset must not be reported as half unscoreable.
+
+        The negative class of this two-class dataset is the literal string
+        "None" - a no-intent label, or a null that survived a pandas round-trip
+        as text. Every row carries an expected output, so the 50/50 split is
+        worth the full 50-example precision; calling half of it unscoreable is
+        the same class of false claim the clamp exists to remove, pointed the
+        other way.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"intent-{index}",
+                    "input": f"utterance {index} token{index}",
+                    "output": "None" if index % 2 else "book_flight",
+                    "split": "tune" if index < 50 else "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "none-class.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertEqual(provenance["labelled_rows"], 100)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 22.0)
+            self.assertIn("50 examples", power["evidence"])
+            self.assertNotIn("scoreable", power["evidence"])
+
+    def test_json_null_expected_outputs_still_clamp_power(self) -> None:
+        """C7: the same shape with genuine nulls stays clamped.
+
+        Only half of these rows can be scored, so the clamp C6 forbids must
+        fire here - the predicate distinguishes the two shapes rather than
+        widening what counts as a label.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"intent-{index}",
+                    "input": f"utterance {index} token{index}",
+                    "output": None if index % 2 else "book_flight",
+                    "split": "tune" if index < 50 else "holdout",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "null-class.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertEqual(provenance["labelled_rows"], 50)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 12.0)
+            self.assertIn("25/25 scoreable", power["evidence"])
+
+    def test_old_preflight_json_without_labelled_split_counts_fails_loudly(
+        self,
+    ) -> None:
+        """Version-skew guard: a declared split without its per-split labelled
+        counts can only be scored with the aggregate clamp, which demonstrably
+        fails to lower a split whose labels all sit on one side - so refuse it
+        rather than report a score that is too high.
+        """
+        stale_records = [
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "detail": "declared sources: ['production']",
+                "metrics": {
+                    "rows": 100,
+                    "labelled_rows": 50,
+                    "synthetic": False,
+                    "sources": ["production"],
+                },
+            },
+            {
+                "check": "dataset-tuning-size",
+                "status": "PASS",
+                "detail": "50 tuning rows",
+                "metrics": {"tuning_rows": 50},
+            },
+            {
+                "check": "dataset-holdout-resolution",
+                "status": "PASS",
+                "detail": "50 holdout rows; one example changes the score by 2.0 "
+                "percentage points",
+                "metrics": {"holdout_rows": 50},
+            },
+        ]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(stale_records),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_labelled_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_null_valued_labelled_split_counts_are_refused(self) -> None:
+        """A key carrying JSON null is not a count.
+
+        The scorer branches on *value*, so a null-valued `tuning_labelled_rows`
+        reaches the same aggregate fallback an absent key would - and the
+        aggregate cannot see labels sitting entirely on one side of the split.
+        Presence of the key must not be mistaken for a usable number.
+        """
+        process = _run_readiness(
+            _declared_split_records(
+                {"tuning_rows": 50, "tuning_labelled_rows": None},
+                {"holdout_rows": 50, "holdout_labelled_rows": None},
+            )
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_labelled_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_negative_split_counts_are_refused(self) -> None:
+        """A row count cannot be negative.
+
+        Nothing preflight emits is below zero, so a negative count means the
+        JSON was hand-edited or corrupted. It is arithmetically a number, so it
+        flows straight through the scorer and prints a nonsense band ("-5
+        comparable examples") instead of admitting the input is unusable.
+        """
+        process = _run_readiness(
+            _declared_split_records(
+                {"tuning_rows": -5, "tuning_labelled_rows": -5},
+                {"holdout_rows": -5, "holdout_labelled_rows": -5},
+            )
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_rows", process.stderr)
+        self.assertIn("holdout_labelled_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_a_missing_split_size_record_is_refused(self) -> None:
+        """A record that is absent altogether announces nothing.
+
+        A JSON carrying only `dataset-tuning-size` says a split exists but
+        leaves the holdout's labelled count unknowable - and an unknown holdout
+        could be zero, which is the whole failure this guard exists to refuse.
+        """
+        process = _run_readiness(
+            _declared_split_records(
+                {"tuning_rows": 50, "tuning_labelled_rows": 50}, None
+            )
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("holdout_labelled_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_a_declared_split_with_no_size_records_at_all_is_refused(self) -> None:
+        """`dataset-split: PASS` alone still declares a split.
+
+        Preflight versions predating the size metrics emit the PASS status with
+        no per-split counts anywhere; the status is the witness that a split
+        exists when neither record survives.
+        """
+        process = _run_readiness(_declared_split_records(None, None))
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_size_records_declare_a_split_without_the_status_record(self) -> None:
+        """The size records are a witness in their own right.
+
+        A JSON whose `dataset-split` record never arrived still describes a
+        split the moment it carries per-split sizes, so the counts inside them
+        must be usable.
+        """
+        process = _run_readiness(
+            _declared_split_records(
+                {"tuning_rows": 50, "tuning_labelled_rows": None},
+                {"holdout_rows": 50, "holdout_labelled_rows": None},
+                split_status=None,
+            )
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_labelled_rows", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_the_refusal_names_the_counts_that_are_actually_missing(self) -> None:
+        """The message must not blame the half that is present.
+
+        With only the labelled counts supplied, it is the totals that are
+        missing; naming `tuning_labelled_rows` there sends the reader looking
+        for the one key they can already see.
+        """
+        process = _run_readiness(
+            _declared_split_records(
+                {"tuning_labelled_rows": 50}, {"holdout_labelled_rows": 50}
+            )
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("tuning_rows", process.stderr)
+        self.assertIn("holdout_rows", process.stderr)
+        self.assertNotIn("labelled", process.stderr)
+        self.assertIn("re-run", process.stderr)
+
+    def test_a_complete_declared_split_still_scores(self) -> None:
+        """The guard must refuse only what it cannot score, never a real split."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(
+                directory,
+                "split.jsonl",
+                _split_rows("holdout question {index} other{index}"),
+            )
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 22.0)
+            self.assertIn("50 tuning / 50 holdout", power["evidence"])
+
+    def test_an_overlapping_split_still_scores_through_the_no_split_branch(
+        self,
+    ) -> None:
+        """An overlapping split emits no size records, and must not start refusing.
+
+        `dataset-split` FAIL suppresses both metric records by construction, so
+        treating FAIL as a declared split would turn every overlapping dataset
+        into an exit-2 refusal. Its overlap cap already says the number is not
+        trustworthy.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(
+                directory,
+                "overlap.jsonl",
+                _split_rows("tuning question {index} token{index}"),
+            )
+
+            records = {record["check"] for record in _preflight_records(dataset)}
+            self.assertNotIn("dataset-tuning-size", records)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertIn("no declared tuning/holdout split", power["evidence"])
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-tune-holdout-overlap", conditions)
+
+    def test_a_dataset_with_no_split_still_scores(self) -> None:
+        """No split declared anywhere is not staleness - it is a plain dataset."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(60)
+            ]
+            dataset = _write_jsonl(directory, "flat.jsonl", rows)
+
+            score = _score(dataset, self._healthy_context(directory))
+            power = _dataset_subscore(score, "power")
+            self.assertEqual(power["value"], 17.6)
+            self.assertIn("no declared tuning/holdout split", power["evidence"])
 
     def test_old_preflight_json_without_malformed_count_fails_loudly(self) -> None:
         """Version-skew guard: integrity FAIL without `malformed_rows` must not
