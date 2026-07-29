@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
@@ -457,6 +457,38 @@ def row_provenance(row: dict[str, Any]) -> Any:
     return None
 
 
+def row_output_provenance(row: dict[str, Any]) -> Any:
+    """Return where a row's *expected output* came from, or None if undeclared.
+
+    Separate from {@link row_provenance} because a row carries one token for
+    itself, and that cannot express the common real shape: genuine collected
+    inputs whose expected answers were written by a model rather than observed.
+    Declaring it in the row's own token does not work - anything starting with
+    a synthetic prefix marks the whole row generated - so it is read from its
+    own field, under either name, at the top level or nested in `metadata`, to
+    match how `row_provenance` reads its pair.
+    """
+    metadata = row.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for candidate in (
+        row.get("output_provenance"),
+        metadata.get("output_provenance"),
+        row.get("output_source"),
+        metadata.get("output_source"),
+    ):
+        if candidate not in (None, ""):
+            return candidate
+    return None
+
+
+def has_generated_output(row: dict[str, Any]) -> bool:
+    """Report whether a row declares its expected output as generated."""
+    source = row_output_provenance(row)
+    if source is None:
+        return False
+    return str(source).casefold().strip().startswith(SYNTHETIC_SOURCE_PREFIXES)
+
+
 def is_synthetic(row: dict[str, Any]) -> bool:
     """Report whether a row's declared provenance is generated, not collected.
 
@@ -513,7 +545,10 @@ def structured_outcomes(
 
 
 def emit_dataset_provenance(
-    present_rows: list[dict[str, Any]], *, labelled: int
+    present_rows: list[dict[str, Any]],
+    *,
+    labelled: int,
+    scored_rows: Sequence[dict[str, Any]] = (),
 ) -> bool:
     """Emit the provenance metric and report whether the data is synthetic.
 
@@ -528,18 +563,37 @@ def emit_dataset_provenance(
     declared_sources = {
         str(row_provenance(row) or "unknown").casefold() for row in present_rows
     }
+    # Reported independently of `synthetic`: a row whose own token is generated
+    # is already fully synthetic, so the interesting case this answers is the
+    # other one - collected inputs whose expected answers were written by a
+    # model. The scorer credits that below production and above generated.
+    #
+    # Scanned over rows that actually carry an expected output, through the same
+    # `dataset_row_is_labelled` predicate the aggregate and per-split counts use.
+    # A row with no answer cannot have a generated one, and answering "does this
+    # row have an output" with a private test here is how the checks in this file
+    # came to disagree about the same row (traigent-first-run#68, #70).
+    generated_outputs = any(
+        has_generated_output(row) for row in scored_rows if dataset_row_is_labelled(row)
+    )
+    if synthetic:
+        detail = "every row declares generated provenance"
+    elif generated_outputs:
+        detail = (
+            f"declared sources: {sorted(declared_sources)}; "
+            "one or more expected outputs declare generated provenance"
+        )
+    else:
+        detail = f"declared sources: {sorted(declared_sources)}"
     emit(
         "dataset-provenance",
         WARN if synthetic else PASS,
-        (
-            "every row declares generated provenance"
-            if synthetic
-            else f"declared sources: {sorted(declared_sources)}"
-        ),
+        detail,
         {
             "rows": len(present_rows),
             "labelled_rows": labelled,
             "synthetic": synthetic,
+            "generated_outputs": generated_outputs,
             "sources": sorted(declared_sources),
         },
     )
@@ -655,7 +709,9 @@ def check_dataset(
         )
 
     labelled = sum(1 for row in rows if dataset_row_is_labelled(row))
-    synthetic = emit_dataset_provenance(present_rows, labelled=labelled)
+    synthetic = emit_dataset_provenance(
+        present_rows, labelled=labelled, scored_rows=rows
+    )
     raw_ids = [row_metadata_value(row, "id") for row in rows]
     missing_ids = [
         index + 1 for index, value in enumerate(raw_ids) if value in (None, "")

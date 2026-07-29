@@ -387,6 +387,10 @@ class DatasetFacts:
     split_overlap: bool = False
     integrity_failed: bool = False
     synthetic: bool = False
+    # Real collected inputs whose expected answers were written by a model.
+    # Defaults False, so a preflight JSON that predates the field scores exactly
+    # as it does today rather than silently entering the new band.
+    generated_outputs: bool = False
     sources: tuple[str, ...] = ()
 
 
@@ -813,6 +817,16 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
     elif "unknown" in facts.sources or not facts.sources:
         provenance = 6.0
         evidence = "provenance undeclared - not credited as production data"
+    elif facts.generated_outputs:
+        # Ordered after the undeclared branch on purpose: this band's claim is
+        # that the *inputs* are real, which is only true once they are declared
+        # and non-synthetic. A dataset that says nothing about its inputs has
+        # not earned "real inputs" no matter what it says about its outputs.
+        provenance = 6.0
+        evidence = (
+            "real inputs with generated expected outputs - the answers are the "
+            "model's, not observed, so this is not credited as production data"
+        )
     else:
         provenance = 10.0
         evidence = f"declared sources: {', '.join(facts.sources)}"
@@ -1600,6 +1614,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         split_overlap=statuses.get("dataset-split") == "FAIL",
         integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
         synthetic=bool(provenance.get("synthetic")),
+        generated_outputs=bool(provenance.get("generated_outputs")),
         sources=tuple(provenance.get("sources", ())),
     )
 

@@ -286,6 +286,16 @@ For a fully generated walkthrough, create 24 examples by default:
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
+When the inputs are real but the expected answers were written by a model rather than observed,
+declare that on the row as `output_provenance: "generated"` (`output_source` is read too, at the top
+level or under `metadata`). It scores 6 of the 10 provenance points - below collected production
+data, above a fully generated set - because the ruler those rows are graded against is the model's
+opinion, not a fact anyone recorded. Do not express it in the row's own `provenance`/`source` token
+instead: anything starting with `synthetic`, `generated`, `walkthrough`, or `mock` marks the entire
+row generated, scoring 3 and capping the whole readiness score at 65. The band also requires the
+inputs to be declared and non-synthetic - a dataset that says nothing about where its inputs came
+from has not earned "real inputs", and scores the undeclared 6 with that reason instead.
+
 Every generated row must:
 
 - Have a unique stable `id`.
