@@ -1339,6 +1339,26 @@ class SkillPackageTests(unittest.TestCase):
         positions = [normalized.index(phrase) for phrase in ordered_funnel_phrases]
         self.assertEqual(positions, sorted(positions))
 
+    def test_account_state_is_established_before_a_destination_is_named(self) -> None:
+        """Receiving the access email and registering are separate acts.
+
+        A user who read the second email and stopped has a valid access code
+        and no account, and is the one person the registration page exists for
+        - sending them to collect a key strands them just as surely as sending
+        a user with no code to register. The guide has to establish which of
+        the three states the user is in before it names a destination.
+        """
+        normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "do not assume the user walked the whole path",
+            "has the access code but never registered",
+            "https://portal.traigent.ai/register",
+            "has not started",
+            "it is the code, not the url, that gets a user in",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_emailed_code_and_link_are_handled_as_credentials(self) -> None:
         """The code and the link are bearer credentials, not navigation.
 
@@ -1401,7 +1421,6 @@ class SkillPackageTests(unittest.TestCase):
             "lead-funnel",
             "lead_token",
             "lead path",
-            "https://portal.traigent.ai/register",
         ):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, combined)

@@ -66,6 +66,8 @@ Ask before any private content leaves the machine, even when the provider key al
 
 At the secret-entry gate, show only the URL needed for the selected service:
 
+- Traigent registration, only once the user already has their access code:
+  `https://portal.traigent.ai/register`
 - Traigent API keys: `https://portal.traigent.ai/management/api-keys`
 - OpenRouter keys: `https://openrouter.ai/keys`
 - OpenAI keys: `https://platform.openai.com/api-keys`
@@ -82,10 +84,20 @@ the link is spent, the portal issues a full-access API key on the page it lands 
 account's portal access period starts. Their address is already confirmed by then, so registration
 does not ask for a second confirmation.
 
-Registration has to be authorized by that link, so a first-time user cannot simply sign up on the
-page. Someone who does not have an account yet is told to start at the Traigent site and watch for
-those two emails - never handed a registration address to visit directly, because without the link
-that page will refuse them.
+Do not assume the user walked the whole path. Getting the second email and registering are separate
+acts, and many people read the email and stop. Establish where they actually are before naming a
+destination:
+
+- **Already registered** - a full-access key was issued for them; they only need to copy it.
+- **Has the access code but never registered** - send them to
+  `https://portal.traigent.ai/register` as a clickable link and tell them to register with the
+  access code from that second email. This is the case the page exists for.
+- **Has not started, or the code is older than 10 days** - they begin at the Traigent site and
+  request a fresh code; an expired one cannot be revived.
+
+Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
+user in. Never hand the registration address to someone who does not have one yet - that page will
+refuse them, and the fix is to start at the Traigent site, not to retry the link.
 
 The confirmation code and the access link are credentials, not navigation. The code proves the
 mailbox and the link authorizes creating an account, so never ask the user to paste either one into
