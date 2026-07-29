@@ -1763,6 +1763,38 @@ def _read_bounds(field: str, value: Any) -> dict[str, dict[str, float]]:
                 f"not low={low:g} and high={high:g}: a knob is scored against "
                 "the width of this range, and this one has none"
             )
+        # Ordered finite edges are still not a usable range: both harms the
+        # checks above close are reachable one step outside them, through the
+        # width the edges were never checked as.
+        #
+        # * Overflow. `{"low": -1e308, "high": 1e308}` is two finite numbers
+        #   whose difference is `inf`, so the noise floor is infinite and a knob
+        #   genuinely sweeping 1 -> 50 collapses to "nothing to search" - the
+        #   verbatim harm `_read_edge` refuses the *spelling* "inf" to prevent.
+        # * Underflow. `{"low": 0.0, "high": 5e-324}` has `low < high` and a
+        #   width so small that `width * DEFAULT_NOISE_FRACTION` underflows to
+        #   0.0, so two practically identical values read as a genuine sweep and
+        #   clear `agent-no-varying-knobs` - the verbatim harm the `low == high`
+        #   refusal above cites. For a knob whose floor is a fixed constant the
+        #   same width instead makes the span ratio it divides infinite, which
+        #   is no more measurable, so the default fraction is what decides.
+        width = high - low
+        # Under the canonical name, because that is the name `score_agent` will
+        # look the floor up under: a check that reads a spelling the scorer has
+        # already renamed is answering about a knob that will not exist.
+        floor = noise_floor(KNOB_ALIASES.get(knob, knob), low, high)
+        if (
+            not math.isfinite(width)
+            or width * DEFAULT_NOISE_FRACTION <= 0.0
+            or floor <= 0.0
+        ):
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] spans {low:g} to {high:g}, "
+                f"whose width is {width:g} and whose noise floor is {floor:g}: "
+                "a knob is scored against that width and two values within that"
+                " floor are one configuration, so a width this scorer cannot "
+                "measure is not a range it can search"
+            )
         read[knob] = {"low": low, "high": high}
     return read
 
@@ -1869,6 +1901,24 @@ CONFIG_SPACE_SPACE_KEYS = tuple(
 )
 
 
+def candidate_domain(values: Iterable[Any]) -> list[tuple[bool, Any]]:
+    """A candidate list as a key that tells `True` from `1`.
+
+    `True == 1` and `False == 0` in Python, so comparing two candidate lists
+    directly read `[true, false]` and `[1, 0]` as one domain: two spellings of
+    one dimension declared over *different* values were merged silently, which
+    is the narrowing the refusal below exists to stop. `dict.fromkeys` collapsed
+    the pair the same way, before any comparison ran.
+
+    The key pairs each value with whether it is a bool rather than using its
+    `repr`, because `1` and `1.0` genuinely are one candidate everywhere else
+    here - `knob_variation` dedupes by value, and the combination count was
+    moved off `repr` for exactly that reason. Keying on `repr` would refuse
+    `[1]` against `[1.0]`, a document that scores today.
+    """
+    return list(dict.fromkeys((isinstance(value, bool), value) for value in values))
+
+
 def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
     """Collapse alias spellings onto one dimension before anything counts them.
 
@@ -1894,9 +1944,7 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
     for name, values in facts.knobs.items():
         canonical = _canonical(name)
         held = knobs.get(canonical)
-        if held is not None and list(dict.fromkeys(held)) != list(
-            dict.fromkeys(values)
-        ):
+        if held is not None and candidate_domain(held) != candidate_domain(values):
             raise ConfigSpaceInputError(
                 f"config-space declares both '{name}' and '{canonical}' over "
                 "different candidate values, but they are two spellings of one "
@@ -1934,8 +1982,19 @@ def _reject_phantom_names(
 
     Both fields address knobs by name, and both are read by intersecting with
     the space, so an unmatched name silently disappears instead of failing.
+
+    It judges the *canonical* name and reports the written one, and it runs
+    after `canonical_alias_names`. Running before it made this refuse
+    `wired: ["prompt_policy"]` against a space declaring `prompt_style` - a
+    spelling this module itself defines as legal - and say the name "is not
+    declared", which is false under the module's own semantics: it does match a
+    declared knob, through `KNOB_ALIASES`. A validation step that reads names
+    the normalization step has not yet collapsed cannot answer the question it
+    is asking.
     """
-    phantom = sorted(set(names) - set(knobs))
+    phantom = sorted(
+        {name for name in names if KNOB_ALIASES.get(name, name) not in knobs}
+    )
     if phantom:
         detail = ", ".join(f"'{name}'" for name in phantom)
         raise ConfigSpaceInputError(
@@ -1950,11 +2009,25 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     """Read a config-space document, or refuse it naming the field at fault.
 
     Every field is read by its own entry in `CONFIG_SPACE_FIELDS` and by
-    nothing else, so this function holds only what is genuinely *cross*-field:
-    which of the two space spellings is read, and the two claims one field
-    makes about another. A `wired` or `bounds` name that is no knob of the
-    declared space is not a narrower space, it is a typo, and it is refused
-    rather than dropped.
+    nothing else, so this function holds only what is genuinely *cross*-field.
+    There are three such rules, and they run in this order because a rule that
+    reads a name must read the name the scorer will use:
+
+    1. **Which space spelling is read.** `knobs` wins over its
+       `configuration_space` alias only when it is non-empty, and `knobs_key`
+       names whichever was actually read, so no message points at a key the
+       author never wrote.
+    2. **Alias spellings are collapsed onto one dimension**
+       (`canonical_alias_names`), across `knobs`, `wired` and `bounds` at once.
+       Two spellings of one dimension declared over different candidate values,
+       or with different ranges, are refused here rather than merged.
+    3. **A `wired` or `bounds` name must be a knob of the declared space**
+       (`_reject_phantom_names`, applied to each field). Such a name is not a
+       narrower space, it is a typo, and it is refused rather than dropped.
+
+    Rule 3 runs on the output of rule 2 and never the other way round: an alias
+    spelling is a legal name for a declared knob, so checking names before they
+    are collapsed refuses documents this module itself defines as valid.
     """
     if not isinstance(document, dict):
         raise ConfigSpaceInputError(
@@ -1998,9 +2071,7 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # it from "collapsed" to "varying" and clear the cap on a range the author
     # never declared for it. The template's own fence asserts this before it
     # searches; enforce it here too, because the document is read long after.
-    _reject_phantom_names("wired", wired, knobs, knobs_key)
-    _reject_phantom_names("bounds", bounds, knobs, knobs_key)
-    return canonical_alias_names(
+    facts = canonical_alias_names(
         AgentFacts(
             agent_type=read.get("agent_type"),
             max_trials=read.get("max_trials"),
@@ -2009,6 +2080,10 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
             bounds=bounds,
         )
     )
+    # Against the collapsed space, and reporting the spelling the author wrote.
+    _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
+    _reject_phantom_names("bounds", bounds, facts.knobs, knobs_key)
+    return facts
 
 
 # ---------------------------------------------------------------------------

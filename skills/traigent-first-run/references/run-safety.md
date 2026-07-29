@@ -275,19 +275,27 @@ Three honesty rules govern the file:
   where the scorer cannot: `probe_wiring` re-builds the provider request under each alternative
   value and returns one verdict per knob.
 
-  State the probe's limits exactly, because they are narrow. It proves **request visibility** -
-  that changing the knob changes the request dict - and never provider *effect*: a provider that
-  accepts a parameter and ignores it yields two different requests and one behaviour. Only the run
-  can show effect; the probe only rules out the dimension that could not have one. It probes every
-  model in the space rather than one base, since request construction branches on the model and a
-  knob consumed under one model and dropped under another is dead for part of the space. It probes
+  State the probe's limits exactly, because they are narrow. Its exact claim is **request
+  visibility, per model** - that changing the knob changes the request dict, under each model in
+  the space - and never provider *effect*: a provider that accepts a parameter and ignores it
+  yields two different requests and one behaviour. Only the run can show effect; the probe only
+  rules out the dimension that could not have one. It probes every model in the space rather than
+  one base, since request construction branches on the model. It probes
   several representative inputs rather than one literal string, since a knob that acts only on some
   inputs (a `sql_mode` applied when the message starts `SQL:`) is invisible under a single probe
   string - which used to block a legitimately wired run before it started. Replace the wrapper's
   `PROBE_INPUTS` placeholders with real inputs from the tuning dataset.
 
-  A `partial` verdict - visible under some models, never under others - fails the load: it is a
-  proven dead dimension for part of the space, not an unknown. An `invisible` verdict is the case
+  A `partial` verdict - visible under some models, never under others - is **information, not a
+  failure**, and the load continues. A knob can legitimately affect only the models that support
+  it: `reasoning_effort` on a reasoning model is a conditional dimension, and failing the load on it
+  blocked a valid run before it started. The wrapper prints which models honour such a knob, so the
+  asymmetry is in the run record and a reader can weigh it. Do not park a `partial` knob in
+  `WIRED_OUTSIDE_THE_REQUEST` either: that mapping is for knobs the probe cannot see at all, and a
+  `partial` knob demonstrably does act inside request construction.
+
+  Only an `invisible` verdict fails the load - a knob no model and no probed input ever moves, which
+  is the no-op the guard exists to catch. It is also the case
   the probe genuinely cannot decide, because it cannot tell "acts outside request construction"
   from "the agent ignores it". It says so rather than guessing either way: a knob that acts outside
   request construction - a retrieval depth, a tool policy, a repair loop - is recorded in the

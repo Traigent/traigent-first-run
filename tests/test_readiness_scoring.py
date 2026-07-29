@@ -765,6 +765,58 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(aliased.wired, ("temperature",))
 
+    def test_an_alias_spelling_is_a_declared_name_not_a_phantom(self) -> None:
+        """The phantom check ran before the names were collapsed, and refused
+        a spelling this module itself defines as legal.
+
+        `wired: ["prompt_style", "prompt_policy"]` against a space declaring
+        `prompt_style` scored on the parent and became exit 2 with "'wired'
+        names 'prompt_policy', which is not declared in 'knobs'" - a sentence
+        that is false by this module's own semantics, because the name does
+        match that knob through `KNOB_ALIASES`. The normalization step has to
+        run before the validation step that reads the names it normalizes.
+        """
+        document = {
+            "knobs": {"prompt_style": ["a", "b"]},
+            "wired": ["prompt_style", "prompt_policy"],
+        }
+        facts = MODULE.agent_facts_from_config_space(document)
+        # one dimension, named once, whichever spellings `wired` used
+        self.assertEqual(facts.wired, ("prompt_style",))
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertEqual([cap.condition for cap in caps], [])
+        single = MODULE.agent_facts_from_config_space(
+            {"knobs": {"prompt_style": ["a", "b"]}, "wired": ["prompt_style"]}
+        )
+        self.assertEqual(pillar.score, MODULE.score_agent(single)[0].score)
+
+        # `bounds` addresses knobs by name the same way and is read the same way
+        ranged = MODULE.agent_facts_from_config_space(
+            {
+                "knobs": {"prompt_style": [1, 5]},
+                "wired": ["prompt_policy"],
+                "bounds": {"prompt_policy": {"low": 1, "high": 5}},
+            }
+        )
+        self.assertEqual(ranged.bounds, {"prompt_style": {"low": 1.0, "high": 5.0}})
+
+        # and a real typo is still refused, naming the spelling that was written
+        for field, document in (
+            ("wired", {"knobs": {"prompt_style": ["a"]}, "wired": ["prompt_polciy"]}),
+            (
+                "bounds",
+                {
+                    "knobs": {"prompt_style": ["a"]},
+                    "bounds": {"prompt_polciy": {"low": 0, "high": 1}},
+                },
+            ),
+        ):
+            with self.subTest(field=field):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as typo:
+                    MODULE.agent_facts_from_config_space(document)
+                self.assertIn(f"'{field}'", str(typo.exception))
+                self.assertIn("'prompt_polciy'", str(typo.exception))
+
     def test_integral_max_trials_scores_however_json_spelled_it(self) -> None:
         """`12.0` is the same trial budget as `12`, and scored as one.
 
@@ -1104,6 +1156,54 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
             32,
         )
 
+    def test_bounds_width_must_be_a_number_the_scorer_can_use(self) -> None:
+        """Ordered finite edges are still not a usable range.
+
+        The pair check read the edges and never the width they make, so both
+        harms it closes were reachable one step outside it:
+
+        * `{"low": -1e308, "high": 1e308}` are two finite numbers whose
+          difference overflows to `inf`, so the noise floor is infinite and the
+          knob sweeping 1 -> 50 scored agent 0 under `agent-no-varying-knobs` -
+          the verbatim harm `_read_edge` refuses the spelling "inf" to prevent.
+        * `{"low": 0.0, "high": 5e-324}` has `low < high` and a width whose 2%
+          underflows to 0.0, so two values a hair apart scored 51 and cleared
+          the cap - the verbatim harm the `low == high` refusal cites.
+        """
+        for knobs, edges, harm in (
+            ({"k": [1, 50]}, {"low": -1e308, "high": 1e308}, "infinite width"),
+            ({"k": [0.0, 5e-324]}, {"low": 0.0, "high": 5e-324}, "zero noise floor"),
+        ):
+            with self.subTest(harm=harm):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        {
+                            "agent_type": "general",
+                            "knobs": knobs,
+                            "wired": ["k"],
+                            "bounds": {"k": edges},
+                        }
+                    )
+                self.assertIn("bounds['k']", str(raised.exception))
+
+        # a narrow range that is still measurable is not refused: the guard is
+        # on the width the scorer can use, not on ranges being small
+        sweeping = {"agent_type": "general", "knobs": {"k": [1, 50]}, "wired": ["k"]}
+        for edges in ({"low": 1, "high": 50}, {"low": 0.0, "high": 1e-300}):
+            with self.subTest(edges=edges):
+                facts = MODULE.agent_facts_from_config_space(
+                    dict(sweeping, bounds={"k": edges})
+                )
+                self.assertEqual(facts.bounds["k"]["high"], float(edges["high"]))
+        self.assertEqual(
+            MODULE.score_agent(
+                MODULE.agent_facts_from_config_space(
+                    dict(sweeping, bounds={"k": {"low": 1, "high": 50}})
+                )
+            )[0].score,
+            51,
+        )
+
     def test_a_large_integer_trial_budget_scores_like_any_other(self) -> None:
         """`10**309` is a positive JSON integer, and it exited 1.
 
@@ -1185,6 +1285,42 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
             )
         self.assertIn("prompt_policy", str(raised.exception))
         self.assertIn("prompt_style", str(raised.exception))
+
+    def test_a_boolean_domain_is_not_the_same_domain_as_its_numbers(self) -> None:
+        """`True == 1` in Python, so the conflict check could not see one.
+
+        `{"prompt_style": [true, false], "prompt_policy": [1, 0]}` are two
+        spellings of one dimension over two different candidate lists, and the
+        list comparison read them as identical: the second was dropped silently
+        and the space was scored as if the author had written one of them - the
+        narrowing the refusal exists to stop, arriving through Python's own
+        equality. `dict.fromkeys` collapsed the pair the same way beforehand.
+        """
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"prompt_style": [True, False], "prompt_policy": [1, 0]}}
+            )
+        self.assertIn("prompt_style", str(raised.exception))
+        self.assertIn("prompt_policy", str(raised.exception))
+
+        # The key is bool-aware, not `repr`-based: `1` and `1.0` are one
+        # candidate to `knob_variation` and to the combination count, so two
+        # spellings that differ only in how JSON spelled the same number are
+        # still one dimension and must not become a hard refusal.
+        merged = MODULE.agent_facts_from_config_space(
+            {"knobs": {"prompt_style": [1, 2], "prompt_policy": [1.0, 2.0]}}
+        )
+        self.assertEqual(list(merged.knobs), ["prompt_style"])
+        self.assertEqual(
+            MODULE.candidate_domain([True, False]),
+            [(True, True), (True, False)],
+        )
+        self.assertNotEqual(
+            MODULE.candidate_domain([True, False]), MODULE.candidate_domain([1, 0])
+        )
+        self.assertEqual(
+            MODULE.candidate_domain([1, 2]), MODULE.candidate_domain([1.0, 2.0])
+        )
 
     def test_the_combination_count_uses_the_same_values_the_card_counts(
         self,

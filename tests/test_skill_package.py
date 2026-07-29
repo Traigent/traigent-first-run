@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import re
 import sys
@@ -2176,6 +2178,102 @@ class SkillPackageTests(unittest.TestCase):
             "a knob that acts only on one of the probed inputs is wired, and "
             "refusing to load is a false refusal that blocks a paid run",
         )
+
+    def _wiring_fence_block(self) -> ast.Module:
+        """The load-time fence that judges the probe's verdicts.
+
+        Compiled apart from the definitions it judges so the tests below can
+        swap `build_request` or `build_prompt` first and then run the real
+        fence over the verdicts that produces.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        body = ast.parse(code).body
+        start = next(
+            index
+            for index, node in enumerate(body)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PROBE_VERDICTS"
+                for target in node.targets
+            )
+        )
+        end = next(
+            index
+            for index, node in enumerate(body)
+            if index > start
+            and isinstance(node, ast.FunctionDef)
+            and node.decorator_list
+        )
+        return ast.fix_missing_locations(
+            ast.Module(body=body[start:end], type_ignores=[])
+        )
+
+    def test_a_conditional_knob_loads_and_says_which_models_honour_it(self) -> None:
+        """`partial` blocked a legitimate run, and only `invisible` should.
+
+        A knob can legitimately affect only the models that support it -
+        `reasoning_effort` on a reasoning model is a conditional dimension, not
+        an ignored knob - and the fence aborted the import on it, so a valid
+        run never started. `WIRED_OUTSIDE_THE_REQUEST` is no honest escape for
+        it either: the knob does act inside request construction, which is
+        exactly what the probe just saw. It loads and is reported instead, with
+        the models that honour it, so the asymmetry reaches the run record. The
+        no-op the guard exists to catch - a knob no model and no probed input
+        ever moves - still fails the load.
+        """
+        fence = self._wiring_fence_block()
+
+        conditional = self._wiring_probe_namespace()
+        honest_build_request = conditional["build_request"]
+        base_model = conditional["BASELINE_CONFIG"]["model"]
+
+        def only_the_base_model_reads_the_prompt(message: str, config: dict) -> dict:
+            request = honest_build_request(message, config)
+            if config["model"] != base_model:
+                # This model takes no prompt-shaping knob at all, the way a
+                # reasoning model takes no sampling temperature.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        conditional["build_request"] = only_the_base_model_reads_the_prompt
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            exec(compile(fence, "<sdk-conditional-knob>", "exec"), conditional)
+
+        self.assertEqual(
+            {
+                knob
+                for knob, verdict in conditional["PROBE_VERDICTS"].items()
+                if verdict == "partial"
+            },
+            {"prompt_style", "self_check"},
+            "the probe must still see the asymmetry it saw before",
+        )
+        self.assertEqual(
+            conditional["UNPROVEN_WIRED_KNOBS"],
+            {},
+            "a conditional dimension is information, not a failed load",
+        )
+        self.assertEqual(
+            conditional["CONDITIONAL_WIRED_KNOBS"],
+            {"prompt_style": [base_model], "self_check": [base_model]},
+            "the load must name the models that honour a conditional knob",
+        )
+        report = printed.getvalue()
+        for expected in ("conditional dimension", "prompt_style", base_model):
+            self.assertIn(expected, report)
+
+        dead = self._wiring_probe_namespace(
+            build_prompt=lambda message, *, style, self_check: message
+            + ("\n\ncheck" if self_check else "")
+        )
+        with self.assertRaises(AssertionError) as raised:
+            with contextlib.redirect_stdout(io.StringIO()):
+                exec(compile(fence, "<sdk-no-op-knob>", "exec"), dead)
+        self.assertIn("prompt_style", str(raised.exception))
+        self.assertEqual(dead["UNPROVEN_WIRED_KNOBS"], {"prompt_style": "invisible"})
 
     def test_the_escape_list_cannot_be_a_blanket_waiver(self) -> None:
         """`WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silenced the guard.

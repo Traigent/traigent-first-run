@@ -478,26 +478,33 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
 def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
     """Classify each wired knob by what a pure request diff can actually prove.
 
-    What this proves and nothing more: **request visibility** - that changing
-    the knob changes the dict `build_request` returns. It does not prove the
-    provider behaves differently, or at all: a provider that silently ignores a
-    parameter it accepts produces two different requests and one behaviour.
-    Only the run itself can show effect; this only rules out the dimension that
-    could not possibly have one.
+    What this proves and nothing more: **request visibility, per model** - that
+    changing the knob changes the dict `build_request` returns, under each model
+    in the space. It never proves provider *effect*: a provider that silently
+    ignores a parameter it accepts produces two different requests and one
+    behaviour. Only the run itself can show effect; this only rules out the
+    dimension that could not possibly have one.
 
     It probes every model in the space, not just the base's, because request
-    construction branches on the model - a knob consumed under one model and
-    dropped under another is dead for part of the space, and probing from a
-    single base reports it as proven. It probes several inputs, because a knob
+    construction branches on the model. It probes several inputs, because a knob
     that acts only on some inputs is invisible under one literal string.
 
     Verdicts:
 
     - `visible`     - under every model in the space, some alternative value
                       changes the request for some probed input.
-    - `partial`     - it changes the request under some models but never under
-                      others: proven dead for part of the space.
+    - `partial`     - it changes the request under some models and never under
+                      others. That is a *conditional* dimension, not a dead one:
+                      `reasoning_effort` exists only on a reasoning model, so a
+                      knob that moves that model's request and no other is
+                      exactly right. This is information about the shape of the
+                      space, reported below with the models that honour it - not
+                      a failure, and not something to launder through
+                      WIRED_OUTSIDE_THE_REQUEST, since the knob demonstrably
+                      does act inside request construction.
     - `invisible`   - no model and no probed input ever changes the request.
+                      This alone is fatal: it is the no-op that inflates the
+                      config-space document with a dimension nothing can move.
                       The probe cannot tell "acts outside request construction"
                       from "the agent ignores it"; it says so and refuses to
                       guess, which is what WIRED_OUTSIDE_THE_REQUEST records.
@@ -551,21 +558,52 @@ assert all(
 )
 
 PROBE_VERDICTS = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
+# A `partial` knob is a conditional dimension and it loads: `reasoning_effort`
+# on a reasoning model moves that model's request and no other, and failing the
+# load on it blocked a valid run before it started. Re-probing the space one
+# model at a time names the models that do honour it, so the asymmetry reaches
+# the run record instead of being either hidden or fatal.
+CONDITIONAL_WIRED_KNOBS = {
+    knob: [
+        model
+        for model in dict.fromkeys(
+            ENHANCED_SPACE.get("model", [BASELINE_CONFIG["model"]])
+        )
+        if probe_wiring(
+            {**ENHANCED_SPACE, "model": [model]},
+            {**BASELINE_CONFIG, "model": model},
+        )[knob]
+        == "visible"
+    ]
+    for knob, verdict in PROBE_VERDICTS.items()
+    if verdict == "partial"
+}
+# Only `invisible` is fatal, because only `invisible` is the no-op this guard
+# exists to catch: a knob no model and no probed input ever moves is a claimed
+# search dimension the agent cannot act on, and claiming it is what inflated an
+# earlier walkthrough's agent pillar by 12 points.
 UNPROVEN_WIRED_KNOBS = {
     knob: verdict
     for knob, verdict in PROBE_VERDICTS.items()
-    if verdict in {"invisible", "partial"} and knob not in WIRED_OUTSIDE_THE_REQUEST
+    if verdict == "invisible" and knob not in WIRED_OUTSIDE_THE_REQUEST
 }
 assert not UNPROVEN_WIRED_KNOBS, (
-    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but the probe could "
-    "not show them reaching the provider request: 'invisible' means changing "
-    "the knob never changed the request under any model or probed input, and "
-    "'partial' means it changed the request under some models and never under "
-    "others, so it is dead for the rest of the space. The config-space "
-    "document would claim search dimensions the agent cannot move. Wire them, "
-    "add probe inputs that exercise them, record where they act in "
-    "WIRED_OUTSIDE_THE_REQUEST, or remove them from WIRED_KNOBS"
+    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but changing them "
+    "never changed the request under any model or any probed input, so the "
+    "config-space document would claim a search dimension the agent cannot "
+    "move. The probe cannot tell 'acts outside request construction' from "
+    "'the agent ignores it' and will not guess: wire them, add probe inputs "
+    "that exercise them, record where they act in WIRED_OUTSIDE_THE_REQUEST, "
+    "or remove them from WIRED_KNOBS"
 )
+for _knob, _models in sorted(CONDITIONAL_WIRED_KNOBS.items()):
+    # Neither a failure nor a free pass: the search moves this knob for part of
+    # the space, and the run record should say which part.
+    print(
+        f"conditional dimension: '{_knob}' changes the request under "
+        f"{', '.join(_models)} and under no other model in the space; the "
+        "search still moves it, for those models only"
+    )
 for _knob, _where in sorted(WIRED_OUTSIDE_THE_REQUEST.items()):
     # Say it rather than wave it through: an escaped knob is an unproven claim
     # and the run record should show it as one.
