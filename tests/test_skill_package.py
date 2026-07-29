@@ -423,6 +423,44 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
+    def test_portal_probe_gates_connected_work_not_the_baseline(self) -> None:
+        """The key ask must never be able to overtake the baseline (#77).
+
+        Three instructions bear on when the Traigent key is needed: stage 5
+        collects keys, the portal-tracking probe runs before connected work,
+        and stage 7 asks for the key only after the first result is on screen.
+        A user arriving with no account has a valid order only while the probe
+        is scoped to *connected* trials - if it gates the first paid trial of
+        any kind, the provider-paid baseline drags the whole registration
+        funnel in front of it, which is the ordering stage 7 exists to avoid.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        # The probe's trigger is reaching the portal, not spending money.
+        self.assertIn("before the first connected paid trial", skill_text)
+        self.assertNotIn("before the first paid trial,", skill_text)
+        self.assertIn("the baseline is not gated on this probe", skill_text)
+        self.assertIn("the probe gates connected work, not provider spend", safety_text)
+
+        # Stage 5 may not send an account-less user through registration; that
+        # ask belongs to stage 7, after the first result.
+        self.assertIn(
+            "do not send a user who has no traigent account through registration at this step",
+            skill_text,
+        )
+        self.assertIn(
+            "only after that first result is on screen, ask for the traigent key",
+            skill_text,
+        )
+
+        # And the baseline still has to precede the key ask in the document.
+        baseline_position = skill_text.index(
+            "the baseline needs only the user's own provider"
+        )
+        key_ask_position = skill_text.index("only after that first result is on screen")
+        self.assertLess(baseline_position, key_ask_position)
+
     def test_semantic_coverage_review_is_assistant_directed(self) -> None:
         skill_text = SKILL.read_text().casefold()
         quality_text = (

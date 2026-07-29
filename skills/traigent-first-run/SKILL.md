@@ -379,10 +379,12 @@ Only after the standard-library-only component checks:
    entries blank; never replace existing values, comments, unrelated keys, or blank alternate
    provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; correct
    any other existing mode before opening the file.
-   Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
-   yet available, provide only the required account/key destination and resume from this step
-   afterward. If the user has already completed portal registration and created their key in the
-   portal, skip the create-account and generate-key ask and have
+   Stop once and ask the user to enter the keys they already hold locally, never in chat. Do not
+   send a user who has no Traigent account through registration at this step: the provider key is
+   all the baseline needs, and the account ask belongs after that first result (stage 7). If the
+   portal key is not yet available, provide only the required account/key destination and resume
+   from this step afterward. If the user has already completed portal registration and created
+   their key in the portal, skip the create-account and generate-key ask and have
    them paste that key. If they have not registered yet, route them by
    which of the four account states they are in per `references/run-safety.md` - do not assume the
    emailed access code was ever used. The key authenticates the run; the account's portal access
@@ -441,10 +443,15 @@ conservative estimate when cost is untracked. Before the next phase, compare its
 remaining total ceiling. Stop before exceeding it and ask only if more paid work is required.
 Never call the walkthrough ceiling a hard provider-billing cap.
 
-After approval and before the first paid trial, run a zero-LLM portal-tracking probe with a trivial
-stub agent that makes no provider call: confirm the whole connected path in one pass - the portal
-key is present and authenticated, is scoped for `experiment.write`, a session is created, the first
-trial is accepted, and a `cloud_url` comes back. A present-but-unscoped key (HTTP 403 without
+After approval and before the first connected paid trial, run a zero-LLM portal-tracking probe with
+a trivial stub agent that makes no provider call: confirm the whole connected path in one pass - the
+portal key is present and authenticated, is scoped for `experiment.write`, a session is created, the
+first trial is accepted, and a `cloud_url` comes back. The baseline is not gated on this probe. It
+runs on the user's own provider credential with no portal key at all, so a user who has not
+registered yet still reaches a first real result without front-loading the account funnel; run the
+probe once that key is in hand, before the first trial meant to reach the portal. Paid is not the
+trigger - reaching the portal is. A baseline spends real provider money and has no tracking to lose;
+a connected trial does. A present-but-unscoped key (HTTP 403 without
 `experiment.write`) and a rejected config (HTTP 400) both otherwise degrade silently to local-only
 tracking while paid trials keep running and never reach the portal. If any rung fails, surface the
 backend reason verbatim and stop before any paid trial. Treat any degradation to local-only tracking

@@ -217,9 +217,12 @@ Use this gate order:
     the existing one securely as described above, then stop once for both local secret pastes.
 12. Present one combined approval covering the smallest live provider/key check, any LLM-judge
     calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-13. After approval, run the live check first, starting with the zero-LLM portal-tracking probe (see
-    Connected-run readiness below), then the smallest live provider/key check. Continue only if both
-    pass.
+13. After approval, run the live check first. When the portal key is already in hand, start with the
+    zero-LLM portal-tracking probe (see Connected-run readiness below), then the smallest live
+    provider/key check. When it is not - the user registers only after seeing the baseline result -
+    run the smallest live provider/key check now, and the probe later, before the first trial meant
+    to reach the portal. The probe gates connected work, not provider spend. Continue only if every
+    check that ran passed.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
