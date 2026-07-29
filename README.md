@@ -32,6 +32,13 @@ The assistant performs the technical work and asks only when it needs:
 No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
 Traigent generates a coherent substitute around everything that already exists.
 
+What it will not do is guess what your agent is *for*. If nothing in the project says what the task
+is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
+product documentation - the assistant asks a single question and waits for the answer before writing
+anything. A placeholder agent counts as nothing to go on: a file that returns a constant or echoes
+its input is judged by what it does, not by the fact that it imports. Everything downstream of an
+invented task is derived from a guess, and you would be approving real spend on it.
+
 ## Install as an Agent Skill
 
 The complete guide, references, scripts, and compact internal run record are packaged together as
@@ -96,9 +103,21 @@ worth fixing first.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
-shares examples with the holdout, or a dataset that is entirely generated. Saying where your rows
-came from is worth the small effort for the same reason: data you collected is credited above data a
-model wrote, and a dataset that declares nothing is not credited as production data.
+shares examples with the holdout, or a dataset that is mostly or entirely generated. A cap is a
+ceiling on the result, not a deduction and not a refusal: the run continues, the pre-cap average
+stays in the report, and the number simply cannot claim more than the evidence supports.
+
+Saying where your rows came from is worth the small effort for the same reason: data you collected
+is credited above data a model wrote, and a dataset that declares nothing is not credited as
+production data. A mixture is scored as a mixture - a few generated rows among real ones cost a
+little, they do not condemn the set.
+
+The card also names what it cannot use. If half your expected answers are `-` or `?`, the line that
+counts them says so - "100/100 rows carry an expected output, but 50 of them are placeholders" - so
+a row count can never be read as that many usable answers. The precision figure beside it is still
+computed from the row count rather than the usable subset: it is qualified, not withheld. Treating a
+symbol as unlabelled would change the score for every dataset that uses one as a real class label,
+so that stays a deliberate open question rather than a silent reinterpretation of your data.
 
 ## Requirements
 
@@ -135,7 +154,7 @@ egress.
 | [`GUIDE.md`](GUIDE.md) | Entry point for a cloned-repository run |
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
-| [`reports/`](reports/) | Field-test evidence that informed the safeguards |
+| [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 
 After the first result, the assistant can offer the advanced
 [Traigent optimization skills](https://github.com/Traigent/traigent-skills) as optional next steps.
