@@ -157,6 +157,19 @@ repeating the card's reason, which is phrased for the component being absent.
 The score grades measured evidence, not declared existence. A real evaluator that has not been
 calibrated yet, and a real agent with no config-space document yet, both score from absent
 evidence: report them as not yet measured, never as "no evaluator connected" or "nothing to tune".
+The config-space document's `wired` list is weaker than that, and the difference matters: nothing
+here reads the agent's code, so the list is an attestation the score takes at its word and never
+verifies. Declaring a knob is not a statement that the agent consumes it, so a document that
+declares knobs but does not state which of them the agent consumes has attested no wiring, scores
+the agent pillar as having nothing to search, and keeps its cap binding until the wired knobs are
+named. Describe that state in your own words too, as the rule above requires - declared search
+controls whose wiring the document never states. Never infer `wired` from `knobs`, never describe a
+declared-only knob as wired or varying, and never write a `wired` list merely to clear the cap:
+nothing enforces the attestation, which is exactly why writing one you cannot stand behind is a
+false statement rather than a shortcut. Continue with local wiring work and a rescore; while a
+document declares knobs without an attested `wired` list, do not begin paid optimization. That
+restriction keys on this state, not on the cap id - `agent-no-varying-knobs` also fires for the
+zero-anchor opening, which this skill proceeds through.
 Read-only preflight and readiness runs are static local validation; they authorize no project
 write.
 
