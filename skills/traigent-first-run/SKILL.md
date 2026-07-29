@@ -137,10 +137,15 @@ Only ask which agent to use if multiple credible candidates remain.
 
 #### Opening readiness gate
 
-After the read-only inventory and before any component creation or repair, score readiness from
-what actually exists: run the bundled static preflight with `--defer-missing-sdk` over whatever
-dataset was discovered - omitting `--dataset` entirely when no dataset exists rather than passing
-a path that does not exist yet - then run `scripts/readiness.py` on that preflight JSON plus any
+After the read-only inventory and before any component creation or repair, use the host `python3`
+interpreter as a narrow bootstrap for every bundled script that runs before stage 5 creates the
+isolated environment - the standard-library-only static checks and the calibration adapter alike;
+nothing is installed into the host interpreter. Every `python-version` result from those
+pre-environment passes therefore describes that host bootstrap interpreter and is provisional; the
+stage-5 environment is the interpreter the connected run is judged on. Score readiness from what
+actually exists: run the bundled static preflight with `--defer-missing-sdk` over whatever dataset
+was discovered - omitting `--dataset` entirely when no dataset exists rather than passing a path
+that does not exist yet - then run `scripts/readiness.py` on that preflight JSON plus any
 calibration or config-space evidence already present. Every guided run does this, the zero-anchor
 walkthrough included, and this opening score is not skippable. It always reports all three
 pillars; a project with no dataset, no calibration, and no config-space document still scores -
@@ -271,9 +276,9 @@ Follow this order:
    ambiguity remains and proceed without a generic review pause. A clarification does not
    authorize changing real labels, expected answers, examples, or rubric policy; show any exact
    judgment-dependent change and obtain the explicit approval required by the action table.
-3. Run the bundled static preflight with `--defer-missing-sdk` and the combined dataset argument
-   so local structure and quality
-   problems are checked without importing user modules. Omit optional model-pricing checks in this
+3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
+   containing the combined tuning and holdout rows, so local structure and quality problems are
+   checked without importing user modules. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
    data and task; do not infer SDK aliases. This heuristic check does not assert SDK compatibility.
