@@ -179,20 +179,33 @@ Provider key vs Traigent portal key
   chat."
 
 Portal
-  Plain: the Traigent website where you register, generate your Traigent
-  portal key (listed there under "API keys"), and view your optimization runs
-  and their results.
+  Plain: the Traigent website where your account lives - it generates your
+  Traigent portal key (listed there under "API keys") and shows your
+  optimization runs and their results. You reach it the first time through the
+  access link Traigent emails you, not by signing up on the page directly.
 
-Access code / lead funnel
-  Plain: some users arrive through a self-serve funnel - they get an emailed
-  Traigent access link or access code, redeem it, and land in the portal already
-  pre-verified, so the portal logs them in and issues a full-access API key for
-  them, with no second verification email and no manual key creation.
-  Note: the ten-day activation window is on the emailed access code - it
-  activates the account - not on the API key, which is a normal full-access key
-  with no special expiry. A cold-start user who self-registers at the portal
-  instead creates that key manually; the two account paths are spelled out in
-  `references/run-safety.md`.
+Confirmation code
+  Plain: the six-digit number in the first email Traigent sends you. It only
+  proves the address is yours, and it stops working within minutes. It is not
+  the thing that gets you into the portal.
+  Ask like this: "Traigent just emailed you a six-digit code - type it into the
+  page you started on, and a second email will follow."
+
+Access code
+  Plain: the single-use link in the second Traigent email. It lets you register
+  once, any time in the next 10 days. Using it is what creates your account, and
+  it cannot be used again afterwards.
+  Note: because your address was already confirmed by the six-digit code,
+  registration will not ask you to confirm it a second time.
+
+Portal access period
+  Plain: the 10 days of Traigent portal access that start the moment you
+  register. When it ends your account, data, and keys are all still there, but
+  runs stop until you buy a plan on that same account.
+  Note: this is not the same as an optimization "trial", which everywhere else
+  in this guide means one tested configuration. Your API key does not extend the
+  access period - the key proves who you are, the period decides whether the run
+  is allowed. The full behavior is in `references/run-safety.md`.
 
 Traigent SDK
   Plain: the library your coding agent uses to wrap your agent and run

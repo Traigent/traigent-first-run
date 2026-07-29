@@ -363,10 +363,11 @@ Only after the standard-library-only component checks:
    any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
-   afterward. If the user arrived via the lead funnel, their Traigent account and a full-access
-   API key already exist from the emailed access link, so skip the create-account and generate-key
-   ask and have them paste the already-issued key; otherwise the existing order holds and the key
-   is created manually.
+   afterward. If the user has already completed portal registration, a full-access API key was
+   issued for them on the page registration landed them on, so skip the create-account and
+   generate-key ask and have them paste that key; otherwise the existing order holds and the key
+   is created manually. The key authenticates the run; the account's portal access period is what
+   authorizes it, so do not treat a valid key as proof the run will be accepted.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
@@ -495,11 +496,12 @@ user has already seen the tool work before being asked to create an account. Tel
 full access rather than the read-only default, because a read-only key still spends on the run and
 then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
 repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
-own link, name which is which, and never present one link as though it covered both. If the user
-arrived via the lead funnel, the account and a full-access key already exist from the emailed access
-link, so skip the create-account and generate-key ask - have them paste the already-issued key and
-upload the baseline as above; otherwise the order above holds and the account and full-access key are
-created here.
+own link, name which is which, and never present one link as though it covered both. If the user has
+already completed portal registration, the account exists and a full-access key was issued for them
+there, so skip the create-account and generate-key ask - have them paste that key into `.env`, never
+into chat, and upload the baseline as above; otherwise the order above holds and the key is created
+here. Creating an account means starting at the Traigent site and following the emailed access link:
+the registration page cannot be reached without it.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
