@@ -401,7 +401,9 @@ class AgentFacts:
     agent_type: str | None = None
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
-    wired: tuple[str, ...] = ()
+    # None = the document never said which knobs the agent consumes.
+    # That is not the same claim as an empty list (#78).
+    wired: tuple[str, ...] | None = None
     bounds: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
@@ -1936,7 +1938,7 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
     Two spellings of one dimension with *different* candidate lists is not a
     space this can silently pick a winner from, so it is refused.
     """
-    names = (*facts.knobs, *facts.wired, *facts.bounds)
+    names = (*facts.knobs, *(facts.wired or ()), *facts.bounds)
     if not any(name in KNOB_ALIASES for name in names):
         return facts
 
@@ -1973,7 +1975,11 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
         agent_type=facts.agent_type,
         max_trials=facts.max_trials,
         knobs=knobs,
-        wired=tuple(dict.fromkeys(_canonical(name) for name in facts.wired)),
+        wired=(
+            None
+            if facts.wired is None
+            else tuple(dict.fromkeys(_canonical(name) for name in facts.wired))
+        ),
         bounds=bounds,
     )
 
@@ -2062,7 +2068,10 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
         next(iter(declared)),
     )
     knobs = declared[knobs_key]
-    wired = read.get("wired", ())
+    # Absent and explicit-empty are DIFFERENT claims: absent says nothing
+    # about wiring, `[]` says "none of them". Collapsing them here would
+    # erase the distinction before the scorer ever sees it (#78).
+    wired = read["wired"] if "wired" in read else None
     bounds = read.get("bounds", {})
     # A misspelled name is a *string*, so the field's own type check lets it
     # through, and `score_agent` then intersects `wired` with the space and
@@ -2084,7 +2093,9 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
         )
     )
     # Against the collapsed space, and reporting the spelling the author wrote.
-    _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
+    # An unattested document names nothing, so there is no phantom to reject.
+    if wired is not None:
+        _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
     _reject_phantom_names("bounds", bounds, facts.knobs, knobs_key)
     return facts
 

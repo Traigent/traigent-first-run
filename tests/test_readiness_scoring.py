@@ -531,8 +531,18 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(empty_preferred.knobs, {"temperature": [0.0, 1.0]})
 
+        # Absent and explicit-empty are different claims and must stay
+        # distinguishable at the adapter: absent says nothing about wiring,
+        # `[]` says "none of them". Collapsing them here erased the distinction
+        # before the scorer could act on it (#78).
+        self.assertIsNone(
+            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}}).wired
+        )
         self.assertEqual(
-            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}}).wired, ()
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"a": [1, 2]}, "wired": []}
+            ).wired,
+            (),
         )
 
     def test_malformed_config_space_documents_are_typed_errors(self) -> None:
