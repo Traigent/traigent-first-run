@@ -80,23 +80,28 @@ A first-time user reaches that key page one way. They start at the Traigent site
 email address, and Traigent sends a six-digit confirmation code that proves the mailbox and expires
 within minutes. Once they enter it, a second email arrives carrying a single-use access link, valid
 for 10 days, that authorizes one portal registration. When the user completes portal registration
-the link is spent, the portal issues a full-access API key on the page it lands them on, and the
-account's portal access period starts. Their address is already confirmed by then, so registration
-does not ask for a second confirmation.
+the link is spent and the account's portal access period starts, and the portal puts them straight
+onto the API-key page to create a full-access key. Their address is already confirmed by then, so
+registration does not ask for a second confirmation.
+
+The key on that page is created, not handed over — which is why the write-scope rule below is the
+main path here and not an edge case. It is also shown once and cannot be read back, so it has to be
+saved when it appears.
 
 Do not assume the user walked the whole path. Getting the second email and registering are separate
 acts, and many people read the email and stop. Establish where they actually are before naming a
 destination:
 
 - **Already registered, key in hand** - they only need to paste it; nothing else is required.
-- **Already registered, no key in hand** - registering is not the same as holding a key. A
-  full-access key is issued on the page registration lands on, but it is shown once and cannot be
-  read back afterwards, so anyone who navigated away or did not save it makes a fresh one at
-  `https://portal.traigent.ai/management/api-keys`. Say the write-scope rule below at that moment,
-  because this is the case it governs.
-- **Has the access code but never registered** - send them to
-  `https://portal.traigent.ai/register` as a clickable link and tell them to register with the
-  access code from that second email. This is the case the page exists for.
+- **Already registered, no key in hand** - registering is not the same as holding a key. The key is
+  created on the API-key page, and it is shown once and cannot be read back, so anyone who skipped
+  that step or did not save the value creates a fresh one at
+  `https://portal.traigent.ai/management/api-keys`. Say the write-scope rule below at that moment.
+- **Has the access code but never registered** - walk the whole remaining path rather than naming
+  one destination: open the second Traigent email for the access code, register at
+  `https://portal.traigent.ai/register` (given as a clickable link) using that code, and then, on
+  the API-key page registration lands on, create a full-access key and save it when it is shown.
+  Only then return here to paste it.
 - **Has not started, or the code is older than 10 days** - they begin at the Traigent site and
   request a fresh code; an expired one cannot be revived.
 

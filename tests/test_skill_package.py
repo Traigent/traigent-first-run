@@ -1316,6 +1316,8 @@ class SkillPackageTests(unittest.TestCase):
         requires that credential, so the page rejects them. The funnel stages
         also have to appear in the order the user meets them, or the guide
         reads as though the key can be collected before the account exists.
+        The key is CREATED on the page registration lands on, not handed over,
+        which is why the read-only default warning is the main path here.
         """
         text = RUN_SAFETY.read_text()
         pre_gate = text.split("Use this gate order:", 1)[0]
@@ -1325,7 +1327,7 @@ class SkillPackageTests(unittest.TestCase):
             "six-digit confirmation code",
             "single-use access link",
             "completes portal registration",
-            "issues a full-access api key",
+            "create a full-access key",
         )
         for phrase in (
             *ordered_funnel_phrases,
@@ -1355,6 +1357,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "do not assume the user walked the whole path",
             "registering is not the same as holding a key",
+            "the key is created on the api-key page",
             "shown once and cannot be read back",
             "https://portal.traigent.ai/management/api-keys",
             "has the access code but never registered",
