@@ -323,6 +323,44 @@ a cluster of them.
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
+## First-run subset for a large dataset
+
+A first run has to show the capability, not exhaust the dataset. Above roughly 100 usable rows,
+every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
+that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 rows by
+default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
+`very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
+one cluster.
+
+Five rules make the subset honest:
+
+1. **Select before preflight, not after.** The bounded subset is the dataset the run actually uses,
+   so preflight and `scripts/readiness.py` must both see exactly those rows. Scoring the full set
+   and running a subset reports precision the run never had.
+2. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
+   the holdout rows from the holdout split, keeping them disjoint. A subset drawn over the combined
+   set can pull the same input into both sides and fabricate a tune/holdout overlap that the
+   original dataset did not have.
+3. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
+   the seed when the pick inside a band was random. The recorded ids are what makes the run
+   reproducible - a seed alone does not, because the selection also depends on judgment about which
+   rows are hard.
+4. **Say the power cost out loud.** Eighteen rows sit in the scorer's low power band - about
+   `+/-16pp` of noise per result, 12 of 25 points. That is a deliberate first-run trade, not a
+   defect in the data, and the readiness card will show it. Say so when presenting the score, or
+   the user reads their own good dataset as weak.
+5. **Name the bound to the user.** Report the subset size beside the full row count ("18 of 4,812
+   rows for this first run"). Never let a bounded run read as though the whole dataset was
+   evaluated.
+
+When the rows carry no difficulty tags, spread the pick across the coverage/scenario tags instead
+and say which axis was used. When neither exists, take a random seeded sample and record that the
+subset is unstratified - an unlabelled pick is still bounded and reproducible, just less
+representative, and that limitation belongs in the report.
+
+The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
+it; this bound exists only so the first run finishes.
+
 ## Holdout and claims
 
 Reserve the holdout before optimization. Keep the same split across all comparisons and

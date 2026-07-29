@@ -247,6 +247,13 @@ Follow the dependency matrix in `references/component-creation.md`:
   outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
   runtime binding is owned by the installed SDK and is verified in stage 5.
 
+When the dataset carries more than about 100 usable rows, select the bounded first-run subset
+described in `references/evaluation-and-dataset.md` - 18 rows by default, spread across the four
+difficulty bands, drawn within each split rather than across it - before the stage-4 preflight, so
+the score describes the rows the run actually uses. Record the chosen row ids, and report the
+subset size beside the full row count so a bounded run never reads as a full evaluation. A first
+run shows the capability; it does not exhaust the dataset.
+
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
 
@@ -673,6 +680,13 @@ Describe those as signals and curation advice, not as numbers - do not promise a
 dataset-quality score, and never imply the platform can grade a dataset that has not been run. Carry
 no numeric pre-run dataset-quality score into this message; it reads the finished run, not an unrun
 dataset.
+
+Close by saying what a further run would be worth, grounded in the two facts already on the table:
+the gaps the opening readiness score named, and which of them this run actually closed. Name the
+ones still open and what each is now costing - an unlabelled half of the dataset, a single-band
+difficulty spread, a substitute component still standing in for a real one - so the motivation is
+the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
+cannot close, say that plainly instead of implying a further run would fix it.
 
 Only after the result, offer optional next steps:
 

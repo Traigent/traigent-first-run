@@ -461,6 +461,72 @@ class SkillPackageTests(unittest.TestCase):
         key_ask_position = skill_text.index("only after that first result is on screen")
         self.assertLess(baseline_position, key_ask_position)
 
+    def test_large_dataset_is_bounded_to_a_reproducible_stratified_subset(self) -> None:
+        """A first run shows the capability; it does not exhaust the dataset.
+
+        Above ~100 rows every trial pays for every row, so the walkthrough runs
+        long and expensive without demonstrating more. The bound is only honest
+        if it is chosen before the score is computed, drawn inside each split,
+        recorded, and reported next to the full row count.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        dataset_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+        self.assertIn("first-run subset for a large dataset", dataset_text)
+        for phrase in (
+            "18 rows by default",
+            "at least four from each of the four difficulty bands",
+            "select before preflight, not after",
+            "sample within each split, never across it",
+            "record what was chosen",
+        ):
+            self.assertIn(phrase, dataset_text)
+
+        # The bound must not be sold as a data defect: 18 rows lands in the
+        # scorer's low power band by construction (size_points: < 30 -> 12.0).
+        self.assertIn("deliberate first-run trade, not a defect", dataset_text)
+        # And a bounded run may never read as a full evaluation.
+        self.assertIn("beside the full row count", dataset_text)
+
+        # SKILL.md must route to it at the stage that precedes preflight.
+        self.assertIn("bounded first-run subset", skill_text)
+        self.assertLess(
+            skill_text.index("bounded first-run subset"),
+            skill_text.index("### 4. validate components locally"),
+        )
+
+    def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
+        """Motivation for a further run must come from measured evidence.
+
+        The report already carries the readiness transition; what this pins is
+        that the close names the gaps still open and what each costs, rather
+        than offering encouragement or implying a further run fixes a gap the
+        walkthrough cannot close.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+
+        self.assertIn("saying what a further run would be worth", skill_text)
+        self.assertIn(
+            "name the ones still open and what each is now costing", skill_text
+        )
+        self.assertIn(
+            "the user's own measured evidence rather than encouragement", skill_text
+        )
+        # It closes on the opening score, so it must follow the readiness
+        # transition and precede the optional next steps.
+        transition = skill_text.index("the readiness transition")
+        motivation = skill_text.index("saying what a further run would be worth")
+        next_steps = skill_text.index(
+            "only after the result, offer optional next steps"
+        )
+        self.assertLess(transition, motivation)
+        self.assertLess(motivation, next_steps)
+
     def test_semantic_coverage_review_is_assistant_directed(self) -> None:
         skill_text = SKILL.read_text().casefold()
         quality_text = (
