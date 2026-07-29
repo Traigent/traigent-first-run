@@ -506,13 +506,14 @@ portal's top-bar key control, or `https://portal.traigent.ai/management/api-keys
 hunting for the original. Ask which
 state they are in rather than assuming, because getting the
 second email and registering are separate acts and many people stop after reading the email. For a
-user who has the access code but never registered, walk the remaining path in order rather than
+user who is not registered but holds an access code still inside its 10 days, walk the remaining
+path in order rather than
 naming one destination: open the second Traigent email for the access code, register at
 `https://portal.traigent.ai/register` (a clickable link) with that code, then create a full-access
 key from the portal's top-bar key control - highlighted on a first visit - and save it as it is
 shown; only then come back and paste it. If they have not started
 at all, they begin at the Traigent site, and the registration page will refuse them until a code
-exists. `references/run-safety.md` holds the three states in full.
+exists. `references/run-safety.md` holds the four states in full.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
