@@ -277,6 +277,134 @@ The converse also holds: OpenRouter `:free`-suffixed model ids genuinely cost `$
 run by trials executing and nonzero token usage, not by a zero cost - do not misflag a legitimate
 free-tier run as mocked.
 
+### Config-space document
+
+`scripts/readiness.py --config-space` scores the agent pillar from the space a run actually built,
+so it needs that space as a file. The file means one thing and nothing else: *this is the space the
+search that just completed received*. The generated wrapper holds it to that meaning in three steps
+- serialize the finalized enhanced space just before the connected search, remove any earlier
+document before that search starts, and write `traigent-runs/config-space.json` only once the search
+has returned trials. So the file describes exactly the space the call received, and it cannot
+outlive a search that raised, a retry over a changed space, or a return that executed nothing.
+Until that write happens there is nothing to score: the agent pillar is honestly scored
+from absent evidence and `agent-no-varying-knobs` stays binding. Report it that way - not yet
+measured - rather than describing the run's knobs as if the score had seen them. A run that
+legitimately stops before the enhanced search, or whose search raises, emits no document and keeps
+the cap, which is the honest outcome.
+
+These are the only fields the scorer reads; anything else in the file is ignored whole, never
+half-read. A field that is present but malformed is refused with a message naming it (exit 2), never
+scored around - a document the scorer cannot read is not a document it may guess at. Refusal turns
+on the *value*, not on how JSON spelled it: an empty list, a `null` and a `0` where an object
+belongs are malformed, not absent, and are refused rather than read as an empty object; conversely
+any value the documented type admits is accepted however it was written, so a document that scores
+does not become an exit 2 because a writer emitted `12.0` instead of `12`.
+
+The table below is not a second description of the schema. `readiness.py` declares the field set,
+each field's type, and the domain of every value inside it once, in `CONFIG_SPACE_FIELDS`, and both
+the validator and this table are read from that declaration - `tests/test_skill_package.py` fails
+when they disagree. So a field is either declared there and validated, or it is not a field.
+
+| Field | Type | Required | What the scorer does with it |
+|---|---|---|---|
+| `knobs` | object: knob name to a non-empty list of scalar candidate values | one of the two | the preferred spelling; a non-empty `knobs` wins over `configuration_space`. A document declaring neither key says nothing about the space and is refused; `{"knobs": {}}` declares an empty one and scores 0 under the cap. Every entry's value must be a list, and a knob written as a bare scalar is **refused** - dropping it would shrink the space silently and often *raise* the score. A list with nothing in it is refused for the same reason: a knob with no candidate values is not a narrower space, and scoring it printed a wired-knob count and a combination count the document itself contradicts |
+| `configuration_space` | same shape | accepted alias | read only when `knobs` is absent or empty. Emit `knobs`; never both. Whichever key is present is type-checked, so a malformed alias cannot hide behind a well-formed preferred key |
+| `agent_type` | `"general"`, `"rag"`, or `"code_gen"` | no | selects the high-impact catalog; absent or empty means `"general"`. An unrecognized non-empty string leaves coverage unmeasured, which drops the pillar's confidence and - because the pillar renormalizes over the subscores it did measure - pulls its score toward the mean of the ones that remain. So the direction is whatever coverage was doing relative to them: a document whose coverage was scoring *above* its other subscores loses points, one whose coverage was scoring *below* them gains points, and the size is however far apart the two were. There is no fixed delta to expect, and no score movement that identifies a wrong type. For a document that has a scoreable space, the `agent type not recognized` gap line is what reports it; the number does not. A document with no declared knobs is capped for that reason first and never reaches the check, so a wrong type is invisible there. A non-string is refused |
+| `max_trials` | positive integer | no | dampens the knob-count points when the space is far larger than the trial cap. Any integral number is read, however JSON spelled it: `12` and `12.0` are the same budget, and an integer of any size is read as itself. A fractional value, zero, a negative, a boolean, or a non-number is refused |
+| `wired` | list of knob names | **yes - always emit it** | the names the agent actually consumes; only these are scored. Do not rely on omitting it or sending `[]`: a document that does not state what the agent consumes attests nothing, and the scorer treats that as nothing-to-search rather than as "all of them" (traigent-first-run#78). Emitting the list is the whole point of the document. Every name must be a knob of the declared space - a misspelled one is **refused**, because it matches nothing, silently shrinks the scored set, and makes the card print a wired-knob count the document contradicts |
+| `bounds` | object: knob name to `{"low": number, "high": number}`, low below high | no | per-knob override of the scorer's canonical numeric ranges; an entry missing `low` or `high`, carrying a non-numeric or non-finite edge (`"inf"` or `"nan"`, either of which would collapse a genuinely sweeping knob), naming a knob absent from the space, declaring a range with no width (`low` above or equal to `high`), or declaring one whose width is unmeasurable even though both edges are finite and ordered, is refused. A zero-width range divides the span by zero and zeroes the noise floor, so two nearly-identical values read as a full sweep - and the two unmeasurable widths break the same noise floor and span in the same two directions: a width that overflows to infinity (`low: -1e308, high: 1e308`) makes the noise floor infinite, so a knob genuinely sweeping 1 to 50 collapses to nothing to search, and a width so small that the noise floor underflows to zero (`low: 0.0, high: 5e-324`) again reads two practically identical values as a genuine sweep. It sets the noise floor, span, and endpoint coverage - it does not add search values. A numeric string (`"5"`) is accepted for either edge |
+
+Candidate values are scalars: a string, a number, a boolean, or `null`. The scorer deduplicates,
+compares and counts them, so an object or an array inside a candidate list is refused rather than
+reaching the comparison as an unhashable value, and a non-finite number (`Infinity`, `NaN`) is
+refused rather than scored - a knob is measured against the span its values cover, and an infinite
+or undefined span is not a sweep.
+
+`prompt_policy` and `prompt_style` are two spellings of one search dimension. The scorer collapses
+them onto the canonical `prompt_style` before it counts anything, so either spelling scores
+identically, and reports the dimension under the canonical name. Declaring **both** over different
+candidate lists is refused: that is two names for one dimension with two answers, and scoring it
+counted one dimension twice and multiplied the reported size of the space.
+
+`agent-no-varying-knobs` clears as soon as one wired knob carries two effective values. What counts
+as "effective" depends on whether the knob has a range at all:
+
+- A numeric knob **with** a range - one of the scorer's canonical knobs (`temperature`, `top_p`,
+  `retrieval_k`, `max_tokens`, and so on) or any knob given a `bounds` entry - needs two values
+  separated by more than the noise floor: 0.05 for `temperature` and `top_p`, otherwise 2% of that
+  range.
+- A numeric knob with **no** canonical range and no `bounds` entry is scored on breadth alone. Any
+  two distinct values clear the cap, however close together they are - `[1, 1.01]` counts. There is
+  no range to measure a noise floor against, so nothing collapses them.
+- A categorical or boolean knob needs two distinct values.
+- `seed` never counts, however many values it lists.
+
+Three honesty rules govern the file:
+
+- List under `wired` only the controls the agent call really consumes. The scorer checks that every
+  wired name is a knob of the declared space, but whether the *agent* reads that knob is an author
+  claim it **cannot verify**: it reads the document, never the agent code. Naming a knob the
+  agent ignores - a config key read into a variable the prompt never uses, say - inflates the agent
+  pillar by scoring a dimension the search cannot actually move. A knob that does not influence the
+  agent code is not a real optimization variable. The generated wrapper therefore probes the claim
+  where the scorer cannot: `probe_wiring` re-builds the provider request under each alternative
+  value and returns one verdict per knob.
+
+  State the probe's limits exactly, because they are narrow. Its exact claim is **request
+  visibility, per model** - that changing the knob changes the request dict, under each model in
+  the space - and never provider *effect*: a provider that accepts a parameter and ignores it
+  yields two different requests and one behaviour. Only the run can show effect; the probe only
+  rules out the dimension that could not have one. It probes every model in the space rather than
+  one base, since request construction branches on the model. It probes
+  several representative inputs rather than one literal string, since a knob that acts only on some
+  inputs (a `sql_mode` applied when the message starts `SQL:`) is invisible under a single probe
+  string - which used to block a legitimately wired run before it started. Replace the wrapper's
+  `PROBE_INPUTS` placeholders with real inputs from the tuning dataset.
+
+  A `partial` verdict - visible under some models, never under others - is **information, not a
+  failure**, and the load continues. A knob can legitimately affect only the models that support
+  it: `reasoning_effort` on a reasoning model is a conditional dimension, and failing the load on it
+  blocked a valid run before it started. The wrapper prints which models honour such a knob, so the
+  asymmetry is in the run record and a reader can weigh it. Do not park a `partial` knob in
+  `WIRED_OUTSIDE_THE_REQUEST` either: that mapping is for knobs the probe cannot see at all, and a
+  `partial` knob demonstrably does act inside request construction.
+
+  Only an `invisible` verdict fails the load - a knob no model and no probed input ever moves, which
+  is the no-op the guard exists to catch. It is also the case
+  the probe genuinely cannot decide, because it cannot tell "acts outside request construction"
+  from "the agent ignores it". It says so rather than guessing either way: a knob that acts outside
+  request construction - a retrieval depth, a tool policy, a repair loop - is recorded in the
+  wrapper's `WIRED_OUTSIDE_THE_REQUEST` mapping of knob to *where it acts*, which the load prints as
+  an unverified claim for a reader to challenge rather than proving it. It is a mapping and not a
+  list of names precisely so that each entry states something reviewable; a bare list let
+  `WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silence the guard completely while still passing.
+  If you cannot say where such a knob acts, drop it from `wired`.
+- `bounds` is likewise self-declared and unverified. It changes the noise floor and the span a knob
+  is measured against, so a narrow declared range can turn two nearly-identical values into a
+  "varying" knob and clear `agent-no-varying-knobs` on bounds alone. Declare the range the knob
+  genuinely has, not the one that scores well.
+- Re-write the document whenever the space changes, and before any later score reads it. A stale
+  document describes a search that never ran. Because a document from one search would otherwise
+  survive the next one failing, the wrapper deletes it before each search rather than relying on
+  the next write to replace it - staleness is removed by the run, not by the reader noticing.
+
+The walkthrough's document, after the placeholder temperature is replaced by the winner-bracketing
+neighbor:
+
+```json
+{
+  "agent_type": "general",
+  "knobs": {
+    "model": ["provider/current", "provider/alternative", "provider/strong"],
+    "prompt_style": ["direct", "structured", "criteria_first"],
+    "self_check": [false, true],
+    "temperature": [0.0, 0.2, 0.1]
+  },
+  "max_trials": 12,
+  "wired": ["model", "temperature", "prompt_style", "self_check"]
+}
+```
+
 ## Approval and budgets
 
 Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any

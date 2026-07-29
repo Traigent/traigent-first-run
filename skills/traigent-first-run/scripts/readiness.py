@@ -33,7 +33,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Iterable, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -213,11 +213,26 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
+# `max_tokens` is deliberately absent from every catalog. It exists so the model
+# is not cut off mid-answer: references/run-safety.md requires at least 2048
+# (4096 at high reasoning effort) and says not to "sweep low `max_tokens` values
+# in any space that contains a reasoning model", because a tight cap truncates
+# the answer to `finish_reason == "length"`, scores it 0, and silently crowns a
+# weaker model the winner. That makes it a capacity guard, not a quality lever -
+# so a space that obeys the safety rule must not be docked for not sweeping it.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
-    "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_policy"),
-    "code_gen": ("model", "temperature", "fewshot_k", "schema_context", "max_tokens"),
-    "general": ("model", "temperature", "prompt_policy", "max_tokens"),
+    "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
+    "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
+    "general": ("model", "temperature", "prompt_style"),
 }
+
+# Accepted alternate spellings of a catalog knob, mapped onto the one canonical
+# name the catalog uses. Both spellings name one search dimension, so the rename
+# happens once - `canonical_alias_names`, applied to the facts before any
+# sub-score reads them - rather than inside whichever sub-score noticed the
+# problem. Normalizing only inside coverage let knob-count, variation and the
+# combination count treat the two spellings as two independent dimensions.
+KNOB_ALIASES: dict[str, str] = {"prompt_policy": "prompt_style"}
 
 # Evaluation-method profiles. `fidelity` is which task kinds the method actually
 # measures well; a method can be perfectly reproducible and still be the wrong
@@ -481,6 +496,24 @@ def knob_variation(
     unique = list(dict.fromkeys(values))
     distinct = len(unique)
     notes: list[str] = []
+
+    if not unique:
+        # A knob with no candidates is not a narrower search space: every
+        # numeric path below reaches `max(numbers)` on an empty list. The
+        # config-space adapter refuses this shape outright, so this is the
+        # answer for a caller that builds `AgentFacts` directly.
+        return KnobScore(
+            name=name,
+            kind="empty",
+            distinct_values=0,
+            effective_values=0,
+            span=0.0,
+            resolution=0.0,
+            coverage=0.0,
+            quality=0.0,
+            span_ratio=None,
+            notes=("no candidate values - nothing to search",),
+        )
 
     if name in EXCLUDED_KNOBS:
         return KnobScore(
@@ -957,7 +990,10 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
         base = 35.0
     else:
         base = max(24.0, 35.0 - 2.0 * (varying - 6))
-    if max_trials and space_size and space_size / max_trials > 20:
+    # Compared as integers rather than through `space_size / max_trials`: both
+    # sides are unbounded Python integers, and true division of two large ones
+    # raises OverflowError instead of answering the question.
+    if max_trials and space_size and space_size > 20 * max_trials:
         base = min(base, 24.0)
     return base
 
@@ -1008,6 +1044,9 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
 
+    # Once, before anything counts a dimension - see `canonical_alias_names`.
+    facts = canonical_alias_names(facts)
+
     # Order is deliberate: an empty `knobs` map is answered here, ahead of the
     # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
     # whether or not it carries a `wired` key. Swapping the two branches would
@@ -1043,9 +1082,13 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     scoreable = [knob for knob in knobs if knob.kind != "excluded"]
     varying = [knob for knob in scoreable if knob.effective_values >= 2]
 
+    # The combination count is printed in the same sentence as the knob counts,
+    # so it is derived from the same distinct-value count they are. Counting
+    # `repr` instead made the two disagree: `[1, 1.0]` is one value to every
+    # other line on the card and was two combinations here.
     space_size = 1
-    for name, values in considered.items():
-        space_size *= max(1, len(set(map(repr, values))))
+    for knob in knobs:
+        space_size *= knob.distinct_values
 
     if not knobs:
         # Reachable now only for an explicit "wired": [] (or wired names
@@ -1097,6 +1140,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
 
     catalog = HIGH_IMPACT_KNOBS.get(facts.agent_type or "general")
     if catalog:
+        # Already canonical: `canonical_alias_names` renamed the facts above.
         present = {knob.name for knob in scoreable}
         missing = [name for name in catalog if name not in present]
         fraction = 1.0 - (len(missing) / len(catalog))
@@ -1451,6 +1495,17 @@ class PreflightInputError(ValueError):
     """
 
 
+class ConfigSpaceInputError(ValueError):
+    """A config-space document the scorer cannot read.
+
+    The sibling of `PreflightInputError` for `--config-space`. Preflight and
+    calibration JSON are machine-written, but this document is hand-authorable -
+    a real agent's wrapper is adapted, not copied verbatim - so a typo in it is
+    a reachable path, not a bug. It gets the same treatment: refuse with a
+    message naming the field, never score a document we cannot read.
+    """
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
@@ -1591,23 +1646,533 @@ def evaluation_facts_from_calibration(
     )
 
 
-def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
-    knobs = document.get("knobs") or document.get("configuration_space") or {}
-    return AgentFacts(
-        agent_type=document.get("agent_type"),
-        max_trials=document.get("max_trials"),
-        knobs={
-            name: list(values)
-            for name, values in knobs.items()
-            if isinstance(values, (list, tuple))
-        },
-        wired=tuple(document["wired"]) if "wired" in document else None,
-        bounds={
-            name: {"low": float(spec["low"]), "high": float(spec["high"])}
-            for name, spec in (document.get("bounds") or {}).items()
-            if isinstance(spec, dict) and "low" in spec and "high" in spec
-        },
+# ---------------------------------------------------------------------------
+# The config-space document schema
+#
+# One declaration, `CONFIG_SPACE_FIELDS`, is the single source of truth for what
+# this document may contain: the field's name, the type it accepts, and - through
+# its reader - the domain of every value inside it. `agent_facts_from_config_space`
+# reads nothing else, and `tests/test_skill_package.py` regenerates the schema
+# table in references/run-safety.md from this tuple and fails when the two
+# disagree.
+#
+# This shape exists because the previous one failed repeatedly in the same two
+# ways, over three review cycles and nineteen findings. Validation was a sequence
+# of independent per-field checks and the documented table was a separate
+# hand-written artifact, so each round closed the field that had just been
+# reported and the next round arrived through the field nobody had written a
+# check for - a knob whose value was a bare scalar, then a falsey one, then a
+# `wired` name matching no knob, then a candidate list with nothing in it, then a
+# candidate that was a dict. Every one of them was silently narrowed and then
+# scored, under an evidence line that was false.
+#
+# The question "is field X validated?" is therefore no longer answerable one
+# field at a time. A field is declared here and validated, or it is not a field:
+# an undeclared key is ignored whole, never half-read. Two rules hold across
+# every reader, in both directions:
+#
+# * **Never coerce a value the field's documented type does not admit.**
+#   `document.get(field) or {}` reads `[]`, `null`, `0` and `""` as "absent", so
+#   presence is tested with `in` and the type is checked on what was written.
+# * **Never refuse a value the documented type does admit.** JSON has one number
+#   type and several ways to spell one value, so a reader judges the *value*:
+#   `12.0` is the trial budget `12`, and `"5"` is the bound `5`. Turning a
+#   document that scores into a hard exit-2 failure is a worse outcome than the
+#   silence being replaced.
+# ---------------------------------------------------------------------------
+
+
+def _scalar_candidate(where: str, value: Any) -> Any:
+    """One candidate value of one knob, or a refusal naming where it sits.
+
+    Every candidate is deduplicated, compared and counted, so the domain is the
+    hashable JSON scalars. The two shapes outside it both used to survive the
+    per-field checks, because those checked the *list* and never its contents:
+
+    * A dict or a list reached `dict.fromkeys(values)` as an unhashable key and
+      raised a bare `TypeError` traceback - not the named exit-2 refusal this
+      document promises for anything it cannot read.
+    * A non-finite float is worse than unreadable, because it scores.
+      `temperature: [0.0, Infinity]` read as a 72 that cleared every cap and
+      `[NaN, NaN]` as a 59, and neither describes any set of runs: the span
+      against which the sweep is measured is infinite in one case and undefined
+      in the other.
+    """
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        # Deliberately not routed through float(): a large integer candidate is
+        # a legal JSON number and float() raises OverflowError on it.
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    if isinstance(value, float):
+        raise ConfigSpaceInputError(
+            f"config-space {where} is {value!r}, which is not a candidate "
+            "value: a knob is scored against the span its values cover, and "
+            "an infinite or undefined span is not a sweep"
+        )
+    raise ConfigSpaceInputError(
+        f"config-space {where} is {type(value).__name__}; a candidate value "
+        "must be a string, number, boolean, or null, because the scorer "
+        "compares and counts candidates"
     )
+
+
+def _read_knob_space(field: str, value: Any) -> dict[str, list[Any]]:
+    """`knobs` / `configuration_space`: knob name to its candidate values."""
+    if not isinstance(value, dict):
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' must be an object mapping each knob "
+            f"name to its list of candidate values, not {type(value).__name__}"
+        )
+    space: dict[str, list[Any]] = {}
+    for knob, candidates in value.items():
+        # A knob written as a bare scalar instead of a list of candidates used
+        # to be dropped, which is the worst outcome available: the knob leaves
+        # the space, the score frequently goes *up* because the dropped knob
+        # was the one not varying, and the cap reason printed afterwards
+        # describes a space the author never wrote.
+        if not isinstance(candidates, (list, tuple)):
+            raise ConfigSpaceInputError(
+                f"config-space '{field}' entries must each be a list of "
+                f"candidate values: '{knob}' is {type(candidates).__name__}"
+            )
+        # An empty list is that same silent narrowing in its purest form: it
+        # declares a dimension with nothing to try. Scored, it printed "0 of 1
+        # wired knobs actually vary; 1 combinations" - a knob count the
+        # document contradicts beside a combination count of a space that has
+        # no configurations at all.
+        if not candidates:
+            raise ConfigSpaceInputError(
+                f"config-space {field}['{knob}'] lists no candidate values; a "
+                "knob with nothing to try is not a search dimension - remove "
+                "it, or give it the values the search should try"
+            )
+        space[knob] = [
+            _scalar_candidate(f"{field}['{knob}'][{index}]", candidate)
+            for index, candidate in enumerate(candidates)
+        ]
+    return space
+
+
+def _read_name_list(field: str, value: Any) -> tuple[str, ...]:
+    """`wired`: the knob names the agent call actually consumes.
+
+    This reader only parses the field; what an ABSENT `wired` means is
+    `score_agent`'s call, not this function's, and the two must not restate
+    each other (traigent-first-run#78). Producers should always emit the list -
+    stating what the agent consumes is the document's purpose. A present one
+    that is not a list of names is a claim about the search space that cannot
+    be read: a non-string entry matches no knob and would silently shrink the
+    considered set instead.
+    """
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(name, str) for name in value
+    ):
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' must be a list of knob names, not {value!r}"
+        )
+    return tuple(value)
+
+
+def _read_edge(knob: str, edge: str, value: Any) -> float:
+    """One end of one `bounds` pair.
+
+    A bound sets the noise floor and the span every numeric knob is scored
+    against, so a non-number here silently decides whether that knob counts as
+    varying at all. bool is an int in Python and is not a bound.
+
+    A numeric *string* is accepted deliberately: this adapter has always read
+    bounds through `float()`, so `{"low": "1", "high": "5"}` scored before this
+    guard existed, and refusing it now would turn a working document into a
+    hard exit-2 failure.
+
+    `float()` also parses "inf" and "nan", which are not ranges: an infinite
+    span makes the 2% noise floor infinite and a NaN span makes every
+    comparison false, so either one collapses a knob that genuinely sweeps
+    1 -> 50 into "nothing to search".
+    """
+    if not isinstance(value, bool) and isinstance(value, (int, float, str)):
+        try:
+            number = float(value)
+        except (ValueError, OverflowError):
+            number = math.nan
+        if math.isfinite(number):
+            return number
+    raise ConfigSpaceInputError(
+        f"config-space bounds['{knob}']['{edge}'] must be a finite number, "
+        f"not {value!r}"
+    )
+
+
+def _read_bounds(field: str, value: Any) -> dict[str, dict[str, float]]:
+    """`bounds`: a per-knob replacement for the scorer's canonical range."""
+    if not isinstance(value, dict):
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' must be an object mapping a knob name to "
+            f"a low/high pair, not {type(value).__name__}"
+        )
+    read: dict[str, dict[str, float]] = {}
+    for knob, spec in sorted(value.items()):
+        if not isinstance(spec, dict):
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] must be an object with 'low' "
+                f"and 'high', not {type(spec).__name__}"
+            )
+        # A half-written bound was dropped silently, so the knob was scored
+        # against the canonical range - or against no range at all - rather
+        # than the one the author declared. That flips whether the knob counts
+        # as varying, so it is refused for the same reason a scalar knob is.
+        missing = [edge for edge in ("low", "high") if edge not in spec]
+        if missing:
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] must carry both 'low' and "
+                f"'high'; {' and '.join(repr(edge) for edge in missing)} missing"
+            )
+        low = _read_edge(knob, "low", spec["low"])
+        high = _read_edge(knob, "high", spec["high"])
+        # The edges were checked one at a time and never as the pair they are.
+        # Both failures scored: an inverted pair makes every span negative, and
+        # a zero-width pair divides the span by zero *and* zeroes the noise
+        # floor, so two values a hair apart read as a genuine sweep and the
+        # `agent-no-varying-knobs` cap cleared on a range that admits one value.
+        if not low < high:
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] must have 'low' below 'high', "
+                f"not low={low:g} and high={high:g}: a knob is scored against "
+                "the width of this range, and this one has none"
+            )
+        # Ordered finite edges are still not a usable range: both harms the
+        # checks above close are reachable one step outside them, through the
+        # width the edges were never checked as.
+        #
+        # * Overflow. `{"low": -1e308, "high": 1e308}` is two finite numbers
+        #   whose difference is `inf`, so the noise floor is infinite and a knob
+        #   genuinely sweeping 1 -> 50 collapses to "nothing to search" - the
+        #   verbatim harm `_read_edge` refuses the *spelling* "inf" to prevent.
+        # * Underflow. `{"low": 0.0, "high": 5e-324}` has `low < high` and a
+        #   width so small that `width * DEFAULT_NOISE_FRACTION` underflows to
+        #   0.0, so two practically identical values read as a genuine sweep and
+        #   clear `agent-no-varying-knobs` - the verbatim harm the `low == high`
+        #   refusal above cites. For a knob whose floor is a fixed constant the
+        #   same width instead makes the span ratio it divides infinite, which
+        #   is no more measurable, so the default fraction is what decides.
+        width = high - low
+        # Under the canonical name, because that is the name `score_agent` will
+        # look the floor up under: a check that reads a spelling the scorer has
+        # already renamed is answering about a knob that will not exist.
+        floor = noise_floor(KNOB_ALIASES.get(knob, knob), low, high)
+        if (
+            not math.isfinite(width)
+            or width * DEFAULT_NOISE_FRACTION <= 0.0
+            or floor <= 0.0
+        ):
+            raise ConfigSpaceInputError(
+                f"config-space bounds['{knob}'] spans {low:g} to {high:g}, "
+                f"whose width is {width:g} and whose noise floor is {floor:g}: "
+                "a knob is scored against that width and two values within that"
+                " floor are one configuration, so a width this scorer cannot "
+                "measure is not a range it can search"
+            )
+        read[knob] = {"low": low, "high": high}
+    return read
+
+
+def _read_trial_budget(field: str, value: Any) -> int:
+    """`max_trials`: how many configurations the search may actually try.
+
+    JSON has a single number type, so an integral budget arrives as `12` from
+    one writer and `12.0` from another; both name the same integer and both
+    scored before this guard existed, so the check is on the value. A Python
+    `int` is judged as an int and never converted - `float(10**309)` raises
+    OverflowError, which is how a legal positive JSON integer turned into a
+    traceback on a document the parent scored.
+    """
+    if not isinstance(value, bool):
+        if isinstance(value, int):
+            if value >= 1:
+                return value
+        elif isinstance(value, float):
+            if math.isfinite(value) and value.is_integer() and value >= 1:
+                return int(value)
+    raise ConfigSpaceInputError(
+        f"config-space '{field}' must be a positive integer, not {value!r}"
+    )
+
+
+def _read_agent_type(field: str, value: Any) -> str:
+    """`agent_type`: which high-impact catalog coverage is scored against.
+
+    An unrecognized *string* stays legal: it names an agent this scorer has no
+    catalog for, which is a real situation and not a typo the scorer can
+    detect. Coverage then goes unmeasured, and because `combine` renormalizes
+    over the measured sub-scores that *raises* the pillar's score while
+    dropping its confidence - the "agent type not recognized" gap line is what
+    carries the news, not the number. A non-string cannot even be looked up.
+    """
+    if not isinstance(value, str):
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' must be a string naming the agent type "
+            f"('general', 'rag', or 'code_gen'), not {value!r}"
+        )
+    return value
+
+
+@dataclass(frozen=True)
+class ConfigSpaceField:
+    """One field of the config-space document, and how it is read.
+
+    `type_label` and `requirement` are the documented schema: the table in
+    references/run-safety.md is checked against them, so a field cannot be
+    added, retyped or removed in one place only.
+    """
+
+    name: str
+    type_label: str
+    requirement: str
+    read: Any
+
+
+CONFIG_SPACE_FIELDS: tuple[ConfigSpaceField, ...] = (
+    ConfigSpaceField(
+        "knobs",
+        "object: knob name to a non-empty list of scalar candidate values",
+        "one of the two",
+        _read_knob_space,
+    ),
+    ConfigSpaceField(
+        "configuration_space",
+        "same shape",
+        "accepted alias",
+        _read_knob_space,
+    ),
+    ConfigSpaceField(
+        "agent_type",
+        '`"general"`, `"rag"`, or `"code_gen"`',
+        "no",
+        _read_agent_type,
+    ),
+    ConfigSpaceField(
+        "max_trials",
+        "positive integer",
+        "no",
+        _read_trial_budget,
+    ),
+    ConfigSpaceField(
+        "wired",
+        "list of knob names",
+        "**yes - always emit it**",
+        _read_name_list,
+    ),
+    ConfigSpaceField(
+        "bounds",
+        'object: knob name to `{"low": number, "high": number}`, low below high',
+        "no",
+        _read_bounds,
+    ),
+)
+
+# The spellings of the search space itself, in preference order - derived from
+# the declaration rather than repeated, so adding a spelling is one edit and the
+# preferred one is whichever the table lists first.
+CONFIG_SPACE_SPACE_KEYS = tuple(
+    spec.name for spec in CONFIG_SPACE_FIELDS if spec.read is _read_knob_space
+)
+
+
+def candidate_domain(values: Iterable[Any]) -> list[tuple[bool, Any]]:
+    """A candidate list as a key that tells `True` from `1`.
+
+    `True == 1` and `False == 0` in Python, so comparing two candidate lists
+    directly read `[true, false]` and `[1, 0]` as one domain: two spellings of
+    one dimension declared over *different* values were merged silently, which
+    is the narrowing the refusal below exists to stop. `dict.fromkeys` collapsed
+    the pair the same way, before any comparison ran.
+
+    The key pairs each value with whether it is a bool rather than using its
+    `repr`, because `1` and `1.0` genuinely are one candidate everywhere else
+    here - `knob_variation` dedupes by value, and the combination count was
+    moved off `repr` for exactly that reason. Keying on `repr` would refuse
+    `[1]` against `[1.0]`, a document that scores today.
+    """
+    return list(dict.fromkeys((isinstance(value, bool), value) for value in values))
+
+
+def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
+    """Collapse alias spellings onto one dimension before anything counts them.
+
+    Doing this inside the coverage sub-score alone was too late. Knob-count,
+    variation and the combination count had already run, and each of them had
+    counted `prompt_policy` and `prompt_style` as two independent dimensions:
+    declaring both over the same values scored the agent pillar 95 with "5 of 5
+    wired knobs" and 108 combinations, against 93, "4 of 4" and 36 for the
+    single spelling. One conceptual dimension earned two dimensions' credit and
+    tripled the reported size of the space.
+
+    Two spellings of one dimension with *different* candidate lists is not a
+    space this can silently pick a winner from, so it is refused.
+    """
+    names = (*facts.knobs, *(facts.wired or ()), *facts.bounds)
+    if not any(name in KNOB_ALIASES for name in names):
+        return facts
+
+    def _canonical(name: str) -> str:
+        return KNOB_ALIASES.get(name, name)
+
+    knobs: dict[str, list[Any]] = {}
+    for name, values in facts.knobs.items():
+        canonical = _canonical(name)
+        held = knobs.get(canonical)
+        if held is not None and candidate_domain(held) != candidate_domain(values):
+            raise ConfigSpaceInputError(
+                f"config-space declares both '{name}' and '{canonical}' over "
+                "different candidate values, but they are two spellings of one "
+                "search dimension: declare it once, under either name"
+            )
+        if held is None:
+            knobs[canonical] = list(values)
+
+    bounds: dict[str, dict[str, float]] = {}
+    for name, spec in facts.bounds.items():
+        canonical = _canonical(name)
+        held = bounds.get(canonical)
+        if held is not None and held != spec:
+            raise ConfigSpaceInputError(
+                f"config-space bounds declares both '{name}' and '{canonical}' "
+                "with different ranges, but they are two spellings of one "
+                "search dimension: declare it once, under either name"
+            )
+        if held is None:
+            bounds[canonical] = dict(spec)
+
+    return AgentFacts(
+        agent_type=facts.agent_type,
+        max_trials=facts.max_trials,
+        knobs=knobs,
+        wired=(
+            None
+            if facts.wired is None
+            else tuple(dict.fromkeys(_canonical(name) for name in facts.wired))
+        ),
+        bounds=bounds,
+    )
+
+
+def _reject_phantom_names(
+    field: str, names: Iterable[str], knobs: dict[str, Any], knobs_key: str
+) -> None:
+    """Refuse a `wired`/`bounds` name that is no knob of the declared space.
+
+    Both fields address knobs by name, and both are read by intersecting with
+    the space, so an unmatched name silently disappears instead of failing.
+
+    It judges the *canonical* name and reports the written one, and it runs
+    after `canonical_alias_names`. Running before it made this refuse
+    `wired: ["prompt_policy"]` against a space declaring `prompt_style` - a
+    spelling this module itself defines as legal - and say the name "is not
+    declared", which is false under the module's own semantics: it does match a
+    declared knob, through `KNOB_ALIASES`. A validation step that reads names
+    the normalization step has not yet collapsed cannot answer the question it
+    is asking.
+    """
+    phantom = sorted(
+        {name for name in names if KNOB_ALIASES.get(name, name) not in knobs}
+    )
+    if phantom:
+        detail = ", ".join(f"'{name}'" for name in phantom)
+        raise ConfigSpaceInputError(
+            f"config-space '{field}' names {detail}, which "
+            f"{'is' if len(phantom) == 1 else 'are'} not declared in "
+            f"'{knobs_key}': a name that matches no knob would silently shrink "
+            "the scored space instead"
+        )
+
+
+def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
+    """Read a config-space document, or refuse it naming the field at fault.
+
+    Every field is read by its own entry in `CONFIG_SPACE_FIELDS` and by
+    nothing else, so this function holds only what is genuinely *cross*-field.
+    There are three such rules, and they run in this order because a rule that
+    reads a name must read the name the scorer will use:
+
+    1. **Which space spelling is read.** `knobs` wins over its
+       `configuration_space` alias only when it is non-empty, and `knobs_key`
+       names whichever was actually read, so no message points at a key the
+       author never wrote.
+    2. **Alias spellings are collapsed onto one dimension**
+       (`canonical_alias_names`), across `knobs`, `wired` and `bounds` at once.
+       Two spellings of one dimension declared over different candidate values,
+       or with different ranges, are refused here rather than merged.
+    3. **A `wired` or `bounds` name must be a knob of the declared space**
+       (`_reject_phantom_names`, applied to each field). Such a name is not a
+       narrower space, it is a typo, and it is refused rather than dropped.
+
+    Rule 3 runs on the output of rule 2 and never the other way round: an alias
+    spelling is a legal name for a declared knob, so checking names before they
+    are collapsed refuses documents this module itself defines as valid.
+    """
+    if not isinstance(document, dict):
+        raise ConfigSpaceInputError(
+            "config-space document must be a JSON object with a 'knobs' key, "
+            f"not {type(document).__name__}"
+        )
+    # Presence with `in`, never truthiness: `[]`, `null`, `0` and `""` are
+    # malformed values of a field that was written, not absent fields. Every
+    # declared field present in the document is read, so a malformed alias
+    # cannot hide behind a well-formed preferred key either.
+    read = {
+        spec.name: spec.read(spec.name, document[spec.name])
+        for spec in CONFIG_SPACE_FIELDS
+        if spec.name in document
+    }
+    declared = {key: read[key] for key in CONFIG_SPACE_SPACE_KEYS if key in read}
+    if not declared:
+        raise ConfigSpaceInputError(
+            "config-space document must declare 'knobs' (or its "
+            "'configuration_space' alias) as an object mapping each knob name "
+            "to its list of candidate values"
+        )
+    # `knobs` wins only when it is non-empty, so an empty one falls through to
+    # the alias. Name whichever key was actually read, or the message points at
+    # a key the author did not write. An explicitly empty space is a statement
+    # the scorer can read ("no knobs declared"), unlike an absent one.
+    knobs_key = next(
+        (key for key in CONFIG_SPACE_SPACE_KEYS if declared.get(key)),
+        next(iter(declared)),
+    )
+    knobs = declared[knobs_key]
+    # Absent and explicit-empty are DIFFERENT claims: absent says nothing
+    # about wiring, `[]` says "none of them". Collapsing them here would
+    # erase the distinction before the scorer ever sees it (#78).
+    wired = read["wired"] if "wired" in read else None
+    bounds = read.get("bounds", {})
+    # A misspelled name is a *string*, so the field's own type check lets it
+    # through, and `score_agent` then intersects `wired` with the space and
+    # drops it - a silent narrowing that raises the score and makes the card
+    # assert "1 of 1 wired knobs actually vary" about a document that declared
+    # two. A `bounds` name addresses knobs the same way and fails the same way:
+    # the declared range never reaches the knob it was meant for, so the knob
+    # is scored against the canonical range or on breadth alone, which can flip
+    # it from "collapsed" to "varying" and clear the cap on a range the author
+    # never declared for it. The template's own fence asserts this before it
+    # searches; enforce it here too, because the document is read long after.
+    facts = canonical_alias_names(
+        AgentFacts(
+            agent_type=read.get("agent_type"),
+            max_trials=read.get("max_trials"),
+            knobs=knobs,
+            wired=wired,
+            bounds=bounds,
+        )
+    )
+    # Against the collapsed space, and reporting the spelling the author wrote.
+    # An unattested document names nothing, so there is no phantom to reject.
+    if wired is not None:
+        _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
+    _reject_phantom_names("bounds", bounds, facts.knobs, knobs_key)
+    return facts
 
 
 # ---------------------------------------------------------------------------
@@ -1730,7 +2295,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config_space
             else AgentFacts()
         )
-    except (OSError, json.JSONDecodeError, PreflightInputError) as error:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        PreflightInputError,
+        ConfigSpaceInputError,
+    ) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 

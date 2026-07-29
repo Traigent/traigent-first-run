@@ -176,6 +176,7 @@ requires.
 Use one production-compatible function for baseline and optimization:
 
 ```python
+import json
 import math
 import os
 from pathlib import Path
@@ -198,6 +199,7 @@ TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
 HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
+CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
 SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
 SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
 SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
@@ -325,10 +327,37 @@ ENHANCED_SPACE = {
     ],
     "self_check": [False, True],
 }
+# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
+# the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
+# call_agent below actually consumes - a knob listed here that the agent ignores
+# is a false claim about the search space. The scorer cannot check that claim,
+# so the assert under `demonstrably_wired` below checks it here at load time.
+AGENT_TYPE = "general"
+WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
+# Inputs the wiring probe below re-builds requests over. A knob that acts only
+# on some inputs - a `sql_mode` applied when the message starts "SQL:", say -
+# produces identical requests under a single literal, so probing one string
+# reports a genuinely wired knob as unproven and blocks the run before it
+# starts. Replace these with two or three real inputs from tuning.jsonl,
+# covering the shapes the task actually contains.
+PROBE_INPUTS = [
+    "probe",
+    "Probe: a longer request that states an explicit output constraint.",
+]
 
 
 def configuration_count(space: dict[str, list]) -> int:
     return math.prod(len(values) for values in space.values())
+
+
+def config_space_document(space: dict[str, list]) -> dict:
+    """Serialize the finalized search space as readiness config-space evidence."""
+    return {
+        "agent_type": AGENT_TYPE,
+        "max_trials": ENHANCED_MAX_TRIALS,
+        "knobs": {name: list(values) for name, values in space.items()},
+        "wired": list(WIRED_KNOBS),
+    }
 
 
 assert len(set(BASELINE_SPACE["model"])) == 3
@@ -341,6 +370,9 @@ assert not STRONG_REASONING_EFFORT or (
 assert configuration_count(BASELINE_SPACE) == 6
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
+assert set(WIRED_KNOBS) <= set(ENHANCED_SPACE), (
+    "every wired knob must name a dimension of the space actually searched"
+)
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
@@ -404,7 +436,13 @@ def provider_reported_cost(response) -> float:
     return cost
 
 
-def call_agent(message: str, config: dict) -> tuple[str, float]:
+def build_request(message: str, config: dict) -> dict:
+    """Build the provider request from one configuration. Pure: makes no call.
+
+    Kept separate from `call_agent` so a wired-knob claim can be probed without
+    a network or a key: two configurations that differ in a real search
+    dimension must produce two different request dicts.
+    """
     sampling_kwargs: dict = {"temperature": config["temperature"]}
     if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
         # Reasoning models reject sampled temperature and need answer headroom
@@ -414,11 +452,11 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
             "reasoning_effort": STRONG_REASONING_EFFORT,
             "max_tokens": 4096,
         }
-    response = litellm.completion(
-        model=config["model"],
-        timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
+    return {
+        "model": config["model"],
+        "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
         **sampling_kwargs,
-        messages=[
+        "messages": [
             {
                 "role": "user",
                 "content": build_prompt(
@@ -428,9 +466,151 @@ def call_agent(message: str, config: dict) -> tuple[str, float]:
                 ),
             }
         ],
-    )
+    }
+
+
+def call_agent(message: str, config: dict) -> tuple[str, float]:
+    response = litellm.completion(**build_request(message, config))
     cost = provider_reported_cost(response)
     return response.choices[0].message.content or "", cost
+
+
+def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
+    """Classify each wired knob by what a pure request diff can actually prove.
+
+    What this proves and nothing more: **request visibility, per model** - that
+    changing the knob changes the dict `build_request` returns, under each model
+    in the space. It never proves provider *effect*: a provider that silently
+    ignores a parameter it accepts produces two different requests and one
+    behaviour. Only the run itself can show effect; this only rules out the
+    dimension that could not possibly have one.
+
+    It probes every model in the space, not just the base's, because request
+    construction branches on the model. It probes several inputs, because a knob
+    that acts only on some inputs is invisible under one literal string.
+
+    Verdicts:
+
+    - `visible`     - under every model in the space, some alternative value
+                      changes the request for some probed input.
+    - `partial`     - it changes the request under some models and never under
+                      others. That is a *conditional* dimension, not a dead one:
+                      `reasoning_effort` exists only on a reasoning model, so a
+                      knob that moves that model's request and no other is
+                      exactly right. This is information about the shape of the
+                      space, reported below with the models that honour it - not
+                      a failure, and not something to launder through
+                      WIRED_OUTSIDE_THE_REQUEST, since the knob demonstrably
+                      does act inside request construction.
+    - `invisible`   - no model and no probed input ever changes the request.
+                      This alone is fatal: it is the no-op that inflates the
+                      config-space document with a dimension nothing can move.
+                      The probe cannot tell "acts outside request construction"
+                      from "the agent ignores it"; it says so and refuses to
+                      guess, which is what WIRED_OUTSIDE_THE_REQUEST records.
+    - `not-searched`- fewer than two distinct values, so it claims no dimension.
+    """
+    models = list(dict.fromkeys(space.get("model", [base["model"]])))
+    verdicts: dict[str, str] = {}
+    for knob in WIRED_KNOBS:
+        values = space.get(knob, [])
+        if len(set(map(repr, values))) < 2:
+            verdicts[knob] = "not-searched"
+            continue
+        moved = set()
+        for model in models:
+            model_base = {**base, "model": model}
+            for message in PROBE_INPUTS:
+                baseline = build_request(message, model_base)
+                if any(
+                    build_request(message, {**model_base, knob: value}) != baseline
+                    for value in values
+                ):
+                    moved.add(model)
+                    break
+        if len(moved) == len(models):
+            verdicts[knob] = "visible"
+        elif moved:
+            verdicts[knob] = "partial"
+        else:
+            verdicts[knob] = "invisible"
+    return verdicts
+
+
+# Knobs that genuinely act outside request construction - a RAG retrieval depth,
+# a tool policy, a repair loop - are invisible to the probe above, so they are
+# recorded here instead. This is a MAPPING, knob -> where it acts, because a
+# bare list of names was a blanket waiver: `WIRED_OUTSIDE_THE_REQUEST =
+# list(WIRED_KNOBS)` silenced the guard entirely while still passing. An entry
+# is an explicit, reviewable claim, NOT evidence: nothing verifies it, and the
+# load prints it so a reader can challenge it. Add a knob only when you can say
+# where in the agent it acts; if you cannot, it is not a real search dimension -
+# drop it from WIRED_KNOBS rather than parking it here. Empty for this
+# walkthrough: all four of its knobs are visible in the request.
+WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}
+
+assert all(
+    knob in WIRED_KNOBS and isinstance(where, str) and where.strip()
+    for knob, where in WIRED_OUTSIDE_THE_REQUEST.items()
+), (
+    "every WIRED_OUTSIDE_THE_REQUEST entry must map a wired knob to a "
+    "non-empty description of where in the agent it acts"
+)
+
+PROBE_VERDICTS = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
+# A `partial` knob is a conditional dimension and it loads: `reasoning_effort`
+# on a reasoning model moves that model's request and no other, and failing the
+# load on it blocked a valid run before it started. Re-probing the space one
+# model at a time names the models that do honour it, so the asymmetry reaches
+# the run record instead of being either hidden or fatal.
+CONDITIONAL_WIRED_KNOBS = {
+    knob: [
+        model
+        for model in dict.fromkeys(
+            ENHANCED_SPACE.get("model", [BASELINE_CONFIG["model"]])
+        )
+        if probe_wiring(
+            {**ENHANCED_SPACE, "model": [model]},
+            {**BASELINE_CONFIG, "model": model},
+        )[knob]
+        == "visible"
+    ]
+    for knob, verdict in PROBE_VERDICTS.items()
+    if verdict == "partial"
+}
+# Only `invisible` is fatal, because only `invisible` is the no-op this guard
+# exists to catch: a knob no model and no probed input ever moves is a claimed
+# search dimension the agent cannot act on, and claiming it is what inflated an
+# earlier walkthrough's agent pillar by 12 points.
+UNPROVEN_WIRED_KNOBS = {
+    knob: verdict
+    for knob, verdict in PROBE_VERDICTS.items()
+    if verdict == "invisible" and knob not in WIRED_OUTSIDE_THE_REQUEST
+}
+assert not UNPROVEN_WIRED_KNOBS, (
+    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but changing them "
+    "never changed the request under any model or any probed input, so the "
+    "config-space document would claim a search dimension the agent cannot "
+    "move. The probe cannot tell 'acts outside request construction' from "
+    "'the agent ignores it' and will not guess: wire them, add probe inputs "
+    "that exercise them, record where they act in WIRED_OUTSIDE_THE_REQUEST, "
+    "or remove them from WIRED_KNOBS"
+)
+for _knob, _models in sorted(CONDITIONAL_WIRED_KNOBS.items()):
+    # Neither a failure nor a free pass: the search moves this knob for part of
+    # the space, and the run record should say which part.
+    print(
+        f"conditional dimension: '{_knob}' changes the request under "
+        f"{', '.join(_models)} and under no other model in the space; the "
+        "search still moves it, for those models only"
+    )
+for _knob, _where in sorted(WIRED_OUTSIDE_THE_REQUEST.items()):
+    # Say it rather than wave it through: an escaped knob is an unproven claim
+    # and the run record should show it as one.
+    print(
+        f"unverified wiring claim: '{_knob}' is declared to act at {_where}; "
+        "the request probe cannot confirm it"
+    )
 
 
 @traigent.optimize(
@@ -603,10 +783,39 @@ the winner-bracketing neighbor chosen from the baseline result per the ladder se
 search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
 internal step - never a user task, an edit the user is asked to make, or another question.
 
+The config-space document is serialized after that replacement, so it records the space the search
+actually receives rather than the pre-baseline guess - but nothing is on disk while the search runs.
+Three steps in order give the file one meaning and no other, *this is the space the search that just
+completed received*:
+
+- **Serialize before the call.** The bytes are frozen from the same `ENHANCED_SPACE` object the call
+  is about to receive, so no later edit to the space can drift into them.
+- **Unlink before the call.** Ordering alone only protects a first run. A retry - the space is
+  narrowed, or the previous search failed and is resumed - starts with the earlier run's document
+  already on disk, and if this search raises, that stale file survives as evidence for a search that
+  is no longer the one being reported. Removing it makes the file's existence conditional on *this*
+  search, not on any search ever having run.
+- **Write after trials are confirmed.** A search that returns having executed nothing did not search
+  the space either, so the document is persisted after `optimized_results.trials` is checked rather
+  than merely after the call returns.
+
+A run that legitimately stops earlier, raises, or completes no trial therefore emits no document at
+all, and the closing score honestly reports the agent pillar as not yet measured. Re-write the
+document whenever the space changes. Its shape is documented in `references/run-safety.md`, and the
+finished file is passed to the closing readiness score with `--config-space`.
+
 Run one connected search using the same decorated function, tuning dataset, and evaluator:
 
 ```python
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
+# Frozen from the space this call receives; persisted only once this search has
+# returned trials of its own.
+config_space_evidence = (
+    json.dumps(config_space_document(ENHANCED_SPACE), indent=2, sort_keys=True) + "\n"
+)
+# An earlier run's document describes an earlier search. It must not survive
+# this one, whatever this one does.
+Path(CONFIG_SPACE_DOCUMENT).unlink(missing_ok=True)
 optimized_results = agent.optimize_sync(
     algorithm="auto",
     configuration_space=ENHANCED_SPACE,
@@ -614,6 +823,8 @@ optimized_results = agent.optimize_sync(
     timeout=OPTIMIZATION_TIMEOUT_SECONDS,
     save_to=OPTIMIZED_RESULTS,
 )
+assert optimized_results.trials, "optimization did not execute"
+Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 ```
 
 Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is

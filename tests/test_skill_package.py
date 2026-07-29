@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import ast
+import contextlib
+import importlib.util
+import io
 import json
 import re
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +17,26 @@ SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
 SKILL = SKILL_ROOT / "SKILL.md"
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
+
+# The config-space document is a contract between prose the assistant follows and
+# code that reads it, so these tests weld the documented shape to the real
+# consumer rather than re-describing it.
+_READINESS = SKILL_ROOT / "scripts" / "readiness.py"
+_SPEC = importlib.util.spec_from_file_location(
+    "first_run_readiness_for_prose", _READINESS
+)
+READINESS = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+sys.modules[_SPEC.name] = READINESS
+_SPEC.loader.exec_module(READINESS)
+
+
+def score_config_space(document: dict) -> tuple[object, list[str]]:
+    """Run a config-space document through the real adapter and agent scorer."""
+    pillar, caps, _knobs = READINESS.score_agent(
+        READINESS.agent_facts_from_config_space(document)
+    )
+    return pillar, [cap.condition for cap in caps]
 
 
 class SkillPackageTests(unittest.TestCase):
@@ -747,12 +772,21 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
+            "AGENT_TYPE",
+            "WIRED_KNOBS",
+            "PROBE_INPUTS",
+            "PROBE_VERDICTS",
+            "WIRED_OUTSIDE_THE_REQUEST",
+            "UNPROVEN_WIRED_KNOBS",
         }
         selected_nodes = []
         for node in module.body:
             if isinstance(node, ast.FunctionDef) and node.name in {
                 "configuration_count",
+                "config_space_document",
                 "build_prompt",
+                "build_request",
+                "probe_wiring",
             }:
                 selected_nodes.append(node)
             elif isinstance(node, ast.Assert):
@@ -761,6 +795,15 @@ class SkillPackageTests(unittest.TestCase):
                 isinstance(target, ast.Name) and target.id in wanted_assignments
                 for target in node.targets
             ):
+                selected_nodes.append(node)
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id in wanted_assignments
+            ):
+                # An annotated constant (`NAME: list[str] = []`) is an AnnAssign,
+                # not an Assign; missing it leaves the asserts below referring to
+                # a name this namespace never bound.
                 selected_nodes.append(node)
 
         executable = ast.fix_missing_locations(
@@ -774,6 +817,7 @@ class SkillPackageTests(unittest.TestCase):
             "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 4,
             "ENHANCED_MAX_TRIALS": 10,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
         exec(compile(executable, "<sdk-spaces-and-knobs>", "exec"), namespace)
 
@@ -793,6 +837,23 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLessEqual(4, count(namespace["BASELINE_SPACE"]))
         self.assertLess(10, count(namespace["ENHANCED_SPACE"]))
 
+        # The template's own producer must emit readiness evidence that clears
+        # `agent-no-varying-knobs` through the real scorer - not a document the
+        # test hand-writes to match. No pillar number is pinned here: the score
+        # moves with unrelated template edits, the cap is the contract.
+        document = namespace["config_space_document"](namespace["ENHANCED_SPACE"])
+        self.assertEqual(document["knobs"], namespace["ENHANCED_SPACE"])
+        self.assertEqual(document["wired"], namespace["WIRED_KNOBS"])
+        self.assertEqual(document["agent_type"], namespace["AGENT_TYPE"])
+        self.assertEqual(document["max_trials"], namespace["ENHANCED_MAX_TRIALS"])
+        self.assertNotIn("configuration_space", document)
+        _pillar, conditions = score_config_space(document)
+        self.assertNotIn(
+            "agent-no-varying-knobs",
+            conditions,
+            "the template's own config-space document must clear the cap it exists to clear",
+        )
+
         build_prompt = namespace["build_prompt"]
         self.assertEqual(build_prompt("task", style="direct", self_check=False), "task")
         structured = build_prompt("task", style="structured", self_check=False)
@@ -811,6 +872,7 @@ class SkillPackageTests(unittest.TestCase):
             "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
         with self.assertRaises(AssertionError):
             exec(
@@ -916,10 +978,14 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
         self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
         code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-        call_agent_node = next(
+        call_path_nodes = [
             node
             for node in ast.parse(code).body
-            if isinstance(node, ast.FunctionDef) and node.name == "call_agent"
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {"build_request", "call_agent"}
+        ]
+        self.assertEqual(
+            [node.name for node in call_path_nodes], ["build_request", "call_agent"]
         )
         calls = []
 
@@ -931,7 +997,7 @@ class SkillPackageTests(unittest.TestCase):
             )
 
         module = ast.fix_missing_locations(
-            ast.Module(body=[call_agent_node], type_ignores=[])
+            ast.Module(body=call_path_nodes, type_ignores=[])
         )
         namespace = {
             "litellm": SimpleNamespace(completion=fake_completion),
@@ -1685,6 +1751,801 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never real-world readiness", norm("component-creation.md"))
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
+
+    def test_first_json_fence_in_run_safety_is_the_config_space_example(self) -> None:
+        """Guard the positional dependency the next test relies on.
+
+        `test_config_space_example_clears_the_cap_through_the_real_consumer`
+        parses the FIRST ```json fence in run-safety.md. Inserting any json
+        fence above it silently changes which document gets scored, and that
+        test then fails in a way that names neither ordering nor the new fence.
+        """
+        match = re.search(r"```json\n(.*?)\n```", RUN_SAFETY.read_text(), re.DOTALL)
+        self.assertIsNotNone(match, "run-safety.md must contain a json fence")
+        document = json.loads(match.group(1))
+        self.assertIsInstance(
+            document,
+            dict,
+            "the first ```json fence in run-safety.md is no longer the "
+            "config-space example; a fence was inserted above it",
+        )
+        for field in ("knobs", "wired"):
+            self.assertIn(
+                field,
+                document,
+                "the first ```json fence in run-safety.md must still be the "
+                "config-space example; a fence was inserted above it",
+            )
+
+    def test_config_space_example_clears_the_cap_through_the_real_consumer(
+        self,
+    ) -> None:
+        """The documented shape is scored, not merely described.
+
+        This is what stops the worked example in run-safety.md drifting from
+        `agent_facts_from_config_space`: the fence is fed to the real adapter and
+        the real agent scorer, so a schema change on either side fails here
+        instead of shipping prose that no longer parses.
+        """
+        match = re.search(r"```json\n(.*?)\n```", RUN_SAFETY.read_text(), re.DOTALL)
+        assert match is not None
+        pillar, conditions = score_config_space(json.loads(match.group(1)))
+        self.assertEqual(conditions, [])
+        # 90 = 35/35 knob-count + 30.4/40 variation + 25/25 coverage. It was 78
+        # while the `general` catalog spelled the prompt dimension
+        # `prompt_policy` (the template emits `prompt_style`) and still listed
+        # `max_tokens`: the walkthrough lost 12.5 of 25 coverage points to a
+        # naming mismatch and to a capacity guard run-safety.md forbids
+        # sweeping. Both are catalog defects, so the document scores higher
+        # without any change to the space it describes.
+        self.assertEqual(pillar.score, 90)
+        self.assertEqual(pillar.confidence, 1.0)
+
+    def test_config_space_document_is_serialized_before_but_written_after(self) -> None:
+        """The document must not be able to drift *or* outlive a failed search.
+
+        Written before `optimize_sync`, the file survives a search that raised
+        and a later score reads it as evidence for a run that never happened.
+        Serialized after the call, it could describe a mutated space. So the
+        template does both halves: freeze the bytes from the space this call
+        receives, persist them only once the call has returned.
+        """
+        text = SDK_EXECUTION.read_text()
+        enhanced = text[text.index("## Broader optimization") :]
+        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        serialize = enhanced.find("config_space_document(ENHANCED_SPACE)")
+        search = enhanced.find("optimized_results = agent.optimize_sync(")
+        write = enhanced.find("Path(CONFIG_SPACE_DOCUMENT).write_text(")
+        self.assertNotEqual(
+            serialize, -1, "the enhanced block must serialize the config space"
+        )
+        self.assertNotEqual(search, -1)
+        self.assertNotEqual(write, -1, "the enhanced block must write the document")
+        self.assertLess(
+            serialize,
+            search,
+            "the config-space document must be serialized from the space this "
+            "call receives, or it can record a space the run never got",
+        )
+        self.assertLess(
+            search,
+            write,
+            "the config-space document must be written only after the search "
+            "returns, or a failed run leaves evidence for a search that never ran",
+        )
+        # The write must persist the pre-call bytes, not re-serialize after it.
+        self.assertNotIn(
+            "write_text(\n    json.dumps(config_space_document",
+            enhanced,
+            "re-serializing at write time reintroduces the drift the early "
+            "serialization exists to prevent",
+        )
+
+    def _template_producer_namespace(self) -> dict:
+        """Execute the template's spaces and its config-space producer.
+
+        The lifecycle tests below run the template's own enhanced-search block,
+        so they need the same objects that block closes over.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        wanted_assignments = {
+            "BASELINE_CONFIG",
+            "BASELINE_SPACE",
+            "ENHANCED_SPACE",
+            "AGENT_TYPE",
+            "WIRED_KNOBS",
+        }
+        selected = [
+            node
+            for node in ast.parse(code).body
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name in {"configuration_count", "config_space_document"}
+            )
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id in wanted_assignments
+                    for target in node.targets
+                )
+            )
+        ]
+        namespace = {
+            "math": __import__("math"),
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
+            "BASELINE_TRIALS": 4,
+            "ENHANCED_MAX_TRIALS": 12,
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                "<sdk-config-space-producer>",
+                "exec",
+            ),
+            namespace,
+        )
+        return namespace
+
+    def test_config_space_document_never_outlives_the_search_it_describes(self) -> None:
+        """Run the template's own search block and check what is left on disk.
+
+        Ordering assertions only prove a *first* run leaves nothing behind.
+        They cannot see the two cases that still produced false evidence: a
+        retry over a changed space whose search raises keeps the previous run's
+        document, and a return that executed no trial writes one. Nor can they
+        see *what* is written - replacing the write body with
+        `write_text("{}\\n")` satisfies every ordering check.
+
+        So this executes the block against a stub search: the document must
+        hold exactly the bytes serialized from the space the call received, and
+        must be absent - not stale - whenever the search did not deliver trials.
+        """
+        producer = self._template_producer_namespace()
+        text = SDK_EXECUTION.read_text()
+        enhanced = text[text.index("## Broader optimization") :]
+        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        fence = re.search(r"```python\n(.*?)\n```", enhanced, re.DOTALL)
+        self.assertIsNotNone(fence, "the enhanced search must still be a python fence")
+        block = compile(fence.group(1), "<sdk-enhanced-search>", "exec")
+
+        expected = (
+            json.dumps(
+                producer["config_space_document"](producer["ENHANCED_SPACE"]),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        searched: list[dict] = []
+
+        def run(document: Path, outcome) -> None:
+            def optimize_sync(**kwargs):
+                searched.append(kwargs)
+                return outcome()
+
+            namespace = dict(producer)
+            namespace.update(
+                {
+                    "json": json,
+                    "Path": Path,
+                    "os": SimpleNamespace(environ={}),
+                    "agent": SimpleNamespace(optimize_sync=optimize_sync),
+                    "OPTIMIZATION_TIMEOUT_SECONDS": 60.0,
+                    "OPTIMIZED_RESULTS": str(
+                        document.parent / "optimized-results.json"
+                    ),
+                    "CONFIG_SPACE_DOCUMENT": str(document),
+                }
+            )
+            exec(block, namespace)
+
+        def raises():
+            raise RuntimeError("provider error")
+
+        stale = '{"knobs": {"stale": [1, 2]}}\n'
+        with tempfile.TemporaryDirectory() as directory:
+            document = Path(directory) / "config-space.json"
+
+            run(document, lambda: SimpleNamespace(trials=[{"trial": 1}]))
+            self.assertEqual(
+                document.read_text(),
+                expected,
+                "the file must hold the document serialized from the space this "
+                "call received, not whatever the write body happens to emit",
+            )
+            self.assertEqual(
+                json.loads(document.read_text())["knobs"],
+                searched[-1]["configuration_space"],
+                "the persisted knobs must be the space optimize_sync was given",
+            )
+
+            # A retry: an earlier run's document is already on disk and this
+            # search raises. Write-after-return alone leaves the stale file as
+            # evidence for a search that is no longer the one being reported.
+            document.write_text(stale)
+            with self.assertRaises(RuntimeError):
+                run(document, raises)
+            self.assertFalse(
+                document.exists(),
+                "a search that raised must leave no config-space document, "
+                "including one written by an earlier search",
+            )
+
+            # A search that returns having executed nothing searched no space
+            # either, so it must not produce evidence that it did.
+            document.write_text(stale)
+            with self.assertRaises(AssertionError):
+                run(document, lambda: SimpleNamespace(trials=[]))
+            self.assertFalse(
+                document.exists(),
+                "a zero-trial return must leave no config-space document",
+            )
+
+    def test_skill_and_template_agree_on_when_the_document_is_written(self) -> None:
+        """One behaviour, three documents - they must not contradict each other.
+
+        SKILL.md is always loaded and the references are bundled, so an
+        assistant adapting the wrapper for a real agent follows SKILL.md's
+        timing. While SKILL.md said "serialize it to
+        `traigent-runs/config-space.json` ... before the connected search
+        runs", the write-after-return fix lived only in sdk-execution.md and
+        was unreachable from the instruction that actually gets read.
+        """
+        documents = {
+            "SKILL.md": " ".join(SKILL.read_text().casefold().split()),
+            "sdk-execution.md": " ".join(SDK_EXECUTION.read_text().casefold().split()),
+            "run-safety.md": " ".join(RUN_SAFETY.read_text().casefold().split()),
+        }
+        for name, text in documents.items():
+            with self.subTest(document=name):
+                self.assertIn(
+                    "returned trials",
+                    text,
+                    f"{name} must state that the document is written only once "
+                    "the search has returned trials",
+                )
+                self.assertTrue(
+                    any(
+                        phrase in text
+                        for phrase in (
+                            "delete any earlier copy",
+                            "remove any earlier document",
+                            "deletes it before each search",
+                            "unlink",
+                        )
+                    ),
+                    f"{name} must state that an earlier document is removed "
+                    "before the search, or a failed retry keeps it",
+                )
+        self.assertNotIn(
+            "serialize it to `traigent-runs/config-space.json`",
+            documents["SKILL.md"],
+            "SKILL.md must not instruct producing the file before the search",
+        )
+        skill = documents["SKILL.md"]
+        self.assertLess(
+            skill.index("serialize it"),
+            skill.index("traigent-runs/config-space.json"),
+            "SKILL.md must serialize the space first and name the file at the "
+            "point it is saved",
+        )
+
+    def test_template_agent_type_names_a_catalog_the_scorer_recognizes(self) -> None:
+        """An unrecognized `AGENT_TYPE` is not caught by anything else.
+
+        The scorer accepts any string, and an unrecognized one leaves coverage
+        unmeasured - which, because the pillar renormalizes over what it
+        measured, *raises* the score by about 9 points while lowering its
+        confidence. Mutating this constant to `"bogus_type"` passed every other
+        semantic test in this file, because the producer test only compares the
+        document's field to the constant that produced it.
+        """
+        namespace = self._template_producer_namespace()
+        self.assertIn(
+            namespace["AGENT_TYPE"],
+            READINESS.HIGH_IMPACT_KNOBS,
+            "AGENT_TYPE must name a catalog the scorer has, or the walkthrough's "
+            "own document scores its coverage as unmeasured",
+        )
+        pillar, _ = score_config_space(
+            namespace["config_space_document"](namespace["ENHANCED_SPACE"])
+        )
+        self.assertEqual(
+            pillar.confidence,
+            1.0,
+            "every agent sub-score must be measured for the template's own document",
+        )
+
+    def test_every_wired_knob_actually_changes_the_agent_request(self) -> None:
+        """`wired` is an author claim the scorer cannot verify - so verify it here.
+
+        `agent_facts_from_config_space` reads the document, never the agent
+        code, so listing a knob `call_agent` ignores inflates the agent pillar
+        with a dimension the search cannot move. Making `prompt_style` a no-op
+        (`style="direct"` instead of `style=config["prompt_style"]`) passes
+        every other test in this file while the document still claims the knob
+        is wired. This runs the template's own `call_agent` against a recording
+        stub and fails when a wired knob leaves the request identical.
+
+        It also pins `call_agent` to `build_request`: the fence's load-time
+        assert probes `build_request`, so a `call_agent` that re-inlined its own
+        request would leave that assert guarding dead code.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )
+        module = ast.parse(code[0])
+        wanted_assignments = {"BASELINE_CONFIG", "BASELINE_SPACE", "ENHANCED_SPACE"}
+        selected = [
+            node
+            for node in module.body
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name in {"build_prompt", "build_request", "call_agent"}
+            )
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id in wanted_assignments
+                    for target in node.targets
+                )
+            )
+        ]
+        self.assertEqual(
+            len(selected), 6, "the template no longer defines the knobs it wires"
+        )
+
+        requests: list[dict] = []
+
+        class _Stub:
+            @staticmethod
+            def completion(**kwargs):
+                requests.append(kwargs)
+                message = SimpleNamespace(content="answer")
+                return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+        namespace = {
+            "litellm": _Stub,
+            "provider_reported_cost": lambda response: 0.0,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                "<sdk-call-agent>",
+                "exec",
+            ),
+            namespace,
+        )
+
+        space = namespace["ENHANCED_SPACE"]
+        base = dict(namespace["BASELINE_CONFIG"])
+        wired = json.loads(
+            re.search(r"^WIRED_KNOBS = (\[[^\]]*\])", code[0], re.MULTILINE).group(1)
+        )
+        namespace["call_agent"]("task", base)
+        baseline_request = requests[-1]
+        for knob in wired:
+            with self.subTest(knob=knob):
+                self.assertIn(
+                    knob,
+                    space,
+                    f"'{knob}' is wired but is not a dimension of the space",
+                )
+                alternatives = [value for value in space[knob] if value != base[knob]]
+                self.assertTrue(alternatives, f"'{knob}' has no second value to test")
+                namespace["call_agent"]("task", dict(base, **{knob: alternatives[0]}))
+                self.assertNotEqual(
+                    requests[-1],
+                    baseline_request,
+                    f"'{knob}' is listed under WIRED_KNOBS but changing it leaves "
+                    "the agent request identical - the config-space document "
+                    "would claim a search dimension the agent ignores",
+                )
+
+        # `call_agent` must route through `build_request`, not re-inline the
+        # request: everything the fence asserts at load time is a claim about
+        # `build_request`, and an inlined `call_agent` would drift past it.
+        namespace["build_request"] = lambda message, config: {"probe": "sentinel"}
+        namespace["call_agent"]("task", base)
+        self.assertEqual(
+            requests[-1],
+            {"probe": "sentinel"},
+            "call_agent must build its request with build_request, or the "
+            "fence's wiring assert guards code the agent no longer calls",
+        )
+
+    def _wiring_probe_namespace(self, **overrides) -> dict:
+        """Execute the fence's wiring probe with pieces of it swapped out."""
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        module = ast.parse(code)
+        wanted_assignments = {
+            "BASELINE_CONFIG",
+            "BASELINE_SPACE",
+            "ENHANCED_SPACE",
+            "WIRED_KNOBS",
+            "PROBE_INPUTS",
+            "WIRED_OUTSIDE_THE_REQUEST",
+        }
+        selected = [
+            node
+            for node in module.body
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name in {"build_prompt", "build_request", "probe_wiring"}
+            )
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id in wanted_assignments
+                    for target in node.targets
+                )
+            )
+            or (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id in wanted_assignments
+            )
+        ]
+        namespace = {
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "SELECTED_CURRENT_MODEL": "provider/current",
+            "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
+            "SELECTED_STRONG_MODEL": "provider/strong",
+            "STRONG_REASONING_EFFORT": None,
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                "<sdk-wiring-probe>",
+                "exec",
+            ),
+            namespace,
+        )
+        namespace.update(overrides)
+        return namespace
+
+    def test_the_wiring_assert_catches_a_knob_the_prompt_builder_ignores(self) -> None:
+        """Regression-test the guard itself, not merely its presence.
+
+        `probe_wiring` is only worth its assert if it actually goes red. This
+        re-executes the fence with `build_prompt` swapped for one that ignores
+        `style` - exactly the `style="direct"` no-op the wiring test above was
+        written against - and requires `prompt_style` to lose its `visible`
+        verdict, leaving the fence's own assert with something to fail on. It
+        also pins the escape mapping empty: seeding it with a name would
+        silently re-admit the unverified claim the probe exists to expose.
+        """
+        honest = self._wiring_probe_namespace()
+        self.assertEqual(
+            honest["WIRED_OUTSIDE_THE_REQUEST"],
+            {},
+            "the shipped walkthrough wires every knob into the request, so its "
+            "escape mapping must stay empty",
+        )
+        verdicts = honest["probe_wiring"](
+            honest["ENHANCED_SPACE"], honest["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            sorted(verdicts),
+            sorted(honest["WIRED_KNOBS"]),
+            "the probe must return a verdict for every wired knob",
+        )
+        self.assertEqual(
+            {knob for knob, verdict in verdicts.items() if verdict == "visible"},
+            set(honest["WIRED_KNOBS"]),
+            "every knob the shipped template calls wired must be provable "
+            "from build_request alone",
+        )
+
+        no_op = self._wiring_probe_namespace(
+            build_prompt=lambda message, *, style, self_check: message
+            + ("\n\ncheck" if self_check else "")
+        )
+        with_no_op = no_op["probe_wiring"](
+            no_op["ENHANCED_SPACE"], no_op["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            with_no_op["prompt_style"],
+            "invisible",
+            "a prompt builder that ignores `style` makes prompt_style a no-op; "
+            "probe_wiring must stop vouching for it",
+        )
+        self.assertEqual(
+            with_no_op["self_check"],
+            "visible",
+            "the probe must still credit the knobs that do reach the request",
+        )
+
+    def test_the_probe_reads_every_model_not_only_the_base_configs(self) -> None:
+        """A knob one model consumes and another drops is dead for half the space.
+
+        The probe used to build every request from `BASELINE_CONFIG`, so a knob
+        the base model consumes came back proven while the *other* models in the
+        ladder produced identical requests for every value of it. The search
+        then spends trials on a dimension that cannot move two thirds of its
+        own space, and the config-space document claims it as a real one.
+        """
+        namespace = self._wiring_probe_namespace()
+        real_build_request = namespace["build_request"]
+
+        def model_dependent(message: str, config: dict) -> dict:
+            request = real_build_request(message, config)
+            if config["model"] != namespace["BASELINE_CONFIG"]["model"]:
+                # This model ignores self_check: same request for either value.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        namespace["build_request"] = model_dependent
+        verdicts = namespace["probe_wiring"](
+            namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            verdicts["self_check"],
+            "partial",
+            "a knob only the base model consumes must not read as proven",
+        )
+        self.assertEqual(
+            verdicts["temperature"],
+            "visible",
+            "a knob every model consumes must still be proven",
+        )
+
+    def test_the_probe_reads_more_than_one_input(self) -> None:
+        """A knob that acts on real input only must not block a paying run.
+
+        The probe tested the single literal `"probe"`, so a knob keyed on the
+        shape of the input - a `sql_mode` applied when the message starts
+        `SQL:` - produced identical requests, landed in UNPROVEN_WIRED_KNOBS,
+        and failed the module import. That is a legitimate run blocked at
+        generation time, so the probe reads several representative inputs and
+        the template says to replace them with real ones.
+        """
+        namespace = self._wiring_probe_namespace()
+        self.assertGreater(
+            len(namespace["PROBE_INPUTS"]),
+            1,
+            "one probe string cannot exercise an input-dependent knob",
+        )
+        real_build_request = namespace["build_request"]
+        trigger = namespace["PROBE_INPUTS"][-1]
+
+        def input_dependent(message: str, config: dict) -> dict:
+            request = real_build_request(message, config)
+            if message == trigger and config["self_check"]:
+                request["messages"] = [{"role": "user", "content": "rewritten"}]
+            else:
+                # Every other input ignores self_check entirely.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        namespace["build_request"] = input_dependent
+        verdicts = namespace["probe_wiring"](
+            namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
+        )
+        self.assertEqual(
+            verdicts["self_check"],
+            "visible",
+            "a knob that acts only on one of the probed inputs is wired, and "
+            "refusing to load is a false refusal that blocks a paid run",
+        )
+
+    def _wiring_fence_block(self) -> ast.Module:
+        """The load-time fence that judges the probe's verdicts.
+
+        Compiled apart from the definitions it judges so the tests below can
+        swap `build_request` or `build_prompt` first and then run the real
+        fence over the verdicts that produces.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        body = ast.parse(code).body
+        start = next(
+            index
+            for index, node in enumerate(body)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PROBE_VERDICTS"
+                for target in node.targets
+            )
+        )
+        end = next(
+            index
+            for index, node in enumerate(body)
+            if index > start
+            and isinstance(node, ast.FunctionDef)
+            and node.decorator_list
+        )
+        return ast.fix_missing_locations(
+            ast.Module(body=body[start:end], type_ignores=[])
+        )
+
+    def test_a_conditional_knob_loads_and_says_which_models_honour_it(self) -> None:
+        """`partial` blocked a legitimate run, and only `invisible` should.
+
+        A knob can legitimately affect only the models that support it -
+        `reasoning_effort` on a reasoning model is a conditional dimension, not
+        an ignored knob - and the fence aborted the import on it, so a valid
+        run never started. `WIRED_OUTSIDE_THE_REQUEST` is no honest escape for
+        it either: the knob does act inside request construction, which is
+        exactly what the probe just saw. It loads and is reported instead, with
+        the models that honour it, so the asymmetry reaches the run record. The
+        no-op the guard exists to catch - a knob no model and no probed input
+        ever moves - still fails the load.
+        """
+        fence = self._wiring_fence_block()
+
+        conditional = self._wiring_probe_namespace()
+        honest_build_request = conditional["build_request"]
+        base_model = conditional["BASELINE_CONFIG"]["model"]
+
+        def only_the_base_model_reads_the_prompt(message: str, config: dict) -> dict:
+            request = honest_build_request(message, config)
+            if config["model"] != base_model:
+                # This model takes no prompt-shaping knob at all, the way a
+                # reasoning model takes no sampling temperature.
+                request["messages"] = [{"role": "user", "content": message}]
+            return request
+
+        conditional["build_request"] = only_the_base_model_reads_the_prompt
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            exec(compile(fence, "<sdk-conditional-knob>", "exec"), conditional)
+
+        self.assertEqual(
+            {
+                knob
+                for knob, verdict in conditional["PROBE_VERDICTS"].items()
+                if verdict == "partial"
+            },
+            {"prompt_style", "self_check"},
+            "the probe must still see the asymmetry it saw before",
+        )
+        self.assertEqual(
+            conditional["UNPROVEN_WIRED_KNOBS"],
+            {},
+            "a conditional dimension is information, not a failed load",
+        )
+        self.assertEqual(
+            conditional["CONDITIONAL_WIRED_KNOBS"],
+            {"prompt_style": [base_model], "self_check": [base_model]},
+            "the load must name the models that honour a conditional knob",
+        )
+        report = printed.getvalue()
+        for expected in ("conditional dimension", "prompt_style", base_model):
+            self.assertIn(expected, report)
+
+        dead = self._wiring_probe_namespace(
+            build_prompt=lambda message, *, style, self_check: message
+            + ("\n\ncheck" if self_check else "")
+        )
+        with self.assertRaises(AssertionError) as raised:
+            with contextlib.redirect_stdout(io.StringIO()):
+                exec(compile(fence, "<sdk-no-op-knob>", "exec"), dead)
+        self.assertIn("prompt_style", str(raised.exception))
+        self.assertEqual(dead["UNPROVEN_WIRED_KNOBS"], {"prompt_style": "invisible"})
+
+    def test_the_escape_list_cannot_be_a_blanket_waiver(self) -> None:
+        """`WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silenced the guard.
+
+        As a bare list of names, one assignment excused every knob at once
+        while still passing every check. As a mapping of knob to where it acts,
+        each entry is a reviewable claim: the list spelling no longer type-
+        checks, and an entry naming a knob that is not wired, or carrying an
+        empty description, fails the fence's own assert.
+        """
+        text = SDK_EXECUTION.read_text()
+        self.assertIn("WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}", text)
+        namespace = self._wiring_probe_namespace()
+        guard = next(
+            node
+            for node in ast.parse(
+                re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+            ).body
+            if isinstance(node, ast.Assert)
+            and "WIRED_OUTSIDE_THE_REQUEST" in ast.dump(node.test)
+        )
+        block = ast.fix_missing_locations(ast.Module(body=[guard], type_ignores=[]))
+
+        for waiver, why in (
+            (list(namespace["WIRED_KNOBS"]), "a bare list is a blanket waiver"),
+            ({"model": ""}, "an empty description records no claim"),
+            ({"not_a_knob": "somewhere"}, "an entry must name a wired knob"),
+        ):
+            with self.subTest(waiver=waiver):
+                scope = dict(namespace, WIRED_OUTSIDE_THE_REQUEST=waiver)
+                with self.assertRaises((AssertionError, AttributeError), msg=why):
+                    exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
+
+        scope = dict(
+            namespace,
+            WIRED_OUTSIDE_THE_REQUEST={"model": "chosen inside the retrieval step"},
+        )
+        exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
+
+    def test_the_documented_schema_table_is_read_from_the_declaration(self) -> None:
+        """The table and the validator must not be two hand-written artifacts.
+
+        They were, and they drifted: every round of fixes closed a field in the
+        code and left the prose describing the shape that had just stopped
+        being accepted. The table is now welded to `CONFIG_SPACE_FIELDS` - same
+        fields, same order, same declared type and requirement - so a field
+        cannot be added, retyped, or removed on one side alone.
+        """
+        text = RUN_SAFETY.read_text()
+        section = text[text.index("### Config-space document") :]
+        table = re.search(
+            r"^\| Field \| Type \| Required \|.*?\n\|[-| ]+\|\n((?:\|.*\n)+)",
+            section,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(table, "the config-space schema table is gone")
+        rows = []
+        for line in table.group(1).strip().splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            rows.append((cells[0].strip("`"), cells[1], cells[2]))
+        self.assertEqual(
+            rows,
+            [
+                (spec.name, spec.type_label, spec.requirement)
+                for spec in READINESS.CONFIG_SPACE_FIELDS
+            ],
+            "the documented schema table no longer matches CONFIG_SPACE_FIELDS",
+        )
+
+    def test_the_documented_schema_refusals_hold_through_the_real_consumer(
+        self,
+    ) -> None:
+        """Prose claims about refusal, checked against the adapter that refuses.
+
+        Each shape below is one the section promises is refused rather than
+        scored around. They are run through the real adapter so the promise
+        cannot outlive the behaviour.
+        """
+        base = {"agent_type": "general", "knobs": {"widget": [1, 50]}}
+        for description, document in (
+            ("a bare scalar knob", {"knobs": {"widget": 5}}),
+            ("an empty candidate list", {"knobs": {"widget": []}}),
+            ("a container candidate", {"knobs": {"widget": [{"a": 1}]}}),
+            ("a non-finite candidate", {"knobs": {"widget": [1, float("inf")]}}),
+            (
+                "a range with no width",
+                dict(base, bounds={"widget": {"low": 3, "high": 3}}),
+            ),
+            ("an inverted range", dict(base, bounds={"widget": {"low": 5, "high": 1}})),
+            ("a phantom wired name", dict(base, wired=["widgets"])),
+            ("a fractional trial budget", dict(base, max_trials=1.5)),
+        ):
+            with self.subTest(shape=description):
+                with self.assertRaises(READINESS.ConfigSpaceInputError):
+                    READINESS.agent_facts_from_config_space(document)
+
+    def test_config_space_producer_and_consumer_are_both_instructed(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        self.assertIn("traigent-runs/config-space.json", skill)
+        self.assertIn("--config-space", skill)
+        # the producer instruction has to land in the run stage, not only in the
+        # closing recap - otherwise there is nothing for the closing score to read
+        self.assertLess(
+            skill.index("traigent-runs/config-space.json"),
+            skill.index("close the loop on the readiness score the run opened with"),
+        )
+        self.assertIn("### config-space document", safety)
+        self.assertIn("only the controls the agent call really consumes", safety)
 
 
 if __name__ == "__main__":
