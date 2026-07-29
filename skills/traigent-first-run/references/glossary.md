@@ -196,9 +196,10 @@ Access code
   once, any time in the next 10 days. Using it is what creates your account, and
   it cannot be used again afterwards.
   Note: because your address was already confirmed by the six-digit code,
-  registration will not ask you to confirm it a second time. Registering drops
-  you straight onto the API-key page, where you create your full-access key -
-  it is shown once, so save it there and then.
+  registration will not ask you to confirm it a second time. Registering lands
+  you in the portal; you then create your full-access key yourself - the key
+  control in the top bar is the quickest way, and it is highlighted on your
+  first visit. The key is shown once, so save it there and then.
 
 Portal access period
   Plain: the 10 days of Traigent portal access that start the moment you

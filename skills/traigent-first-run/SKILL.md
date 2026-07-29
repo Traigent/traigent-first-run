@@ -363,8 +363,8 @@ Only after the standard-library-only component checks:
    any other existing mode before opening the file.
    Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
    yet available, provide only the required account/key destination and resume from this step
-   afterward. If the user has already completed portal registration and created their key on the
-   API-key page registration landed them on, skip the create-account and generate-key ask and have
+   afterward. If the user has already completed portal registration and created their key in the
+   portal, skip the create-account and generate-key ask and have
    them paste that key. If they have not registered yet, route them by
    which of the four account states they are in per `references/run-safety.md` - do not assume the
    emailed access code was ever used. The key authenticates the run; the account's portal access
@@ -501,15 +501,16 @@ own link, name which is which, and never present one link as though it covered b
 already completed portal registration and still has the key created there, skip the create-account and
 generate-key ask - have them paste that key into `.env`, never into chat, and upload the baseline as
 above. Registering is not the same as holding a key: the key is created on the API-key page and is
-shown once, so a user who registered but did not save it creates a fresh full-access one at
-`https://portal.traigent.ai/management/api-keys` rather than hunting for the original. Ask which
+shown once, so a user who registered but did not save it creates a fresh full-access one - from the
+portal's top-bar key control, or `https://portal.traigent.ai/management/api-keys` - rather than
+hunting for the original. Ask which
 state they are in rather than assuming, because getting the
 second email and registering are separate acts and many people stop after reading the email. For a
 user who has the access code but never registered, walk the remaining path in order rather than
 naming one destination: open the second Traigent email for the access code, register at
 `https://portal.traigent.ai/register` (a clickable link) with that code, then create a full-access
-key on the API-key page registration lands on and save it as it is shown - only then come back and
-paste it. If they have not started
+key from the portal's top-bar key control - highlighted on a first visit - and save it as it is
+shown; only then come back and paste it. If they have not started
 at all, they begin at the Traigent site, and the registration page will refuse them until a code
 exists. `references/run-safety.md` holds the three states in full.
 
