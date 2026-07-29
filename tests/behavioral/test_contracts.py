@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,53 @@ class BehavioralContractUnitTests(unittest.TestCase):
     def test_current_behavior_package_matches_qualification_lock(self) -> None:
         lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
         self.assertEqual(harness.behavior_manifest(ROOT), lock)
+
+    def test_a_tool_cache_inside_the_skill_cannot_enter_the_lock(self) -> None:
+        """A linter run must not be able to corrupt the behaviour lock.
+
+        `behavior_manifest` used to walk the filesystem and skip a hand-written
+        list of droppings (`__pycache__`, `*.pyc`). `ruff check skills/` writes
+        `.ruff_cache/`, which was not on that list, so three untracked files
+        entered the lock and it matched only on the machine that wrote it -
+        green locally, red in CI, on the same commit. Asking git instead makes
+        the ignore rules the single source of truth.
+        """
+        before = harness.behavior_manifest(ROOT)
+        cache = ROOT / "skills" / "traigent-first-run" / ".ruff_cache" / "0.0.0"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text("stray tool output")
+        try:
+            self.assertEqual(harness.behavior_manifest(ROOT), before)
+        finally:
+            shutil.rmtree(cache.parent)
+
+    def test_an_unignored_new_file_does_enter_the_lock(self) -> None:
+        """The rule is git's ignore list, not "hide anything untracked".
+
+        A reference added but not yet `git add`-ed is part of the package and
+        must be locked, or regenerating before staging would under-lock it.
+        """
+        before = harness.behavior_manifest(ROOT)
+        stray = ROOT / "skills" / "traigent-first-run" / "references" / "_probe.md"
+        stray.write_text("not staged yet")
+        try:
+            self.assertNotEqual(harness.behavior_manifest(ROOT), before)
+        finally:
+            stray.unlink()
+
+    def test_the_git_and_walk_file_lists_agree(self) -> None:
+        """The hermetic fallback must lock the same package git would.
+
+        The offline-contract job has no git, so it takes the walk. If the two
+        ever disagree the lock means one thing in CI and another locally, which
+        is the whole failure this pair was written to end - so they are compared
+        directly rather than trusted to stay in step. A new `.gitignore` rule
+        that matters to the skill tree fails here first.
+        """
+        self.assertEqual(
+            harness.behavior_files(ROOT),
+            harness._walk_behavior_files(ROOT),
+        )
 
     def test_forbidden_write_is_rejected(self) -> None:
         contract = {"allowed_writes": ["traigent-runs/**"]}

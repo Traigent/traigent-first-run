@@ -247,6 +247,13 @@ Follow the dependency matrix in `references/component-creation.md`:
   outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
   runtime binding is owned by the installed SDK and is verified in stage 5.
 
+When the dataset carries more than about 100 usable rows, select the bounded first-run subset
+described in `references/evaluation-and-dataset.md` - 18 rows by default, spread across the four
+difficulty bands, drawn within each split rather than across it - before the stage-4 preflight, so
+the score describes the rows the run actually uses. Record the chosen row ids, and report the
+subset size beside the full row count so a bounded run never reads as a full evaluation. A first
+run shows the capability; it does not exhaust the dataset.
+
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
 
@@ -332,6 +339,13 @@ rather than the condition id:
 - `dataset-fully-synthetic` - continue only under the walkthrough labeling rules: keep the real
   Dataset gap `❗`, mark the substitute `🛠️`, and never read the score gain as production
   readiness.
+- `dataset-mostly-synthetic` - the same walkthrough labeling rules apply to the generated majority.
+  Name the split out loud ("62 of 100 rows are generated"), and when reporting the result, say which
+  side of the mixture the claim rests on. Adding real examples is the cheapest way to clear it.
+- `dataset-generated-answer-key` - the questions are real but every expected answer was written by a
+  model, so the score measures agreement with that model rather than correctness. Recommend that a
+  person reviews a sample of the answers before any accuracy claim leaves the run, and make no
+  correctness claim on the unreviewed key.
 
 Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
 paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
@@ -379,10 +393,12 @@ Only after the standard-library-only component checks:
    entries blank; never replace existing values, comments, unrelated keys, or blank alternate
    provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; correct
    any other existing mode before opening the file.
-   Stop once and ask the user to enter both keys locally, never in chat. If the portal key is not
-   yet available, provide only the required account/key destination and resume from this step
-   afterward. If the user has already completed portal registration and created their key in the
-   portal, skip the create-account and generate-key ask and have
+   Stop once and ask the user to enter the keys they already hold locally, never in chat. Do not
+   send a user who has no Traigent account through registration at this step: the provider key is
+   all the baseline needs, and the account ask belongs after that first result (stage 7). If the
+   portal key is not yet available, provide only the required account/key destination and resume
+   from this step afterward. If the user has already completed portal registration and created
+   their key in the portal, skip the create-account and generate-key ask and have
    them paste that key. If they have not registered yet, route them by
    which of the four account states they are in per `references/run-safety.md` - do not assume the
    emailed access code was ever used. The key authenticates the run; the account's portal access
@@ -441,10 +457,15 @@ conservative estimate when cost is untracked. Before the next phase, compare its
 remaining total ceiling. Stop before exceeding it and ask only if more paid work is required.
 Never call the walkthrough ceiling a hard provider-billing cap.
 
-After approval and before the first paid trial, run a zero-LLM portal-tracking probe with a trivial
-stub agent that makes no provider call: confirm the whole connected path in one pass - the portal
-key is present and authenticated, is scoped for `experiment.write`, a session is created, the first
-trial is accepted, and a `cloud_url` comes back. A present-but-unscoped key (HTTP 403 without
+After approval and before the first connected paid trial, run a zero-LLM portal-tracking probe with
+a trivial stub agent that makes no provider call: confirm the whole connected path in one pass - the
+portal key is present and authenticated, is scoped for `experiment.write`, a session is created, the
+first trial is accepted, and a `cloud_url` comes back. The baseline is not gated on this probe. It
+runs on the user's own provider credential with no portal key at all, so a user who has not
+registered yet still reaches a first real result without front-loading the account funnel; run the
+probe once that key is in hand, before the first trial meant to reach the portal. Paid is not the
+trigger - reaching the portal is. A baseline spends real provider money and has no tracking to lose;
+a connected trial does. A present-but-unscoped key (HTTP 403 without
 `experiment.write`) and a rejected config (HTTP 400) both otherwise degrade silently to local-only
 tracking while paid trials keep running and never reach the portal. If any rung fails, surface the
 backend reason verbatim and stop before any paid trial. Treat any degradation to local-only tracking
@@ -666,6 +687,13 @@ Describe those as signals and curation advice, not as numbers - do not promise a
 dataset-quality score, and never imply the platform can grade a dataset that has not been run. Carry
 no numeric pre-run dataset-quality score into this message; it reads the finished run, not an unrun
 dataset.
+
+Close by saying what a further run would be worth, grounded in the two facts already on the table:
+the gaps the opening readiness score named, and which of them this run actually closed. Name the
+ones still open and what each is now costing - an unlabelled half of the dataset, a single-band
+difficulty spread, a substitute component still standing in for a real one - so the motivation is
+the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
+cannot close, say that plainly instead of implying a further run would fix it.
 
 Only after the result, offer optional next steps:
 

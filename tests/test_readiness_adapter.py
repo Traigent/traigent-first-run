@@ -712,6 +712,308 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             conditions = {cap["condition"] for cap in score["caps"]}
             self.assertIn("dataset-fully-synthetic", conditions)
 
+    def test_real_inputs_with_generated_outputs_score_the_middle_band(self) -> None:
+        """C5: collected inputs whose expected answers were written by a model.
+
+        Scores 6 of 10 - below collected production data, above a fully
+        generated set - because the ruler those rows are graded against is the
+        model's opinion, not a fact anyone recorded. It must NOT reach the
+        fully-synthetic branch, whose 3 points also cap the whole score at 65.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"ticket-{index}",
+                    "input": f"real customer ticket {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {
+                        "provenance": "production",
+                        "output_provenance": "generated",
+                    },
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "generated-outputs.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertFalse(provenance["synthetic"])
+            self.assertTrue(provenance["generated_outputs"])
+
+            score = _score(dataset)
+            subscore = _dataset_subscore(score, "provenance")
+            self.assertEqual(subscore["value"], 6.0)
+            self.assertIn("expected answers written by a model", subscore["evidence"])
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertNotIn("dataset-fully-synthetic", conditions)
+
+    def test_generated_outputs_do_not_claim_real_inputs_when_inputs_are_undeclared(
+        self,
+    ) -> None:
+        """The band asserts the INPUTS are real, so undeclared inputs lose it.
+
+        Same 6 points either way, but the reason differs, and reporting "real
+        inputs" about rows that never said where they came from would be the
+        card asserting something it cannot know.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {"output_provenance": "generated"},
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "undeclared-inputs.jsonl", rows)
+
+            score = _score(dataset)
+            subscore = _dataset_subscore(score, "provenance")
+            self.assertEqual(subscore["value"], 6.0)
+            self.assertIn("30 undeclared", subscore["evidence"])
+            self.assertNotIn("collected", subscore["evidence"])
+
+    def test_a_synthetic_row_stays_fully_synthetic_whatever_its_output_says(
+        self,
+    ) -> None:
+        """A generated row is generated. The new field cannot upgrade it to 6."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {
+                        "provenance": "synthetic-walkthrough",
+                        "output_provenance": "generated",
+                    },
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "synthetic-both.jsonl", rows)
+
+            score = _score(dataset)
+            self.assertEqual(_dataset_subscore(score, "provenance")["value"], 3.0)
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-fully-synthetic", conditions)
+
+    def test_a_dataset_that_declares_nothing_new_scores_exactly_as_before(self) -> None:
+        """Regression guard: the new field is additive, not a rescore.
+
+        Every dataset in circulation predates `output_provenance`, so absent
+        means "unchanged" - production data must still score the full 10.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "production.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertFalse(provenance["generated_outputs"])
+            self.assertEqual(
+                _dataset_subscore(_score(dataset), "provenance")["value"], 10.0
+            )
+
+    def test_a_row_with_no_answer_cannot_have_a_generated_answer(self) -> None:
+        """The scan is scoped to rows that actually carry an expected output.
+
+        Scoped through `dataset_row_is_labelled`, the same predicate the
+        aggregate and per-split counts use, rather than a private test here -
+        the checks in preflight.py disagreeing about whether a given row has an
+        output is the class already filed as #68 and #70.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}" if index % 2 else "",
+                    # Declared on every row, including the ones with no answer.
+                    "metadata": {
+                        "provenance": "production",
+                        "output_provenance": (
+                            "generated" if index % 2 == 0 else "human-reviewed"
+                        ),
+                    },
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "half-unlabelled.jsonl", rows)
+
+            # Only the blank-output rows claim a generated answer, and a blank
+            # output is not an answer - so the band must not fire.
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertFalse(provenance["generated_outputs"])
+            subscore = _dataset_subscore(_score(dataset), "provenance")
+            self.assertEqual(subscore["value"], 10.0)
+
+    def test_one_generated_row_does_not_condemn_a_collected_dataset(self) -> None:
+        """The mixture bug: `any()` made 1 demo row in 1000 a generated dataset.
+
+        999 collected rows and one generated one scored 3 of 10 and capped the
+        whole run at 65, while the card claimed every row was generated. Credit
+        is now per row, so the score barely moves and no cap fires.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {
+                        "provenance": "synthetic" if index == 0 else "production"
+                    },
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "one-synthetic.jsonl", rows)
+
+            provenance = _provenance_metric(_preflight_records(dataset))
+            self.assertFalse(provenance["synthetic"])
+            self.assertEqual(provenance["synthesised_rows"], 1)
+            self.assertEqual(provenance["collected_rows"], 99)
+
+            score = _score(dataset)
+            subscore = _dataset_subscore(score, "provenance")
+            # 99*10 + 1*3 over 100 rows.
+            self.assertEqual(subscore["value"], 9.93)
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertNotIn("dataset-fully-synthetic", conditions)
+            self.assertNotIn("dataset-mostly-synthetic", conditions)
+
+    def test_a_mostly_generated_mixture_keeps_a_ceiling(self) -> None:
+        """Fixing any()->all() must not hand every mixture a free pass."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {
+                        "provenance": "synthetic" if index < 80 else "production"
+                    },
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "mostly-synthetic.jsonl", rows)
+
+            score = _score(dataset)
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-mostly-synthetic", conditions)
+            self.assertNotIn("dataset-fully-synthetic", conditions)
+            self.assertLessEqual(score["overall"], 70)
+
+    def test_an_entirely_model_written_answer_key_keeps_a_ceiling(self) -> None:
+        """Real questions, but every answer is a model's opinion.
+
+        An accuracy number then reports agreement with that model rather than
+        correctness, and nothing inside the run can falsify it.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"real question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {
+                        "provenance": "production",
+                        "output_provenance": "llm-written",
+                    },
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "generated-key.jsonl", rows)
+
+            score = _score(dataset)
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-generated-answer-key", conditions)
+            self.assertLessEqual(score["overall"], 75)
+            # "llm-written" must read as generated, not as an unknown word.
+            self.assertEqual(_dataset_subscore(score, "provenance")["value"], 6.0)
+
+    def test_an_unrecognised_provenance_word_is_flagged_not_silently_credited(
+        self,
+    ) -> None:
+        """A project's own vocabulary keeps its score, but is said out loud."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": f"answer {index % 4}",
+                    "metadata": {"provenance": "crm-export"},
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "own-vocabulary.jsonl", rows)
+
+            records = _preflight_records(dataset)
+            vocabulary = [
+                record
+                for record in records
+                if record["check"] == "dataset-provenance-vocabulary"
+            ]
+            self.assertEqual(len(vocabulary), 1)
+            self.assertEqual(vocabulary[0]["status"], "WARN")
+            self.assertIn("crm-export", vocabulary[0]["detail"])
+            # Unchanged score: the word list must not silently demote a project.
+            self.assertEqual(
+                _dataset_subscore(_score(dataset), "provenance")["value"], 10.0
+            )
+
+    def test_an_impossible_provenance_count_is_refused_not_absorbed(self) -> None:
+        """A negative count must not quietly change the denominator.
+
+        Zeroing it kept the score plausible while every share was computed over
+        the wrong total, and -1 synthesised rows against 50 collected scored
+        10.14 on a sub-score whose maximum is 10. Driven through the real CLI so
+        the refusal is what a user actually sees. An absent key still falls back
+        to 0 - that is a payload predating the field, not a broken one.
+        """
+        metrics = {
+            "rows": 50,
+            "labelled_rows": 50,
+            "collected_rows": 50,
+            "synthesised_rows": -1,
+        }
+        record = [{"check": "dataset-provenance", "status": "PASS", "metrics": metrics}]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(record),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("synthesised_rows", process.stderr)
+        self.assertIn("re-run preflight.py --json", process.stderr)
+
+        # Absent counts are the version-skew case and must still be accepted.
+        metrics.pop("synthesised_rows")
+        metrics.pop("collected_rows")
+        accepted = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(record),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

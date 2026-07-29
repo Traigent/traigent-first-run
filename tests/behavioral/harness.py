@@ -107,16 +107,96 @@ def tree_manifest(root: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
+# Names inside the skill tree that are never part of the package: tool caches and
+# the run artifacts this skill itself writes. Mirrors the relevant `.gitignore`
+# entries, and `test_the_git_and_walk_file_lists_agree` fails if the two drift.
+_EXCLUDED_DIR_NAMES = {
+    "__pycache__",
+    "traigent-runs",
+    "optimization_results",
+    "results",
+}
+_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _walk_behavior_files(root: Path) -> list[Path]:
+    """Filesystem fallback for environments without git.
+
+    The offline-contract job runs in a pinned `python:3.12-slim` image with no
+    git, and installing one would put a network fetch inside the evidence
+    boundary the job exists to keep clean.
+
+    Hidden directories are skipped as a class rather than named one at a time:
+    `.ruff_cache`, `.pytest_cache` and `.mypy_cache` are all tool state, and the
+    previous denylist could only ever name the ones someone had already hit.
+    Hidden *files* are kept - a `.gitignore` shipped inside the package is part
+    of it.
+    """
     skill_root = root / "skills" / "traigent-first-run"
-    behavior_paths = [Path("GUIDE.md")]
-    behavior_paths.extend(
-        path.relative_to(root)
-        for path in sorted(skill_root.rglob("*"))
-        if path.is_file()
-        and "__pycache__" not in path.parts
-        and path.suffix not in {".pyc", ".pyo"}
-    )
+    found = [Path("GUIDE.md")]
+    for path in skill_root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        parents = relative.parts[:-1]
+        if any(part.startswith(".") or part in _EXCLUDED_DIR_NAMES for part in parents):
+            continue
+        if path.suffix in _EXCLUDED_SUFFIXES:
+            continue
+        found.append(relative)
+    return sorted(found)
+
+
+def behavior_files(root: Path) -> list[Path]:
+    """The files the behaviour lock covers, as git sees them where git exists.
+
+    Asking git rather than walking, because the walk needed a hand-maintained
+    list of things to skip and that list can only ever name the tool droppings
+    someone already hit. `__pycache__` and `*.pyc` were on it; `.ruff_cache/`,
+    written by `ruff check skills/`, was not - so three untracked cache files
+    entered the lock, which then matched only on the machine that generated it.
+    Green locally, red in CI, same commit.
+
+    `--cached --others --exclude-standard` is tracked files plus new ones that
+    are not ignored: a reference added but not yet staged is still covered, so
+    regenerating before `git add` cannot silently under-lock the package, while
+    anything `.gitignore` excludes is excluded here for free.
+
+    Falls back to {@link _walk_behavior_files} only when git is genuinely absent
+    - never on a git error, which would hide a real problem behind a quieter
+    answer.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                "GUIDE.md",
+                "skills/traigent-first-run",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        return _walk_behavior_files(root)
+    if result.returncode != 0:
+        raise RuntimeError(
+            "could not list the behaviour files from git "
+            f"(exit {result.returncode}): {result.stderr.strip()}"
+        )
+    return sorted(Path(entry) for entry in result.stdout.split("\0") if entry)
+
+
+def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
+    behavior_paths = behavior_files(root)
     entries = []
     for relative in behavior_paths:
         path = root / relative

@@ -386,7 +386,20 @@ class DatasetFacts:
     ceiling_risk: bool = False
     split_overlap: bool = False
     integrity_failed: bool = False
+    # True only when EVERY row is generated. Mixtures are read from the counts
+    # below; asking "is this dataset synthetic" of a mixture has no true answer.
     synthetic: bool = False
+    generated_outputs: bool = False
+    # Row counts by provenance class. All zero means the preflight JSON predates
+    # them, and `score_provenance` falls back to the pre-count behaviour rather
+    # than reading the absence as an empty dataset.
+    collected_rows: int = 0
+    synthesised_rows: int = 0
+    undeclared_rows: int = 0
+    # Rows carrying an expected answer, and how many of those answers a model
+    # wrote rather than a person observing them.
+    answerable_rows: int = 0
+    generated_answer_rows: int = 0
     sources: tuple[str, ...] = ()
 
 
@@ -652,6 +665,175 @@ def size_points(effective_n: int | None) -> tuple[float, str]:
     return 25.0, f"{effective_n} examples - roughly +/-2.5pp of noise per result"
 
 
+# Per-row provenance credit, out of the sub-score's 10 points. The ladder is the
+# same question asked twice: was the question observed, and was the answer?
+COLLECTED_ROW_POINTS = 10.0  # observed question, observed answer
+GENERATED_ANSWER_ROW_POINTS = 6.0  # observed question, answer written by a model
+UNDECLARED_ROW_POINTS = 6.0  # says nothing - not credited as production data
+SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
+
+# A cap is a ceiling on the whole run, not a deduction. It exists because a
+# points deduction cannot stop an average from hiding a fatal flaw: 10 -> 3 on a
+# 10-point sub-score inside a 40%-weighted pillar moves the overall score by
+# 2.8, so a fully generated dataset that was perfect everywhere else still
+# reported 93 and read as production-ready.
+FULLY_SYNTHETIC_CEILING = 65  # nothing here was observed
+MOSTLY_SYNTHETIC_CEILING = 70  # more invented than observed
+GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a model's
+MOSTLY_SYNTHETIC_SHARE = 0.5
+GENERATED_ANSWER_KEY_SHARE = 1.0
+
+
+def _row_count(value: Any, name: str) -> int:
+    """Read one provenance row count, refusing a present-but-impossible one.
+
+    An absent key means the preflight JSON predates the field, and falls back to
+    0 so an older payload keeps scoring as it did. A key that IS present and
+    carries a negative or non-integer count is a different thing: it reaches the
+    arithmetic, shifts the denominator every share is computed over, and can
+    push the sub-score past its own 10-point maximum (`-1` synthesised rows
+    against 50 collected scores 10.14). Refused for the same reason, and with
+    the same message, as the declared-split counts a few lines below - a guard
+    that checks four counts and waves three through is the odd-one-out this
+    file already has an issue open about (traigent-first-run#69).
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PreflightInputError(
+            f"dataset-provenance carries no usable {name} count - row counts "
+            "are whole and non-negative, so this preflight JSON was edited or "
+            "predates the current preflight.py; re-run preflight.py --json "
+            "from the same version as this script"
+        )
+    return value
+
+
+def score_provenance(facts: DatasetFacts) -> tuple[float, str, list[Cap]]:
+    """Credit provenance by share, and cap on how much of the data was invented.
+
+    Scored per row and averaged rather than by an all-or-nothing test. The old
+    `any(is_synthetic(...))` marked a 1000-row collected dataset fully generated
+    on the strength of one demo row: 3 of 10 points, the run capped at 65, and a
+    detail line claiming every row was generated. Mixtures are the normal case
+    once a user tops up real data with examples, so they get a real answer.
+
+    Falls back to the pre-count behaviour when the counts are absent, which is
+    what a preflight JSON written before this field looks like - an older
+    payload keeps scoring exactly as it did rather than silently reading 0 rows.
+    """
+    caps: list[Cap] = []
+    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    if not counted:
+        if facts.synthetic:
+            return (
+                SYNTHESISED_ROW_POINTS,
+                "fully generated - cannot represent production traffic",
+                [
+                    Cap(
+                        "dataset-fully-synthetic",
+                        FULLY_SYNTHETIC_CEILING,
+                        "The dataset is generated, so a high score here measures "
+                        "the walkthrough, not real-world readiness.",
+                    )
+                ],
+            )
+        if "unknown" in facts.sources or not facts.sources:
+            return (
+                UNDECLARED_ROW_POINTS,
+                "provenance undeclared - not credited as production data",
+                [],
+            )
+        return (
+            COLLECTED_ROW_POINTS,
+            f"declared sources: {', '.join(facts.sources)}",
+            [],
+        )
+
+    # An answer written by a model downgrades a row that was otherwise
+    # collected; it cannot downgrade one already counted as synthesised, and
+    # cannot rescue one either.
+    generated_answers = min(facts.generated_answer_rows, facts.collected_rows)
+    clean_collected = facts.collected_rows - generated_answers
+    points = (
+        clean_collected * COLLECTED_ROW_POINTS
+        + generated_answers * GENERATED_ANSWER_ROW_POINTS
+        + facts.undeclared_rows * UNDECLARED_ROW_POINTS
+        + facts.synthesised_rows * SYNTHESISED_ROW_POINTS
+    ) / counted
+
+    synthesised_share = facts.synthesised_rows / counted
+    if facts.synthesised_rows == counted:
+        caps.append(
+            Cap(
+                "dataset-fully-synthetic",
+                FULLY_SYNTHETIC_CEILING,
+                "The dataset is generated, so a high score here measures the "
+                "walkthrough, not real-world readiness.",
+            )
+        )
+    elif synthesised_share > MOSTLY_SYNTHETIC_SHARE:
+        # Without this the any()->all() correction would hand every mixture a
+        # free pass: a 90%-generated dataset would lose its ceiling entirely.
+        caps.append(
+            Cap(
+                "dataset-mostly-synthetic",
+                MOSTLY_SYNTHETIC_CEILING,
+                "Most of the dataset is generated, so the result mostly "
+                "measures invented examples rather than real traffic.",
+            )
+        )
+
+    # The expected answers are the ruler every score is measured against. When
+    # all of them were written by a model, an accuracy number reports agreement
+    # with that model's opinion, not correctness - believable, and unfalsifiable
+    # from inside the run. The questions are still real, so this ceiling sits
+    # above both synthetic ones.
+    if (
+        facts.answerable_rows
+        and facts.generated_answer_rows
+        >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
+        and facts.synthesised_rows != counted
+    ):
+        caps.append(
+            Cap(
+                "dataset-generated-answer-key",
+                GENERATED_ANSWER_KEY_CEILING,
+                "Every expected answer was written by a model, so a score "
+                "measures agreement with that model rather than correctness.",
+            )
+        )
+
+    return round(points, 2), provenance_evidence(facts, counted), caps
+
+
+def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
+    """Name the mixture, so a share is never rounded away into one word.
+
+    "mostly real" and "mostly generated" are the same word to a reader who
+    wanted the number, and the number is what decides whether the result can be
+    quoted, so the counts go in the line.
+    """
+    if facts.synthesised_rows == counted:
+        return "fully generated - cannot represent production traffic"
+    parts: list[str] = []
+    if facts.collected_rows:
+        parts.append(f"{facts.collected_rows} collected")
+    if facts.synthesised_rows:
+        parts.append(f"{facts.synthesised_rows} generated")
+    if facts.undeclared_rows:
+        parts.append(f"{facts.undeclared_rows} undeclared")
+    mixture = f"{', '.join(parts)} of {counted} rows"
+    if facts.generated_answer_rows:
+        return (
+            f"{mixture}; {facts.generated_answer_rows} of {facts.answerable_rows} "
+            "expected answers written by a model, not observed"
+        )
+    if not facts.synthesised_rows:
+        return f"{mixture}; declared sources: {', '.join(facts.sources)}"
+    return mixture
+
+
 def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -799,23 +981,8 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
             SubScore("diversity", 0.0, 20.0, False, "duplication was not checked")
         )
 
-    if facts.synthetic:
-        provenance = 3.0
-        evidence = "fully generated - cannot represent production traffic"
-        caps.append(
-            Cap(
-                "dataset-fully-synthetic",
-                65,
-                "The dataset is generated, so a high score here measures the "
-                "walkthrough, not real-world readiness.",
-            )
-        )
-    elif "unknown" in facts.sources or not facts.sources:
-        provenance = 6.0
-        evidence = "provenance undeclared - not credited as production data"
-    else:
-        provenance = 10.0
-        evidence = f"declared sources: {', '.join(facts.sources)}"
+    provenance, evidence, provenance_caps = score_provenance(facts)
+    caps.extend(provenance_caps)
     subs.append(SubScore("provenance", provenance, 10.0, True, evidence))
 
     if facts.split_overlap:
@@ -1600,6 +1767,20 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         split_overlap=statuses.get("dataset-split") == "FAIL",
         integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
         synthetic=bool(provenance.get("synthetic")),
+        generated_outputs=bool(provenance.get("generated_outputs")),
+        collected_rows=_row_count(provenance.get("collected_rows"), "collected_rows"),
+        synthesised_rows=_row_count(
+            provenance.get("synthesised_rows"), "synthesised_rows"
+        ),
+        undeclared_rows=_row_count(
+            provenance.get("undeclared_rows"), "undeclared_rows"
+        ),
+        answerable_rows=_row_count(
+            provenance.get("answerable_rows"), "answerable_rows"
+        ),
+        generated_answer_rows=_row_count(
+            provenance.get("generated_answer_rows"), "generated_answer_rows"
+        ),
         sources=tuple(provenance.get("sources", ())),
     )
 

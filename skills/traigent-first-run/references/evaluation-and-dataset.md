@@ -286,6 +286,58 @@ For a fully generated walkthrough, create 24 examples by default:
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
+### Declaring provenance
+
+Provenance answers one question twice: was the question observed, and was the answer? Declare the
+first on the row as `provenance` (or `source`), the second as `output_provenance` (or
+`output_source`) - either at the top level or under `metadata`.
+
+Each row earns its own share of the 10 provenance points, and the sub-score is their average:
+
+| The row | Points |
+|---|---|
+| Observed question, observed answer | 10 |
+| Observed question, answer written by a model | 6 |
+| Says nothing about where it came from | 6 |
+| Neither was observed | 3 |
+
+Because it is a per-row average, a mixture scores like a mixture: 99 collected rows and one
+generated one score 9.93, not 3. What a mixture cannot do is escape a ceiling - see the cap ladder
+below.
+
+Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough` both land where you
+would expect. `synthetic`, `generated`, `llm`, `gpt`, `claude`, `model-written`, `ai-`,
+`walkthrough`, `mock`, `fake`, `dummy`, `simulated` and `template` all mean the same thing - nobody
+observed this - and are not different classes. `production`, `real`, `collected`, `logged`,
+`customer`, `human`, `curated`, `annotated`, `benchmark` and `gold` mean it was.
+
+A word on neither list keeps the collected score, so a project's own vocabulary (`crm-export`) is
+not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
+unknown word quietly earning the production band is the failure that check exists to prevent. If the
+data is generated, say so with a word from the first list.
+
+Do not express a generated answer in the row's own `provenance` token: that marks the whole row
+generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
+
+### Provenance ceilings
+
+Points alone cannot keep a score honest here. Provenance is 10 points inside a pillar worth 40% of
+the total, so the whole 10-to-3 range moves the overall score by under 3 points - a fully generated
+dataset that was perfect on every other dimension still reported 93 and read as production-ready.
+So how much of the data was invented also sets a ceiling on the entire run:
+
+| The dataset | Ceiling |
+|---|---|
+| Every row generated | 65 |
+| More than half generated | 70 |
+| Real questions, but every expected answer written by a model | 75 |
+
+The ladder is ordered by how much of the result is the model talking to itself. The last rung is the
+highest because the questions are still real - but an accuracy number computed against an answer key
+a model wrote reports agreement with that model, not correctness, and nothing inside the run can
+falsify it. A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average
+stays in the output, and the number simply cannot claim more than the data supports.
+
 Every generated row must:
 
 - Have a unique stable `id`.
@@ -322,6 +374,44 @@ a cluster of them.
 
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
+
+## First-run subset for a large dataset
+
+A first run has to show the capability, not exhaust the dataset. Above roughly 100 usable rows,
+every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
+that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 rows by
+default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
+`very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
+one cluster.
+
+Five rules make the subset honest:
+
+1. **Select before preflight, not after.** The bounded subset is the dataset the run actually uses,
+   so preflight and `scripts/readiness.py` must both see exactly those rows. Scoring the full set
+   and running a subset reports precision the run never had.
+2. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
+   the holdout rows from the holdout split, keeping them disjoint. A subset drawn over the combined
+   set can pull the same input into both sides and fabricate a tune/holdout overlap that the
+   original dataset did not have.
+3. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
+   the seed when the pick inside a band was random. The recorded ids are what makes the run
+   reproducible - a seed alone does not, because the selection also depends on judgment about which
+   rows are hard.
+4. **Say the power cost out loud.** Eighteen rows sit in the scorer's low power band - about
+   `+/-16pp` of noise per result, 12 of 25 points. That is a deliberate first-run trade, not a
+   defect in the data, and the readiness card will show it. Say so when presenting the score, or
+   the user reads their own good dataset as weak.
+5. **Name the bound to the user.** Report the subset size beside the full row count ("18 of 4,812
+   rows for this first run"). Never let a bounded run read as though the whole dataset was
+   evaluated.
+
+When the rows carry no difficulty tags, spread the pick across the coverage/scenario tags instead
+and say which axis was used. When neither exists, take a random seeded sample and record that the
+subset is unstratified - an unlabelled pick is still bounded and reproducible, just less
+representative, and that limitation belongs in the report.
+
+The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
+it; this bound exists only so the first run finishes.
 
 ## Holdout and claims
 

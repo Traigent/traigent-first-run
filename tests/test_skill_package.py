@@ -423,6 +423,138 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
+    def test_portal_probe_gates_connected_work_not_the_baseline(self) -> None:
+        """The key ask must never be able to overtake the baseline (#77).
+
+        Three instructions bear on when the Traigent key is needed: stage 5
+        collects keys, the portal-tracking probe runs before connected work,
+        and stage 7 asks for the key only after the first result is on screen.
+        A user arriving with no account has a valid order only while the probe
+        is scoped to *connected* trials - if it gates the first paid trial of
+        any kind, the provider-paid baseline drags the whole registration
+        funnel in front of it, which is the ordering stage 7 exists to avoid.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        # The probe's trigger is reaching the portal, not spending money.
+        self.assertIn("before the first connected paid trial", skill_text)
+        self.assertNotIn("before the first paid trial,", skill_text)
+        self.assertIn("the baseline is not gated on this probe", skill_text)
+        self.assertIn("the probe gates connected work, not provider spend", safety_text)
+
+        # Stage 5 may not send an account-less user through registration; that
+        # ask belongs to stage 7, after the first result.
+        self.assertIn(
+            "do not send a user who has no traigent account through registration at this step",
+            skill_text,
+        )
+        self.assertIn(
+            "only after that first result is on screen, ask for the traigent key",
+            skill_text,
+        )
+
+        # And the baseline still has to precede the key ask in the document.
+        baseline_position = skill_text.index(
+            "the baseline needs only the user's own provider"
+        )
+        key_ask_position = skill_text.index("only after that first result is on screen")
+        self.assertLess(baseline_position, key_ask_position)
+
+    def test_provenance_is_documented_as_a_per_row_average_with_ceilings(self) -> None:
+        """Points and ceilings answer different questions; the guide says both.
+
+        The per-row average is what stops one demo row condemning a collected
+        dataset; the ceilings are what stop an average hiding how much of the
+        result was invented. Documenting one without the other reads as either
+        "generated data is fine" or "one bad row ruins it", and both are wrong.
+        """
+        dataset_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "was the question observed, and was the answer",
+            "a mixture scores like a mixture",
+            "99 collected rows and one generated one score 9.93, not 3",
+            "provenance ceilings",
+            "a ceiling is not a deduction and not a refusal",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset_text)
+
+        # An unknown word keeps its score but must never do so silently.
+        self.assertIn("dataset-provenance-vocabulary", dataset_text)
+        self.assertIn("is not silently demoted", dataset_text)
+
+    def test_large_dataset_is_bounded_to_a_reproducible_stratified_subset(self) -> None:
+        """A first run shows the capability; it does not exhaust the dataset.
+
+        Above ~100 rows every trial pays for every row, so the walkthrough runs
+        long and expensive without demonstrating more. The bound is only honest
+        if it is chosen before the score is computed, drawn inside each split,
+        recorded, and reported next to the full row count.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        dataset_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+        self.assertIn("first-run subset for a large dataset", dataset_text)
+        for phrase in (
+            "18 rows by default",
+            "at least four from each of the four difficulty bands",
+            "select before preflight, not after",
+            "sample within each split, never across it",
+            "record what was chosen",
+        ):
+            self.assertIn(phrase, dataset_text)
+
+        # The bound must not be sold as a data defect: 18 rows lands in the
+        # scorer's low power band by construction (size_points: < 30 -> 12.0).
+        self.assertIn("deliberate first-run trade, not a defect", dataset_text)
+        # And a bounded run may never read as a full evaluation.
+        self.assertIn("beside the full row count", dataset_text)
+
+        # SKILL.md must route to it at the stage that precedes preflight.
+        self.assertIn("bounded first-run subset", skill_text)
+        self.assertLess(
+            skill_text.index("bounded first-run subset"),
+            skill_text.index("### 4. validate components locally"),
+        )
+
+    def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
+        """Motivation for a further run must come from measured evidence.
+
+        The report already carries the readiness transition; what this pins is
+        that the close names the gaps still open and what each costs, rather
+        than offering encouragement or implying a further run fixes a gap the
+        walkthrough cannot close.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+
+        self.assertIn("saying what a further run would be worth", skill_text)
+        self.assertIn(
+            "name the ones still open and what each is now costing", skill_text
+        )
+        self.assertIn(
+            "the user's own measured evidence rather than encouragement", skill_text
+        )
+        # It closes on the opening score, so it must follow the readiness
+        # transition and precede the optional next steps.
+        transition = skill_text.index("the readiness transition")
+        motivation = skill_text.index("saying what a further run would be worth")
+        next_steps = skill_text.index(
+            "only after the result, offer optional next steps"
+        )
+        self.assertLess(transition, motivation)
+        self.assertLess(motivation, next_steps)
+
     def test_semantic_coverage_review_is_assistant_directed(self) -> None:
         skill_text = SKILL.read_text().casefold()
         quality_text = (
@@ -1685,11 +1817,18 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
-        body = source.split("def score_dataset(", 1)[1].split("\ndef ", 1)[0]
-        conditions = set(re.findall(r'Cap\(\s*"([a-z0-9-]+)"', body))
-        # A sixth dataset cap must be routed too, so pin the count rather than
-        # spot-checking the five that exist today.
-        self.assertEqual(len(conditions), 5)
+        # Scanned over the whole module, not one function body: the dataset caps
+        # were split across `score_dataset` and `score_provenance`, and a scan
+        # scoped to the first silently stopped seeing the provenance ones - the
+        # guard went green while covering less.
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("dataset-")
+        }
+        # An eighth dataset cap must be routed too, so pin the count rather
+        # than spot-checking the seven that exist today.
+        self.assertEqual(len(conditions), 7)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -1698,6 +1837,11 @@ class SkillPackageTests(unittest.TestCase):
             ("dataset-integrity-fail", "repair and revalidate a working copy"),
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),
             ("dataset-fully-synthetic", "walkthrough labeling rules"),
+            ("dataset-mostly-synthetic", "name the split out loud"),
+            (
+                "dataset-generated-answer-key",
+                "a person reviews a sample of the answers",
+            ),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)
