@@ -1235,7 +1235,11 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         )
         # and from the other side: a space too large to divide by anything
         crowded = MODULE.agent_facts_from_config_space(
-            {"knobs": {f"k{index}": [1, 2] for index in range(1330)}, "max_trials": 1}
+            {
+                "knobs": {f"k{index}": [1, 2] for index in range(1330)},
+                "wired": [f"k{index}" for index in range(1330)],
+                "max_trials": 1,
+            }
         )
         pillar, _, _ = MODULE.score_agent(crowded)
         self.assertGreater(pillar.score, 0)
@@ -1341,7 +1345,9 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         that does not vary beside a space with two configurations in it.
         """
         pillar, caps, _ = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 1.0]}})
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"a": [1, 1.0]}, "wired": ["a"]}
+            )
         )
         count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
