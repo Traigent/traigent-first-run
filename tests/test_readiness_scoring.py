@@ -445,6 +445,56 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(matrix.probe_scores, single.probe_scores)
 
 
+class WiredAttestationShapeTests(unittest.TestCase):
+    """Pin the three `wired` shapes directly, through the document reader.
+
+    traigent-first-run#78: this PR and #74 assigned OPPOSITE meanings to an
+    omitted or empty `wired`, and the only test covering it ran an example that
+    names every knob explicitly - the one shape both semantics agree on. It
+    therefore passed under either, and the contradiction lived only in prose.
+
+    These assert the disputed shapes with no example fence in the way, so a
+    future change cannot flip the semantics and stay green.
+    """
+
+    def _caps_for(self, document: dict) -> list[str]:
+        facts = MODULE.agent_facts_from_config_space(document)
+        _, caps, _ = MODULE.score_agent(facts)
+        return [cap.condition for cap in caps]
+
+    def test_absent_wired_is_unattested_and_capped(self) -> None:
+        # A document that never says what the agent consumes attests nothing.
+        # Reading it as "all declared knobs" made writing a six-line JSON file
+        # the cheapest way to clear a 45-point safety cap.
+        self.assertIn(
+            "agent-no-varying-knobs",
+            self._caps_for({"knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]}}),
+        )
+
+    def test_explicit_empty_wired_is_also_capped(self) -> None:
+        # An explicit [] says "the agent consumes none of them" - the same
+        # nothing-to-search state as an absent list, never "all of them".
+        self.assertIn(
+            "agent-no-varying-knobs",
+            self._caps_for(
+                {"knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]}, "wired": []}
+            ),
+        )
+
+    def test_named_wired_knobs_clear_the_cap(self) -> None:
+        # The shape both semantics always agreed on - kept so the two failing
+        # cases above cannot be "fixed" by capping everything.
+        self.assertNotIn(
+            "agent-no-varying-knobs",
+            self._caps_for(
+                {
+                    "knobs": {"model": ["a", "b"], "temperature": [0.0, 1.0]},
+                    "wired": ["model", "temperature"],
+                }
+            ),
+        )
+
+
 class AgentScoringTests(unittest.TestCase):
     def test_no_varying_knob_is_capped(self) -> None:
         _, caps, _ = MODULE.score_agent(
@@ -479,6 +529,152 @@ class AgentScoringTests(unittest.TestCase):
         )
         coverage = next(s for s in pillar.subscores if s.name == "coverage")
         self.assertIn("retrieval_k", coverage.evidence)
+
+    def test_absent_wired_attests_nothing_rather_than_everything(self) -> None:
+        """A document that never named the wired knobs attested none of them.
+
+        Declaring a knob is not a statement that the agent consumes it. Reading
+        an absent `wired` list as "every declared knob is wired" let a six-line
+        hand-written file buy agent points and retire the cap, so the honest
+        state is zero knobs attested as wired, still capped.
+        """
+        pillar, caps, knobs = MODULE.score_agent(
+            MODULE.AgentFacts(knobs={"model": ["a", "b"]})
+        )
+        self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
+        self.assertEqual(pillar.score, 0)
+        self.assertEqual(knobs, [])
+        measured = {s.name: s.measured for s in pillar.subscores}
+        self.assertEqual(
+            measured, {"knob-count": True, "variation": False, "coverage": False}
+        )
+
+    def test_declared_knobs_without_wiring_score_like_no_document(self) -> None:
+        """The declaration on its own is worth exactly zero points.
+
+        Confidence is asserted alongside the score because the two can diverge:
+        an earlier draft scored both at 0 but reported the declared-knobs run at
+        confidence 0.00 against 0.35 for no document at all, which is the
+        inversion `nothing_to_search_pillar` exists to prevent.
+        """
+        declared, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs={"model": ["a", "b"]})
+        )
+        absent, _, _ = MODULE.score_agent(MODULE.AgentFacts())
+        self.assertEqual(declared.score, absent.score)
+        self.assertEqual(declared.confidence, absent.confidence)
+
+    def test_a_config_space_never_lowers_agent_confidence(self) -> None:
+        """Monotonicity: more input must never report as less observed.
+
+        Every state with no knob attested as wired reports one confidence, so
+        supplying a document can only hold it level or raise it.
+        """
+        absent, _, _ = MODULE.score_agent(MODULE.AgentFacts())
+        for label, facts in (
+            ("declared, unattested", MODULE.AgentFacts(knobs={"model": ["a", "b"]})),
+            (
+                "declared, attested empty",
+                MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=()),
+            ),
+            (
+                "declared and wired",
+                MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=("model",)),
+            ),
+        ):
+            with self.subTest(document=label):
+                pillar, _, _ = MODULE.score_agent(facts)
+                self.assertGreaterEqual(pillar.confidence, absent.confidence)
+
+    def test_empty_knobs_document_is_unchanged_by_the_wired_key(self) -> None:
+        """The emptiest document keeps the wording and confidence it always had.
+
+        `not facts.knobs` is answered ahead of the `wired` branch, so both
+        spellings still say "no knobs declared" rather than the wiring message.
+        Reordering those two branches would change that silently, so pin both.
+        """
+        for document in ({"knobs": {}}, {"knobs": {}, "wired": []}):
+            with self.subTest(document=document):
+                pillar, caps, knobs = MODULE.score_agent(
+                    MODULE.agent_facts_from_config_space(document)
+                )
+                self.assertEqual(
+                    [cap.condition for cap in caps], ["agent-no-varying-knobs"]
+                )
+                self.assertEqual(
+                    [cap.reason for cap in caps],
+                    [
+                        "No tunable knob is attested as wired, so there is "
+                        "nothing to search."
+                    ],
+                )
+                self.assertEqual(knobs, [])
+                self.assertEqual(pillar.score, 0)
+                self.assertEqual(pillar.confidence, 0.35)
+                self.assertEqual(
+                    {s.evidence for s in pillar.subscores}, {"no knobs declared"}
+                )
+
+    def test_explicit_empty_wired_is_an_attested_zero(self) -> None:
+        """`"wired": []` states something an absent list does not.
+
+        It names zero wired knobs, so knob-count is a counted zero - and the
+        evidence must not repeat the "no knobs declared" line, because knobs
+        *are* declared here; zero of them are attested as wired.
+        """
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs={"temperature": [0.0, 1.0]}, wired=())
+        )
+        self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
+        knob_count = next(s for s in pillar.subscores if s.name == "knob-count")
+        self.assertTrue(knob_count.measured)
+        self.assertEqual(
+            knob_count.evidence, "0 of 1 declared knobs are attested as wired"
+        )
+
+    def test_explicit_wiring_still_scores_the_knob(self) -> None:
+        """Guard against over-correcting into "nothing ever scores".
+
+        Asserted structurally rather than against the pillar integer: the
+        high-impact knob catalog is being reworked on a sibling branch, and a
+        pinned number would fail there for a reason that has nothing to do with
+        wiring.
+        """
+        pillar, caps, knobs = MODULE.score_agent(
+            MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=("model",))
+        )
+        self.assertNotIn("agent-no-varying-knobs", [cap.condition for cap in caps])
+        self.assertEqual([knob.name for knob in knobs], ["model"])
+        self.assertGreater(pillar.score, 0)
+        self.assertEqual(pillar.confidence, 1.0)
+
+
+class ConfigSpaceAdapterTests(unittest.TestCase):
+    """The adapter must preserve the difference between the three states.
+
+    `wired` has three meanings - never recorded, recorded as empty, recorded as
+    a subset - and only key *presence* distinguishes the first two. A future
+    `document.get("wired", ())` would collapse them again silently, so pin the
+    mapping here rather than only its downstream effect on the score.
+    """
+
+    def test_absent_wired_key_maps_to_none(self) -> None:
+        facts = MODULE.agent_facts_from_config_space({"knobs": {"model": ["a", "b"]}})
+        self.assertIsNone(facts.wired)
+
+    def test_present_empty_wired_stays_distinct_from_an_absent_key(self) -> None:
+        """`assertEqual(facts.wired, ())` alone would not catch the collapse.
+
+        A `document.get("wired", ())` adapter also satisfies it, so the guard is
+        the *difference*: the empty list and the absent key must not map to the
+        same value. No collapsing adapter can pass that.
+        """
+        empty = MODULE.agent_facts_from_config_space(
+            {"knobs": {"model": ["a", "b"]}, "wired": []}
+        )
+        absent = MODULE.agent_facts_from_config_space({"knobs": {"model": ["a", "b"]}})
+        self.assertEqual(empty.wired, ())
+        self.assertNotEqual(empty.wired, absent.wired)
 
 
 class ColorAndRenderingTests(unittest.TestCase):
@@ -583,6 +779,25 @@ class ColorAndRenderingTests(unittest.TestCase):
         return MODULE.aggregate(pillars, [], [], dict(MODULE.DEFAULT_WEIGHTS))
 
 
+PREFLIGHT_RECORDS = [
+    {
+        "check": "dataset-provenance",
+        "status": "PASS",
+        "metrics": {
+            "rows": 40,
+            "labelled_rows": 40,
+            "sources": ["reviewed-production"],
+            "synthetic": False,
+        },
+    },
+    {
+        "check": "dataset-integrity",
+        "status": "PASS",
+        "metrics": {"malformed_rows": 0},
+    },
+]
+
+
 class CliTests(unittest.TestCase):
     @staticmethod
     def _run(argv: list[str]) -> tuple[int, str]:
@@ -634,6 +849,64 @@ class CliTests(unittest.TestCase):
             report = Path(directory) / "report.md"
             self._run(["--config-space", str(space), "--json", "--report", str(report)])
             self.assertIn("Traigent optimization readiness", report.read_text())
+
+    def test_wired_less_config_space_adds_no_points(self) -> None:
+        """Handing the scorer a knob document must not, by itself, buy anything.
+
+        Written as a two-run differential over identical preflight input rather
+        than as an absolute `overall == 0`: the complaint is that the file
+        *added points*, and a differential keeps pinning that through any later
+        rescaling of the pillars.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text(json.dumps(PREFLIGHT_RECORDS))
+            space = Path(directory) / "space.json"
+            space.write_text(
+                json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
+            )
+            without = json.loads(
+                self._run(["--preflight", str(preflight), "--json"])[1]
+            )
+            with_document = json.loads(
+                self._run(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--config-space",
+                        str(space),
+                        "--json",
+                    ]
+                )[1]
+            )
+        self.assertEqual(with_document["overall"], without["overall"])
+        self.assertEqual(with_document["band"], without["band"])
+        # ...and must not cost anything either. The first draft of this fix
+        # reported 0.49 without the document and 0.40 with it, so supplying more
+        # input read as having observed less.
+        self.assertEqual(with_document["confidence"], without["confidence"])
+        conditions = {cap["condition"] for cap in with_document["caps"]}
+        self.assertEqual(conditions, {cap["condition"] for cap in without["caps"]})
+        self.assertIn("agent-no-varying-knobs", conditions)
+
+    def test_absent_wiring_card_reports_an_unattested_connection(self) -> None:
+        """What the user reads must name what the document failed to state.
+
+        The negative assertions matter as much as the positive one: the card
+        used to claim "1 of 1 wired knobs actually vary" about a knob nobody had
+        named, and "no knobs declared" is false whenever knobs are declared.
+        Both strings live in branches that are still reachable, so pin their
+        absence rather than trusting that this branch can no longer produce them.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "space.json"
+            space.write_text(
+                json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
+            )
+            _, output = self._run(["--config-space", str(space), "--color", "never"])
+        self.assertIn("does not state which of them the agent consumes", output)
+        self.assertNotIn("1 of 1 wired knobs", output)
+        self.assertNotIn("no knobs declared", output)
 
     def test_weights_are_configurable_and_reported(self) -> None:
         parsed = MODULE.parse_weights("50,30,20")

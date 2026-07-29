@@ -17,6 +17,11 @@ The score is deliberately modest about itself. It runs before any optimization,
 from local evidence only, so it estimates rather than measures: a sub-score that
 cannot be computed is marked unmeasured and excluded rather than scored zero,
 and the reported confidence says how much of the pillar was actually observed.
+The config space's 'wired' list is the one input that is weaker than that: it is
+an attestation, taken at its word and never verified, because nothing here reads
+the agent's code. Declaring a knob is not a statement that the agent consumes
+it, so a document that never names its wired knobs has attested no wiring and
+that pillar reports nothing to search.
 """
 
 from __future__ import annotations
@@ -386,7 +391,12 @@ class AgentFacts:
     agent_type: str | None = None
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
-    wired: tuple[str, ...] = ()
+    # None means the document never named the knobs the agent consumes, so
+    # nothing is attested as wired and the pillar fails closed. An empty tuple
+    # is the different, explicit statement "nothing is wired". Declaring a knob
+    # is not a statement that the agent consumes it - and neither state is
+    # verified here, only read.
+    wired: tuple[str, ...] | None = None
     bounds: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
@@ -952,11 +962,79 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
     return base
 
 
+NOTHING_WIRED_CAP = Cap(
+    "agent-no-varying-knobs",
+    45,
+    "No tunable knob is attested as wired, so there is nothing to search.",
+)
+
+UNATTESTED_WIRING_CAP = Cap(
+    "agent-no-varying-knobs",
+    45,
+    "Search controls are declared, but the document does not state which of "
+    "them the agent consumes, so nothing is attested as wired to search.",
+)
+
+
+def nothing_to_search_pillar(evidence: str) -> Pillar:
+    """The agent pillar every "no knob is attested as wired" state reports.
+
+    Three inputs land here: no knobs declared at all, knobs declared with no
+    `wired` list, and knobs declared with an explicit empty one. The rule is
+    that all three report the same shape - score 0, `knob-count` measured at
+    zero, the two behavior-dependent sub-scores unmeasured - because how many
+    knobs the document attests as wired is readable off the document in every
+    one of them (it is zero), while how those absent knobs vary and what they
+    cover is not readable from anything.
+
+    Holding them equal is what keeps confidence monotonic: handing the scorer a
+    config space can never *lower* the agent pillar's confidence below what the
+    same run reports with no document at all. An earlier draft marked all three
+    sub-scores unmeasured for the missing-`wired` case alone, which dropped that
+    pillar to confidence 0.00 while a run with no document kept 0.35 - so
+    supplying more input reported knowing less.
+    """
+    return combine(
+        "agent",
+        [
+            SubScore("knob-count", 0.0, 35.0, True, evidence),
+            SubScore("variation", 0.0, 40.0, False, evidence),
+            SubScore("coverage", 0.0, 25.0, False, evidence),
+        ],
+    )
+
+
 def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
 
-    wired = set(facts.wired) if facts.wired else set(facts.knobs)
+    # Order is deliberate: an empty `knobs` map is answered here, ahead of the
+    # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
+    # whether or not it carries a `wired` key. Swapping the two branches would
+    # silently reword the emptiest document in the file.
+    if not facts.knobs:
+        return nothing_to_search_pillar("no knobs declared"), [NOTHING_WIRED_CAP], []
+
+    if facts.wired is None:
+        # Declared knobs, unattested wiring. The document lists controls but
+        # never states which of them the agent consumes, and this script cannot
+        # tell: it reads JSON, not the agent's call path. So the knobs it can
+        # credit are the ones attested as wired - here, none - and the cap
+        # stays binding until the document names them. What this contract buys
+        # is "explicitly attested", not "measured": actually proving that a
+        # knob reaches a provider call is the job of issue #59's
+        # `demonstrably_wired()` probe, and until that lands the `wired` list
+        # is an unenforced claim.
+        return (
+            nothing_to_search_pillar(
+                f"{len(facts.knobs)} declared knob(s), none attested as wired - "
+                "name the knobs the agent consumes in the document's 'wired' list"
+            ),
+            [UNATTESTED_WIRING_CAP],
+            [],
+        )
+
+    wired = set(facts.wired)
     considered = {name: values for name, values in facts.knobs.items() if name in wired}
     knobs = [
         knob_variation(name, values, facts.bounds.get(name))
@@ -970,18 +1048,16 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         space_size *= max(1, len(set(map(repr, values))))
 
     if not knobs:
-        caps.append(
-            Cap(
-                "agent-no-varying-knobs",
-                45,
-                "No tunable knob is wired into the agent, so there is nothing to "
-                "search.",
-            )
+        # Reachable now only for an explicit "wired": [] (or wired names
+        # matching no declared knob). "no knobs declared" was false here:
+        # knobs ARE declared, zero of them are attested as wired.
+        return (
+            nothing_to_search_pillar(
+                f"0 of {len(facts.knobs)} declared knobs are attested as wired"
+            ),
+            [NOTHING_WIRED_CAP],
+            knobs,
         )
-        subs.append(SubScore("knob-count", 0.0, 35.0, True, "no knobs declared"))
-        subs.append(SubScore("variation", 0.0, 40.0, False, "no knobs declared"))
-        subs.append(SubScore("coverage", 0.0, 25.0, False, "no knobs declared"))
-        return combine("agent", subs), caps, knobs
 
     if not varying:
         caps.append(
@@ -1525,7 +1601,7 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
             for name, values in knobs.items()
             if isinstance(values, (list, tuple))
         },
-        wired=tuple(document.get("wired", ())),
+        wired=tuple(document["wired"]) if "wired" in document else None,
         bounds={
             name: {"low": float(spec["low"]), "high": float(spec["high"])}
             for name, spec in (document.get("bounds") or {}).items()
@@ -1575,7 +1651,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--calibration", help="calibrate_evaluator.py --json output (path or -)"
     )
-    parser.add_argument("--config-space", help="agent knob document (path or -)")
+    parser.add_argument(
+        "--config-space",
+        help=(
+            "agent knob document (path or -); knobs earn credit only when its "
+            "'wired' list names them - the list is an unverified attestation, "
+            "and an absent one credits nothing"
+        ),
+    )
     parser.add_argument(
         "--evaluator-method",
         choices=tuple(sorted(METHOD_PROFILES)),
