@@ -162,7 +162,7 @@ the repository root only after the evaluator-execution gate:
 ```
 
 ```bash
-python skills/traigent-first-run/scripts/calibrate_evaluator.py \
+python3 skills/traigent-first-run/scripts/calibrate_evaluator.py \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
   --allow-execution \

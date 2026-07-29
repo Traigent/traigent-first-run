@@ -23,9 +23,9 @@ paths follow one canonical workflow.
 Use the bundled tools:
 
 - Static/free validation:
-  `python skills/traigent-first-run/scripts/preflight.py --help`
+  `python3 skills/traigent-first-run/scripts/preflight.py --help`
 - Mandatory readiness score (opening gate, re-scored after repair/creation) and state planning:
-  `python skills/traigent-first-run/scripts/readiness.py --help`
+  `python3 skills/traigent-first-run/scripts/readiness.py --help`
 - Compact internal run record:
   `skills/traigent-first-run/assets/run-plan.md`
 - Tested first-run SDK stack:
