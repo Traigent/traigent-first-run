@@ -395,7 +395,9 @@ def normalize_dataset_row(
     return normalized, None
 
 
-def dataset_row_is_labelled(row: dict[str, Any]) -> bool:
+def dataset_row_is_labelled(
+    row: dict[str, Any], expected_field: str = "output"
+) -> bool:
     """Report whether a normalized row carries a usable expected output.
 
     A row is unlabelled when the expected output is absent, JSON `null`, or a
@@ -413,10 +415,16 @@ def dataset_row_is_labelled(row: dict[str, Any]) -> bool:
 
     One definition, used by both the aggregate `labelled_rows` count and the
     per-split counts, so the two can never disagree about the same row.
+
+    `expected_field` exists so the one definition also works on a RAW row, where
+    the answer still sits under the user's own field name. The default keeps
+    every normalized-row caller unchanged; the split loop passes the real field,
+    because reading `row["output"]` off a raw row under `--expected-field answer`
+    silently counts every answered row as unlabelled.
     """
 
-    value = row.get("output")
-    if value is None:
+    found, value = dataset_field_value(row, expected_field)
+    if not found or value is None:
         return False
     return str(value).strip() != ""
 
@@ -896,30 +904,69 @@ def check_dataset(
             f"{len(rows)} rows exceeds the local pairwise-check limit of {MAX_NEAR_DUPLICATE_ROWS}",
         )
 
-    outputs = [normalized_text(row["output"]) for row in rows]
-    output_counts = Counter(outputs)
-    if any(not output for output in outputs):
-        emit("dataset-outputs", FAIL, "one or more expected outputs are empty")
-    elif len(set(outputs)) == 1:
+    # Emptiness is answered by `dataset_row_is_labelled`, the same predicate the
+    # aggregate and per-split counts use, so this check can no longer contradict
+    # them. It used to test `normalized_text(...)`, which keeps only word
+    # characters - so a punctuation-only placeholder ("-", "?", "...") was empty
+    # here and labelled there, and one card reported "100/100 rows carry an
+    # expected output" beside "one or more expected outputs are empty" (#70).
+    unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
+    # A separate question, kept because it is a real signal: an output with no
+    # word characters at all is a placeholder, not an answer. Reported as its own
+    # check rather than folded into emptiness, so neither claim contradicts the
+    # row counts and each says what it actually found.
+    placeholder_outputs = [
+        row
+        for row in rows
+        if dataset_row_is_labelled(row) and not normalized_text(row["output"])
+    ]
+    if placeholder_outputs:
+        emit(
+            "dataset-output-placeholders",
+            WARN,
+            f"{len(placeholder_outputs)}/{len(rows)} expected outputs carry no "
+            'word characters (for example "-", "?" or "...") - a placeholder '
+            "is not an answer the evaluator can score against",
+            {"placeholder_rows": len(placeholder_outputs), "rows": len(rows)},
+        )
+    # #68: dominance is a question about the answers that exist. Counting an
+    # unlabelled row's output made `normalized_text(None)` -> "null" a legitimate
+    # dominant value, so a 100-row set with 10 answers was docked twice - once
+    # correctly on power, once as a false "one expected output dominates" - and
+    # the card called the same 90 rows both unlabelled and identically-answered.
+    scoreable_rows = [row for row in rows if dataset_row_is_labelled(row)]
+    scoreable_outputs = [normalized_text(row["output"]) for row in scoreable_rows]
+    output_counts = Counter(scoreable_outputs)
+    if unlabelled:
+        emit(
+            "dataset-outputs",
+            FAIL,
+            f"{len(unlabelled)}/{len(rows)} expected outputs are empty",
+        )
+    elif len(set(scoreable_outputs)) == 1:
         emit(
             "dataset-outputs",
             FAIL if synthetic else WARN,
             "every expected output is identical; evaluator discrimination is likely degenerate",
         )
     else:
-        emit("dataset-outputs", PASS, f"{len(set(outputs))} distinct expected outputs")
+        emit(
+            "dataset-outputs",
+            PASS,
+            f"{len(set(scoreable_outputs))} distinct expected outputs",
+        )
         dominant_count = max(output_counts.values())
-        dominant_ratio = dominant_count / len(outputs)
+        dominant_ratio = dominant_count / len(scoreable_outputs)
         if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
             emit(
                 "dataset-ceiling-risk",
                 WARN,
-                f"{dominant_count}/{len(outputs)} expected outputs "
+                f"{dominant_count}/{len(scoreable_outputs)} expected outputs "
                 f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
                 "could hide meaningful failures",
             )
 
-    structured = structured_outcomes(rows, outcome_field)
+    structured = structured_outcomes(scoreable_rows, outcome_field)
     if structured:
         field, values = structured
         normalized_values = [normalized_text(value) for value in values]
@@ -944,14 +991,26 @@ def check_dataset(
     splits: dict[str, set[str]] = {}
     split_counts: Counter[str] = Counter()
     labelled_split_counts: Counter[str] = Counter()
-    for row in rows:
+    # Iterates `present_rows`, not the normalized `rows` (#66). A row that omits
+    # the expected-output field entirely is rejected by `normalize_dataset_row`
+    # and never reaches `rows`, so a holdout declared that way was invisible:
+    # preflight reported "no explicit tuning/holdout split was found" about a
+    # dataset where every row declared one, and readiness scored it through the
+    # no-split branch.
+    #
+    # The input is resolved through `dataset_field_value` rather than read as
+    # `row["input"]`. That subscript is only correct on a normalized row, where
+    # "input" is the projected value; on a raw row it is a KeyError under any
+    # non-default `--input-field`.
+    for row in present_rows:
         split = row_metadata_value(row, "split")
         if split:
             split_name = str(split).casefold()
             split_counts[split_name] += 1
-            if dataset_row_is_labelled(row):
+            if dataset_row_is_labelled(row, expected_field):
                 labelled_split_counts[split_name] += 1
-            splits.setdefault(split_name, set()).add(normalized_text(row["input"]))
+            _, input_value = dataset_field_value(row, input_field)
+            splits.setdefault(split_name, set()).add(normalized_text(input_value))
     tune_names = {"tune", "tuning", "train", "search"}
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(

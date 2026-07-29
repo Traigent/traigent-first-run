@@ -1751,6 +1751,44 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 "edited; re-run preflight.py --json from the same version as "
                 "this script"
             )
+        # #69: the same guard, applied to the aggregates and to the coherence
+        # between the two. Checking type and sign on four counts while waving the
+        # aggregates through invites a reader to trust numbers nothing validated,
+        # and its own rationale - a negative count "arithmetically reaches the
+        # scorer and prints a nonsense band" - applies verbatim to them.
+        for name, value in (
+            ("rows", provenance.get("rows")),
+            ("labelled_rows", provenance.get("labelled_rows")),
+        ):
+            if value is not None and not _usable_count(value):
+                raise PreflightInputError(
+                    f"dataset-provenance carries no usable {name} count - row "
+                    "counts are whole and non-negative, so this preflight JSON "
+                    "was edited or predates the current preflight.py; re-run "
+                    "preflight.py --json from the same version as this script"
+                )
+        # No row is counted twice: `tune_names` and `holdout_names` are disjoint
+        # and a row carries one split tag, so the two split-labelled counts
+        # cannot legitimately exceed the aggregate. A shape that says otherwise
+        # (100 split labels against 1 aggregate label) was accepted and scored
+        # 22.0 power beside "1/100 rows carry an expected output".
+        aggregate_labelled = provenance.get("labelled_rows")
+        split_labelled = (
+            tuning_metrics.get("tuning_labelled_rows"),
+            holdout_metrics.get("holdout_labelled_rows"),
+        )
+        if aggregate_labelled is not None and all(
+            _usable_count(count) for count in split_labelled
+        ):
+            if sum(split_labelled) > aggregate_labelled:
+                raise PreflightInputError(
+                    f"declared split metrics report {sum(split_labelled)} labelled "
+                    f"rows across tuning and holdout, more than the "
+                    f"{aggregate_labelled} the dataset declares in total - the "
+                    "splits are disjoint, so this cannot describe one dataset; "
+                    "re-run preflight.py --json from the same version as this "
+                    "script"
+                )
     return DatasetFacts(
         exists=True,
         rows=provenance.get("rows"),
