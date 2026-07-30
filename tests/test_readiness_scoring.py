@@ -1835,5 +1835,45 @@ class CliTests(unittest.TestCase):
         self.assertEqual(parsed["dataset"], 50.0)
 
 
+class ThinPillarCannotPresentAsVerifiedTests(unittest.TestCase):
+    """A pillar nobody measured must not carry a STRONG or EXCELLENT band.
+
+    `band_for`'s stated promise is that "a thin-evidence run is not allowed to
+    present as STRONG or EXCELLENT". The aggregate confidence alone did not
+    deliver it: it is a weighted mean, so two fully-measured pillars carry a
+    nearly-unmeasured third over the gate.
+    """
+
+    def test_the_aggregate_alone_lets_a_thin_pillar_through(self) -> None:
+        """The exact arithmetic that defeated the guard.
+
+        agent 1.00, dataset 1.00, evaluation 0.45 at weights 40/35/25 average to
+        0.81 - clear of the 0.75 gate - so a 100/100 evaluation pillar that had
+        observed two of its four checks reported STRONG.
+        """
+        aggregate = 0.40 * 1.0 + 0.35 * 0.45 + 0.25 * 1.0
+        self.assertAlmostEqual(aggregate, 0.8075, places=4)
+        self.assertGreaterEqual(aggregate, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
+
+        # Aggregate only: undemoted, which is the bug.
+        self.assertEqual(MODULE.band_for(89, aggregate), ("STRONG", False))
+        # Weakest pillar considered: demoted to the confidence ceiling.
+        self.assertEqual(
+            MODULE.band_for(89, aggregate, 0.45),
+            (MODULE.CONFIDENCE_BAND_CEILING, True),
+        )
+
+    def test_a_fully_measured_run_is_not_demoted(self) -> None:
+        """The guard must not punish a project that actually measured."""
+        self.assertEqual(MODULE.band_for(92, 1.0, 1.0), ("EXCELLENT", False))
+        self.assertEqual(MODULE.band_for(80, 0.9, 0.8), ("STRONG", False))
+
+    def test_a_band_already_at_or_below_the_ceiling_is_untouched(self) -> None:
+        """Demotion only ever lowers, and only from above the ceiling."""
+        for score, band in ((10, "NOT READY"), (40, "PARTIAL"), (60, "WORKABLE")):
+            with self.subTest(band=band):
+                self.assertEqual(MODULE.band_for(score, 0.2, 0.1), (band, False))
+
+
 if __name__ == "__main__":
     unittest.main()

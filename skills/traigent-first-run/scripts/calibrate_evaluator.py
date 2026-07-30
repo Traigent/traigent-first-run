@@ -21,6 +21,32 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 30
+# An LLM judge does not leave the process once - it makes four probe calls per
+# case, and a reasoning model can think for a minute or more on each. A
+# deterministic scorer's 30 seconds reported a *working* judge as timed out,
+# which is a false failure on the check whose whole job is telling a broken
+# evaluator from a slow one.
+#
+# So the judge budget is derived from the work rather than fixed: a generous
+# per-probe allowance times the probes actually being run. The floor keeps a
+# tiny case set from getting an unreasonably short budget; the ceiling is where
+# "slow" stops being a credible explanation and a hang is the likelier one, and
+# it also stops calibration from quietly eating the run's own time budget.
+LLM_JUDGE_SECONDS_PER_PROBE = 90
+LLM_JUDGE_TIMEOUT_FLOOR_SECONDS = 180
+LLM_JUDGE_TIMEOUT_CEILING_SECONDS = 600
+PROBES_PER_CASE = 4
+
+
+def llm_judge_timeout_seconds(case_count: int) -> int:
+    """Budget an LLM-judge calibration from the number of probe calls it makes."""
+    probes = max(1, case_count) * PROBES_PER_CASE
+    return max(
+        LLM_JUDGE_TIMEOUT_FLOOR_SECONDS,
+        min(LLM_JUDGE_TIMEOUT_CEILING_SECONDS, probes * LLM_JUDGE_SECONDS_PER_PROBE),
+    )
+
+
 GOOD_MINIMUM = 0.8
 BAD_MAXIMUM = 0.2
 EQUIVALENCE_TOLERANCE = 0.15
@@ -304,7 +330,18 @@ def parse_args() -> argparse.Namespace:
             f"(default: {SEPARATION_MARGIN})"
         ),
     )
-    parser.add_argument("--timeout", type=positive_int, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--timeout",
+        type=positive_int,
+        default=None,
+        help=(
+            "seconds the calibration subprocess may take (default: "
+            f"{DEFAULT_TIMEOUT_SECONDS}; for --kind llm-judge, "
+            f"{LLM_JUDGE_SECONDS_PER_PROBE}s per probe call, "
+            f"{LLM_JUDGE_TIMEOUT_FLOOR_SECONDS}-"
+            f"{LLM_JUDGE_TIMEOUT_CEILING_SECONDS}s)"
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -499,6 +536,14 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, ValueError) as error:
         print(f"Invalid calibration cases: {error}", file=sys.stderr)
         return 2
+    if args.timeout is None:
+        # Set here, not at parse time: the judge budget depends on how many
+        # probe calls the case set actually asks for.
+        args.timeout = (
+            llm_judge_timeout_seconds(len(cases))
+            if args.kind == "llm-judge"
+            else DEFAULT_TIMEOUT_SECONDS
+        )
     try:
         thresholds = calibration_thresholds(args)
     except ValueError as error:
@@ -526,9 +571,49 @@ def main() -> int:
             cwd=Path(scorer_file).resolve().parent,
         )
     except subprocess.TimeoutExpired:
-        print(
-            f"Evaluator calibration exceeded {args.timeout} seconds.", file=sys.stderr
+        message = (
+            f"Evaluator calibration exceeded {args.timeout} seconds. This does "
+            "not by itself mean the evaluator is broken - a reasoning judge can "
+            "legitimately take longer. Re-run with a larger --timeout, or "
+            "calibrate against a faster model, before concluding anything about "
+            "the evaluator itself."
         )
+        print(message, file=sys.stderr)
+        # Emit a parseable result as well as the stderr line, so the readiness
+        # scorer can actually see this. Its `evaluator-timeout (45)` cap reads a
+        # `timed_out` key that nothing ever wrote: on timeout this exited 1 with
+        # no JSON at all, so the one condition the scorer has a dedicated cap and
+        # ceiling for could never fire, and a slow evaluator surfaced as a
+        # generic calibration failure instead (traigent-first-run#71).
+        #
+        # The exit code stays 1 - the run still failed - and the payload is what
+        # makes the failure legible.
+        if args.json:
+            # Whole-calibration, not per-case (traigent-first-run#71, point 2).
+            # Every case's probes run inside ONE subprocess, so when the budget
+            # expires the parent has no partial output to attribute: it cannot
+            # say which case was slow, or whether any finished. Reporting a
+            # per-case breakdown would mean inventing one.
+            #
+            # `cases` is empty for that reason and not because zero cases were
+            # requested, which is a distinction a reader of this payload has no
+            # other way to make - so `timeout_scope` states it rather than
+            # leaving it to be inferred from an empty list.
+            print(
+                json.dumps(
+                    {
+                        "timed_out": True,
+                        "timeout_scope": "calibration",
+                        "passed": False,
+                        "timeout_seconds": args.timeout,
+                        "kind": args.kind,
+                        "cases_requested": len(cases),
+                        "cases": [],
+                        "detail": message,
+                    },
+                    indent=2,
+                )
+            )
         return 1
     if process.returncode != 0:
         print(

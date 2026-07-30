@@ -440,18 +440,32 @@ def round_half_up(value: float) -> int:
     return int(math.floor(value + 0.5))
 
 
-def band_for(score: int, confidence: float) -> tuple[str, bool]:
+def band_for(
+    score: int, confidence: float, weakest_pillar_confidence: float | None = None
+) -> tuple[str, bool]:
     """Return the band, demoted when too little of the score was measured.
 
     Renormalizing unmeasured sub-scores can *raise* a score when less is known,
     so a thin-evidence run is not allowed to present as STRONG or EXCELLENT.
+
+    Both confidences are checked, because the aggregate alone did not deliver
+    that promise. It is a weighted mean, so two fully-measured pillars carry a
+    nearly-unmeasured third over the line: agent 1.00, dataset 1.00 and an
+    uncalibrated evaluation pillar at 0.45 average to 0.81, clear of the 0.75
+    gate, and the run reported 89 STRONG with a 100/100 evaluation pillar that
+    had observed two of its four checks. An uncalibrated evaluator is the exact
+    thin evidence this guard exists to refuse - and it is the ordinary state of
+    the opening card, which runs before any calibration exists.
     """
     band = BAND_ORDER[-1]
     for threshold, name in BAND_THRESHOLDS:
         if score < threshold:
             band = name
             break
-    if confidence >= MIN_CONFIDENCE_FOR_TOP_BANDS:
+    thinnest = confidence
+    if weakest_pillar_confidence is not None:
+        thinnest = min(confidence, weakest_pillar_confidence)
+    if thinnest >= MIN_CONFIDENCE_FOR_TOP_BANDS:
         return band, False
     ceiling_index = BAND_ORDER.index(CONFIDENCE_BAND_CEILING)
     if BAND_ORDER.index(band) <= ceiling_index:
@@ -1403,7 +1417,11 @@ def aggregate(
     confidence = (
         sum(weights.get(p.name, 0.0) * p.confidence for p in pillars) / confidence_total
     )
-    band, limited = band_for(overall, confidence)
+    band, limited = band_for(
+        overall,
+        confidence,
+        min((pillar.confidence for pillar in pillars), default=None),
+    )
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         overall=overall,
@@ -1543,11 +1561,16 @@ def render_card(
         headline_suffix = f"  {pillar.score}/100"
         if pillar.confidence < MIN_CONFIDENCE_FOR_TOP_BANDS:
             # A renormalized score over half the checks is not the same claim as
-            # a full one. Saying so on the same line stops "100/100" from reading
-            # as "verified perfect" when most of it was never observed. The share
-            # itself is an internal weight ratio and means nothing to the reader,
-            # so the plain fact is shown here and the marked rows below say which.
-            headline_suffix += f"  {palette.dim}(partly checked){palette.reset}"
+            # a full one, and "(partly checked)" proved too quiet to carry that
+            # next to a full bar and a round number: an uncalibrated evaluator
+            # read as 100/100 with two of four checks observed. The count is
+            # named instead, because "2 of 4 checks" is a fact the reader can
+            # act on where an internal weight ratio is not.
+            measured = sum(1 for sub in pillar.subscores if sub.measured)
+            headline_suffix += (
+                f"  {palette.dim}({measured} of {len(pillar.subscores)} checks"
+                f" measured){palette.reset}"
+            )
         lines.append(
             f"  {pillar.name.upper():<11} {colour}{bar(pillar.score, unicode_ok=unicode_ok)}"
             f"{palette.reset}{headline_suffix}"

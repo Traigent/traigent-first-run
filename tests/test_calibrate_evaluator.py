@@ -834,5 +834,203 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
 
 
+class TimeoutIsReportableTests(unittest.TestCase):
+    """A slow evaluator must be legible to the scorer, not just to stderr.
+
+    `readiness.py` carries an `evaluator-timeout (45)` cap gated on a `timed_out`
+    key that nothing ever wrote: on timeout this script exited non-zero with no
+    JSON at all. The one condition it has a dedicated cap and ceiling for could
+    never fire, and a slow evaluator - an LLM judge, a subprocess-heavy scorer -
+    surfaced as a generic calibration failure (traigent-first-run#71).
+    """
+
+    CASES = [
+        {
+            "name": "field extraction",
+            "expected": ["name", "email"],
+            "input_data": {"format": "fields"},
+            "probes": {
+                "good": ["name", "email"],
+                "equivalent_good": ["email", "name"],
+                "partial": ["name"],
+                "bad": ["unrelated"],
+            },
+        },
+        {
+            "name": "sentiment",
+            "expected": "positive",
+            "input_data": {"format": "label"},
+            "probes": {
+                "good": "positive",
+                "equivalent_good": "POSITIVE",
+                "partial": "mixed",
+                "bad": "negative",
+            },
+        },
+    ]
+
+    def _run_slow_calibration(self, directory: Path) -> subprocess.CompletedProcess:
+        scorer = directory / "slow_scorer.py"
+        scorer.write_text(
+            "import time\n\n\n"
+            "def score(*, output, expected, input_data=None, metadata=None):\n"
+            "    time.sleep(30)\n"
+            "    return 1.0\n"
+        )
+        cases = directory / "cases.json"
+        cases.write_text(json.dumps(self.CASES))
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--cases",
+                f"@{cases}",
+                "--timeout",
+                "2",
+                "--allow-execution",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_a_timeout_emits_a_parseable_result_and_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+
+        # The exit code stays the failure signal.
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertIn("exceeded 2 seconds", process.stderr)
+        # And the payload is what makes the failure legible.
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["timed_out"])
+        self.assertFalse(payload["passed"])
+        self.assertEqual(payload["timeout_seconds"], 2)
+
+    def test_a_timeout_is_scoped_to_the_whole_calibration_not_a_case(self) -> None:
+        """#71 point 2: decide what a timeout means when cases are mixed.
+
+        It is whole-calibration. Every case's probes share one subprocess, so
+        when the budget expires the parent has no partial output to attribute -
+        it cannot say which case was slow or whether any finished, and a
+        per-case breakdown would have to be invented.
+
+        `cases` is therefore empty because nothing could be attributed, not
+        because none were requested. A reader has no way to tell those apart
+        from an empty list, so the payload states both.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+        payload = json.loads(process.stdout)
+
+        self.assertEqual(payload["timeout_scope"], "calibration")
+        self.assertEqual(payload["cases"], [])
+        self.assertEqual(payload["cases_requested"], len(self.CASES))
+
+    def test_readiness_raises_the_timeout_cap_from_that_payload(self) -> None:
+        """The two halves of the contract, tested together.
+
+        Asserting the payload alone would have passed while the cap stayed
+        unreachable, which is exactly how this went unnoticed.
+        """
+        readiness = SCRIPT.parent / "readiness.py"
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            process = self._run_slow_calibration(directory)
+            calibration = directory / "calibration.json"
+            calibration.write_text(process.stdout)
+            preflight = directory / "preflight.json"
+            preflight.write_text(
+                json.dumps(
+                    [
+                        {
+                            "check": "dataset-provenance",
+                            "status": "PASS",
+                            "metrics": {
+                                "rows": 40,
+                                "labelled_rows": 40,
+                                "collected_rows": 40,
+                            },
+                        }
+                    ]
+                )
+            )
+            scored = subprocess.run(
+                [
+                    sys.executable,
+                    str(readiness),
+                    "--preflight",
+                    str(preflight),
+                    "--calibration",
+                    str(calibration),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(scored.returncode, 0, scored.stderr)
+        caps = {
+            cap["condition"]: cap["ceiling"]
+            for cap in json.loads(scored.stdout)["caps"]
+        }
+        self.assertEqual(caps.get("evaluator-timeout"), 45)
+
+    def test_an_llm_judge_budget_scales_with_the_probe_calls_it_makes(self) -> None:
+        """A reasoning judge can think for a minute on each of four probes a case.
+
+        One flat number cannot serve both a deterministic scorer that never
+        leaves the process and a judge making 4 network round trips per case, so
+        the budget is derived from the work - with a floor so a tiny case set is
+        not starved, and a ceiling where "slow" stops being credible and a hang
+        is likelier. The ceiling also stops calibration quietly consuming the
+        run's own time budget.
+        """
+        module = _load_constants()
+        budget = module["llm_judge_timeout_seconds"]
+
+        self.assertGreater(budget(1), module["DEFAULT_TIMEOUT_SECONDS"])
+        self.assertGreaterEqual(budget(1), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
+        self.assertLessEqual(budget(50), module["LLM_JUDGE_TIMEOUT_CEILING_SECONDS"])
+        # More cases never buys less time.
+        self.assertLessEqual(budget(1), budget(2))
+        self.assertLessEqual(budget(2), budget(4))
+        # And a zero/negative count cannot produce a nonsense budget.
+        self.assertGreaterEqual(budget(0), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
+
+    def test_a_timeout_says_slow_is_not_the_same_as_broken(self) -> None:
+        """The cap means "not verified", never "this evaluator is bad"."""
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+        self.assertIn("does not by itself mean the evaluator is broken", process.stderr)
+        self.assertIn("larger --timeout", process.stderr)
+
+
+def _load_constants() -> dict:
+    """Load the module's timeout constants and helper without importing it.
+
+    Importing the script executes its argument parser at module scope in some
+    entry paths; the constants and the one pure function are all this needs.
+    """
+    import ast
+
+    source = SCRIPT.read_text()
+    tree = ast.parse(source)
+    namespace: dict = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            if name.startswith(("LLM_JUDGE_", "DEFAULT_TIMEOUT", "PROBES_PER_CASE")):
+                namespace[name] = ast.literal_eval(node.value)
+        elif (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "llm_judge_timeout_seconds"
+        ):
+            exec(compile(ast.Module([node], []), "<calibrator>", "exec"), namespace)
+    return namespace
+
+
 if __name__ == "__main__":
     unittest.main()
