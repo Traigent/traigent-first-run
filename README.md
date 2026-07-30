@@ -101,15 +101,27 @@ a single number with nothing to compare it to.
 
 It is deliberately modest about itself. It runs before any optimization, from evidence on your own
 machine, so it estimates rather than measures: a check that cannot be computed is marked unmeasured
-and excluded rather than scored zero, and the card prints how much of each pillar was actually
-observed. A low score never stops the run - it decides which gaps are worth explaining and which are
-worth fixing first.
+and excluded rather than scored zero, and the card says how much of each pillar it actually observed
+- `EVALUATION 100/100 (2 of 4 checks measured)` is a pillar whose two remaining checks nobody has
+run yet, not a verified perfect one. A low score never stops the run; it decides which gaps are
+worth explaining and which are worth fixing first.
+
+That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
+verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
+it is the card declining to call a project Strong on evidence it has not seen. Calibrating the
+evaluator is usually what moves it.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
-shares examples with the holdout, or a dataset that is mostly or entirely generated. A cap is a
-ceiling on the result, not a deduction and not a refusal: the run continues, the pre-cap average
-stays in the report, and the number simply cannot claim more than the evidence supports.
+shares examples with the holdout, a dataset that is mostly or entirely generated, or simply too few
+comparable examples to tell one configuration from another. A cap is a ceiling on the result, not a
+deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
+number simply cannot claim more than the evidence supports.
+
+The card labels the two kinds differently, and the label is the whole message. `BLOCKED` means
+something is broken and paid work measured against it would measure the wrong thing - fix it first.
+`LIMITED TO 89` means nothing is wrong with your setup, the result simply cannot claim more than your
+data supports, and it names the number so "why is this 89" has an answer on the same line.
 
 Saying where your rows came from is worth the small effort for the same reason: data you collected
 is credited above data a model wrote, and a dataset that declares nothing is not credited as
