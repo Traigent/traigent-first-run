@@ -347,6 +347,15 @@ rather than the condition id:
   model, so the score measures agreement with that model rather than correctness. Recommend that a
   person reviews a sample of the answers before any accuracy claim leaves the run, and make no
   correctness claim on the unreviewed key.
+- `dataset-below-measurable-size` - there are too few comparable examples to tell any configuration
+  from any other. Say that plainly before the run rather than after it: the walkthrough can still
+  demonstrate the mechanics end to end, and that is worth doing, but no result it produces is
+  evidence about which configuration is better. Adding examples is the only thing that changes this,
+  and the first few dozen buy most of the resolution.
+- `dataset-coarse-resolution` - the comparison can only see large differences. Name the size of the
+  difference it *could* detect when presenting the result, so a flat outcome reads as "too close to
+  call on this much data" rather than as "the configurations are equivalent". The two are not the
+  same claim and only one of them is supported.
 
 Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
 paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair

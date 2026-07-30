@@ -1929,9 +1929,9 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # An eighth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the seven that exist today.
-        self.assertEqual(len(conditions), 7)
+        # A tenth dataset cap must be routed too, so pin the count rather
+        # than spot-checking the nine that exist today.
+        self.assertEqual(len(conditions), 9)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
