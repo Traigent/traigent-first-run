@@ -1601,7 +1601,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_first_time_access_path_is_single_and_ordered(self) -> None:
         """There is exactly one way a first-time user reaches the portal.
 
-        The account is created by redeeming the single-use access link that
+        The account is created by entering the single-use access code that
         arrives in the second Traigent email. Sending a user with no account
         straight to the portal's registration page strands them: registration
         requires that credential, so the page rejects them. The funnel stages
@@ -1617,7 +1617,7 @@ class SkillPackageTests(unittest.TestCase):
 
         ordered_funnel_phrases = (
             "six-digit confirmation code",
-            "single-use access link",
+            "single-use access code",
             "completes portal registration",
             "create a full-access key",
         )
@@ -1666,20 +1666,30 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_emailed_code_and_link_are_handled_as_credentials(self) -> None:
-        """The code and the link are bearer credentials, not navigation.
+    def test_both_emailed_codes_are_handled_as_credentials(self) -> None:
+        """The two emailed codes are bearer credentials; the link is not.
 
-        The link authorizes creating the account, so pasting it into chat hands
-        that authority to the transcript. Neither it nor the six-digit code is a
-        `uk_`-shaped secret, so the existing "never paste or print secrets" rule
-        does not visibly cover them and an assistant can ask for them in good
-        faith. The guide has to name them.
+        The access code authorizes creating the account, so pasting it into chat
+        hands that authority to the transcript. Neither it nor the six-digit
+        confirmation code is a `uk_`-shaped secret, so the existing "never paste
+        or print secrets" rule does not visibly cover them and an assistant can
+        ask for them in good faith. The guide has to name them.
+
+        The registration link is deliberately excluded: it carries no credential
+        (`/register?lead=1`), because a credential in a URL is logged by nginx,
+        kept in browser history and forwarded in the Referer header - the leak
+        TraigentBackend #2463 exists to remove. The guide must keep saying the
+        link is plain, so nobody "helpfully" restores a one-click redeem URL and
+        reintroduces it.
         """
         normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
-            "the confirmation code and the access link are credentials",
+            "the confirmation code and the access code are credentials",
             "never ask the user to paste either one into chat",
             "never repeat one back",
+            # The link must stay credential-free — see #2463.
+            "carries no credential",
+            "the registration address itself is not a credential",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)

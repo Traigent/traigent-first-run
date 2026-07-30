@@ -181,8 +181,8 @@ Provider key vs Traigent portal key
 Portal
   Plain: the Traigent website where your account lives - it generates your
   Traigent portal key (listed there under "API keys") and shows your
-  optimization runs and their results. You reach it the first time through the
-  access link Traigent emails you, not by signing up on the page directly.
+  optimization runs and their results. You reach it the first time with the
+  access code Traigent emails you, not by signing up on the page directly.
 
 Confirmation code
   Plain: the six-digit number in the first email Traigent sends you. It only
@@ -192,9 +192,11 @@ Confirmation code
   page you started on, and a second email will follow."
 
 Access code
-  Plain: the single-use link in the second Traigent email. It lets you register
-  once, any time in the next 10 days. Using it is what creates your account, and
-  it cannot be used again afterwards.
+  Plain: the single-use code in the second Traigent email. It lets you register
+  once, any time in the next 10 days. Entering it is what creates your account,
+  and it cannot be used again afterwards. The registration link in that email is
+  just the way to the page - it carries no credential, so the code has to be
+  typed in rather than clicked through.
   Note: because your address was already confirmed by the six-digit code,
   registration will not ask you to confirm it a second time. Registering lands
   you in the portal; you then create your full-access key yourself - the key
