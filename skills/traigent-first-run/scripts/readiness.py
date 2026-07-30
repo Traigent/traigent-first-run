@@ -345,6 +345,26 @@ class Cap:
     blocks: bool = True
 
 
+def binds(cap: Cap, overall: int) -> bool:
+    """Whether this cap's ceiling is the one actually holding the score down.
+
+    `aggregate` takes the *lowest* ceiling and the weighted average, so a cap
+    can be entirely real and still not be the operative limit - either a
+    stricter cap sits below it or the pillars never reached it. Its ceiling is
+    then a number that describes nothing on the report it is printed on.
+
+    Both renderers ask this rather than each deciding for itself, because the
+    card and the durable report drifting apart is how this class of defect got
+    reported twice: the card's cap line was fixed while the markdown one, whose
+    heading keys off `status` and so looked fine, kept the same unconditioned
+    number.
+
+    `overall` is `min(weighted_average, min(ceilings))`, so it is never above a
+    ceiling - equality is the whole test.
+    """
+    return cap.ceiling == overall
+
+
 @dataclass(frozen=True)
 class Pillar:
     name: str
@@ -1689,11 +1709,19 @@ def render_card(
             # line says it: something to fix before paying, or a limit on the
             # number - with the limit shown, since "why is this 89" is the
             # question it answers.
-            label = (
-                f"{palette.bad}BLOCKED{palette.reset}"
-                if cap.blocks
-                else f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
-            )
+            #
+            # The number has to be conditioned too, not only the kind of label.
+            # A ceiling that is not the operative one is not what limits this
+            # score, and printing it flat states a number the card cannot
+            # reconcile: the reader is shown 89 beside a 25, with nothing on the
+            # card saying the lowest ceiling wins. The subjunctive is the whole
+            # fix - it says the ceiling is real without claiming it applies now.
+            if cap.blocks:
+                label = f"{palette.bad}BLOCKED{palette.reset}"
+            elif binds(cap, score.overall):
+                label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
+            else:
+                label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
             lines.append(f"  {label} {cap.reason}")
         lines.append("")
     if score.band_limited_by_confidence:
@@ -1777,12 +1805,31 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
                 f"{knob.resolution:.0%} | {knob.coverage:.0%} | {knob.quality:.0%} |"
             )
         lines.append("")
-    if score.caps:
+    # Split by what the cap does, not merely listed together: an advisory
+    # ceiling under "What is blocking a trustworthy result" is false about the
+    # only thing the heading asserts, and this report is the durable artifact -
+    # it outlives the terminal the card was printed to.
+    blocking = [cap for cap in score.caps if cap.blocks]
+    limiting = [cap for cap in score.caps if not cap.blocks]
+
+    def cap_line(cap: Cap) -> str:
+        # Conditioned for the same reason the card's label is: a ceiling that is
+        # not the operative one caps nothing, and stating it flat invites the
+        # reader to take it as the score's limit.
+        effect = (
+            f"caps the score at {cap.ceiling}"
+            if binds(cap, score.overall)
+            else f"would cap the score at {cap.ceiling}"
+        )
+        return f"- **{cap.condition}** ({effect}): {cap.reason}"
+
+    if blocking:
         lines.extend(["## What is blocking a trustworthy result", ""])
-        for cap in score.caps:
-            lines.append(
-                f"- **{cap.condition}** (caps the score at {cap.ceiling}): {cap.reason}"
-            )
+        lines.extend(cap_line(cap) for cap in blocking)
+        lines.append("")
+    if limiting:
+        lines.extend(["## What limits how high this can score", ""])
+        lines.extend(cap_line(cap) for cap in limiting)
         lines.append("")
     if score.gaps:
         lines.extend(["## Ranked gaps", ""])

@@ -164,6 +164,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Others say only that the data cannot support a strong claim: too few
   comparable examples to tell a small improvement from noise. That limits what
   the result may claim without saying anything is wrong with your setup.
+  Several can apply at once, and the score is the strictest of them together
+  with the average - so a listed ceiling is not necessarily the one in force.
+  The card marks the difference: "limited to" is the ceiling you are at, "would
+  limit to" is one that only starts to matter once something lower is cleared.
   Blocked: the flag the card shows when a cap of the first kind fired - something
   is broken, and paid work measured against it would measure the wrong thing. A
   cap that only limits the claim does not set it, because the run is still worth

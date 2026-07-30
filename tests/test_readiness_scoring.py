@@ -1944,13 +1944,22 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         schema use, not one a first-time reader knows; what they need is the
         consequence, and for a ceiling that means the number it is limited to,
         because "why is this 89" is the question the line answers.
+
+        Scored across all three pillars so the 89 ceiling is genuinely the
+        binding one. Written first with a single 90/100 dataset pillar, which
+        weights to an overall of 36 - so this asserted `LIMITED TO 89` on a
+        36-point card, pinning as correct the very claim the sibling test below
+        exists to refuse.
         """
-        pillar = MODULE.Pillar(name="dataset", score=90, confidence=1.0, subscores=())
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
         palette = MODULE.Palette()
 
         def rendered(cap):
             score = MODULE.aggregate(
-                [pillar], caps=[cap], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+                pillars, caps=[cap], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
             )
             return MODULE.render_card(score, palette=palette, unicode_ok=False)
 
@@ -1961,6 +1970,75 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         blocking = rendered(MODULE.power_ceiling(3))
         self.assertIn("BLOCKED", blocking)
         self.assertNotIn("LIMITED TO", blocking)
+
+    def test_a_ceiling_that_is_not_the_limit_is_not_printed_as_one(self) -> None:
+        """A cap line may not state a number that describes nothing.
+
+        The test above renders each cap ALONE, which is exactly why it passed
+        while this was broken: with one cap and a high pillar, that ceiling is
+        always the operative one, so an unconditioned number is right by
+        construction. The combination is where it lies, and the combination is
+        what a real blocked card carries.
+
+        `overall` is the lowest of every ceiling and the weighted average, so
+        the advisory 89 - the only `blocks=False` ceiling in the module, and
+        higher than all twelve others - can never be the limit on a card that
+        also carries a blocking cap. It was printed there as `LIMITED TO 89`,
+        which README.md glosses as "nothing is wrong with your setup", directly
+        under a line saying something was.
+        """
+        # All three pillars, because a lone pillar only carries its own weight -
+        # one 60/100 dataset averages to 24, below the 25 ceiling, so the cap
+        # under test would not be the binding one and the setup would prove
+        # nothing about the case it is named for.
+        pillars = [
+            MODULE.Pillar(name="dataset", score=60, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="evaluation", score=40, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="agent", score=70, confidence=1.0, subscores=()),
+        ]
+        blocking = MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken.")
+        advisory = MODULE.power_ceiling(15)
+        self.assertIsNotNone(advisory)
+        self.assertFalse(advisory.blocks, "power_ceiling(15) must be the advisory cap")
+
+        def render(caps):
+            score = MODULE.aggregate(
+                pillars, caps=caps, knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+            )
+            return score, MODULE.render_card(
+                score, palette=MODULE.Palette(), unicode_ok=False
+            )
+
+        score, card = render([blocking, advisory])
+        self.assertEqual(score.weighted_average, 56, "the cap, not the average, binds")
+        self.assertEqual(score.overall, 25, "the lowest ceiling is the score")
+        self.assertIn("WOULD LIMIT TO 89", card)
+        self.assertNotIn("LIMITED TO 89", card)
+
+        # The durable report carries the same number, and must not file a cap
+        # that blocks nothing under the heading that says it does.
+        report = MODULE.render_markdown(score)
+        self.assertIn("would cap the score at 89", report)
+        blocking_section = report.split("## What is blocking a trustworthy result")[1]
+        self.assertNotIn("dataset-coarse-resolution", blocking_section.split("##")[0])
+
+        # Not suppression: the ceiling still appears, because it is the limit
+        # the user meets next, once the blocking condition is cleared.
+        self.assertIn("89", card)
+
+        # And where the ceiling IS the score, the flat claim is correct.
+        tall = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        at_ceiling = MODULE.aggregate(
+            tall, caps=[advisory], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(at_ceiling.overall, 89)
+        self.assertIn(
+            "LIMITED TO 89",
+            MODULE.render_card(at_ceiling, palette=MODULE.Palette(), unicode_ok=False),
+        )
 
     def test_a_dataset_that_can_resolve_is_not_capped(self) -> None:
         for count in (30, 100, 500):
