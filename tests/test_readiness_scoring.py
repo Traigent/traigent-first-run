@@ -2050,6 +2050,154 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertIsNone(MODULE.power_ceiling(None))
 
 
+class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
+    """Both defects found by reading the module end to end after #93.
+
+    Same class as #93 in a different place: a number printed beside other
+    numbers that a reader who can add cannot reconcile with them.
+    """
+
+    def _agent(self, knobs, wired, max_trials):
+        pillar, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(
+                agent_type="general",
+                knobs=knobs,
+                wired=wired,
+                max_trials=max_trials,
+            )
+        )
+        return next(sub for sub in pillar.subscores if sub.name == "knob-count")
+
+    def test_an_excluded_knob_does_not_inflate_the_combination_count(self) -> None:
+        """`seed` is excluded from scoring, so it cannot be inside the count.
+
+        The evidence line pairs a knob count with a combination count, and the
+        combination count multiplied over EVERY knob while the knob count
+        excluded `seed` - so two two-valued knobs printed "2 of 2 wired knobs
+        actually vary; 24 combinations". Two of those knobs make four.
+        """
+        two_knobs = {"temperature": [0.0, 1.0], "model": ["a", "b"]}
+        with_seed = self._agent(
+            {**two_knobs, "seed": [1, 2, 3, 4, 5, 6]},
+            ("temperature", "model", "seed"),
+            12,
+        )
+        self.assertIn("4 combinations", with_seed.evidence)
+        self.assertNotIn("24 combinations", with_seed.evidence)
+        # Not hidden either: the run really is 24 trials, and the line says so
+        # in terms the knob count can account for.
+        self.assertIn("6 repeats", with_seed.evidence)
+        self.assertIn("24 runs", with_seed.evidence)
+
+        # A space with nothing excluded says exactly what it said before.
+        plain = self._agent(two_knobs, ("temperature", "model"), 12)
+        self.assertEqual(
+            plain.evidence, "2 of 2 wired knobs actually vary; 4 combinations"
+        )
+
+    def test_the_budget_penalty_still_counts_the_trials_seed_really_costs(
+        self,
+    ) -> None:
+        """Excluding `seed` from the COUNT must not exclude it from the SPEND.
+
+        The SDK runs every combination once per seed, so a 4-combination space
+        swept over 6 seeds is 24 paid trials. Scoring the budget against 4 would
+        trade one wrong number for another.
+        """
+        swept = self._agent(
+            {"temperature": [0.0, 1.0], "model": ["a", "b"], "seed": list(range(6))},
+            ("temperature", "model", "seed"),
+            1,
+        )
+        unswept = self._agent(
+            {"temperature": [0.0, 1.0], "model": ["a", "b"]},
+            ("temperature", "model"),
+            1,
+        )
+        self.assertLess(
+            swept.value,
+            unswept.value,
+            "24 trials against a 1-trial budget is over-large, and must still say so",
+        )
+
+    def test_a_ceiling_costing_nothing_is_not_the_first_thing_to_fix(self) -> None:
+        """The ranked gaps are documented as ordered by cost, so order by cost.
+
+        Every cap was ranked at one weight and ties broke alphabetically, so
+        `dataset-coarse-resolution` sorted above `evaluator-invalid` on a card
+        the evaluator had set to 25 - telling the user to fix, first, the one
+        condition that would not move the number.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        blocking = MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken.")
+        advisory = MODULE.power_ceiling(15)
+        score = MODULE.aggregate(
+            pillars,
+            caps=[blocking, advisory],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(score.overall, 25)
+        self.assertTrue(score.gaps[0].startswith("evaluator-invalid"))
+        self.assertTrue(score.gaps[1].startswith("dataset-coarse-resolution"))
+
+    def test_the_blocking_cap_that_sets_the_score_leads_the_other_blockers(
+        self,
+    ) -> None:
+        """The same defect, between two caps that both block.
+
+        Ranking caps on `blocks` alone closed the advisory-versus-blocking case
+        and left this one identical: two blocking caps tie, the tie breaks
+        alphabetically, and `dataset-tune-holdout-overlap` (50) leads a card
+        that `evaluator-invalid` (25) has actually set. Fixing the reported
+        instance and not the class is how this list got re-reported once
+        already.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            caps=[
+                MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken."),
+                MODULE.Cap(
+                    "dataset-tune-holdout-overlap",
+                    50,
+                    "Tuning and holdout share examples.",
+                ),
+            ],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(score.overall, 25)
+        self.assertTrue(score.gaps[0].startswith("evaluator-invalid"))
+        self.assertTrue(score.gaps[1].startswith("dataset-tune-holdout-overlap"))
+
+    def test_collect_gaps_requires_the_score_it_ranks_against(self) -> None:
+        """A default would silently restore the flat ordering."""
+        with self.assertRaises(TypeError):
+            MODULE.collect_gaps([], (), ())  # type: ignore[call-arg]
+
+    def test_a_ceiling_that_is_the_score_still_leads_the_list(self) -> None:
+        """Demoting an inactive ceiling must not demote an active one."""
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            caps=[MODULE.power_ceiling(15)],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(score.overall, 89)
+        self.assertTrue(score.gaps[0].startswith("dataset-coarse-resolution"))
+
+
 class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
     """#67, which #88 was blocked on.
 
