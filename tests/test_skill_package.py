@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -508,6 +509,63 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
+        """This repository is public; the tools that test it are not.
+
+        Naming an internal repository or its test bank here leaks both its
+        existence and, worse, what it does or does not cover - a reader learns
+        where the gaps are. It has been scrubbed once already and came back
+        through a test docstring crediting where a finding came from, which is a
+        natural thing to write and exactly the thing that must not ship.
+
+        Credit the mechanism ("a consumer that cross-checks the action against
+        the caps") rather than the tool, and this stays true.
+        """
+        # Assembled rather than written out: a literal here would be the very
+        # leak this test forbids, and excluding this file instead would leave a
+        # hole exactly where someone edits the rule.
+        forbidden = tuple(
+            a + b
+            for a, b in (
+                ("agents-", "skills"),
+                ("fixture", " bank"),
+                ("quality-", "onboarding"),
+                ("onboarding", " fixture"),
+            )
+        )
+        # The file list comes from git, not a filesystem walk. `harness.py`
+        # already learned this: a walk needs a hand-maintained list of what to
+        # skip, and that list can only ever name the droppings someone already
+        # hit. The first version of this check inverted it into an extension
+        # ALLOWLIST, which is the same fragility - it silently ignored the
+        # dataset `.jsonl` fixtures, `.env.example`, and every extensionless
+        # file, any of which can carry prose. Git also answers the question this
+        # test actually asks, which is what gets PUBLISHED, not what happens to
+        # sit in the working tree.
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(
+                f"could not list tracked files from git: {listed.stderr.strip()}"
+            )
+        offenders: list[str] = []
+        for name in listed.stdout.split("\0"):
+            if not name:
+                continue
+            path = ROOT / name
+            try:
+                text = path.read_text(encoding="utf-8").casefold()
+            except (UnicodeDecodeError, OSError):
+                continue  # binary or deleted-but-tracked; no prose to leak
+            for token in forbidden:
+                if token in text:
+                    offenders.append(f"{name}: {token!r}")
+        self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
         """The user-facing definition has to follow the code that changed.
