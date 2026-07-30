@@ -78,10 +78,12 @@ link; show only the selected provider and Traigent when each key becomes necessa
 
 A first-time user reaches that key page one way. They start at the Traigent site and submit their
 email address, and Traigent sends a six-digit confirmation code that proves the mailbox and expires
-within minutes. Once they enter it, a second email arrives carrying a single-use access link, valid
-for 10 days, that authorizes one portal registration. When the user completes portal registration
-the link is spent, the account's portal access period starts, and they land in the portal. Their
-address is already confirmed by then, so registration does not ask for a second confirmation.
+within minutes. Once they enter it, a second email arrives carrying a single-use access code, valid
+for 10 days, that authorizes one portal registration. The registration link in that same email is
+deliberately plain and carries no credential, so the code is typed into the page rather than
+clicked through. When the user completes portal registration the code is spent, the account's
+portal access period starts, and they land in the portal. Their address is already confirmed by
+then, so registration does not ask for a second confirmation.
 
 The key is then created, not handed over — which is why the write-scope rule below is the main path
 here and not an edge case. Two places create one: the key control in the portal's top bar, which
@@ -116,11 +118,12 @@ Registration has to be authorized by that access code, so it is the code, not th
 user in. Never hand the registration address to someone who does not have one yet - that page will
 refuse them, and the fix is to start at the Traigent site, not to retry the link.
 
-The confirmation code and the access link are credentials, not navigation. The code proves the
-mailbox and the link authorizes creating an account, so never ask the user to paste either one into
-chat, never write either into a file or a command, and never repeat one back. Both stay between the
-user's mailbox and their browser; the only thing that reaches this machine is the API key, and it
-goes straight into `.env`.
+The confirmation code and the access code are credentials, not navigation. The first proves the
+mailbox and the second authorizes creating an account, so never ask the user to paste either one
+into chat, never write either into a file or a command, and never repeat one back. Both stay
+between the user's mailbox and their browser; the only thing that reaches this machine is the API
+key, and it goes straight into `.env`. The registration address itself is not a credential and is
+safe to hand over — but only to someone who already holds a code, per the rule above.
 
 The portal access period lasts 10 days from the moment the user registers, and it is what authorizes
 product use. The API key is a separate thing: the key authenticates the run and does not by itself
