@@ -589,13 +589,25 @@ def main() -> int:
         # The exit code stays 1 - the run still failed - and the payload is what
         # makes the failure legible.
         if args.json:
+            # Whole-calibration, not per-case (traigent-first-run#71, point 2).
+            # Every case's probes run inside ONE subprocess, so when the budget
+            # expires the parent has no partial output to attribute: it cannot
+            # say which case was slow, or whether any finished. Reporting a
+            # per-case breakdown would mean inventing one.
+            #
+            # `cases` is empty for that reason and not because zero cases were
+            # requested, which is a distinction a reader of this payload has no
+            # other way to make - so `timeout_scope` states it rather than
+            # leaving it to be inferred from an empty list.
             print(
                 json.dumps(
                     {
                         "timed_out": True,
+                        "timeout_scope": "calibration",
                         "passed": False,
                         "timeout_seconds": args.timeout,
                         "kind": args.kind,
+                        "cases_requested": len(cases),
                         "cases": [],
                         "detail": message,
                     },

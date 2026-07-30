@@ -909,6 +909,26 @@ class TimeoutIsReportableTests(unittest.TestCase):
         self.assertFalse(payload["passed"])
         self.assertEqual(payload["timeout_seconds"], 2)
 
+    def test_a_timeout_is_scoped_to_the_whole_calibration_not_a_case(self) -> None:
+        """#71 point 2: decide what a timeout means when cases are mixed.
+
+        It is whole-calibration. Every case's probes share one subprocess, so
+        when the budget expires the parent has no partial output to attribute -
+        it cannot say which case was slow or whether any finished, and a
+        per-case breakdown would have to be invented.
+
+        `cases` is therefore empty because nothing could be attributed, not
+        because none were requested. A reader has no way to tell those apart
+        from an empty list, so the payload states both.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+        payload = json.loads(process.stdout)
+
+        self.assertEqual(payload["timeout_scope"], "calibration")
+        self.assertEqual(payload["cases"], [])
+        self.assertEqual(payload["cases_requested"], len(self.CASES))
+
     def test_readiness_raises_the_timeout_cap_from_that_payload(self) -> None:
         """The two halves of the contract, tested together.
 
