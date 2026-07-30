@@ -489,6 +489,26 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
         self.assertIn("is not silently demoted", dataset_text)
 
+    def test_the_time_ceiling_pauses_and_asks_rather_than_stopping(self) -> None:
+        """A clock must not spend the user's decision for them.
+
+        The run is bounded so it fits one sitting, but ending it because a timer
+        expired takes the choice away from the person paying - and the answer is
+        often "keep going". So the boundary is a decision point, presented in
+        the user's terms (configurations tested, not elapsed seconds), with the
+        remaining cost derived from what was actually measured.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "reaching that ceiling is a decision point, not an automatic stop",
+            "9 of 13 configurations tested so far",
+            "stop here and report what has been measured, or continue with a named",
+            "do not offer a third path that quietly abandons the holdout",
+            "a partial comparison that names what it never tried is honest",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
     def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
         """#61: a stub agent satisfied the trigger and anchored nothing.
 

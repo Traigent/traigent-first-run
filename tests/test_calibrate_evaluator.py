@@ -958,23 +958,58 @@ class TimeoutIsReportableTests(unittest.TestCase):
         }
         self.assertEqual(caps.get("evaluator-timeout"), 45)
 
-    def test_an_llm_judge_gets_its_own_budget(self) -> None:
-        """Four network round trips are not a deterministic scorer's 30 seconds.
+    def test_an_llm_judge_budget_scales_with_the_probe_calls_it_makes(self) -> None:
+        """A reasoning judge can think for a minute on each of four probes a case.
 
-        Sharing one budget reported a working judge as timed out, a false failure
-        on the check whose job is telling a broken evaluator from a slow one.
+        One flat number cannot serve both a deterministic scorer that never
+        leaves the process and a judge making 4 network round trips per case, so
+        the budget is derived from the work - with a floor so a tiny case set is
+        not starved, and a ceiling where "slow" stops being credible and a hang
+        is likelier. The ceiling also stops calibration quietly consuming the
+        run's own time budget.
         """
-        source = SCRIPT.read_text()
-        namespace: dict = {}
-        for line in source.splitlines():
-            if line.startswith(
-                ("DEFAULT_TIMEOUT_SECONDS", "LLM_JUDGE_TIMEOUT_SECONDS")
-            ):
-                exec(line, namespace)  # noqa: S102 - two integer constants
-        self.assertGreater(
-            namespace["LLM_JUDGE_TIMEOUT_SECONDS"],
-            namespace["DEFAULT_TIMEOUT_SECONDS"],
-        )
+        module = _load_constants()
+        budget = module["llm_judge_timeout_seconds"]
+
+        self.assertGreater(budget(1), module["DEFAULT_TIMEOUT_SECONDS"])
+        self.assertGreaterEqual(budget(1), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
+        self.assertLessEqual(budget(50), module["LLM_JUDGE_TIMEOUT_CEILING_SECONDS"])
+        # More cases never buys less time.
+        self.assertLessEqual(budget(1), budget(2))
+        self.assertLessEqual(budget(2), budget(4))
+        # And a zero/negative count cannot produce a nonsense budget.
+        self.assertGreaterEqual(budget(0), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
+
+    def test_a_timeout_says_slow_is_not_the_same_as_broken(self) -> None:
+        """The cap means "not verified", never "this evaluator is bad"."""
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+        self.assertIn("does not by itself mean the evaluator is broken", process.stderr)
+        self.assertIn("larger --timeout", process.stderr)
+
+
+def _load_constants() -> dict:
+    """Load the module's timeout constants and helper without importing it.
+
+    Importing the script executes its argument parser at module scope in some
+    entry paths; the constants and the one pure function are all this needs.
+    """
+    import ast
+
+    source = SCRIPT.read_text()
+    tree = ast.parse(source)
+    namespace: dict = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            if name.startswith(("LLM_JUDGE_", "DEFAULT_TIMEOUT", "PROBES_PER_CASE")):
+                namespace[name] = ast.literal_eval(node.value)
+        elif (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "llm_judge_timeout_seconds"
+        ):
+            exec(compile(ast.Module([node], []), "<calibrator>", "exec"), namespace)
+    return namespace
 
 
 if __name__ == "__main__":

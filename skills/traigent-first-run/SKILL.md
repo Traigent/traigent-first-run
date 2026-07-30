@@ -457,13 +457,28 @@ baseline and 20 for the enhanced run - and say the numbers out loud rather than 
 who knows the run is bounded at half an hour reads a pause differently from one watching an
 open-ended process.
 
-Treat that ceiling exactly as the cost ceiling is treated: a stop target, not a hard cap the
-provider enforces. When a phase is going to exceed it, stop at the boundary rather than after it,
-keep every completed trial, and report what was actually covered - "the enhanced run completed 7 of
-13 trials inside the 20-minute budget; the winner below is chosen from those 7, and the four
-configurations not reached are listed". A partial comparison that says which configurations it
-never tried is honest; the same comparison presented as complete is not. Never silently drop the
-holdout check to fit the budget - a smaller comparison with a holdout beats a larger one without.
+Reaching that ceiling is a decision point, not an automatic stop. Ending the run because a clock
+expired takes the choice away from the person paying for it - and the answer is often "keep going, I
+have ten more minutes". So pause at the boundary, hold the completed work, and ask.
+
+Give them the three things they need to answer in one screen, in their terms rather than the
+scheduler's:
+
+- **What is done** - "9 of 13 configurations tested so far", not a percentage or an elapsed time.
+- **What the current best looks like**, with the same honesty the final report owes: the leading
+  configuration, its score, and whether it has beaten the baseline yet.
+- **What finishing would take** - the approximate remaining time and spend for the untested
+  configurations, derived from the ones already measured rather than from the original estimate.
+
+Then offer exactly two choices: stop here and report what has been measured, or continue with a named
+additional budget. Do not offer a third path that quietly abandons the holdout - a smaller comparison
+with a holdout beats a larger one without, and the holdout is what makes any of it a claim rather
+than an anecdote.
+
+If they stop, the report says so in the same breath as the result: "tested 9 of 13 configurations
+within the approved time; the winner below is the best of those 9, and the 4 not reached are listed".
+A partial comparison that names what it never tried is honest. The same comparison presented as
+complete is not, and a reader cannot tell the difference unless the run says which it is.
 
 If the estimated first run exceeds `$5.00` or about 30 minutes, first recommend a smaller
 representative tuning slice while preserving meaningful difficulty and a holdout. Reduce the
