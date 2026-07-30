@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -533,26 +534,37 @@ class SkillPackageTests(unittest.TestCase):
                 ("onboarding", " fixture"),
             )
         )
+        # The file list comes from git, not a filesystem walk. `harness.py`
+        # already learned this: a walk needs a hand-maintained list of what to
+        # skip, and that list can only ever name the droppings someone already
+        # hit. The first version of this check inverted it into an extension
+        # ALLOWLIST, which is the same fragility - it silently ignored the
+        # dataset `.jsonl` fixtures, `.env.example`, and every extensionless
+        # file, any of which can carry prose. Git also answers the question this
+        # test actually asks, which is what gets PUBLISHED, not what happens to
+        # sit in the working tree.
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(
+                f"could not list tracked files from git: {listed.stderr.strip()}"
+            )
         offenders: list[str] = []
-        for path in sorted(ROOT.rglob("*")):
-            if not path.is_file() or ".git" in path.parts:
+        for name in listed.stdout.split("\0"):
+            if not name:
                 continue
-            if path.suffix.lower() not in {
-                ".md",
-                ".py",
-                ".json",
-                ".txt",
-                ".yml",
-                ".yaml",
-            }:
-                continue
+            path = ROOT / name
             try:
                 text = path.read_text(encoding="utf-8").casefold()
             except (UnicodeDecodeError, OSError):
-                continue
+                continue  # binary or deleted-but-tracked; no prose to leak
             for token in forbidden:
                 if token in text:
-                    offenders.append(f"{path.relative_to(ROOT)}: {token!r}")
+                    offenders.append(f"{name}: {token!r}")
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
