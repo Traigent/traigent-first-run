@@ -2765,5 +2765,104 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("only the controls the agent call really consumes", safety)
 
 
+class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
+    """Catch the failure this repo actually produces: two rules that disagree.
+
+    Every other test here pins WORDING - that a phrase is present, that one
+    passage precedes another. Those catch drift and reflows, and they caught
+    none of the four contradictions found in this package's own history: the key
+    was required both before and after the first result (#77), an absent `wired`
+    meant both "nothing" and "all of them" (#78), the intent gate was triggered
+    by presence in one file and by quality in another (#61), and a closing
+    section condemned menus one line above a menu.
+
+    A phrase lock cannot see any of those, because each phrase is individually
+    correct. What they share is shape: one decision, described in two places,
+    with the descriptions disagreeing. These tests encode that shape - each
+    entry names a decision, the phrases that assert one answer, and the phrases
+    that assert the opposite. Both sides appearing is the failure.
+
+    Adding a rule here is cheap and adding a contradiction is not, so this is
+    where a new load-bearing decision should be recorded.
+    """
+
+    def guidance(self) -> dict[str, str]:
+        """Every assistant-facing document, whitespace-normalised."""
+        documents = {"SKILL.md": SKILL.read_text()}
+        for reference in sorted((SKILL_ROOT / "references").glob("*.md")):
+            documents[reference.name] = reference.read_text()
+        return {
+            name: " ".join(text.casefold().split()) for name, text in documents.items()
+        }
+
+    # (decision, phrases asserting one answer, phrases asserting the opposite)
+    CONTRADICTIONS = (
+        (
+            "when the Traigent key is required",
+            ("only after that first result is on screen, ask for the traigent key",),
+            (
+                "ask the user to enter both keys locally",
+                "before the first paid trial, run a zero-llm portal-tracking probe",
+            ),
+        ),
+        (
+            "what an absent `wired` list attests",
+            ('treats that as nothing-to-search rather than as "all of them"',),
+            (
+                "omitted or empty means every declared knob counts as wired",
+                'an absent `wired` means "every declared knob is wired"',
+            ),
+        ),
+        (
+            "what anchors task intent",
+            ("finds no agent *that performs an identifiable task*",),
+            ("when the read-only inventory finds no agent, dataset,",),
+        ),
+        (
+            "whether the readiness score is taken on the run's subset",
+            ("score the dataset, not the subset",),
+            ("select before preflight, not after",),
+        ),
+    )
+
+    def test_no_decision_is_described_two_opposite_ways(self) -> None:
+        joined = " ".join(self.guidance().values())
+        for decision, agreed, contradicting in self.CONTRADICTIONS:
+            with self.subTest(decision=decision):
+                self.assertTrue(
+                    any(phrase in joined for phrase in agreed),
+                    f"the settled answer for '{decision}' is no longer stated - "
+                    "if the decision changed, update this table with the new "
+                    "answer rather than deleting the check",
+                )
+                for phrase in contradicting:
+                    self.assertNotIn(
+                        phrase,
+                        joined,
+                        f"'{decision}' is described two opposite ways; this "
+                        "wording was settled and reintroducing it puts the "
+                        "guidance back in conflict",
+                    )
+
+    def test_the_guidance_budget_is_not_silently_exceeded(self) -> None:
+        """Size is a contradiction surface, so it gets a number and a ceiling.
+
+        Nothing here is duplicated - measured at nine repeated sentences across
+        every document - so this is genuine content, and the honest control is a
+        budget rather than a de-duplication pass. The assistant loads all of it
+        before reading a line of the user's project.
+        """
+        total = sum(len(text) for text in self.guidance().values())
+        budget = 210_000
+        self.assertLess(
+            total,
+            budget,
+            f"assistant-facing guidance is {total / 1024:.0f} KB against a "
+            f"{budget / 1024:.0f} KB budget. Every rule added is also a surface "
+            "for two rules to disagree on. Prune scope, or raise this number "
+            "deliberately with a reason.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 30
+# An LLM judge makes four network round trips before it can answer; a
+# deterministic scorer does not leave the process. Sharing one 30-second budget
+# reported a working judge as timed out, which is a false failure on the check
+# whose whole job is telling a broken evaluator from a slow one.
+LLM_JUDGE_TIMEOUT_SECONDS = 180
 GOOD_MINIMUM = 0.8
 BAD_MAXIMUM = 0.2
 EQUIVALENCE_TOLERANCE = 0.15
@@ -304,7 +309,16 @@ def parse_args() -> argparse.Namespace:
             f"(default: {SEPARATION_MARGIN})"
         ),
     )
-    parser.add_argument("--timeout", type=positive_int, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--timeout",
+        type=positive_int,
+        default=None,
+        help=(
+            "seconds the calibration subprocess may take "
+            f"(default: {DEFAULT_TIMEOUT_SECONDS}, or "
+            f"{LLM_JUDGE_TIMEOUT_SECONDS} for --kind llm-judge)"
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -487,6 +501,12 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if args.timeout is None:
+        args.timeout = (
+            LLM_JUDGE_TIMEOUT_SECONDS
+            if args.kind == "llm-judge"
+            else DEFAULT_TIMEOUT_SECONDS
+        )
     if args.kind == "llm-judge" and not args.paid_approved:
         print(
             "LLM-judge calibration can make provider calls; obtain approval and pass --paid-approved.",
@@ -526,9 +546,31 @@ def main() -> int:
             cwd=Path(scorer_file).resolve().parent,
         )
     except subprocess.TimeoutExpired:
-        print(
-            f"Evaluator calibration exceeded {args.timeout} seconds.", file=sys.stderr
-        )
+        message = f"Evaluator calibration exceeded {args.timeout} seconds."
+        print(message, file=sys.stderr)
+        # Emit a parseable result as well as the stderr line, so the readiness
+        # scorer can actually see this. Its `evaluator-timeout (45)` cap reads a
+        # `timed_out` key that nothing ever wrote: on timeout this exited 1 with
+        # no JSON at all, so the one condition the scorer has a dedicated cap and
+        # ceiling for could never fire, and a slow evaluator surfaced as a
+        # generic calibration failure instead (traigent-first-run#71).
+        #
+        # The exit code stays 1 - the run still failed - and the payload is what
+        # makes the failure legible.
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "timed_out": True,
+                        "passed": False,
+                        "timeout_seconds": args.timeout,
+                        "kind": args.kind,
+                        "cases": [],
+                        "detail": message,
+                    },
+                    indent=2,
+                )
+            )
         return 1
     if process.returncode != 0:
         print(

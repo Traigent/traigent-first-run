@@ -834,5 +834,148 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
 
 
+class TimeoutIsReportableTests(unittest.TestCase):
+    """A slow evaluator must be legible to the scorer, not just to stderr.
+
+    `readiness.py` carries an `evaluator-timeout (45)` cap gated on a `timed_out`
+    key that nothing ever wrote: on timeout this script exited non-zero with no
+    JSON at all. The one condition it has a dedicated cap and ceiling for could
+    never fire, and a slow evaluator - an LLM judge, a subprocess-heavy scorer -
+    surfaced as a generic calibration failure (traigent-first-run#71).
+    """
+
+    CASES = [
+        {
+            "name": "field extraction",
+            "expected": ["name", "email"],
+            "input_data": {"format": "fields"},
+            "probes": {
+                "good": ["name", "email"],
+                "equivalent_good": ["email", "name"],
+                "partial": ["name"],
+                "bad": ["unrelated"],
+            },
+        },
+        {
+            "name": "sentiment",
+            "expected": "positive",
+            "input_data": {"format": "label"},
+            "probes": {
+                "good": "positive",
+                "equivalent_good": "POSITIVE",
+                "partial": "mixed",
+                "bad": "negative",
+            },
+        },
+    ]
+
+    def _run_slow_calibration(self, directory: Path) -> subprocess.CompletedProcess:
+        scorer = directory / "slow_scorer.py"
+        scorer.write_text(
+            "import time\n\n\n"
+            "def score(*, output, expected, input_data=None, metadata=None):\n"
+            "    time.sleep(30)\n"
+            "    return 1.0\n"
+        )
+        cases = directory / "cases.json"
+        cases.write_text(json.dumps(self.CASES))
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--cases",
+                f"@{cases}",
+                "--timeout",
+                "2",
+                "--allow-execution",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_a_timeout_emits_a_parseable_result_and_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+
+        # The exit code stays the failure signal.
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertIn("exceeded 2 seconds", process.stderr)
+        # And the payload is what makes the failure legible.
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["timed_out"])
+        self.assertFalse(payload["passed"])
+        self.assertEqual(payload["timeout_seconds"], 2)
+
+    def test_readiness_raises_the_timeout_cap_from_that_payload(self) -> None:
+        """The two halves of the contract, tested together.
+
+        Asserting the payload alone would have passed while the cap stayed
+        unreachable, which is exactly how this went unnoticed.
+        """
+        readiness = SCRIPT.parent / "readiness.py"
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            process = self._run_slow_calibration(directory)
+            calibration = directory / "calibration.json"
+            calibration.write_text(process.stdout)
+            preflight = directory / "preflight.json"
+            preflight.write_text(
+                json.dumps(
+                    [
+                        {
+                            "check": "dataset-provenance",
+                            "status": "PASS",
+                            "metrics": {
+                                "rows": 40,
+                                "labelled_rows": 40,
+                                "collected_rows": 40,
+                            },
+                        }
+                    ]
+                )
+            )
+            scored = subprocess.run(
+                [
+                    sys.executable,
+                    str(readiness),
+                    "--preflight",
+                    str(preflight),
+                    "--calibration",
+                    str(calibration),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(scored.returncode, 0, scored.stderr)
+        caps = {
+            cap["condition"]: cap["ceiling"]
+            for cap in json.loads(scored.stdout)["caps"]
+        }
+        self.assertEqual(caps.get("evaluator-timeout"), 45)
+
+    def test_an_llm_judge_gets_its_own_budget(self) -> None:
+        """Four network round trips are not a deterministic scorer's 30 seconds.
+
+        Sharing one budget reported a working judge as timed out, a false failure
+        on the check whose job is telling a broken evaluator from a slow one.
+        """
+        source = SCRIPT.read_text()
+        namespace: dict = {}
+        for line in source.splitlines():
+            if line.startswith(
+                ("DEFAULT_TIMEOUT_SECONDS", "LLM_JUDGE_TIMEOUT_SECONDS")
+            ):
+                exec(line, namespace)  # noqa: S102 - two integer constants
+        self.assertGreater(
+            namespace["LLM_JUDGE_TIMEOUT_SECONDS"],
+            namespace["DEFAULT_TIMEOUT_SECONDS"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

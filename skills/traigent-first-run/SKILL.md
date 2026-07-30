@@ -451,7 +451,21 @@ Prepare one concise combined approval immediately before paid work containing:
 - What leaves the machine and every service or route that may receive it. For OpenRouter, name
   OpenRouter plus every allowed upstream inference provider/route and disclose fallback behavior.
 
-If the estimated first run exceeds `$5.00` or is materially long, first recommend a smaller
+Give time a stated ceiling as well as money, and put both in the same approval. The walkthrough
+promises one sitting, so budget the whole paid phase at about **30 minutes** - roughly 10 for the
+baseline and 20 for the enhanced run - and say the numbers out loud rather than only the cost. A user
+who knows the run is bounded at half an hour reads a pause differently from one watching an
+open-ended process.
+
+Treat that ceiling exactly as the cost ceiling is treated: a stop target, not a hard cap the
+provider enforces. When a phase is going to exceed it, stop at the boundary rather than after it,
+keep every completed trial, and report what was actually covered - "the enhanced run completed 7 of
+13 trials inside the 20-minute budget; the winner below is chosen from those 7, and the four
+configurations not reached are listed". A partial comparison that says which configurations it
+never tried is honest; the same comparison presented as complete is not. Never silently drop the
+holdout check to fit the budget - a smaller comparison with a holdout beats a larger one without.
+
+If the estimated first run exceeds `$5.00` or about 30 minutes, first recommend a smaller
 representative tuning slice while preserving meaningful difficulty and a holdout. Reduce the
 generated six-row baseline or the 10-13-trial enhanced target only when the approved ceiling,
 runtime, or plan quota still binds, and disclose that reduced comparison in the approval. Ask
