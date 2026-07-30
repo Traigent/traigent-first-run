@@ -162,6 +162,11 @@ drops what the card is careful to say: the measured-check count beside a thin pi
 a ceiling reads `LIMITED TO` or `WOULD LIMIT TO`. Add your narrative around the card - never in
 place of it.
 
+The card, specifically - not the durable markdown report, which lists each cap by its internal
+condition id and would put exactly the strings the next paragraph keeps out of user-facing lines
+back into the conversation. The report is written to disk for the run record; the card is the one
+built to be read.
+
 Present the overall score, band, and the plain-language reason behind each cap beside the
 readiness board, and keep the internal cap condition ids out of those user-facing lines. Caps
 select the branches in stage 4; they do not stop the run by themselves. When a cap fires on a
@@ -300,14 +305,18 @@ Follow this order:
    interpretations to put to the user: no configuration can earn that row, so it measures nothing
    about any of them. Report it and continue on the reliably-scoreable rows, which is what
    `references/evaluation-and-dataset.md` already requires - name the count and the share, and
-   quote the result on the subset that can actually be scored. Record the excluded row ids next to
-   the ones the bounded subset already records, so the run can be repeated exactly. Do not offer
+   quote the result on the subset that can actually be scored. Record the excluded row ids, and
+   report them again in the closing report, so the run can be repeated exactly. That recording is
+   unconditional: the bounded first-run subset records its own ids, but it is only drawn above
+   about 100 rows, so on the small datasets where a handful of degenerate golds matters most it
+   would leave nothing behind at all. Do not offer
    scoring the full set as an equal option: those rows hand free points to any configuration that
    emits valid-but-empty output, so including them biases the ranking toward bad configurations,
    and a menu that lists a known-bad choice beside the right one is not a real question.
 
-   Two conditions bound this. The remaining scoreable rows must still clear the measurable-size
-   floor the readiness scorer applies, and the degenerate rows must be a minority of the set. When
+   Two conditions bound this. What remains must still be enough for the scorer to call the
+   comparison a measurement rather than a wiring check - the same floor the card itself names -
+   and the degenerate rows must be a minority of the set. When
    either fails, the exclusion is the story rather than a footnote - it changes what the run
    measures - so stop and ask instead. Repairing a gold is a different act in any case: it edits
    the user's expected answers, so it stays behind the explicit approval the action table requires
@@ -731,6 +740,12 @@ If any substitute was used, lead the interpretation with:
 
 Do not promote a configuration from a fully synthetic run. For real components, promotion still
 requires the untouched holdout and explicit user approval.
+
+Name every row the comparison did not score, with its id: rows excluded as degenerate references,
+and the ids of the bounded subset when one was drawn. A result quoted on 25 of 30 rows is a
+different claim from one quoted on 30, and the reader cannot reproduce either without knowing
+which rows they were. State it even when nothing was excluded, so silence never has to be
+interpreted.
 
 Close the loop on the readiness score the run opened with: re-run `scripts/readiness.py` on the
 post-repair, post-creation evidence and show the recorded opening score beside the closing one,
