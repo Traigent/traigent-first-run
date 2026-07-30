@@ -1464,7 +1464,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             35.0,
             True,
             f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
-            f"{combinations}",
+            + combinations,
         )
     )
 
@@ -1509,31 +1509,46 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
 
 # Caps outrank every sub-score gap - a broken ruler is not a few points - but
 # they do not all outrank each other. Ranked flat at one weight, ties broke
-# alphabetically, so on a blocked card the advisory ceiling that was costing
-# nothing sorted ABOVE the blocking cap that had set the score: the first thing
-# the list told a user to fix was the one thing that would not move the number.
-# This list is documented as ordered by cost, so it is ordered by cost.
-BLOCKING_CAP_WEIGHT = 1000.0
+# alphabetically, so the first thing the list told a user to fix was whichever
+# cap sorted first by name, and not the one setting their score.
+#
+# Two things decide a cap's cost, so both order it. Whether it BLOCKS: paid work
+# measured against a broken ruler measures the wrong thing, which outranks any
+# ceiling. And whether it BINDS: among caps of the same kind, the one holding
+# the score down is the one worth fixing first - the others cost nothing until
+# it is gone. Ranking on `blocks` alone left the identical symptom between two
+# blocking caps, which is the half of this defect the first fix missed.
+BLOCKING_AND_BINDING_WEIGHT = 1000.0
+BLOCKING_CAP_WEIGHT = 975.0
 BINDING_CEILING_WEIGHT = 950.0
 INACTIVE_CEILING_WEIGHT = 900.0
+
+
+def cap_weight(cap: Cap, overall: int) -> float:
+    """How much this cap is costing, as the ranked list orders it."""
+    if cap.blocks:
+        return (
+            BLOCKING_AND_BINDING_WEIGHT if binds(cap, overall) else BLOCKING_CAP_WEIGHT
+        )
+    return BINDING_CEILING_WEIGHT if binds(cap, overall) else INACTIVE_CEILING_WEIGHT
 
 
 def collect_gaps(
     pillars: Sequence[Pillar],
     knobs: Sequence[KnobScore],
     caps: Sequence[Cap],
-    overall: int = 0,
+    overall: int,
 ) -> tuple[str, ...]:
-    """Order remediation by how many points it is actually costing."""
+    """Order remediation by how many points it is actually costing.
+
+    `overall` is required rather than defaulted: every cap's rank depends on
+    whether its ceiling is the operative one, and a default would answer "no"
+    for all of them - silently restoring the flat ordering this argument exists
+    to replace, in whichever caller forgot to pass it.
+    """
     gaps: list[tuple[float, str]] = []
     for cap in caps:
-        if cap.blocks:
-            weight = BLOCKING_CAP_WEIGHT
-        elif binds(cap, overall):
-            weight = BINDING_CEILING_WEIGHT
-        else:
-            weight = INACTIVE_CEILING_WEIGHT
-        gaps.append((weight, f"{cap.condition}: {cap.reason}"))
+        gaps.append((cap_weight(cap, overall), f"{cap.condition}: {cap.reason}"))
     for pillar in pillars:
         for sub in pillar.subscores:
             if not sub.measured:

@@ -2144,6 +2144,44 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
         self.assertTrue(score.gaps[0].startswith("evaluator-invalid"))
         self.assertTrue(score.gaps[1].startswith("dataset-coarse-resolution"))
 
+    def test_the_blocking_cap_that_sets_the_score_leads_the_other_blockers(
+        self,
+    ) -> None:
+        """The same defect, between two caps that both block.
+
+        Ranking caps on `blocks` alone closed the advisory-versus-blocking case
+        and left this one identical: two blocking caps tie, the tie breaks
+        alphabetically, and `dataset-tune-holdout-overlap` (50) leads a card
+        that `evaluator-invalid` (25) has actually set. Fixing the reported
+        instance and not the class is how this list got re-reported once
+        already.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            caps=[
+                MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken."),
+                MODULE.Cap(
+                    "dataset-tune-holdout-overlap",
+                    50,
+                    "Tuning and holdout share examples.",
+                ),
+            ],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(score.overall, 25)
+        self.assertTrue(score.gaps[0].startswith("evaluator-invalid"))
+        self.assertTrue(score.gaps[1].startswith("dataset-tune-holdout-overlap"))
+
+    def test_collect_gaps_requires_the_score_it_ranks_against(self) -> None:
+        """A default would silently restore the flat ordering."""
+        with self.assertRaises(TypeError):
+            MODULE.collect_gaps([], (), ())  # type: ignore[call-arg]
+
     def test_a_ceiling_that_is_the_score_still_leads_the_list(self) -> None:
         """Demoting an inactive ceiling must not demote an active one."""
         pillars = [
