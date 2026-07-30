@@ -1899,6 +1899,38 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(cap.condition, "dataset-coarse-resolution")
         self.assertLess(cap.ceiling, 90)
 
+    def test_a_ceiling_that_only_bounds_a_claim_does_not_block_the_run(self) -> None:
+        """A bounded claim and a stopped run are different statements.
+
+        Every cap used to imply BLOCKED, which was right while every cap meant
+        "something here is broken". `dataset-coarse-resolution` says only "this
+        cannot present as EXCELLENT" - the run is worth making. Conflating them
+        marked a healthy 30-row dataset BLOCKED and told the assistant not to
+        proceed, against the guide's own rule that a low score never stops the
+        walkthrough. Caught by the fixture bank: "a blocked run cannot be told
+        to proceed".
+        """
+        coarse = MODULE.power_ceiling(15)
+        self.assertFalse(coarse.blocks)
+        # Too few to measure anything IS a stop: there is nothing to compare.
+        self.assertTrue(MODULE.power_ceiling(3).blocks)
+        # And the ceiling still binds even though it does not block.
+        self.assertEqual(coarse.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
+
+    def test_status_is_blocked_only_by_a_blocking_cap(self) -> None:
+        pillar = MODULE.Pillar(name="dataset", score=90, confidence=1.0, subscores=())
+        soft = MODULE.Cap("dataset-coarse-resolution", 89, "bounded", blocks=False)
+        hard = MODULE.Cap("dataset-absent", 20, "stopped")
+
+        def status_for(caps):
+            return MODULE.aggregate(
+                [pillar], caps=caps, knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+            ).status
+
+        self.assertEqual(status_for([soft]), "OK")
+        self.assertEqual(status_for([hard]), "BLOCKED")
+        self.assertEqual(status_for([soft, hard]), "BLOCKED")
+
     def test_a_dataset_that_can_resolve_is_not_capped(self) -> None:
         for count in (30, 100, 500):
             with self.subTest(count=count):

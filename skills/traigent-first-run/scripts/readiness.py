@@ -334,6 +334,15 @@ class Cap:
     condition: str
     ceiling: int
     reason: str
+    # Whether this condition stops the run, or only limits what it may claim.
+    #
+    # Every cap used to imply BLOCKED, which was right while every cap meant
+    # "something here is broken". A ceiling that only says "this cannot present
+    # as EXCELLENT" is a different statement: the run is fine, the claim is
+    # bounded. Conflating them marked a healthy 30-row dataset BLOCKED and told
+    # the assistant not to proceed with a run that was worth doing - against the
+    # guide's own rule that a low score never stops the walkthrough.
+    blocks: bool = True
 
 
 @dataclass(frozen=True)
@@ -708,6 +717,8 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
             f"{effective_n} comparable examples resolve differences of roughly "
             "16 percentage points; a smaller improvement cannot be told from "
             "noise on this data.",
+            # The run is worth making - it just cannot claim a small win.
+            blocks=False,
         )
     return None
 
@@ -1516,7 +1527,7 @@ def aggregate(
         overall=overall,
         weighted_average=weighted_average,
         band=band,
-        status="BLOCKED" if ordered_caps else "OK",
+        status="BLOCKED" if any(cap.blocks for cap in ordered_caps) else "OK",
         confidence=round(confidence, 2),
         band_limited_by_confidence=limited,
         weights=dict(sorted(weights.items())),

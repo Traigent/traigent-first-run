@@ -159,10 +159,16 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   is broken does stop paid optimization against that signal.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
-  Cap: a rule that holds the score down when something essential is missing or
-  broken (for example a broken evaluator), so a high average cannot hide it.
-  Blocked: the flag the card shows whenever at least one cap fired - it names
-  the specific broken thing even when the rest looks good.
+  Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
+  Some caps say something is missing or broken - a broken evaluator, no dataset.
+  Others say only that the data cannot support a strong claim: too few
+  comparable examples to tell a small improvement from noise. That limits what
+  the result may claim without saying anything is wrong with your setup.
+  Blocked: the flag the card shows when a cap of the first kind fired - something
+  is broken, and paid work measured against it would measure the wrong thing. A
+  cap that only limits the claim does not set it, because the run is still worth
+  making. Either way the card names the specific thing rather than only lowering
+  a number.
 
 .env file
   Plain: a small text file in your project that holds settings and secrets -

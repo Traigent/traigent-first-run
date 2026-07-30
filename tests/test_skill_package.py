@@ -509,6 +509,27 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
+        """The user-facing definition has to follow the code that changed.
+
+        The glossary is where a reader learns what "cap" and "blocked" mean, and
+        it said blocked was shown "whenever at least one cap fired". Once a cap
+        could bound a claim without stopping the run, that sentence described
+        behaviour the code no longer had - in the one document whose whole job
+        is explaining the vocabulary.
+        """
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        self.assertNotIn("whenever at least one cap fired", glossary)
+        for phrase in (
+            "some caps say something is missing or broken",
+            "limits what the result may claim without saying anything is wrong",
+            "a cap that only limits the claim does not set it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, glossary)
+
     def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
         """#61: a stub agent satisfied the trigger and anchored nothing.
 
