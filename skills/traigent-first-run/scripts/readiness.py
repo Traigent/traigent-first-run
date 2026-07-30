@@ -1406,13 +1406,25 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     scoreable = [knob for knob in knobs if knob.kind != "excluded"]
     varying = [knob for knob in scoreable if knob.effective_values >= 2]
 
-    # The combination count is printed in the same sentence as the knob counts,
-    # so it is derived from the same distinct-value count they are. Counting
-    # `repr` instead made the two disagree: `[1, 1.0]` is one value to every
-    # other line on the card and was two combinations here.
+    # Two different questions, and one number cannot answer both.
+    #
+    # `space_size` is how many CONFIGURATIONS the search can distinguish, and it
+    # is printed beside the knob counts - so it must be derived from the same
+    # knobs those counts are, or the sentence does not add up. Multiplying over
+    # every knob included `seed`, which this module deliberately excludes from
+    # scoring, and printed "2 of 2 wired knobs actually vary; 24 combinations"
+    # for two two-valued knobs. Four is the only number two of those can make.
+    #
+    # `run_count` is how many TRIALS the budget must cover, and there `seed`
+    # does count: the SDK runs every combination once per seed, so the spend is
+    # real even though the dimension measures variance rather than quality.
+    # That is why the budget check below reads this one.
     space_size = 1
-    for knob in knobs:
+    for knob in scoreable:
         space_size *= knob.distinct_values
+    run_count = 1
+    for knob in knobs:
+        run_count *= knob.distinct_values
 
     if not knobs:
         # Reachable now only for an explicit "wired": [] (or wired names
@@ -1436,14 +1448,23 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             )
         )
 
+    # Named when the two differ, because a reader who can add cannot otherwise
+    # reconcile a budget penalty with the knobs on the same line - the knob that
+    # caused it is, by construction, not among them.
+    repeats = run_count // space_size if space_size else 1
+    combinations = (
+        f"{space_size} combinations"
+        if repeats <= 1
+        else f"{space_size} combinations x {repeats} repeats = {run_count} runs"
+    )
     subs.append(
         SubScore(
             "knob-count",
-            knob_count_points(len(varying), space_size, facts.max_trials),
+            knob_count_points(len(varying), run_count, facts.max_trials),
             35.0,
             True,
             f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
-            f"{space_size} combinations",
+            f"{combinations}",
         )
     )
 
@@ -1486,13 +1507,33 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     return combine("agent", subs), caps, knobs
 
 
+# Caps outrank every sub-score gap - a broken ruler is not a few points - but
+# they do not all outrank each other. Ranked flat at one weight, ties broke
+# alphabetically, so on a blocked card the advisory ceiling that was costing
+# nothing sorted ABOVE the blocking cap that had set the score: the first thing
+# the list told a user to fix was the one thing that would not move the number.
+# This list is documented as ordered by cost, so it is ordered by cost.
+BLOCKING_CAP_WEIGHT = 1000.0
+BINDING_CEILING_WEIGHT = 950.0
+INACTIVE_CEILING_WEIGHT = 900.0
+
+
 def collect_gaps(
-    pillars: Sequence[Pillar], knobs: Sequence[KnobScore], caps: Sequence[Cap]
+    pillars: Sequence[Pillar],
+    knobs: Sequence[KnobScore],
+    caps: Sequence[Cap],
+    overall: int = 0,
 ) -> tuple[str, ...]:
     """Order remediation by how many points it is actually costing."""
     gaps: list[tuple[float, str]] = []
     for cap in caps:
-        gaps.append((1000.0, f"{cap.condition}: {cap.reason}"))
+        if cap.blocks:
+            weight = BLOCKING_CAP_WEIGHT
+        elif binds(cap, overall):
+            weight = BINDING_CEILING_WEIGHT
+        else:
+            weight = INACTIVE_CEILING_WEIGHT
+        gaps.append((weight, f"{cap.condition}: {cap.reason}"))
     for pillar in pillars:
         for sub in pillar.subscores:
             if not sub.measured:
@@ -1554,7 +1595,7 @@ def aggregate(
         pillars=tuple(sorted(pillars, key=lambda pillar: pillar.name)),
         caps=ordered_caps,
         knobs=tuple(sorted(knobs, key=lambda knob: knob.name)),
-        gaps=collect_gaps(pillars, knobs, ordered_caps),
+        gaps=collect_gaps(pillars, knobs, ordered_caps, overall),
     )
 
 
