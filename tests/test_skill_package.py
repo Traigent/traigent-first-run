@@ -509,6 +509,52 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
+        """This repository is public; the tools that test it are not.
+
+        Naming an internal repository or its test bank here leaks both its
+        existence and, worse, what it does or does not cover - a reader learns
+        where the gaps are. It has been scrubbed once already and came back
+        through a test docstring crediting where a finding came from, which is a
+        natural thing to write and exactly the thing that must not ship.
+
+        Credit the mechanism ("a consumer that cross-checks the action against
+        the caps") rather than the tool, and this stays true.
+        """
+        # Assembled rather than written out: a literal here would be the very
+        # leak this test forbids, and excluding this file instead would leave a
+        # hole exactly where someone edits the rule.
+        forbidden = tuple(
+            a + b
+            for a, b in (
+                ("agents-", "skills"),
+                ("fixture", " bank"),
+                ("quality-", "onboarding"),
+                ("onboarding", " fixture"),
+            )
+        )
+        offenders: list[str] = []
+        for path in sorted(ROOT.rglob("*")):
+            if not path.is_file() or ".git" in path.parts:
+                continue
+            if path.suffix.lower() not in {
+                ".md",
+                ".py",
+                ".json",
+                ".txt",
+                ".yml",
+                ".yaml",
+            }:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8").casefold()
+            except (UnicodeDecodeError, OSError):
+                continue
+            for token in forbidden:
+                if token in text:
+                    offenders.append(f"{path.relative_to(ROOT)}: {token!r}")
+        self.assertEqual(offenders, [], "internal tooling named in a public repository")
+
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
         """The user-facing definition has to follow the code that changed.
 

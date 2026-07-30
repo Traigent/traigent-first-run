@@ -1907,8 +1907,9 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         cannot present as EXCELLENT" - the run is worth making. Conflating them
         marked a healthy 30-row dataset BLOCKED and told the assistant not to
         proceed, against the guide's own rule that a low score never stops the
-        walkthrough. Caught by the fixture bank: "a blocked run cannot be told
-        to proceed".
+        walkthrough. Surfaced by a downstream consumer that cross-checks a
+        recommended action against the caps that fired: a run reported as
+        blocked cannot also be told to proceed.
         """
         coarse = MODULE.power_ceiling(15)
         self.assertFalse(coarse.blocks)
