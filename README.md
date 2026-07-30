@@ -118,11 +118,10 @@ comparable examples to tell one configuration from another. A cap is a ceiling o
 deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
 number simply cannot claim more than the evidence supports.
 
-The two kinds read differently on the card. A cap that says something is broken also marks the run
-blocked, because paid work measured against a broken signal measures the wrong thing. A cap that
-only says your data cannot support a strong claim - too few examples to resolve a small improvement
-- leaves the status `OK`: nothing is wrong with your setup, the result just has a ceiling on what it
-may claim.
+The card labels the two kinds differently, and the label is the whole message. `BLOCKED` means
+something is broken and paid work measured against it would measure the wrong thing - fix it first.
+`LIMITED TO 89` means nothing is wrong with your setup, the result simply cannot claim more than your
+data supports, and it names the number so "why is this 89" has an answer on the same line.
 
 Saying where your rows came from is worth the small effort for the same reason: data you collected
 is credited above data a model wrote, and a dataset that declares nothing is not credited as

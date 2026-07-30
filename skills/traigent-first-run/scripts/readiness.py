@@ -1680,7 +1680,21 @@ def render_card(
         lines.append("")
     if score.caps:
         for cap in score.caps:
-            lines.append(f"  {palette.bad}BLOCKED{palette.reset} {cap.reason}")
+            # The label has to carry the difference the status already makes,
+            # or the card contradicts its own JSON: an advisory ceiling reported
+            # `status: OK` while this line printed BLOCKED next to it.
+            #
+            # "Cap" is the word the code and the schema use; it is not a word a
+            # first-time reader knows. What they need is the consequence, so the
+            # line says it: something to fix before paying, or a limit on the
+            # number - with the limit shown, since "why is this 89" is the
+            # question it answers.
+            label = (
+                f"{palette.bad}BLOCKED{palette.reset}"
+                if cap.blocks
+                else f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
+            )
+            lines.append(f"  {label} {cap.reason}")
         lines.append("")
     if score.band_limited_by_confidence:
         # Grounded in the rows above rather than in a percentage: the reader can

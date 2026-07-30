@@ -1932,6 +1932,36 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(status_for([hard]), "BLOCKED")
         self.assertEqual(status_for([soft, hard]), "BLOCKED")
 
+    def test_the_card_label_matches_the_status_it_reports(self) -> None:
+        """The rendered line must not contradict the JSON beside it.
+
+        Every cap printed "BLOCKED" regardless of whether it blocked, so an
+        advisory ceiling reported `status: OK` in the payload while the card
+        told the reader the run was blocked - reintroducing, in the one artifact
+        a human actually reads, the conflation the status field had just fixed.
+
+        The label also stopped saying "cap". That is the word the code and the
+        schema use, not one a first-time reader knows; what they need is the
+        consequence, and for a ceiling that means the number it is limited to,
+        because "why is this 89" is the question the line answers.
+        """
+        pillar = MODULE.Pillar(name="dataset", score=90, confidence=1.0, subscores=())
+        palette = MODULE.Palette()
+
+        def rendered(cap):
+            score = MODULE.aggregate(
+                [pillar], caps=[cap], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+            )
+            return MODULE.render_card(score, palette=palette, unicode_ok=False)
+
+        advisory = rendered(MODULE.power_ceiling(15))
+        self.assertIn("LIMITED TO 89", advisory)
+        self.assertNotIn("BLOCKED", advisory)
+
+        blocking = rendered(MODULE.power_ceiling(3))
+        self.assertIn("BLOCKED", blocking)
+        self.assertNotIn("LIMITED TO", blocking)
+
     def test_a_dataset_that_can_resolve_is_not_capped(self) -> None:
         for count in (30, 100, 500):
             with self.subTest(count=count):
