@@ -1928,6 +1928,38 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertFalse(MODULE.scores_without_a_reference(method))
 
+    def test_the_clamp_follows_the_method_on_a_declared_split_too(self) -> None:
+        """The common shape, and the one the first fix missed.
+
+        Preflight emits per-split labelled counts whenever a split is declared,
+        so that branch - not the no-split fallback - is where most datasets
+        land. Fixing only the fallback left the method-awareness dead exactly
+        where it mattered, and the first version of this suite did not catch it
+        because its fixture declared no split.
+        """
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=100,
+            labelled_rows=10,
+            collected_rows=100,
+            tuning_rows=50,
+            holdout_rows=50,
+            tuning_labelled_rows=5,
+            holdout_labelled_rows=5,
+        )
+        reference_based, _ = MODULE.score_dataset(facts, "exact")
+        reference_free, _ = MODULE.score_dataset(facts, "llm-judge-rubric")
+
+        power_of = lambda pillar: next(  # noqa: E731
+            sub for sub in pillar.subscores if sub.name == "power"
+        )
+        # 5 scoreable against 50: the judge must be credited the whole split.
+        self.assertIn("5/5 scoreable", power_of(reference_based).evidence)
+        self.assertIn("50 examples", power_of(reference_free).evidence)
+        self.assertGreater(
+            power_of(reference_free).value, power_of(reference_based).value
+        )
+
     def test_the_clamp_follows_the_method(self) -> None:
         """100 rows, 10 with reference answers - the case #67 names."""
         facts = MODULE.DatasetFacts(

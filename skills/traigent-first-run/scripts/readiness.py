@@ -1015,7 +1015,15 @@ def score_dataset(
 
     if facts.tuning_rows is not None and facts.holdout_rows is not None:
         split_floor = min(facts.tuning_rows, facts.holdout_rows)
-        if (
+        if reference_free:
+            # A judge that needs no reference scores every row in the smaller
+            # split, so the labelled counts do not bound this comparison at all.
+            # Reached for a DECLARED split, which is the common shape - applying
+            # the method only to the no-split branch left the fix dead exactly
+            # where most datasets land.
+            effective = split_floor
+            marker = f"{split_floor} scoreable"
+        elif (
             facts.tuning_labelled_rows is not None
             and facts.holdout_labelled_rows is not None
         ):
