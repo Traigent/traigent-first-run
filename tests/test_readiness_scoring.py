@@ -1875,5 +1875,108 @@ class ThinPillarCannotPresentAsVerifiedTests(unittest.TestCase):
                 self.assertEqual(MODULE.band_for(score, 0.2, 0.1), (band, False))
 
 
+class PowerBoundsTheBandTests(unittest.TestCase):
+    """Power must be able to say "this cannot be trusted", not only deduct.
+
+    Power is 25 of the dataset pillar's 100 and the pillar is 40% of the total,
+    so the whole range from perfect to worst moves the overall score by 8. A
+    one-row holdout could still reach 92 and read as "proceed" - the card said
+    "a wiring check, not a score" and returned STRONG in the same breath
+    (traigent-first-run#88).
+    """
+
+    def test_a_dataset_too_small_to_measure_cannot_present_as_strong(self) -> None:
+        cap = MODULE.power_ceiling(3)
+        self.assertIsNotNone(cap)
+        self.assertEqual(cap.condition, "dataset-below-measurable-size")
+        self.assertEqual(cap.ceiling, MODULE.WIRING_CHECK_CEILING)
+        # Below the STRONG floor, so the result cannot present as trustworthy.
+        self.assertLess(cap.ceiling, 75)
+
+    def test_a_coarse_dataset_cannot_present_as_excellent(self) -> None:
+        cap = MODULE.power_ceiling(15)
+        self.assertIsNotNone(cap)
+        self.assertEqual(cap.condition, "dataset-coarse-resolution")
+        self.assertLess(cap.ceiling, 90)
+
+    def test_a_dataset_that_can_resolve_is_not_capped(self) -> None:
+        for count in (30, 100, 500):
+            with self.subTest(count=count):
+                self.assertIsNone(MODULE.power_ceiling(count))
+
+    def test_an_unknown_size_is_not_capped(self) -> None:
+        """No size reported is not the same claim as a small size."""
+        self.assertIsNone(MODULE.power_ceiling(None))
+
+
+class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
+    """#67, which #88 was blocked on.
+
+    A rubric or pointwise judge reads the input and the output; the gold answer
+    is not an input to it. Clamping its scoreable count to the labelled rows
+    under-states power - and capping a number known to be wrong would convert a
+    soft under-claim into a hard, band-changing false verdict.
+    """
+
+    def test_a_rubric_judge_scores_rows_without_a_reference(self) -> None:
+        for method in ("llm-judge-rubric", "llm-judge-pointwise", "llm-judge-pairwise"):
+            with self.subTest(method=method):
+                self.assertTrue(MODULE.scores_without_a_reference(method))
+
+    def test_a_reference_based_method_still_needs_the_answer(self) -> None:
+        for method in ("exact", "contains", "regex", None):
+            with self.subTest(method=method):
+                self.assertFalse(MODULE.scores_without_a_reference(method))
+
+    def test_the_clamp_follows_the_method_on_a_declared_split_too(self) -> None:
+        """The common shape, and the one the first fix missed.
+
+        Preflight emits per-split labelled counts whenever a split is declared,
+        so that branch - not the no-split fallback - is where most datasets
+        land. Fixing only the fallback left the method-awareness dead exactly
+        where it mattered, and the first version of this suite did not catch it
+        because its fixture declared no split.
+        """
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=100,
+            labelled_rows=10,
+            collected_rows=100,
+            tuning_rows=50,
+            holdout_rows=50,
+            tuning_labelled_rows=5,
+            holdout_labelled_rows=5,
+        )
+        reference_based, _ = MODULE.score_dataset(facts, "exact")
+        reference_free, _ = MODULE.score_dataset(facts, "llm-judge-rubric")
+
+        power_of = lambda pillar: next(  # noqa: E731
+            sub for sub in pillar.subscores if sub.name == "power"
+        )
+        # 5 scoreable against 50: the judge must be credited the whole split.
+        self.assertIn("5/5 scoreable", power_of(reference_based).evidence)
+        self.assertIn("50 examples", power_of(reference_free).evidence)
+        self.assertGreater(
+            power_of(reference_free).value, power_of(reference_based).value
+        )
+
+    def test_the_clamp_follows_the_method(self) -> None:
+        """100 rows, 10 with reference answers - the case #67 names."""
+        facts = MODULE.DatasetFacts(
+            exists=True, rows=100, labelled_rows=10, collected_rows=100
+        )
+        reference_based, _ = MODULE.score_dataset(facts, "exact")
+        reference_free, _ = MODULE.score_dataset(facts, "llm-judge-rubric")
+
+        power_of = lambda pillar: next(  # noqa: E731
+            sub for sub in pillar.subscores if sub.name == "power"
+        )
+        # The judge scores all 100, so it must not be told it has 10.
+        self.assertGreater(
+            power_of(reference_free).value, power_of(reference_based).value
+        )
+        self.assertIn("100 examples", power_of(reference_free).evidence)
+
+
 if __name__ == "__main__":
     unittest.main()

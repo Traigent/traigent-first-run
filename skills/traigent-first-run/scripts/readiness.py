@@ -283,6 +283,10 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "cost": 0.7,
         "fits": ("free-text", "short-answer"),
     },
+    # Reference-free: these score a row from the input and a rubric, so a row
+    # carrying no expected output is still scoreable by them. Named once here
+    # because the dataset pillar has to ask the question and a scattered
+    # startswith("llm-judge") test drifts the moment a method is added.
     "llm-judge-pointwise": {
         "reproducibility": 0.2,
         "cost": 0.2,
@@ -658,6 +662,56 @@ def knob_variation(
     )
 
 
+# A deduction cannot express "this cannot be trusted". Power is 25 of the
+# dataset pillar's 100 and the pillar is 40% of the total, so the entire range
+# from perfect to worst moves the overall score by 8 - a one-row holdout could
+# still reach 92 and read as "proceed" (traigent-first-run#88).
+#
+# Same shape, and the same number, as the provenance case the rubric already
+# fixed: "a ten-point deduction still allowed a synthetic dataset perfect on
+# every other dimension to score 93", so provenance was capped instead. Power
+# was left with the identical structure and no cap.
+#
+# The thresholds reuse the bands `size_points` already draws, so there is one
+# table to move rather than two: under 10 comparable examples is the band the
+# scorer itself calls "a wiring check, not a score", and under 30 is the +/-16pp
+# band. The ceilings sit one point below a band edge because the claim is about
+# what the result may *present as*, not about the arithmetic.
+WIRING_CHECK_EXAMPLES = 10
+COARSE_RESOLUTION_EXAMPLES = 30
+WIRING_CHECK_CEILING = 74  # cannot present as STRONG
+COARSE_RESOLUTION_CEILING = 89  # cannot present as EXCELLENT
+
+
+def power_ceiling(effective_n: int | None) -> Cap | None:
+    """Bound the band by what the comparison can resolve, not just deduct points.
+
+    Returns None when the dataset can resolve enough to speak for itself. The
+    count passed in is the *scoreable* one, which is why #88 was blocked on #67:
+    capping a number that under-states power for a reference-free judge would
+    convert a soft under-claim into a hard, band-changing false verdict.
+    """
+    if effective_n is None:
+        return None
+    if effective_n < WIRING_CHECK_EXAMPLES:
+        return Cap(
+            "dataset-below-measurable-size",
+            WIRING_CHECK_CEILING,
+            f"{effective_n} comparable example(s) is a wiring check, not a "
+            "measurement - no difference between configurations can be "
+            "distinguished from noise at this size.",
+        )
+    if effective_n < COARSE_RESOLUTION_EXAMPLES:
+        return Cap(
+            "dataset-coarse-resolution",
+            COARSE_RESOLUTION_CEILING,
+            f"{effective_n} comparable examples resolve differences of roughly "
+            "16 percentage points; a smaller improvement cannot be told from "
+            "noise on this data.",
+        )
+    return None
+
+
 def size_points(effective_n: int | None) -> tuple[float, str]:
     """Band statistical power on the smaller *scoreable* split, not the row count.
 
@@ -871,7 +925,25 @@ def labels_evidence(labelled: int, rows: int, placeholders: int) -> str:
     )
 
 
-def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
+REFERENCE_FREE_METHODS = frozenset(
+    {"llm-judge-pointwise", "llm-judge-pairwise", "llm-judge-rubric"}
+)
+
+
+def scores_without_a_reference(method: str | None) -> bool:
+    """True when the evaluator can score a row that carries no expected output.
+
+    A rubric or pointwise judge reads the input and the output; the gold answer
+    is not an input to it. So "how many rows are scoreable" has a different
+    answer for those methods, and the dataset pillar cannot answer it alone
+    (traigent-first-run#67).
+    """
+    return method in REFERENCE_FREE_METHODS
+
+
+def score_dataset(
+    facts: DatasetFacts, evaluator_method: str | None = None
+) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
 
@@ -918,29 +990,40 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
-    # Known limitation, recorded rather than hidden: this clamp is blind to the
-    # *evaluator*. score_dataset receives only DatasetFacts and structurally
-    # cannot read EvaluationFacts.method, so it cannot exempt a reference-free
-    # judge (llm-judge-pointwise / -pairwise / -rubric) that scores a row
-    # carrying no expected output at all.
+    # How many rows this run can actually compare configurations on. For a
+    # reference-based scorer that is the labelled count: a row with no expected
+    # answer cannot be scored against one. For a reference-free judge - rubric,
+    # pointwise, pairwise - the gold answer is not an input at all, so every row
+    # with an input is scoreable and clamping to the labelled count *understates*
+    # power rather than protecting anyone (traigent-first-run#67).
     #
-    # The cost is an under-statement, not merely a blind spot, and it lands
-    # exactly where the clamp does its work: 0 < labelled < rows. No cap fires
-    # there, so the clamp alone moves the number, and the card calls the
-    # unlabelled rows unscoreable on the dataset pillar's own authority. A
-    # 100-row dataset with 10 reference answers reports "10 scoreable" and a
-    # +/-16pp band; a rubric judge scores all 100 and the truthful band is
-    # +/-5pp. Against a reference-free evaluator the clamp therefore replaces an
-    # over-claim with an under-claim of the same class; it is unambiguously
-    # right only for a reference-based method. (labelled == 0 is the one regime
-    # this does not touch: the cap-30 "dataset-no-expected-outputs" above
-    # already fires there regardless of method.)
-    #
-    # Making the dataset pillar method-aware is a signature change and
-    # cross-pillar coupling - a separate, larger decision, filed as follow-up.
+    # The pillar therefore takes the resolved method. Before, `score_dataset`
+    # received only DatasetFacts and structurally could not ask: a 100-row set
+    # with 10 reference answers reported "10 scoreable" and +/-16pp, while a
+    # rubric judge scored all 100 and the truthful band was +/-5pp. An
+    # under-claim of the same class as the over-claim the clamp was added to
+    # remove - and one that #88 would have converted into a hard, band-changing
+    # verdict once power starts bounding the band.
+    reference_free = scores_without_a_reference(evaluator_method)
+
+    def scoreable(rows_available: int, labelled_available: int) -> int:
+        return (
+            rows_available
+            if reference_free
+            else min(rows_available, labelled_available)
+        )
+
     if facts.tuning_rows is not None and facts.holdout_rows is not None:
         split_floor = min(facts.tuning_rows, facts.holdout_rows)
-        if (
+        if reference_free:
+            # A judge that needs no reference scores every row in the smaller
+            # split, so the labelled counts do not bound this comparison at all.
+            # Reached for a DECLARED split, which is the common shape - applying
+            # the method only to the no-split branch left the fix dead exactly
+            # where most datasets land.
+            effective = split_floor
+            marker = f"{split_floor} scoreable"
+        elif (
             facts.tuning_labelled_rows is not None
             and facts.holdout_labelled_rows is not None
         ):
@@ -951,7 +1034,7 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
                 f"{facts.tuning_labelled_rows}/{facts.holdout_labelled_rows} scoreable"
             )
         else:
-            effective = min(split_floor, labelled)
+            effective = scoreable(split_floor, labelled)
             marker = f"{labelled} scoreable"
         points, evidence = size_points(effective)
         prefix = f"{facts.tuning_rows} tuning / {facts.holdout_rows} holdout"
@@ -959,13 +1042,19 @@ def score_dataset(facts: DatasetFacts) -> tuple[Pillar, list[Cap]]:
             prefix = f"{prefix}, {marker}"
         evidence = f"{prefix}; {evidence}"
     else:
-        effective = min(rows, labelled)
+        effective = scoreable(rows, labelled)
         points, evidence = size_points(effective)
         points *= 0.8
         if effective < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = f"no declared tuning/holdout split; {evidence}"
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
+    # Deducting alone let the card say "a wiring check, not a score" and return
+    # STRONG in the same breath (#88). The ceiling is what stops a result
+    # presenting as trustworthy when nothing measurable was measured.
+    ceiling = power_ceiling(effective)
+    if ceiling is not None:
+        caps.append(ceiling)
 
     if facts.difficulty_tagged_rows:
         bands = set(facts.difficulty_bands)
@@ -2573,7 +2662,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 
-    dataset_pillar, dataset_caps = score_dataset(dataset_facts)
+    dataset_pillar, dataset_caps = score_dataset(dataset_facts, evaluation_facts.method)
     evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
     agent_pillar, agent_caps, knobs = score_agent(agent_facts)
     score = aggregate(
