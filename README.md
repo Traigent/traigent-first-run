@@ -123,6 +123,13 @@ something is broken and paid work measured against it would measure the wrong th
 `LIMITED TO 89` means nothing is wrong with your setup, the result simply cannot claim more than your
 data supports, and it names the number so "why is this 89" has an answer on the same line.
 
+More than one condition can apply, and then only the lowest ceiling is doing anything - your score is
+the strictest of them. So a ceiling that is real but is not the one currently in force reads `WOULD
+LIMIT TO 89` instead: the tense is the difference. `LIMITED TO 89` is the number you are at; `WOULD
+LIMIT TO 89` is a limit you will meet later, once whatever is lower has been dealt with. That line is
+still worth reading on a blocked card - it is what you run into next - but it is not why the score is
+what it is today.
+
 Saying where your rows came from is worth the small effort for the same reason: data you collected
 is credited above data a model wrote, and a dataset that declares nothing is not credited as
 production data. A mixture is scored as a mixture - a few generated rows among real ones cost a
