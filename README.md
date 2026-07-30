@@ -28,6 +28,9 @@ The assistant performs the technical work and asks only when it needs:
 - A choice that materially changes the task.
 - A key pasted into a local, git-ignored `.env` file.
 - Approval before paid model calls or private-data egress.
+- Confirmation before installing into a virtual environment you already had, rather than one
+  created for this run. It always names the full path first, either way, so you know which
+  directory is about to change.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
 Traigent generates a coherent substitute around everything that already exists.
