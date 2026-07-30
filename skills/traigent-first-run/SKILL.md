@@ -153,6 +153,15 @@ typically 0 and `NOT READY` - and that capped baseline is the honest opening the
 measured against. Always show that opening score to the user before anything is created or
 repaired, so the user knows the state they are starting from.
 
+Show the card the script rendered, in a code block, rather than retyping its numbers into prose or
+a table of your own. `render_card` already draws a bar per pillar, already falls back from `█░` to
+`#-` when the host cannot encode them, and already decides about colour from the stream and the
+environment - so a re-typed table silently discards work the tool did for the reader, and turns a
+proportion they can see at a glance back into a number they have to compare. Reformatting also
+drops what the card is careful to say: the measured-check count beside a thin pillar, and whether
+a ceiling reads `LIMITED TO` or `WOULD LIMIT TO`. Add your narrative around the card - never in
+place of it.
+
 Present the overall score, band, and the plain-language reason behind each cap beside the
 readiness board, and keep the internal cap condition ids out of those user-facing lines. Caps
 select the branches in stage 4; they do not stop the run by themselves. When a cap fires on a
@@ -194,7 +203,7 @@ that treats it as an anchor invents the task the user was supposed to choose.
 The opening readiness gate has already scored the empty project. Keep that result in the
 conversation; recording it is a write and waits for the answer.
 
-1. Present the opening readiness score and band, then the three real-world gaps:
+1. Show the rendered card, then the three real-world gaps:
    - ❗ **Agent** - no production agent is connected.
    - ❗ **Dataset** - no real examples are connected.
    - ❗ **Evaluation** - no validated grading method is connected.
@@ -222,8 +231,8 @@ entry, before any substitute exists.
 
 For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
 render it again before the user answers. For every other starting state, render the initial
-real-world readiness board after inspection. Show the opening readiness score and band beside that
-board. State what Traigent will create for the walkthrough.
+real-world readiness board after inspection. Show the rendered card beside that board, as printed.
+State what Traigent will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
 changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
 instead of replacing the initial board with a green one.
@@ -284,6 +293,25 @@ Follow this order:
    ambiguity remains and proceed without a generic review pause. A clarification does not
    authorize changing real labels, expected answers, examples, or rubric policy; show any exact
    judgment-dependent change and obtain the explicit approval required by the action table.
+
+   A *diagnosed degenerate reference is not ambiguity* and does not qualify for that question.
+   When a real gold scores a right and a wrong answer identically - empty, constant, or matching
+   nothing because of a leading space or a case-sensitive comparison - there are no competing
+   interpretations to put to the user: no configuration can earn that row, so it measures nothing
+   about any of them. Report it and continue on the reliably-scoreable rows, which is what
+   `references/evaluation-and-dataset.md` already requires - name the count and the share, and
+   quote the result on the subset that can actually be scored. Record the excluded row ids next to
+   the ones the bounded subset already records, so the run can be repeated exactly. Do not offer
+   scoring the full set as an equal option: those rows hand free points to any configuration that
+   emits valid-but-empty output, so including them biases the ranking toward bad configurations,
+   and a menu that lists a known-bad choice beside the right one is not a real question.
+
+   Two conditions bound this. The remaining scoreable rows must still clear the measurable-size
+   floor the readiness scorer applies, and the degenerate rows must be a minority of the set. When
+   either fails, the exclusion is the story rather than a footnote - it changes what the run
+   measures - so stop and ask instead. Repairing a gold is a different act in any case: it edits
+   the user's expected answers, so it stays behind the explicit approval the action table requires
+   and is offered only if the user asks for it.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
    containing the combined tuning and holdout rows, so local structure and quality problems are
    checked without importing user modules. Omit optional model-pricing checks in this
