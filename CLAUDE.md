@@ -40,3 +40,18 @@ refuses the reintroduction of a contradiction someone already found, and is wher
 decision gets recorded. The shared-value and flag-existence checks beside it need no foreknowledge
 and will fail on drift nobody has seen yet. Neither replaces reading the whole guide, which is how
 all four historical instances were actually found.
+
+**So a guidance change is reviewed by reading the whole document, not the diff.** This is the rule
+the checks cannot enforce, and it is the one that has actually worked. Every one of the four
+contradictions was invisible in the diff that introduced it: each added passage was correct on its
+own, and disagreed with a passage elsewhere that the diff did not show. A reviewer looking only at
+the change is looking at the half that is never wrong.
+
+Concretely, when a pull request edits `SKILL.md` or a `references/` file: read that file end to
+end, and read the other document if the change touches a decision they share. It costs one pass
+over one document, against a defect class whose entire history is "somebody happened to notice".
+
+Scheduled sweeps were considered instead and are weaker for this repository. A cadence detects a
+contradiction some days after it lands, while a read at review time prevents it - and a periodic
+sweep with nothing to compare against tends to become a green tick. Re-open this decision if the
+guide is ever edited faster than it is reviewed, which is the condition that would invert it.
