@@ -1034,3 +1034,233 @@ def _load_constants() -> dict:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PermutationProbeTests(unittest.TestCase):
+    """traigent-first-run#99 - the six checks pass on a binding-blind ruler.
+
+    The worked example: a SQL-result evaluator comparing token bags scores the
+    inverted answer ("France 1 / Italy 2" against "France 2 / Italy 1") a
+    perfect 1.0, while every mechanical check stays green, because the token
+    multiset is identical and only the binding differs.
+    """
+
+    TOKEN_BAG = (
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    a, b = set(str(output).split()), set(str(expected).split())\n"
+        "    return len(a & b) / len(a | b) if (a | b) else 1.0\n"
+    )
+    ROW_AWARE = (
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    a = [tuple(l.split()) for l in str(output).strip().splitlines()]\n"
+        "    b = [tuple(l.split()) for l in str(expected).strip().splitlines()]\n"
+        "    if not b:\n"
+        "        return 1.0 if not a else 0.0\n"
+        "    return sum(1 for r in b if r in a) / len(b)\n"
+    )
+    CASES = [
+        {
+            "name": "counts",
+            "expected": "France 2\nItaly 1",
+            "probes": {
+                "good": "France 2\nItaly 1",
+                "equivalent_good": "France 2\nItaly 1",
+                "partial": "France 2",
+                "bad": "Spain 9",
+            },
+        },
+        {
+            "name": "names",
+            "expected": "Alice Bob",
+            "probes": {
+                "good": "Alice Bob",
+                "equivalent_good": "Alice Bob",
+                "partial": "Alice",
+                "bad": "Zoe",
+            },
+        },
+    ]
+
+    def calibrate(self, directory: str, source: str, *extra: str, cases=None):
+        scorer = Path(directory) / "scorer.py"
+        scorer.write_text(source, encoding="utf-8")
+        case_file = Path(directory) / "cases.json"
+        case_file.write_text(json.dumps(cases or self.CASES), encoding="utf-8")
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--cases",
+                f"@{case_file}",
+                "--allow-execution",
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return process, json.loads(process.stdout)
+
+    def test_a_binding_blind_evaluator_is_questioned_not_failed(self) -> None:
+        """The six checks are right; the question is what they cannot ask."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, self.TOKEN_BAG)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(payload["passed"], "the six checks correctly still pass")
+        for case in payload["cases"]:
+            with self.subTest(case=case["name"]):
+                probe = case["permutation_probe"]
+                self.assertEqual(probe["score"], 1.0)
+                self.assertFalse(probe["distinguished"])
+        self.assertIn("permutation_question", payload)
+        self.assertIn("rearrangement", payload["permutation_question"])
+
+    def binary_cases(self):
+        """The same cases, each in the mode the row-aware scorer implements.
+
+        `counts` has two rows, so a partially-right answer scores 0.5 - graded
+        partial credit, and graded is its contract. `names` has one row, so the
+        same partial answer scores 0.0, which no graded rule can accept because
+        partial must sit a margin ABOVE bad. Per-case `score_mode` exists for
+        exactly this, and using one mode for both would make the test fail on a
+        mode mismatch it never meant to exercise rather than on the probe.
+        """
+        cases = json.loads(json.dumps(self.CASES))
+        modes = {"counts": "graded", "names": "binary"}
+        for case in cases:
+            case["score_mode"] = modes[case["name"]]
+        return cases
+
+    def test_a_correct_evaluator_is_not_questioned(self) -> None:
+        """The false-red side. A check that cries wolf teaches evasion.
+
+        Without this, the honest outcome of the probe would be indistinguishable
+        from it firing on everything.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory, self.ROW_AWARE, cases=self.binary_cases()
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        for case in payload["cases"]:
+            self.assertTrue(case["permutation_probe"]["distinguished"])
+        self.assertNotIn("permutation_question", payload)
+
+    def test_a_paid_judge_gets_no_extra_probe(self) -> None:
+        """Counted, not read off the branch: an added probe is billed.
+
+        The guide requires paid work to be approved in advance, so a tool may
+        not add a provider call of its own - proven by counting the scorer
+        invocations rather than by inspecting the condition that guards them.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "calls.log"
+            counting = (
+                "from pathlib import Path\n"
+                f"LOG = Path({str(log)!r})\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    LOG.open('a').write('x\\n')\n"
+                "    return 1.0 if str(output) == str(expected) else 0.0\n"
+            )
+            self.calibrate(
+                directory, counting, "--kind", "llm-judge", "--paid-approved"
+            )
+            paid_calls = len(log.read_text().splitlines())
+            log.unlink()
+            self.calibrate(directory, counting, "--kind", "deterministic")
+            free_calls = len(log.read_text().splitlines())
+        self.assertEqual(paid_calls, 8, "4 probes x 2 cases, and nothing added")
+        self.assertEqual(free_calls, 10, "the deterministic path adds one per case")
+
+    def test_a_permutation_is_never_the_expected_answer(self) -> None:
+        """A probe equal to the expectation SHOULD score 1.0.
+
+        Emitting one would manufacture a false alarm on a correct evaluator, so
+        these return None instead of something arbitrary.
+        """
+        sys.path.insert(0, str(SCRIPT.parent))
+        try:
+            from calibrate_evaluator import permuted_answer
+        finally:
+            sys.path.pop(0)
+        for value in ("France 2\nItaly 1", "a a b", "x=1; y=2"):
+            with self.subTest(value=value):
+                permuted = permuted_answer(value)
+                self.assertIsNotNone(permuted)
+                self.assertNotEqual(permuted, value)
+                self.assertEqual(sorted(permuted.split()), sorted(value.split()))
+        for value in ("solo", "a a a", "", {"k": 1}, 42, None):
+            with self.subTest(value=value):
+                self.assertIsNone(permuted_answer(value))
+
+    def test_the_probe_is_deterministic(self) -> None:
+        """Two runs of an unchanged evaluator must not disagree."""
+        with tempfile.TemporaryDirectory() as directory:
+            _, first = self.calibrate(directory, self.TOKEN_BAG)
+            _, second = self.calibrate(directory, self.TOKEN_BAG)
+        self.assertEqual(
+            [c["permutation_probe"] for c in first["cases"]],
+            [c["permutation_probe"] for c in second["cases"]],
+        )
+
+    def test_declared_outcome_classes_are_recorded(self) -> None:
+        """The attestation says what it covered, not only its verdict."""
+        cases = self.binary_cases()
+        cases[0]["outcome_classes"] = ["label/value binding", "empty result"]
+        cases[1]["outcome_classes"] = ["ordering"]
+        with tempfile.TemporaryDirectory() as directory:
+            _, payload = self.calibrate(directory, self.ROW_AWARE, cases=cases)
+        self.assertEqual(
+            payload["outcome_classes_covered"],
+            ["empty result", "label/value binding", "ordering"],
+        )
+
+    def test_naming_a_class_cannot_defeat_the_duplicate_guard(self) -> None:
+        """Otherwise the dedup check is switched off by writing a word."""
+        cases = [
+            {
+                "name": "a",
+                "expected": "x y",
+                "outcome_classes": ["ordering"],
+                "probes": {
+                    "good": "x y",
+                    "equivalent_good": "x y",
+                    "partial": "x",
+                    "bad": "z",
+                },
+            },
+            {
+                "name": "b",
+                "expected": "x y",
+                "outcome_classes": ["binding"],
+                "probes": {
+                    "good": "x y",
+                    "equivalent_good": "x y",
+                    "partial": "x",
+                    "bad": "z",
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(self.ROW_AWARE, encoding="utf-8")
+            case_file = Path(directory) / "cases.json"
+            case_file.write_text(json.dumps(cases), encoding="utf-8")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{case_file}",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("duplicates another case payload", process.stderr)

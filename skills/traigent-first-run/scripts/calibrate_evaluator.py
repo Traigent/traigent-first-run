@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -71,6 +72,45 @@ MATRIX_COVERAGE_NOTE = (
 )
 PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
 SCORE_MODES = ("graded", "binary")
+
+# A wrong answer built from the expected one by moving its tokens, keeping every
+# character between them. Same multiset, same punctuation, same line breaks -
+# only the binding differs, which is the class the four author-written probes
+# most often miss because the author already understands the task.
+#
+# Deterministic on purpose: calibration is re-run and compared, so a randomly
+# drawn permutation would make two runs of an unchanged evaluator disagree.
+#
+# It answers a question the four probes cannot: "France 2 / Italy 1" against
+# "France 1 / Italy 2" is a wrong answer with an identical token bag, and an
+# evaluator comparing bags scores it 1.0 while every mechanical check stays
+# green (traigent-first-run#99).
+TOKEN_SPLIT = re.compile(r"(\s+)")
+
+
+def permuted_answer(expected: Any) -> str | None:
+    """Reorder the tokens of `expected`, or None when that is not meaningful.
+
+    Returns None rather than something arbitrary for the cases where the probe
+    would prove nothing: a non-string expectation has no token order, and a
+    single token or an all-identical token run has no permutation that differs
+    from the original - a probe equal to the expected answer SHOULD score 1.0,
+    so asking about it would manufacture a false alarm on a correct evaluator.
+    """
+    if not isinstance(expected, str):
+        return None
+    parts = TOKEN_SPLIT.split(expected)
+    positions = [i for i, part in enumerate(parts) if i % 2 == 0 and part]
+    if len(positions) < 2:
+        return None
+    tokens = [parts[i] for i in positions]
+    for candidate in (tokens[::-1], tokens[1:] + tokens[:1]):
+        if candidate != tokens:
+            for index, value in zip(positions, candidate):
+                parts[index] = value
+            return "".join(parts)
+    # Every token identical: any permutation is the original.
+    return None
 
 
 def literal_or_file(value: str) -> Any:
@@ -197,7 +237,29 @@ def run_worker() -> int:
                     )
                     for label, value in case["probes"].items()
                 }
-                case_results.append({"name": case["name"], "scores": scores})
+                # Deliberately NOT a member of `scores`: `non_constant` reduces
+                # over that dict, so a fifth entry would change the value of a
+                # check the author's four probes are supposed to decide. It is
+                # also not one of the six checks at all - it asks a question.
+                permutation = case.get("permutation")
+                permutation_score = (
+                    bind_call(
+                        function,
+                        permutation,
+                        case["expected"],
+                        case.get("input_data"),
+                        case.get("metadata"),
+                    )
+                    if permutation is not None
+                    else None
+                )
+                case_results.append(
+                    {
+                        "name": case["name"],
+                        "scores": scores,
+                        "permutation_score": permutation_score,
+                    }
+                )
         print(
             json.dumps(
                 {
@@ -403,12 +465,27 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
                     f"case {index} score_mode must be one of: "
                     f"{', '.join(SCORE_MODES)}"
                 )
+            # What outcome classes this case is claimed to cover. Optional, so
+            # every existing matrix keeps working, and recorded verbatim when
+            # given: the attestation used to state only a verdict, which cannot
+            # be reviewed - a reader could see that someone looked, never what
+            # they looked at, and so never that a class was missing
+            # (traigent-first-run#99).
+            outcome_classes = raw_case.get("outcome_classes", [])
+            if not isinstance(outcome_classes, list) or not all(
+                isinstance(item, str) and item.strip() for item in outcome_classes
+            ):
+                raise ValueError(
+                    f"case {index} outcome_classes must be a list of non-empty "
+                    "strings naming what this case covers"
+                )
             case = {
                 "name": display_name,
                 "score_mode": score_mode,
                 "expected": raw_case["expected"],
                 "input_data": raw_case.get("input_data"),
                 "metadata": raw_case.get("metadata", {}),
+                "outcome_classes": [item.strip() for item in outcome_classes],
                 "probes": {
                     probe_name: probes[probe_name] for probe_name in PROBE_NAMES
                 },
@@ -417,7 +494,11 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
                 {
                     key: value
                     for key, value in case.items()
-                    if key not in {"name", "score_mode"}
+                    # `outcome_classes` joins name and score_mode here: two cases
+                    # with the same payload are the same case however they are
+                    # labelled, and letting a declared class distinguish them
+                    # would turn the duplicate guard off by writing a word.
+                    if key not in {"name", "score_mode", "outcome_classes"}
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -555,6 +636,18 @@ def main() -> int:
         print("--scorer must use FILE.py:FUNCTION.", file=sys.stderr)
         return 2
     absolute_scorer = f"{Path(scorer_file).resolve()}:{scorer_name}"
+    # Attached once, here, rather than inside each of the two case-building
+    # paths: one expected answer must not be able to acquire two permutations.
+    #
+    # Deterministic kinds only, and this is the load-bearing half of the gate.
+    # An LLM judge bills for every probe, so generating one automatically would
+    # spend the user's money on a check they never asked for - and the guide
+    # requires paid work to be approved in advance, not added by a tool. A judge
+    # therefore keeps exactly the four probes its author approved.
+    if args.kind == "deterministic":
+        for case in cases:
+            case["permutation"] = permuted_answer(case["expected"])
+
     request = {
         "scorer": absolute_scorer,
         "cases": cases,
@@ -626,19 +719,48 @@ def main() -> int:
     for configured_case, case in zip(cases, payload["cases"], strict=True):
         score_mode = configured_case["score_mode"]
         checks = calibration_checks(case["scores"], score_mode, thresholds)
-        case_results.append(
+        result = {
+            "name": case["name"],
+            "score_mode": score_mode,
+            "scores": case["scores"],
+            "checks": checks,
+            "passed": all(checks.values()),
+        }
+        # Reported beside the checks and deliberately outside `passed`. A
+        # permutation that scores well is not proof of a broken evaluator: for a
+        # genuinely order-free task - a set of returned ids, an unordered label
+        # list - accepting one is correct, and failing the run there would train
+        # authors to work around the check rather than answer it. So it asks,
+        # and the author answers something only they know.
+        permutation = configured_case.get("permutation")
+        if permutation is not None:
+            score = case.get("permutation_score")
+            result["permutation_probe"] = {
+                "probe": permutation,
+                "score": score,
+                # "Not distinguished" rather than "passed": the evaluator failed
+                # to separate a rearrangement of the expected answer from the
+                # answer itself.
+                "distinguished": score is not None
+                and score <= thresholds["bad_maximum"],
+            }
+        case_results.append(result)
+    if is_matrix:
+        declared = sorted(
             {
-                "name": case["name"],
-                "score_mode": score_mode,
-                "scores": case["scores"],
-                "checks": checks,
-                "passed": all(checks.values()),
+                item
+                for configured_case in cases
+                for item in configured_case.get("outcome_classes", [])
             }
         )
-    if is_matrix:
         result = {
             "cases": case_results,
             "coverage_note": MATRIX_COVERAGE_NOTE,
+            # What the author says these cases cover, so a reviewer can see an
+            # absent class. Empty is reported as empty rather than omitted: a
+            # matrix that names nothing is the state worth noticing, and a
+            # missing key reads as an older payload instead.
+            "outcome_classes_covered": declared,
             "thresholds": thresholds,
             "passed": all(case["passed"] for case in case_results),
         }
@@ -650,6 +772,28 @@ def main() -> int:
             "thresholds": thresholds,
             "passed": case_results[0]["passed"],
         }
+        # Single-case output is flat, so the probe has to be lifted out of the
+        # case it came from or it would be the one shape that silently drops it.
+        if "permutation_probe" in case_results[0]:
+            result["permutation_probe"] = case_results[0]["permutation_probe"]
+
+    # One list, both shapes, so neither can answer this differently.
+    unresolved = [
+        case
+        for case in case_results
+        if "permutation_probe" in case
+        and not case["permutation_probe"]["distinguished"]
+    ]
+    if unresolved:
+        result["permutation_question"] = (
+            "This evaluator does not distinguish a rearrangement of the expected "
+            "answer from the expected answer itself, in: "
+            + ", ".join(case["name"] for case in unresolved)
+            + ". That is correct for a task whose order genuinely does not "
+            "matter, and a broken ruler for one where it does - a swapped "
+            "label/value binding is a wrong answer that scores full marks. "
+            "Confirm which this task is before optimizing against it."
+        )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif is_matrix:
@@ -666,6 +810,12 @@ def main() -> int:
             print(f"{label:<16} {score:.4f}")
         failed = [name for name, passed in result["checks"].items() if not passed]
         print("PASS" if not failed else f"FAIL: {', '.join(failed)}")
+    # Printed for the human paths too. A question only a person can answer is
+    # worth nothing in a payload nobody reads, and this is exactly the run where
+    # the six checks come back green.
+    if not args.json and "permutation_question" in result:
+        print()
+        print(f"QUESTION: {result['permutation_question']}")
     return 0 if result["passed"] else 1
 
 

@@ -293,7 +293,18 @@ Follow this order:
    contracts and documentation, tests and fixtures, labels and examples, accepted outputs,
    rubrics, and failure reports. Record the semantic-coverage reviewer and evidence, materially
    distinct inputs, outcome classes, and rubric/schema branches, the mode and threshold rationale,
-   known gaps, and a `sufficient` or `ambiguous` verdict.
+   known gaps, and a `sufficient` or `ambiguous` verdict. Review against the outcome-class table in
+   `references/run-safety.md` rather than against a sense of having looked, and name the classes
+   each case covers in its `outcome_classes`, so the record says what was examined instead of that
+   someone examined it.
+
+   When `calibrate_evaluator.py` returns a `permutation_question`, put it to the user before any
+   paid run. It reports that the evaluator scores a rearrangement of an expected answer as well as
+   the answer itself - which is correct for a task whose order genuinely does not matter, and a
+   broken ruler for one where a swapped label/value binding is simply wrong. The six mechanical
+   checks cannot decide that and stay green either way; the user can decide it in one line. Do not
+   treat it as a failure, and do not skip it because the calibration passed - passing is the case
+   it exists for.
 2. If unresolved product-grading ambiguity would materially change which output is correct or how
    candidate configurations rank, ask exactly one product-grading question, explain the competing
    interpretations and affected decision, then stop and wait. Otherwise record that no material

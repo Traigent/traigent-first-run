@@ -172,6 +172,28 @@ Use this gate order:
    assistant perform and record the evidence-backed semantic-coverage review. Record the reviewer
    and evidence, materially distinct inputs, outcomes, and rubric/schema branches, mode and
    threshold rationale, known gaps, and a `sufficient` or `ambiguous` verdict.
+
+   Review against the list below, not against your own sense of having looked. The mechanical
+   checks say plainly that they are structural and that correctness rests on this review, which
+   means its coverage is whatever the author thought of on the day - strongest where they already
+   understood the task, and weakest on the outcome class they did not consider, which is exactly
+   where evaluator bugs live. Name the classes covered in each case's `outcome_classes`, so
+   `sufficient` records what was examined rather than that someone examined it, and an absent
+   class is visible to a reader instead of being invisible to everyone.
+
+   | If the answer is | Speak to |
+   |---|---|
+   | rows, sets, or lists | label/value binding, duplicate rows, ordering, empty result, partial overlap |
+   | numeric | tolerance edges, sign, units, formatting and rounding |
+   | a classification | near-miss labels, an absent label, case and whitespace |
+   | free text | omission, contradiction, added claims not in the input |
+   | structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
+
+   Binding is first because it is the one a token-comparison evaluator cannot see at all: an
+   answer that pairs every right value with the wrong key contains exactly the expected tokens.
+   `calibrate_evaluator.py` now probes that one automatically for deterministic evaluators and
+   asks about it, because it needs no understanding of the task - the rest of the list still
+   needs yours.
 2. If unresolved product-grading ambiguity would materially change correctness or candidate
    ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
    that no material ambiguity remains and continue without a generic semantic-review stop.
