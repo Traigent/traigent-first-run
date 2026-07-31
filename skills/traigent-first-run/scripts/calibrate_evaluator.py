@@ -241,23 +241,36 @@ def run_worker() -> int:
                 # over that dict, so a fifth entry would change the value of a
                 # check the author's four probes are supposed to decide. It is
                 # also not one of the six checks at all - it asks a question.
+                #
+                # Isolated, because this probe is the only input to the scorer
+                # the AUTHOR did not write. Plenty of correct scorers parse what
+                # they are given and raise on anything else, and an unguarded
+                # call let a generated probe fail the whole calibration - a run
+                # that passed before this existed, reported as
+                # "Evaluator execution failed: invalid literal for int()", which
+                # names the user's evaluator and never mentions that the input
+                # was ours. A probe that only asks a question must not be able
+                # to answer "your evaluator is broken" by crashing.
                 permutation = case.get("permutation")
-                permutation_score = (
-                    bind_call(
-                        function,
-                        permutation,
-                        case["expected"],
-                        case.get("input_data"),
-                        case.get("metadata"),
-                    )
-                    if permutation is not None
-                    else None
-                )
+                permutation_score = None
+                permutation_error = None
+                if permutation is not None:
+                    try:
+                        permutation_score = bind_call(
+                            function,
+                            permutation,
+                            case["expected"],
+                            case.get("input_data"),
+                            case.get("metadata"),
+                        )
+                    except Exception as error:  # noqa: BLE001 - probe, not a check
+                        permutation_error = f"{type(error).__name__}: {error}"
                 case_results.append(
                     {
                         "name": case["name"],
                         "scores": scores,
                         "permutation_score": permutation_score,
+                        "permutation_error": permutation_error,
                     }
                 )
         print(
@@ -735,14 +748,22 @@ def main() -> int:
         permutation = configured_case.get("permutation")
         if permutation is not None:
             score = case.get("permutation_score")
+            error = case.get("permutation_error")
             result["permutation_probe"] = {
                 "probe": permutation,
                 "score": score,
-                # "Not distinguished" rather than "passed": the evaluator failed
-                # to separate a rearrangement of the expected answer from the
-                # answer itself.
-                "distinguished": score is not None
-                and score <= thresholds["bad_maximum"],
+                "error": error,
+                # Three states, not two. "Not distinguished" rather than
+                # "failed": the evaluator did not separate a rearrangement of
+                # the expected answer from the answer itself. `None` is the
+                # third - the scorer refused the probe outright, which answers
+                # neither question, and calling that a pass or a failure would
+                # invent a result out of an exception.
+                "distinguished": (
+                    None
+                    if error is not None or score is None
+                    else score <= thresholds["bad_maximum"]
+                ),
             }
         case_results.append(result)
     if is_matrix:
@@ -778,11 +799,16 @@ def main() -> int:
             result["permutation_probe"] = case_results[0]["permutation_probe"]
 
     # One list, both shapes, so neither can answer this differently.
+    #
+    # `is False`, not `not`: `distinguished` is tri-state, and `not None` is
+    # True - so a probe the scorer REFUSED would have raised the "does not
+    # distinguish" question, which is a claim nothing established. Only a probe
+    # that actually scored, and scored well, asks anything.
     unresolved = [
         case
         for case in case_results
         if "permutation_probe" in case
-        and not case["permutation_probe"]["distinguished"]
+        and case["permutation_probe"]["distinguished"] is False
     ]
     if unresolved:
         result["permutation_question"] = (

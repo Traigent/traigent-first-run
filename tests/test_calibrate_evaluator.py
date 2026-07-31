@@ -1264,3 +1264,62 @@ class PermutationProbeTests(unittest.TestCase):
             )
         self.assertEqual(process.returncode, 2)
         self.assertIn("duplicates another case payload", process.stderr)
+
+    STRICT = (
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    def parse(s):\n"
+        "        rows = []\n"
+        "        for line in str(s).strip().splitlines():\n"
+        "            name, count = line.split()\n"
+        "            rows.append((name, int(count)))\n"
+        "        return rows\n"
+        "    return 1.0 if parse(output) == parse(expected) else 0.0\n"
+    )
+
+    def test_a_scorer_that_refuses_the_probe_does_not_fail_the_run(self) -> None:
+        """The probe is the only scorer input the author did not write.
+
+        Plenty of correct scorers parse what they are given and raise on
+        anything else. Unguarded, a generated probe failed the whole calibration
+        with "invalid literal for int()" - a run that passed before this
+        existed, reported against the user's evaluator with no hint the input
+        was ours.
+        """
+        cases = [
+            {
+                "name": "counts",
+                "expected": "France 2\nItaly 1",
+                "score_mode": "binary",
+                "probes": {
+                    "good": "France 2\nItaly 1",
+                    "equivalent_good": "France 2\nItaly 1",
+                    "partial": "France 3",
+                    "bad": "Spain 9",
+                },
+            },
+            {
+                "name": "more",
+                "expected": "Spain 4\nPeru 5",
+                "score_mode": "binary",
+                "probes": {
+                    "good": "Spain 4\nPeru 5",
+                    "equivalent_good": "Spain 4\nPeru 5",
+                    "partial": "Spain 9",
+                    "bad": "Chile 1",
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, self.STRICT, cases=cases)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(payload["passed"], "the author's own probes still decide")
+        for case in payload["cases"]:
+            with self.subTest(case=case["name"]):
+                probe = case["permutation_probe"]
+                self.assertIsNone(probe["score"])
+                self.assertIsNotNone(probe["error"])
+                # Tri-state: the scorer refused, which answers neither question.
+                self.assertIsNone(probe["distinguished"])
+        # `not None` is True, so a two-state filter would have asked the
+        # "does not distinguish" question about a probe that never scored.
+        self.assertNotIn("permutation_question", payload)
