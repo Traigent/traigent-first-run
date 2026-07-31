@@ -2520,3 +2520,83 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             unicode_ok=False,
         )
         self.assertIn("examples to compare on", card)
+
+
+class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
+    """A card line is a claim, and a claim has to be one the scorer can make.
+
+    "The evaluator was not calibrated" is a statement about the user's project.
+    The only thing establishing it was that no calibration payload reached this
+    scorer - which is also true of an evaluator calibrated last week, or
+    calibrated in a run whose JSON nobody passed to `--calibration`.
+
+    This module already draws the distinction correctly elsewhere: "no rows
+    carry a difficulty tag - spread is unverified, not absent".
+    """
+
+    def calibration_line(self, facts) -> str:
+        pillar, _ = MODULE.score_evaluation(facts)
+        return next(s.evidence for s in pillar.subscores if s.name == "calibration")
+
+    def test_an_absent_payload_is_reported_as_an_absent_payload(self) -> None:
+        facts = MODULE.evaluation_facts_from_calibration(
+            None, method="execution", task_kind="code-sql"
+        )
+        line = self.calibration_line(facts)
+        self.assertIn("provided", line)
+        self.assertNotIn("was not calibrated", line)
+
+    def test_a_calibration_that_ran_is_never_called_absent(self) -> None:
+        """The case that made the old wording self-contradicting.
+
+        A calibration that timed out emits a payload with no cases, so the card
+        said the evaluator had never been calibrated beside an
+        `evaluator-timeout` cap - which can only fire when it ran.
+        """
+        facts = MODULE.evaluation_facts_from_calibration(
+            {"timed_out": True, "cases": [], "passed": False},
+            method="llm-judge-rubric",
+            task_kind="free-text",
+        )
+        pillar, caps = MODULE.score_evaluation(facts)
+        line = next(s.evidence for s in pillar.subscores if s.name == "calibration")
+        self.assertIn("evaluator-timeout", [cap.condition for cap in caps])
+        self.assertIn("did not finish", line)
+        self.assertNotIn("was not calibrated", line)
+
+    def test_ran_with_no_checks_is_distinct_from_never_ran(self) -> None:
+        """Three states, three sentences - collapsing them loses the fact."""
+        supplied_empty = self.calibration_line(
+            MODULE.evaluation_facts_from_calibration(
+                {"cases": [], "passed": False}, method="execution", task_kind="code-sql"
+            )
+        )
+        never_ran = self.calibration_line(
+            MODULE.evaluation_facts_from_calibration(
+                None, method="execution", task_kind="code-sql"
+            )
+        )
+        self.assertIn("ran but reported no checks", supplied_empty)
+        self.assertNotEqual(supplied_empty, never_ran)
+
+    def test_no_unmeasured_line_claims_something_was_not_done(self) -> None:
+        """The class, not the instance: an unmeasured check reports its input.
+
+        An unmeasured check knows one thing - that it had nothing to read. Any
+        wording asserting the user did not do something is a claim the absence
+        of an input cannot support.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        forbidden = ("was not calibrated", "has not been calibrated")
+        for node in ast.walk(ast.parse(source)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "SubScore"
+                and len(node.args) >= 5
+                and isinstance(node.args[4], ast.Constant)
+            ):
+                evidence = str(node.args[4].value)
+                for phrase in forbidden:
+                    with self.subTest(evidence=evidence[:40]):
+                        self.assertNotIn(phrase, evidence)

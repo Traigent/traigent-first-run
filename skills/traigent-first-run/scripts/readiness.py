@@ -566,6 +566,12 @@ class EvaluationFacts:
     method: str | None = None
     task_kind: str | None = None
     calibration_present: bool = False
+    # Whether a calibration payload reached the scorer at all, which is a
+    # different fact from whether it carried checks. Without it the scorer can
+    # only see "no checks" and cannot tell a calibration that never ran from
+    # one that ran and produced none - and it was reporting the first of those
+    # as though it had established it.
+    calibration_supplied: bool = False
     checks: tuple[dict[str, bool], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
@@ -1332,11 +1338,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 )
             )
     else:
-        subs.append(
-            SubScore(
-                "calibration", 0.0, 40.0, False, "the evaluator was not calibrated"
-            )
-        )
+        # Say what this score can see, not what it infers about the world.
+        #
+        # "The evaluator was not calibrated" is a claim about the user's
+        # project, and the only thing establishing it was that no calibration
+        # payload reached this scorer. An evaluator calibrated last week, or in
+        # a run whose JSON nobody passed to `--calibration`, produced it too.
+        #
+        # It could also be flatly self-contradicting: a calibration that RAN and
+        # timed out emits a payload with no cases, so the same card reported
+        # "the evaluator was not calibrated" beside an `evaluator-timeout` cap,
+        # which can only fire when calibration ran.
+        #
+        # This module already draws the distinction correctly a hundred lines
+        # away - "spread is unverified, not absent". This was the one place it
+        # did not.
+        if facts.timed_out:
+            evidence = "calibration ran but did not finish"
+        elif facts.calibration_supplied:
+            evidence = "calibration ran but reported no checks"
+        else:
+            evidence = "no calibration result was provided to this score"
+        subs.append(SubScore("calibration", 0.0, 40.0, False, evidence))
 
     profile = METHOD_PROFILES.get(facts.method or "")
     if profile and facts.task_kind:
@@ -2302,6 +2325,9 @@ def evaluation_facts_from_calibration(
         method=method,
         task_kind=task_kind,
         calibration_present=bool(checks),
+        # A payload arrived, whatever it turned out to contain. Reaching this
+        # line is the proof - `payload is None` returned above.
+        calibration_supplied=True,
         checks=tuple(checks),
         probe_scores=tuple(probes),
         timed_out=bool(payload.get("timed_out")),
