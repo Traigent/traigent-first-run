@@ -14,6 +14,29 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ## Environment and privacy
 
+### Why the install sits where it does
+
+It is the slowest unattended step in the run and it overlaps nothing: stage 4 runs every
+standard-library-only check *before* the environment exists, and both stage-5 steps after the
+install need the installed SDK. There is nothing left to run beside it.
+
+Moving it earlier is the obvious way to win that time back, and is deliberately not done. Two
+things have to be true before an install is the right thing to do, and both are established by the
+work that precedes it. The target has to be resolved - starting the moment *some* environment is
+found is how dependencies land in the wrong project, and a tree with several environments is
+exactly where that stays invisible. And the run has to be one worth installing for: ahead of stage
+4 nothing has shown the project is scoreable at all, and in the zero-anchor opening the user has
+not chosen the task, so an early install spends their disk and time on a walkthrough that may never
+be run. A minute of honest waiting is the cheaper of the two.
+
+Not a sub-agent either, and not one reached for to make the wait feel shorter. There is nothing to
+run beside it, so a second agent would only wait too - and it is one command with an exit code and
+a diagnostic on failure, which has to reach the reader intact: a summary of a resolver conflict is
+not a resolver conflict. Nothing in this guide requires sub-agents, which not every assistant it
+targets provides.
+
+### Rules
+
 - Reuse an existing compatible isolated environment. When none exists, use the conventional
   `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
 - Create and then activate the environment before installing: `source .venv/bin/activate` on
