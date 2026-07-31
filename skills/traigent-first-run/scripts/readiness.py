@@ -1906,7 +1906,7 @@ def render_card(
             # raises. Rendering a card must not be able to fail on a shape the
             # scorer itself produces.
             pass
-        elif len(distinct) == 1:
+        elif len(pillar.subscores) > 1 and len(distinct) == 1:
             # One fact, so one line. Naming the checks here would join three
             # labels into a sentence longer than the finding, which is how the
             # first attempt at this made an unreadable pillar out of a readable

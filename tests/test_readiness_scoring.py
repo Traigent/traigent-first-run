@@ -2500,3 +2500,23 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             unicode_ok=False,
         )
         self.assertEqual(card.count("no knobs declared"), 1)
+
+    def test_a_single_check_keeps_its_label(self) -> None:
+        """Collapsing needs repetition; one check has none to collapse.
+
+        A pillar with one check also has exactly one distinct evidence string,
+        so the naive rule swallowed its label and printed the bare finding -
+        losing the only thing that said which question it answered.
+        """
+        pillar = MODULE.Pillar(
+            name="dataset",
+            score=50,
+            confidence=1.0,
+            subscores=(MODULE.SubScore("power", 1.0, 25.0, True, "some evidence"),),
+        )
+        card = MODULE.render_card(
+            MODULE.aggregate([pillar], [], (), dict(MODULE.DEFAULT_WEIGHTS)),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+        self.assertIn("examples to compare on", card)
