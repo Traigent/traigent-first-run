@@ -461,6 +461,14 @@ class ReadinessScore:
     # The one thing to do next, from ACTION_KINDS. Per-cap remedies say what
     # each condition asks for; this says which of them to do FIRST, which is the
     # question a reader actually has when several fired.
+    #
+    # Named `recommended_action` and not `action`, because `--json` emits two
+    # different payloads and the other one already has an `action`:
+    # `ReadinessPlan.action` is a PROSE sentence for a human, this is a slug from
+    # a closed set for a machine. Same flag, same word, different type - so they
+    # are deliberately not the same key, and must not be unified into one later.
+    # A plan payload carries no `schema_version`, which is how a consumer tells
+    # the two apart.
     recommended_action: str
     confidence: float
     band_limited_by_confidence: bool
