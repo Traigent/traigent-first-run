@@ -3095,10 +3095,43 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
         Nothing here is duplicated - measured at nine repeated sentences across
         every document - so this is genuine content, and the honest control is a
-        budget rather than a de-duplication pass. The assistant loads all of it
-        before reading a line of the user's project.
+        budget rather than a de-duplication pass.
+
+        Two numbers, because this package is progressively disclosed and one
+        number described it wrongly. SKILL.md says "Load each reference when its
+        stage begins", and sdk-execution.md is "only before writing the
+        wrapper" - so the claim that once stood here, that the assistant loads
+        all of it before reading a line of the user's project, was false about
+        the design it was guarding. It is the shape of contradiction these tests
+        exist to catch, inside the test that counts them.
+
+        RESIDENT is what cannot leave: the entry documents and the flow. It is
+        in context from the first turn to the last, so every rule in it competes
+        with the user's project for attention the whole way, and it is the
+        number that governs drift.
+
+        TOTAL is the worst case - a run that reaches every stage, which a full
+        guided run does. It bounds how much guidance can accumulate behind the
+        mandates before the late, expensive stages, which is where an
+        instruction quietly stops being followed.
         """
-        total = sum(len(text) for text in self.guidance().values())
+        documents = self.guidance()
+        # Resident = read up front and never dropped. The references are loaded
+        # per stage and can leave; these cannot.
+        resident = sum(
+            len(text)
+            for name, text in documents.items()
+            if name in {"GUIDE.md", "SKILL.md"}
+        )
+        self.assertLess(
+            resident,
+            75_000,
+            f"resident guidance is {resident / 1024:.0f} KB - the part in "
+            "context for the whole run, competing with the user's project from "
+            "the first turn. Stage detail belongs in the reference for that "
+            "stage, which the run can load and leave.",
+        )
+        total = sum(len(text) for text in documents.values())
         # 220 KB, and NOT a relaxation of the 210 that stood here. That number
         # was measured over six documents; this one is measured over eight,
         # because GUIDE.md and the run-plan template were missing from the
