@@ -8,6 +8,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,15 +142,22 @@ class BandAndAggregationTests(unittest.TestCase):
             MODULE.combine(name, [MODULE.SubScore("x", 10.0, 10.0, True, "")])
             for name in ("agent", "dataset", "evaluation")
         ]
+        # Real condition ids, alphabetically reversed against their ceilings, so
+        # this still proves ordering is by ceiling and not by name. Throwaway
+        # slugs no longer construct: every cap must name a remedy, and a made-up
+        # condition has none.
         caps = [
-            MODULE.Cap("z-high", 60, "z"),
-            MODULE.Cap("a-low", 25, "a"),
+            MODULE.Cap("dataset-fully-synthetic", 65, "z"),
+            MODULE.Cap("evaluator-invalid", 25, "a"),
         ]
         score = MODULE.aggregate(pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS))
         self.assertEqual(score.weighted_average, 100)
         self.assertEqual(score.overall, 25)
         self.assertEqual(score.status, "BLOCKED")
-        self.assertEqual([cap.condition for cap in score.caps], ["a-low", "z-high"])
+        self.assertEqual(
+            [cap.condition for cap in score.caps],
+            ["evaluator-invalid", "dataset-fully-synthetic"],
+        )
 
     def test_weighted_average_is_retained_so_a_cap_is_never_hidden(self) -> None:
         pillars = [
@@ -157,7 +165,10 @@ class BandAndAggregationTests(unittest.TestCase):
             for name in ("agent", "dataset", "evaluation")
         ]
         score = MODULE.aggregate(
-            pillars, [MODULE.Cap("c", 30, "r")], [], dict(MODULE.DEFAULT_WEIGHTS)
+            pillars,
+            [MODULE.Cap("dataset-no-expected-outputs", 30, "r")],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
         )
         self.assertEqual(score.overall, 30)
         self.assertEqual(score.weighted_average, 100)
@@ -2048,6 +2059,113 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_an_unknown_size_is_not_capped(self) -> None:
         """No size reported is not the same claim as a small size."""
         self.assertIsNone(MODULE.power_ceiling(None))
+
+
+class TheRemedyIsMachineReadableTests(unittest.TestCase):
+    """traigent-first-run#98 - the payload named the problem, never the fix."""
+
+    def test_every_condition_the_scorer_can_raise_declares_a_remedy(self) -> None:
+        """Read off the module, not off a list a reader has to keep in step.
+
+        A hand-maintained expected list would pass while a newly added cap went
+        unmapped, because the same person updates both.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        built = {
+            node.args[0].value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Cap"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        }
+        self.assertTrue(built, "found no Cap construction to check")
+        self.assertEqual(
+            built - set(MODULE.ACTION_FOR_CONDITION),
+            set(),
+            "a cap can be raised whose remedy nothing declares",
+        )
+        # And the other direction: a mapping nothing raises is dead, and dead
+        # vocabulary is what a consumer matches against and never sees.
+        self.assertEqual(
+            set(MODULE.ACTION_FOR_CONDITION) - built,
+            set(),
+            "a remedy is declared for a condition the scorer never raises",
+        )
+
+    def test_an_unmapped_condition_cannot_be_constructed(self) -> None:
+        """Fail closed: a new cap without a remedy raises where it is written."""
+        with self.assertRaises(ValueError) as caught:
+            MODULE.Cap("a-condition-nobody-mapped", 50, "reason")
+        self.assertIn("ACTION_FOR_CONDITION", str(caught.exception))
+
+    def test_the_vocabulary_is_closed(self) -> None:
+        """Every emitted remedy is a member, including `proceed`."""
+        for condition in MODULE.ACTION_FOR_CONDITION:
+            cap = MODULE.Cap(condition, 50, "reason")
+            self.assertIn(cap.action_kind, MODULE.ACTION_KINDS)
+        self.assertIn(MODULE.PROCEED, MODULE.ACTION_KINDS)
+
+    def test_one_condition_cannot_carry_two_remedies(self) -> None:
+        """The reason the table is keyed by condition rather than per call site.
+
+        `dataset-fully-synthetic` is raised from two places and
+        `agent-no-varying-knobs` from three; a remedy passed at each site is a
+        chance for two of them to disagree about the same condition.
+        """
+        for condition in ("dataset-fully-synthetic", "agent-no-varying-knobs"):
+            with self.subTest(condition=condition):
+                kinds = {
+                    MODULE.Cap(condition, ceiling, "reason").action_kind
+                    for ceiling in (45, 65, 70)
+                }
+                self.assertEqual(len(kinds), 1)
+
+    def test_only_a_blocking_cap_displaces_proceed(self) -> None:
+        """An advisory ceiling stops nothing, so it recommends nothing."""
+        pillars = [
+            MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+
+        def action_for(caps):
+            return MODULE.aggregate(
+                pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS)
+            ).recommended_action
+
+        advisory = MODULE.power_ceiling(15)
+        self.assertFalse(advisory.blocks)
+        self.assertEqual(action_for([]), MODULE.PROCEED)
+        self.assertEqual(action_for([advisory]), MODULE.PROCEED)
+
+        # Among blocking caps the lowest ceiling wins - the one setting the
+        # score - not the first one supplied and not the alphabetical first.
+        low = MODULE.Cap("evaluator-invalid", 25, "broken")
+        high = MODULE.Cap("dataset-tune-holdout-overlap", 50, "overlapping")
+        self.assertEqual(action_for([high, low, advisory]), "repair-evaluator")
+        self.assertEqual(action_for([low, high]), "repair-evaluator")
+
+    def test_the_payload_carries_both_forms(self) -> None:
+        """The JSON a consumer reads, not the objects behind it."""
+        pillars = [
+            MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            [MODULE.Cap("evaluator-invalid", 25, "broken")],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        payload = json.loads(json.dumps(asdict(score), sort_keys=True))
+        self.assertEqual(payload["recommended_action"], "repair-evaluator")
+        self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
+        self.assertEqual(
+            payload["schema_version"],
+            2,
+            "a consumer must be able to tell 'emits no remedy' from 'has none'",
+        )
 
 
 class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):

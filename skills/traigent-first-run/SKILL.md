@@ -363,6 +363,13 @@ do not run paid optimization against it. Offer to repair and revalidate it, paus
 user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
 "continue as is" as permission to optimize against a broken grading signal.
 
+These branches are the policy, and `readiness.py` now emits the same decision in machine-readable
+form so a consumer does not have to re-derive it: every cap carries an `action_kind` from a closed
+vocabulary, and the payload carries one `recommended_action` for the run - `proceed` unless a
+blocking cap fires, otherwise the remedy of the lowest-ceiling blocking cap. Keep presenting the
+reason in the user's language; the vocabulary is for the machines reading the JSON, and belongs in
+user-facing lines no more than the condition ids do.
+
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id:
 
