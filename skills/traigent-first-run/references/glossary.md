@@ -147,6 +147,55 @@ Pareto frontier (optimal frontier)
   Plain: the set of best trade-offs - each one is a config where you cannot get
   more accuracy without paying more cost or latency.
 
+The lines under each pillar on the card
+  Plain: each line is one question the score asked about your setup, with what
+  it found. They are the things a first run can check for free, on your own
+  machine, before anything is paid for.
+  Dataset:
+    answers to score against   - how many rows carry an expected answer at all.
+                                 A row without one cannot say whether a
+                                 configuration got it right.
+    examples to compare on     - how many rows the two runs can actually be
+                                 compared on. Small numbers cannot separate a
+                                 real improvement from luck.
+    range of difficulty        - whether the rows span easy to hard. If every
+                                 row is easy, every configuration looks equally
+                                 good.
+    repeated or dominant answers - whether the same input or the same expected
+                                 answer keeps recurring, which lets a lazy
+                                 configuration score well by guessing it.
+    where the rows came from   - whether the data was collected or written by a
+                                 model. Both are usable; only one is evidence
+                                 about production.
+  Evaluation:
+    right kind of check for this output - whether the grading method suits the
+                                 kind of answer your agent produces.
+    same answer every time     - whether re-grading the same output gives the
+                                 same score. An evaluator that drifts makes
+                                 every comparison noisier.
+    checked on known-good and known-bad - whether the evaluator was tried
+                                 against answers already known to be right and
+                                 wrong. Until it is, nothing establishes it can
+                                 tell them apart.
+    separates good answers from bad - how far apart it scored those known-good
+                                 and known-bad answers. A narrow gap means the
+                                 grade barely reflects quality.
+  Agent:
+    settings that vary         - how many of your agent's settings the search
+                                 has more than one value for. One value is not
+                                 a search.
+    how widely each setting varies - whether those values cover a useful part of
+                                 the setting's range, rather than three points
+                                 next to each other.
+    the settings that matter most - whether the settings known to move results
+                                 for this kind of agent are among the ones being
+                                 tried.
+  Why two of them are usually blank at the start: "checked on known-good and
+  known-bad" and "separates good answers from bad" both come from calibrating
+  the evaluator, which happens later in the run. At the opening score they have
+  not been done yet, so they are reported as not measured rather than as zero -
+  they are not something you were supposed to bring.
+
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
   to be optimized, broken into three parts: your dataset, your evaluator, and

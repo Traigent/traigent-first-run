@@ -2387,3 +2387,116 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
+    """The card is the most-read artifact and it printed internal check ids.
+
+    SKILL.md: "Keep internal check IDs, SDK internals, and optimization jargon
+    out of user-facing progress." Cap condition ids were kept out; the twelve
+    sub-score names were printed verbatim, and nine of them appeared in no
+    glossary entry - so a reader who wanted to know what "power" meant had
+    nowhere to look it up.
+    """
+
+    def all_check_names(self) -> set[str]:
+        """Read off the module, so a new check cannot be added unnamed."""
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        return {
+            node.args[0].value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "SubScore"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        }
+
+    def test_every_check_has_a_plain_language_name(self) -> None:
+        names = self.all_check_names()
+        self.assertTrue(names, "found no SubScore to check")
+        self.assertEqual(
+            names - set(MODULE.CHECK_DISPLAY_NAMES),
+            set(),
+            "a check would print its internal name on the card",
+        )
+        # And nothing named that is never printed: a dead entry reads as
+        # coverage while translating nothing.
+        self.assertEqual(set(MODULE.CHECK_DISPLAY_NAMES) - names, set())
+
+    def test_no_internal_check_name_reaches_the_card(self) -> None:
+        """The rule, tested on the artifact rather than on the table."""
+        pillars = [
+            MODULE.Pillar(
+                name=name,
+                score=50,
+                confidence=1.0,
+                subscores=tuple(
+                    MODULE.SubScore(check, 1.0, 2.0, True, f"evidence for {index}")
+                    for index, check in enumerate(sorted(self.all_check_names()))
+                ),
+            )
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        card = MODULE.render_card(
+            MODULE.aggregate(pillars, [], (), dict(MODULE.DEFAULT_WEIGHTS)),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+        for check, shown in MODULE.CHECK_DISPLAY_NAMES.items():
+            with self.subTest(check=check):
+                self.assertIn(shown, card)
+                # Skipped when the internal name is a word inside its own plain
+                # label - "range of difficulty" contains "difficulty", and
+                # forbidding that would forbid the clearest wording available.
+                # What must not appear is the internal name standing alone as a
+                # label, which is what the column check below tests.
+                if check not in shown:
+                    self.assertNotIn(check, card)
+        labels = [
+            line.split("  ")[0].strip(" .!?OK")
+            for line in card.splitlines()
+            if line.startswith("    ")
+        ]
+        self.assertEqual(
+            [label for label in labels if label in MODULE.CHECK_DISPLAY_NAMES],
+            [],
+            "an internal check name is printed as a label",
+        )
+
+    def test_the_glossary_explains_every_line_the_card_prints(self) -> None:
+        """So there is a prepared answer when the user asks what one means."""
+        glossary = (
+            Path(MODULE.__file__).parents[1] / "references" / "glossary.md"
+        ).read_text(encoding="utf-8")
+        flat = " ".join(glossary.split())
+        for shown in sorted(set(MODULE.CHECK_DISPLAY_NAMES.values())):
+            with self.subTest(line=shown):
+                self.assertIn(
+                    shown,
+                    flat,
+                    f"the card prints '{shown}' and the glossary does not "
+                    "explain it, so the assistant has nothing to answer with",
+                )
+
+    def test_one_fact_prints_as_one_line(self) -> None:
+        """An agent with no config space produced three identical rows.
+
+        One fact, three chances to read it as three separate things to fix.
+        """
+        pillar = MODULE.Pillar(
+            name="agent",
+            score=0,
+            confidence=0.35,
+            subscores=(
+                MODULE.SubScore("coverage", 0.0, 25.0, False, "no knobs declared"),
+                MODULE.SubScore("knob-count", 0.0, 35.0, True, "no knobs declared"),
+                MODULE.SubScore("variation", 0.0, 40.0, False, "no knobs declared"),
+            ),
+        )
+        card = MODULE.render_card(
+            MODULE.aggregate([pillar], [], (), dict(MODULE.DEFAULT_WEIGHTS)),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+        self.assertEqual(card.count("no knobs declared"), 1)

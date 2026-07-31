@@ -409,6 +409,51 @@ class Cap:
         object.__setattr__(self, "action_kind", kind)
 
 
+# What each check is called on the card.
+#
+# The keys are this module's own vocabulary and stay that way in `--json`,
+# where the reader is a machine and a stable identifier is the point. The
+# values are for the card, where the reader is someone running their first
+# optimization and "probe-spread" is not a phrase they have met.
+#
+# This is the guide's own rule applied to its most-read artifact: "Keep
+# internal check IDs, SDK internals, and optimization jargon out of user-facing
+# progress" (SKILL.md). Cap condition ids were already kept out; these twelve
+# were printed verbatim, and nine of them appeared in no glossary entry, so a
+# reader who wanted to know what "power" meant had nowhere to look.
+#
+# Each is phrased as the question the check answers, so the line reads as a
+# finding rather than a category.
+CHECK_DISPLAY_NAMES: dict[str, str] = {
+    # dataset
+    "labels": "answers to score against",
+    "power": "examples to compare on",
+    "difficulty": "range of difficulty",
+    "diversity": "repeated or dominant answers",
+    "provenance": "where the rows came from",
+    # evaluation
+    "calibration": "checked on known-good and known-bad",
+    "task-fit": "right kind of check for this output",
+    "reproducibility": "same answer every time",
+    "probe-spread": "separates good answers from bad",
+    # agent
+    "knob-count": "settings that vary",
+    "variation": "how widely each setting varies",
+    "coverage": "the settings that matter most",
+}
+
+
+def display_name(check: str) -> str:
+    """The card's name for a check, falling back to the internal one.
+
+    Falls back rather than raising: a missing entry costs a reader one obscure
+    word, while a scorer that refuses to render its own card costs them the
+    result. A test keeps the table complete, which is the right place for that
+    to fail - in the author's run, not the user's.
+    """
+    return CHECK_DISPLAY_NAMES.get(check, check)
+
+
 def binds(cap: Cap, overall: int) -> bool:
     """Whether this cap's ceiling is the one actually holding the score down.
 
@@ -1848,8 +1893,36 @@ def render_card(
             f"  {pillar.name.upper():<11} {colour}{bar(pillar.score, unicode_ok=unicode_ok)}"
             f"{palette.reset}{headline_suffix}"
         )
-        for sub in pillar.subscores:
-            lines.append(f"    {marker(sub, unicode_ok)} {sub.name:<16} {sub.evidence}")
+        # Several checks in a pillar can rest on one fact, and printing it once
+        # per check reads as several findings. An agent with no config-space
+        # document produced three rows all saying "no knobs declared" - one
+        # fact, three chances for a reader to think two of them are something
+        # else they must also fix.
+        distinct = {sub.evidence for sub in pillar.subscores}
+        if not pillar.subscores:
+            # A pillar can carry no checks at all - `aggregate` accepts one and
+            # several callers build them. The old loop was a no-op there; the
+            # column-width calculation below is not, and `max()` of nothing
+            # raises. Rendering a card must not be able to fail on a shape the
+            # scorer itself produces.
+            pass
+        elif len(distinct) == 1:
+            # One fact, so one line. Naming the checks here would join three
+            # labels into a sentence longer than the finding, which is how the
+            # first attempt at this made an unreadable pillar out of a readable
+            # one - the evidence IS the finding when nothing distinguishes them.
+            worst = min(pillar.subscores, key=lambda sub: (sub.measured, sub.value))
+            lines.append(f"    {marker(worst, unicode_ok)} {distinct.pop()}")
+        else:
+            # Width from the labels actually present, not a constant: these are
+            # phrases now, and a fixed column either wraps the long ones or
+            # pads every short one to the width of the longest name in the file.
+            width = max(len(display_name(sub.name)) for sub in pillar.subscores)
+            for sub in pillar.subscores:
+                label = display_name(sub.name)
+                lines.append(
+                    f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
+                )
         lines.append("")
     if score.caps:
         for cap in score.caps:
