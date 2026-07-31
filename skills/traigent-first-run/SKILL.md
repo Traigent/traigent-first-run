@@ -70,7 +70,7 @@ approval.
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
-| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, proceed; into one that already existed, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
+| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
 | Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, and unrelated keys; append only missing selected-provider and Traigent key names with blank values. Before opening it, require mode `0600` on POSIX, then stop once for local secret entry. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
@@ -426,12 +426,17 @@ Only after the standard-library-only component checks:
 
    - **Creating one** - name the full path and proceed. Nothing of the user's is being changed, and
      an approval for a directory this run is about to make is a stop that buys the reader nothing.
-   - **Adopting an environment that already existed** - name the full path, name what will be
+   - **Adopting an environment that has other dependents** - name the full path, name what will be
      installed into it, and get one confirmation first. This is the one step here that modifies
      something the user built: a version resolution inside their environment can move a package
      their other work depends on, and that is not reversible by deleting a directory we created.
      Offer creating a separate `.venv-traigent` as the alternative in the same breath, so declining
      costs them nothing.
+
+     Other dependents, not merely "already there" - the risk being confirmed is the one that only
+     exists when something else relies on that environment. An environment holding nothing but
+     this walkthrough's own pinned set has none, which is what a second run of this guide finds,
+     and asking again there would charge a stop for a question already answered.
    - **More than one compatible candidate, or the only candidate sits outside the project root** -
      that is a genuine choice, and it gets the same one-question stop as a choice between agent
      candidates. Recommend one, say why, and list the others by path.
@@ -443,19 +448,27 @@ Only after the standard-library-only component checks:
    compatible exact declarations, or otherwise the exact pins in
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
 
-   This install is the slowest unattended step in the run, so it may proceed in the background
-   while remaining local inspection continues - but only into an environment **this run created**.
-   Never start an install into an environment that already existed before its confirmation above
-   has been answered, and never start one before the target is resolved. Resolving the target is
-   what inspection is for: beginning an install the moment some environment is found is how the
-   dependencies land in the wrong project, and a tree with several environments is exactly the tree
-   where that is invisible until much later.
+   This is the slowest unattended step in the run, and it does not overlap anything, because by
+   the time it starts there is nothing local left to overlap: stage 4 runs every
+   standard-library-only check *before* the environment exists, and both steps below need the
+   installed SDK. Say what is happening rather than going quiet, and do not present the wait as
+   though work were proceeding beside it.
 
-   Do not delegate this to a sub-agent. It is one command with an exit code and a diagnostic on
-   failure, and that diagnostic has to reach the reader intact - a summary of a resolver conflict
-   is not a resolver conflict. Backgrounding is the mechanism for overlapping it; where the
-   assistant cannot background a command, run it in the foreground and say what is happening.
-   Nothing in this guide requires sub-agents, which not every assistant it targets provides.
+   Moving it earlier is the obvious way to win that time back, and it is deliberately not done.
+   Two things have to be true before an install is the right thing to do, and both are established
+   by the work that precedes it. The target has to be resolved - starting the moment *some*
+   environment is found is how dependencies land in the wrong project, and a tree with several
+   environments is exactly where that stays invisible. And the run has to be one worth installing
+   for: ahead of stage 4 nothing has yet shown the project is scoreable at all, and in the
+   zero-anchor opening the user has not chosen the task, so an early install spends the user's
+   disk and time on a walkthrough that may never be run. A minute of honest waiting is the cheaper
+   of the two.
+
+   Do not delegate this to a sub-agent, and do not reach for one to make the wait feel shorter.
+   There is nothing to run beside it, so a second agent would only wait too - and it is one
+   command with an exit code and a diagnostic on failure, which has to reach the reader intact:
+   a summary of a resolver conflict is not a resolver conflict. Nothing in this guide requires
+   sub-agents, which not every assistant it targets provides.
 4. Verify the installed SDK's capabilities and public signatures instead of relying on a
    hardcoded "current" version statement. Use its public dataset validator/loader and construct the
    wrapper through its public decorator and evaluation models so the installed SDK owns

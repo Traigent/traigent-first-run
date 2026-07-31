@@ -47,7 +47,8 @@ discovery. Stop only for:
 
 - A genuine choice between multiple agent candidates, or between multiple existing environments to
   install into.
-- Installing into an environment you already had, rather than one created for this run.
+- Installing into an environment other work of yours depends on, rather than one created for this
+  run or holding only a previous walkthrough's packages.
 - One task-intent question when nothing anchors the walkthrough.
 - Secrets that must be pasted into a preserved or newly created owner-only local `.env`.
 - Paid/provider calls or private-data egress.
@@ -59,9 +60,9 @@ A dependency install may proceed without another approval only when it is confin
 environment this run created, uses the exact packages and versions declared at the top level plus
 their package-declared dependencies, fetches package artifacts only, and permits no
 project/provider/Traigent code execution or private-data transfer. Installing into an environment
-that already existed is confirmed once first: the other four conditions bound what is installed,
-and none of them bounds what a resolution can move inside an environment you built for something
-else.
+that other work depends on is confirmed once first: the other four conditions bound what is
+installed, and none of them bounds what a resolution can move inside an environment you built for
+something else.
 A project without compatible exact declarations uses the skill's pinned first-run requirements;
 never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,
