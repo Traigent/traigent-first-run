@@ -313,27 +313,11 @@ Follow this order:
    judgment-dependent change and obtain the explicit approval required by the action table.
 
    A *diagnosed degenerate reference is not ambiguity* and does not qualify for that question.
-   When a real gold scores a right and a wrong answer identically - empty, constant, or matching
-   nothing because of a leading space or a case-sensitive comparison - there are no competing
-   interpretations to put to the user: no configuration can earn that row, so it measures nothing
-   about any of them. Report it and continue on the reliably-scoreable rows, which is what
-   `references/evaluation-and-dataset.md` already requires - name the count and the share, and
-   quote the result on the subset that can actually be scored. Record the excluded row ids, and
-   report them again in the closing report, so the run can be repeated exactly. That recording is
-   unconditional: the bounded first-run subset records its own ids, but it is only drawn above
-   about 100 rows, so on the small datasets where a handful of degenerate golds matters most it
-   would leave nothing behind at all. Do not offer
-   scoring the full set as an equal option: those rows hand free points to any configuration that
-   emits valid-but-empty output, so including them biases the ranking toward bad configurations,
-   and a menu that lists a known-bad choice beside the right one is not a real question.
-
-   Two conditions bound this. What remains must still be enough for the scorer to call the
-   comparison a measurement rather than a wiring check - the same floor the card itself names -
-   and the degenerate rows must be a minority of the set. When
-   either fails, the exclusion is the story rather than a footnote - it changes what the run
-   measures - so stop and ask instead. Repairing a gold is a different act in any case: it edits
-   the user's expected answers, so it stays behind the explicit approval the action table requires
-   and is offered only if the user asks for it.
+   Report it, continue on the reliably-scoreable rows, and record the excluded row ids for the
+   closing report. Do not offer scoring the full set as an equal option. Stop and ask only when
+   the remainder is too small to be a measurement or the degenerate rows are a majority; repairing
+   a gold keeps the action table's explicit approval either way. The reasoning, and what each of
+   those bounds is protecting, are in `references/evaluation-and-dataset.md`.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
    containing the combined tuning and holdout rows, so local structure and quality problems are
    checked without importing user modules. Omit optional model-pricing checks in this
@@ -466,27 +450,10 @@ Only after the standard-library-only component checks:
    compatible exact declarations, or otherwise the exact pins in
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
 
-   This is the slowest unattended step in the run, and it does not overlap anything, because by
-   the time it starts there is nothing local left to overlap: stage 4 runs every
-   standard-library-only check *before* the environment exists, and both steps below need the
-   installed SDK. Say what is happening rather than going quiet, and do not present the wait as
-   though work were proceeding beside it.
-
-   Moving it earlier is the obvious way to win that time back, and it is deliberately not done.
-   Two things have to be true before an install is the right thing to do, and both are established
-   by the work that precedes it. The target has to be resolved - starting the moment *some*
-   environment is found is how dependencies land in the wrong project, and a tree with several
-   environments is exactly where that stays invisible. And the run has to be one worth installing
-   for: ahead of stage 4 nothing has yet shown the project is scoreable at all, and in the
-   zero-anchor opening the user has not chosen the task, so an early install spends the user's
-   disk and time on a walkthrough that may never be run. A minute of honest waiting is the cheaper
-   of the two.
-
-   Do not delegate this to a sub-agent, and do not reach for one to make the wait feel shorter.
-   There is nothing to run beside it, so a second agent would only wait too - and it is one
-   command with an exit code and a diagnostic on failure, which has to reach the reader intact:
-   a summary of a resolver conflict is not a resolver conflict. Nothing in this guide requires
-   sub-agents, which not every assistant it targets provides.
+   This is the slowest unattended step and it overlaps nothing, so say what is happening rather
+   than going quiet, and do not present the wait as though work were proceeding beside it. Do not
+   move it earlier and do not delegate it to a sub-agent. `references/run-safety.md` records why
+   both are deliberate.
 4. Verify the installed SDK's capabilities and public signatures instead of relying on a
    hardcoded "current" version statement. Use its public dataset validator/loader and construct the
    wrapper through its public decorator and evaluation models so the installed SDK owns

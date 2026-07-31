@@ -372,6 +372,30 @@ reliably-scoreable subset with that caveat rather than the raw aggregate. Even a
 data carries some - for example empty or case-sensitive golds - and a small random slice can land on
 a cluster of them.
 
+This is a report-and-continue case, not a question to put to the user, and the difference is worth
+stating because the guide's ambiguity rule looks as though it applies. It does not: when a real
+gold scores a right and a wrong answer identically - empty, constant, or matching nothing because
+of a leading space or a case-sensitive comparison - there are no competing interpretations to
+offer. No configuration can earn that row, so it separates none of them.
+
+So name the count and the share, quote the result on the subset that can actually be scored, and
+record the excluded row ids so the run repeats exactly. That recording is unconditional. The
+bounded first-run subset records its own ids, but it is only drawn above about 100 rows - so on the
+small datasets where a handful of degenerate golds decides the outcome, nothing else would be left
+behind at all.
+
+Do not offer scoring the full set as an equal option. Those rows hand free points to any
+configuration that emits valid-but-empty output, so including them biases the ranking toward bad
+configurations, and a menu listing a known-bad choice beside the right one is not a real question.
+
+Two conditions bound the exclusion, and both exist to stop it quietly changing what the run
+measures. What remains must still be enough for the scorer to call the comparison a measurement
+rather than a wiring check - the same floor the card itself names - and the degenerate rows must be
+a minority of the set. When either fails, the exclusion is the story rather than a footnote, so
+stop and ask instead. Repairing a gold is a different act in any case: it edits the user's expected
+answers, so it stays behind the explicit approval the action table requires and is offered only if
+the user asks for it.
+
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
