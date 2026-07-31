@@ -160,7 +160,15 @@ def render_text(plan: ReadinessPlan) -> str:
 # they are the cheapest gap to close.
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 1
+# 2: caps carry `action_kind` and the payload carries `recommended_action`.
+#
+# Additive - nothing was removed or renamed, so a reader of v1 keeps working.
+# Bumped anyway, because the version is what lets a consumer tell "this scorer
+# does not emit a remedy" from "this run has no remedy to emit", and those need
+# different handling: the first is a stale script, the second is a healthy
+# project. Left at 1, a consumer seeing no `recommended_action` could not tell
+# which it was looking at.
+SCHEMA_VERSION = 2
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 BAND_THRESHOLDS = (
     (30, "NOT READY"),
@@ -329,6 +337,43 @@ class SubScore:
     evidence: str
 
 
+# What the user should DO about each cap, as a closed vocabulary.
+#
+# Closed, because an open string reintroduces the problem one layer down: a
+# consumer cannot tell a near-miss ("fix the evaluator") from a real
+# disagreement with `repair-evaluator`, so a typo grades as a defect.
+#
+# Keyed by condition rather than passed at each `Cap(...)`, because the remedy
+# is a property OF the condition, and several conditions are raised from more
+# than one place - `dataset-fully-synthetic` from two, `agent-no-varying-knobs`
+# from three. Sixteen call sites carrying their own copy is sixteen chances for
+# two of them to disagree about the same condition, which is the drift this
+# field exists to remove rather than relocate.
+#
+# The spellings are not invented here. A downstream grader already keeps this
+# table, because the payload said what was wrong and never what to do - so every
+# consumer re-derived the mapping and drifted from it (traigent-first-run#98).
+# Emitting it is what makes that copy deletable instead of a second source of
+# truth.
+PROCEED = "proceed"
+ACTION_FOR_CONDITION: dict[str, str] = {
+    "dataset-absent": "get-data",
+    "dataset-below-measurable-size": "get-data",
+    "dataset-coarse-resolution": "get-data",
+    "dataset-no-expected-outputs": "label-data",
+    "dataset-integrity-fail": "repair-dataset",
+    "dataset-tune-holdout-overlap": "resplit-dataset",
+    "dataset-fully-synthetic": "connect-real-data",
+    "dataset-mostly-synthetic": "connect-real-data",
+    "dataset-generated-answer-key": "review-answer-key",
+    "evaluator-absent": "connect-evaluator",
+    "evaluator-invalid": "repair-evaluator",
+    "evaluator-timeout": "bound-evaluator-cost",
+    "agent-no-varying-knobs": "vary-knobs",
+}
+ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
+
+
 @dataclass(frozen=True)
 class Cap:
     condition: str
@@ -343,6 +388,25 @@ class Cap:
     # the assistant not to proceed with a run that was worth doing - against the
     # guide's own rule that a low score never stops the walkthrough.
     blocks: bool = True
+    # Derived, never passed: `init=False` means no call site can supply one, so
+    # the table above is the only place a remedy is decided and a condition
+    # cannot acquire two.
+    action_kind: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # Fails closed on an unmapped condition. A new cap therefore cannot ship
+        # without a remedy - it raises the moment it is constructed, in the
+        # author's own test run, rather than emitting a payload whose consumers
+        # silently see no recommendation for that one condition.
+        try:
+            kind = ACTION_FOR_CONDITION[self.condition]
+        except KeyError:
+            raise ValueError(
+                f"cap {self.condition!r} has no entry in ACTION_FOR_CONDITION; "
+                "every cap names a remedy, so add one there rather than "
+                "emitting a diagnosis a consumer cannot act on"
+            ) from None
+        object.__setattr__(self, "action_kind", kind)
 
 
 def binds(cap: Cap, overall: int) -> bool:
@@ -394,6 +458,18 @@ class ReadinessScore:
     weighted_average: int
     band: str
     status: str
+    # The one thing to do next, from ACTION_KINDS. Per-cap remedies say what
+    # each condition asks for; this says which of them to do FIRST, which is the
+    # question a reader actually has when several fired.
+    #
+    # Named `recommended_action` and not `action`, because `--json` emits two
+    # different payloads and the other one already has an `action`:
+    # `ReadinessPlan.action` is a PROSE sentence for a human, this is a slug from
+    # a closed set for a machine. Same flag, same word, different type - so they
+    # are deliberately not the same key, and must not be unified into one later.
+    # A plan payload carries no `schema_version`, which is how a consumer tells
+    # the two apart.
+    recommended_action: str
     confidence: float
     band_limited_by_confidence: bool
     weights: dict[str, float]
@@ -1573,6 +1649,26 @@ def collect_gaps(
     return tuple(text for _, text in gaps)
 
 
+def recommended_action(ordered_caps: Sequence[Cap]) -> str:
+    """The one remedy to do first, from caps already sorted by ceiling.
+
+    Only a *blocking* cap can displace `proceed`. An advisory ceiling bounds
+    what the result may claim and stops nothing, so a run carrying only those is
+    still worth making - recommending a fix there would contradict the guide's
+    own rule that a low score never stops the walkthrough, and it is the same
+    conflation `blocks` was added to end.
+
+    Among blocking caps the lowest ceiling wins, which is the one setting the
+    score. `ordered_caps` is already sorted by ceiling, so the first blocking
+    entry is that one; this reads the order rather than re-deriving it, so the
+    two cannot disagree about which cap is most severe.
+    """
+    for cap in ordered_caps:
+        if cap.blocks:
+            return cap.action_kind
+    return PROCEED
+
+
 def aggregate(
     pillars: Sequence[Pillar],
     caps: Sequence[Cap],
@@ -1604,6 +1700,7 @@ def aggregate(
         weighted_average=weighted_average,
         band=band,
         status="BLOCKED" if any(cap.blocks for cap in ordered_caps) else "OK",
+        recommended_action=recommended_action(ordered_caps),
         confidence=round(confidence, 2),
         band_limited_by_confidence=limited,
         weights=dict(sorted(weights.items())),
@@ -1877,7 +1974,13 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             if binds(cap, score.overall)
             else f"would cap the score at {cap.ceiling}"
         )
-        return f"- **{cap.condition}** ({effect}): {cap.reason}"
+        # The remedy goes in the durable report, not on the card: this file
+        # already names each cap by its internal condition id, and the card
+        # deliberately does not - the guide keeps that vocabulary out of
+        # user-facing lines. Both are machine-readable artifacts here.
+        return (
+            f"- **{cap.condition}** ({effect}, fix: `{cap.action_kind}`): {cap.reason}"
+        )
 
     if blocking:
         lines.extend(["## What is blocking a trustworthy result", ""])
