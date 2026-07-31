@@ -16,6 +16,26 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
 SKILL = SKILL_ROOT / "SKILL.md"
+
+
+def assistant_facing_documents() -> list[Path]:
+    """Every document the assistant reads while running the guide.
+
+    Defined once because it was defined three times: two other corpora in this
+    file each rebuilt the list and each omitted GUIDE.md, so a rule stated
+    there was outside what any of them checked. That is the same defect the
+    guidance checks below exist to catch, in the checks themselves - and the
+    same rule CLAUDE.md now states for the guidance applies to this list: one
+    decision, one home.
+    """
+    return [
+        ROOT / "GUIDE.md",
+        SKILL,
+        *sorted((SKILL_ROOT / "references").glob("*.md")),
+        *sorted((SKILL_ROOT / "assets").glob("*.md")),
+    ]
+
+
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
@@ -107,13 +127,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("not for experienced", combined)
 
     def test_active_run_guidance_contains_only_required_account_links(self) -> None:
-        combined = "\n".join(
-            path.read_text()
-            for path in [
-                SKILL,
-                *sorted((SKILL_ROOT / "references").glob("*.md")),
-            ]
-        )
+        combined = "\n".join(path.read_text() for path in assistant_facing_documents())
         urls = re.findall(r"https?://[^`\s)]+", combined)
         allowed_hosts = {
             "portal.traigent.ai",
@@ -2911,13 +2925,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         reports it in the reassuring direction.
         """
         documents = {
-            "GUIDE.md": (ROOT / "GUIDE.md").read_text(),
-            "SKILL.md": SKILL.read_text(),
+            path.name: path.read_text() for path in assistant_facing_documents()
         }
-        for extra in sorted((SKILL_ROOT / "references").glob("*.md")) + sorted(
-            (SKILL_ROOT / "assets").glob("*.md")
-        ):
-            documents[extra.name] = extra.read_text()
         return {
             name: " ".join(text.casefold().split()) for name, text in documents.items()
         }
