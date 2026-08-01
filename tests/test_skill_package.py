@@ -36,6 +36,21 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+def conversation_contract_documents() -> list[Path]:
+    """Every tracked document that can shape or promise the user journey.
+
+    The progressive-load corpus above owns the guidance byte budget. Public
+    promises and repository-level instructions also participate in
+    contradictions even though the installed skill does not load them all.
+    """
+    return [
+        ROOT / "README.md",
+        ROOT / "AGENTS.md",
+        ROOT / "CLAUDE.md",
+        *assistant_facing_documents(),
+    ]
+
+
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
@@ -280,13 +295,33 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete_prompt, combined)
         for paid_phase in (
-            "smallest live provider/key check",
+            "smallest live provider-credential check",
             "llm-judge calibration",
             "preserved baseline or a generated six-row sweep",
             "one broader bounded optimization",
-            "baseline winner versus enhanced winner holdout comparison",
+            "baseline winner versus enhanced winner validation comparison",
         ):
             self.assertIn(paid_phase, skill_text)
+
+    def test_paid_approval_discloses_the_actual_comparison_and_decision_rule(
+        self,
+    ) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        approval = safety.split("## approval and budgets", 1)[1].split(
+            "## live provider probe", 1
+        )[0]
+        for phrase in (
+            "baseline winner versus enhanced winner validation comparison",
+            "tuning/validation rows",
+            "validation visibility",
+            "objective directions and weights",
+            "fixed baseline space and added enhanced controls",
+            "how traigent chooses trials",
+            "rule for recommending among tradeoffs",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, approval)
+        self.assertNotIn("winner holdout", approval)
 
     def test_dependency_install_authorization_is_narrow(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -438,43 +473,55 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
-    def test_portal_probe_gates_connected_work_not_the_baseline(self) -> None:
-        """The key ask must never be able to overtake the baseline (#77).
+    def test_local_baseline_checkpoint_precedes_every_traigent_key_request(
+        self,
+    ) -> None:
+        """The account funnel starts only after visible provider-backed value."""
+        text = SKILL.read_text().casefold()
+        stage_five = text.split("### 5.", 1)[1].split("### 6.", 1)[0]
+        stage_seven = " ".join(text.split("### 7.", 1)[1].split("### 8.", 1)[0].split())
 
-        Three instructions bear on when the Traigent key is needed: stage 5
-        collects keys, the portal-tracking probe runs before connected work,
-        and stage 7 asks for the key only after the first result is on screen.
-        A user arriving with no account has a valid order only while the probe
-        is scoped to *connected* trials - if it gates the first paid trial of
-        any kind, the provider-paid baseline drags the whole registration
-        funnel in front of it, which is the ordering stage 7 exists to avoid.
-        """
-        skill_text = " ".join(SKILL.read_text().casefold().split())
-        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for forbidden in (
+            "keys they already hold",
+            "both local secret pastes",
+            "provide only the required account/key destination",
+            "blank selected-provider and traigent key entries",
+        ):
+            self.assertNotIn(forbidden, stage_five)
+        self.assertIn("only the selected-provider secret", stage_five)
 
-        # The probe's trigger is reaching the portal, not spending money.
-        self.assertIn("before the first connected paid trial", skill_text)
-        self.assertNotIn("before the first paid trial,", skill_text)
-        self.assertIn("the baseline is not gated on this probe", skill_text)
-        self.assertIn("the probe gates connected work, not provider spend", safety_text)
+        ordered = (
+            "the baseline needs only the user's provider credential",
+            "show a **local baseline checkpoint**",
+            "only after that checkpoint, ask for the traigent key",
+            "once the key is present, run the zero-llm portal probe",
+            "feature-detect a public exact sync id",
+            "run the enhanced optimization connected",
+        )
+        positions = [stage_seven.index(phrase) for phrase in ordered]
+        self.assertEqual(positions, sorted(positions))
 
-        # Stage 5 may not send an account-less user through registration; that
-        # ask belongs to stage 7, after the first result.
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("the probe gates connected work, not provider spend", safety)
         self.assertIn(
-            "do not send a user who has no traigent account through registration at this step",
-            skill_text,
-        )
-        self.assertIn(
-            "only after that first result is on screen, ask for the traigent key",
-            skill_text,
+            "do not request a traigent key or route an account state yet", safety
         )
 
-        # And the baseline still has to precede the key ask in the document.
-        baseline_position = skill_text.index(
-            "the baseline needs only the user's own provider"
-        )
-        key_ask_position = skill_text.index("only after that first result is on screen")
-        self.assertLess(baseline_position, key_ask_position)
+    def test_public_promises_match_the_local_then_connected_sequence(self) -> None:
+        documents = {
+            path.name: " ".join(path.read_text().casefold().split())
+            for path in (ROOT / "README.md", ROOT / "GUIDE.md", SKILL, RUN_SAFETY)
+        }
+        joined = " ".join(documents.values())
+        self.assertNotIn("two connected optimization experiments", joined)
+        for phrase in (
+            "provider-paid local fixed baseline",
+            "zero-llm portal probe",
+            "connected managed optimization",
+            "without rerunning",
+            "otherwise it remains local",
+        ):
+            self.assertIn(phrase, joined)
 
     def test_provenance_is_documented_as_a_per_row_average_with_ceilings(self) -> None:
         """Points and ceilings answer different questions; the guide says both.
@@ -504,25 +551,21 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
         self.assertIn("is not silently demoted", dataset_text)
 
-    def test_the_time_ceiling_pauses_and_asks_rather_than_stopping(self) -> None:
-        """A clock must not spend the user's decision for them.
-
-        The run is bounded so it fits one sitting, but ending it because a timer
-        expired takes the choice away from the person paying - and the answer is
-        often "keep going". So the boundary is a decision point, presented in
-        the user's terms (configurations tested, not elapsed seconds), with the
-        remaining cost derived from what was actually measured.
-        """
+    def test_progress_promises_are_observable(self) -> None:
+        """A synchronous run cannot promise a checkpoint it cannot expose."""
         normalized = " ".join(SKILL.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for phrase in (
-            "reaching that ceiling is a decision point, not an automatic stop",
-            "9 of 13 configurations tested so far",
-            "stop here and report what has been measured, or continue with a named",
-            "do not offer a third path that quietly abandons the holdout",
-            "a partial comparison that names what it never tried is honest",
+            "30-minute completion target",
+            "not a hard wall-clock guarantee",
+            "never promise a pause at minute 30",
+            "only observable phase milestones",
+            "never invent progress",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        self.assertIn("uncapped by default", sdk)
+        self.assertNotIn("reaching that ceiling is a decision point", normalized)
 
     def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
         """This repository is public; the tools that test it are not.
@@ -627,10 +670,10 @@ class SkillPackageTests(unittest.TestCase):
 
         A first run has to be bounded above ~100 rows, or every trial pays for
         every row. But choosing the bound BEFORE a score makes the user's data
-        wear the run's limitation. Measured on 500 labelled, difficulty-tagged
-        production rows: the dataset pillar reads 98 with "249 examples -
-        roughly +/-5pp", and the same dataset scored as an 18-row subset reads 80
-        with "8 comparable examples - a wiring check, not a score" - a sentence
+        wear the run's limitation. On 500 labelled, difficulty-tagged production
+        rows the score sees 249 comparable examples, while the same dataset
+        scored as an 18-row subset sees 8 and calls it "a wiring check, not a
+        score" - a sentence
         that is true of the run and false of the data. So the ordering is the
         contract, not an implementation detail.
         """
@@ -647,7 +690,7 @@ class SkillPackageTests(unittest.TestCase):
             "18 rows by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
-            "report the run's own resolution separately",
+            "report the run's sample-size limitation separately",
             "sample within each split, never across it",
             "record what was chosen",
         ):
@@ -699,11 +742,11 @@ class SkillPackageTests(unittest.TestCase):
             "the user's own measured evidence rather than encouragement", skill_text
         )
 
-        # And it must land on ONE action earned by their starting state, with the
+        # And it must land on ONE action earned by the latest state, with the
         # reason attached. A menu of everything they could do is the same as no
         # recommendation, so the anti-pattern is pinned too.
         self.assertIn(
-            "give the one next action their *starting* state earns", skill_text
+            "give the one next action the **latest validated state** earns", skill_text
         )
         self.assertIn(
             "a menu offered *instead of* a recommendation is the same as no recommendation",
@@ -726,7 +769,7 @@ class SkillPackageTests(unittest.TestCase):
         for state in (
             "generated or mostly generated data",
             "real inputs with model-written answers",
-            "rows without expected outputs, or placeholder answers",
+            "rows without expected outputs when the evaluator requires references",
             "a substitute component still standing in for a real one",
         ):
             with self.subTest(state=state):
@@ -897,12 +940,20 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "preserve existing values",
             "comments",
-            "append only missing",
             "0600",
             "before opening",
         ):
             self.assertIn(phrase, skill_text)
             self.assertIn(phrase, safety_text)
+        for text in (skill_text, safety_text):
+            self.assertIn("missing selected-provider", text)
+        self.assertIn(
+            "add or request the traigent key only after the baseline checkpoint",
+            skill_text,
+        )
+        self.assertIn(
+            "traigent key only after the local baseline checkpoint", safety_text
+        )
         self.assertIn("owner-only local `.env`", readme_text)
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
@@ -1219,9 +1270,8 @@ class SkillPackageTests(unittest.TestCase):
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
-        self.assertIn(
-            "user's existing baseline/configuration exactly as defined", guide
-        )
+        self.assertIn("preserving the user's configuration exactly", guide)
+        self.assertIn("do not expand, shrink, or weaken a user-owned baseline", guide)
         self.assertIn(
             "one row is correct when that is what the user actually defined", guide
         )
@@ -1230,45 +1280,40 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("preserve a user-owned baseline space unchanged", safety)
         self.assertIn("its row count exactly; do not expand it to six", sdk)
         self.assertIn("real one-row fixed configuration remains one row", sdk)
+        self.assertIn("preserve its exact model set", sdk)
+        self.assertIn("add non-model controls by default", sdk)
         self.assertIn(
             "matched an explicitly approved and disclosed reduced target", skill
         )
 
-    def test_walkthrough_model_ladder_skips_the_flagship(self) -> None:
-        """The first run never auto-selects the vendor's newest flagship.
-
-        Selected models ladder down from one step below the flagship, and both
-        runs share the identical three-model list: the enhanced run never gets
-        a model the baseline did not measure, so a win is attributable to the
-        added knobs and the managed search rather than to a quiet model
-        upgrade. A user's own flagship choice is preserved exactly, never
-        swapped, and the user hears the one-line faster-and-cheaper reason
-        before approving.
-        """
+    def test_generated_model_ladder_never_expands_a_user_owned_baseline(self) -> None:
+        """The affordable three-model ladder belongs only to generated evidence."""
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
         for phrase in (
+            "this section applies only when the assistant prepares a missing baseline",
             "one fast low-cost tier, one mid-tier workhorse, and one strong tier",
             "one step below the vendor's newest flagship",
             "do not select the flagship itself",
-            "both runs use the same three models",
+            "both generated spaces use the same three models",
             "never gets a model the baseline did not measure",
-            "never to quietly upgrading the model",
+            "cannot be explained by quietly upgrading the model",
             "refine the swept values around its top rows",
             "sweep only knobs that are real for every model in the space",
-            "never remove or replace the user's model choice silently",
-            "build the ladder inside one model family",
+            "when the user already owns a baseline, do not apply this ladder",
+            "adding a cheaper or stronger model changes the experiment",
+            "for the generated ladder, use one model family",
             "tiers are roles, not hardcoded ids",
         ):
             with self.subTest(document="sdk-execution", phrase=phrase):
                 self.assertIn(phrase, sdk)
         for phrase in (
             "never the vendor's newest flagship",
-            "faster and cheaper by searching down the ladder",
-            "never auto-select the flagship itself",
-            "never to a quietly upgraded model",
+            "the three-tier ladder applies only when this walkthrough supplies a missing baseline",
+            "do not add cheaper tiers without the separate disclosure",
+            "preserve its exact model set",
             "a deliberately small enhancement",
             "a small slice of what traigent can drive, not its full capability",
         ):
@@ -1279,7 +1324,8 @@ class SkillPackageTests(unittest.TestCase):
             "keeps the identical model list",
             "never to a model the baseline did not measure",
             "keeps the first run faster and cheaper",
-            "never remove or swap the user's model silently",
+            "do not add cheaper tiers or any other model",
+            "a separate model comparison is disclosed and approved",
         ):
             with self.subTest(document="run-safety", phrase=phrase):
                 self.assertIn(phrase, safety)
@@ -1320,6 +1366,7 @@ class SkillPackageTests(unittest.TestCase):
         namespace = {
             "litellm": SimpleNamespace(completion=fake_completion),
             "provider_reported_cost": lambda response: 0.01,
+            "require_nonzero_token_usage": lambda response: None,
             "build_prompt": lambda message, *, style, self_check: message,
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
@@ -1399,6 +1446,28 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
 
+    def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
+        preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn('"--evaluator-method"', preflight)
+        self.assertIn("REFERENCE_FREE_METHODS", preflight)
+        preflight_module = ast.parse(preflight)
+        preflight_methods = next(
+            ast.literal_eval(node.value)
+            for node in preflight_module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "REFERENCE_FREE_METHODS"
+                for target in node.targets
+            )
+        )
+        self.assertEqual(preflight_methods, set(READINESS.REFERENCE_FREE_METHODS))
+        for document in (skill, safety):
+            self.assertIn("same resolved `--evaluator-method`", document)
+            self.assertIn("preflight", document)
+            self.assertIn("expected outputs", document)
+
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
         self,
     ) -> None:
@@ -1418,6 +1487,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             helper(SimpleNamespace(usage=SimpleNamespace(cost=0.25))), 0.25
         )
+        self.assertEqual(helper(SimpleNamespace(usage=SimpleNamespace(cost=0.0))), 0.0)
         header_response = SimpleNamespace(
             usage=SimpleNamespace(cost=None),
             _hidden_params={
@@ -1425,12 +1495,86 @@ class SkillPackageTests(unittest.TestCase):
             },
         )
         self.assertEqual(helper(header_response), 0.125)
-        with self.assertRaisesRegex(RuntimeError, "stop before scaling"):
-            helper(SimpleNamespace(usage=SimpleNamespace(cost=None)))
+        self.assertIsNone(helper(SimpleNamespace(usage=SimpleNamespace(cost=None))))
         with self.assertRaisesRegex(RuntimeError, "malformed response-cost metadata"):
             helper(SimpleNamespace(usage=SimpleNamespace(cost="not-a-number")))
         with self.assertRaisesRegex(RuntimeError, "invalid per-response cost"):
             helper(SimpleNamespace(usage=SimpleNamespace(cost=float("nan"))))
+        with self.assertRaisesRegex(RuntimeError, "invalid per-response cost"):
+            helper(SimpleNamespace(usage=SimpleNamespace(cost=-0.01)))
+        with self.assertRaisesRegex(RuntimeError, "malformed response-cost metadata"):
+            helper(SimpleNamespace(usage=SimpleNamespace(cost=True)))
+
+        usage_module = ast.fix_missing_locations(
+            ast.Module(body=[functions["require_nonzero_token_usage"]], type_ignores=[])
+        )
+        usage_namespace = {"math": __import__("math")}
+        exec(compile(usage_module, "<provider-usage>", "exec"), usage_namespace)
+        require_usage = usage_namespace["require_nonzero_token_usage"]
+        require_usage(SimpleNamespace(usage=SimpleNamespace(total_tokens=1)))
+        require_usage(SimpleNamespace(usage={"total_tokens": 42}))
+        require_usage(
+            SimpleNamespace(usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3))
+        )
+        require_usage(
+            SimpleNamespace(usage={"prompt_tokens": 1, "completion_tokens": 0})
+        )
+        for invalid in (None, 0, -1, True, float("nan"), float("inf")):
+            with self.subTest(total_tokens=invalid):
+                with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
+                    require_usage(
+                        SimpleNamespace(usage=SimpleNamespace(total_tokens=invalid))
+                    )
+        for invalid_components in (
+            {"prompt_tokens": 0, "completion_tokens": 0},
+            {"prompt_tokens": -1, "completion_tokens": 2},
+            {"prompt_tokens": True, "completion_tokens": 2},
+        ):
+            with self.subTest(components=invalid_components):
+                with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
+                    require_usage(SimpleNamespace(usage=invalid_components))
+
+        call_module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    functions["provider_reported_cost"],
+                    functions["require_nonzero_token_usage"],
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        current_response = None
+
+        def completion(**_kwargs):
+            return current_response
+
+        call_namespace = {
+            "math": __import__("math"),
+            "litellm": SimpleNamespace(completion=completion),
+            "build_request": lambda message, config: {},
+        }
+        exec(compile(call_module, "<provider-call>", "exec"), call_namespace)
+        call_agent = call_namespace["call_agent"]
+
+        def response(*, usage):
+            return SimpleNamespace(
+                usage=usage,
+                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+            )
+
+        current_response = response(usage=SimpleNamespace(total_tokens=3))
+        self.assertEqual(call_agent("task", {}), ("answer", None))
+        current_response = response(usage=SimpleNamespace(cost=0.2, total_tokens=3))
+        self.assertEqual(call_agent("task", {}), ("answer", 0.2))
+        current_response = response(usage=SimpleNamespace(cost=0.0, total_tokens=3))
+        self.assertEqual(call_agent("task", {}), ("answer", 0.0))
+        current_response = response(usage=SimpleNamespace())
+        with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
+            call_agent("task", {})
+        current_response = response(usage=SimpleNamespace(cost=0.2))
+        with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
+            call_agent("task", {})
 
     def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -1537,21 +1681,32 @@ class SkillPackageTests(unittest.TestCase):
             ],
         )
 
+        untracked_costs = iter((0.25, None))
+
+        def call_agent_with_untracked_cost(message, config):
+            output = "urgent" if message == "classify this" else "normal"
+            return output, next(untracked_costs)
+
+        namespace["call_agent"] = call_agent_with_untracked_cost
+        score, cost = namespace["evaluate_holdout"](config)
+        self.assertEqual(score, 1.0)
+        self.assertIsNone(cost)
+
     def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         sdk_text = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
+        self.assertIn("retain every experiment that was actually persisted", skill_text)
+        self.assertIn("never delete one as automatic teardown", skill_text)
+        self.assertIn("direct verified link for each persisted run", skill_text)
         self.assertIn(
-            "retain the customer's baseline and optimization experiments", skill_text
+            "do not delete portal experiments as walkthrough cleanup", guide_text
         )
-        self.assertIn(
-            "never delete portal experiments as automatic teardown", skill_text
-        )
-        self.assertIn("direct link to every persisted first-run experiment", skill_text)
-        self.assertIn("do not delete them as walkthrough cleanup", guide_text)
-        self.assertIn("assert baseline_results.cloud_url is not none", sdk_text)
+        self.assertNotIn("assert baseline_results.cloud_url is not none", sdk_text)
         self.assertIn("assert optimized_results.cloud_url is not none", sdk_text)
+        self.assertIn("comes from the successful sync json", sdk_text)
+        self.assertIn("otherwise label it local-only", sdk_text)
         self.assertIn(
             "portal experiment deletion is never walkthrough teardown", sdk_text
         )
@@ -1629,8 +1784,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "close the loop on the readiness score the run opened with",
             "the opening score and the closing recap are the same conversation",
-            "shows its full power only once the enhanced run has finished",
-            "grows with the readiness score",
+            "one action selected from the latest closing evidence",
+            "re-rank the remaining closing caps",
             "npx skills add traigent/traigent-skills",
             "restart the session so the new skills load",
         ):
@@ -1647,9 +1802,10 @@ class SkillPackageTests(unittest.TestCase):
         """
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "describe those as signals and curation advice, not as numbers",
-            "do not promise a numeric dataset-quality score",
-            "never imply the platform can grade a dataset that has not been run",
+            "only when a verified run-scoped platform artifact actually returned them",
+            "never fill the deeper-insights template from expectation",
+            "promise a numeric dataset-quality score",
+            "imply the platform graded an unrun dataset",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -1666,7 +1822,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "do not call the result's `analyze()` method",
             "raises `importerror` without it",
-            "neither is meaningful under mock mode",
+            "neither read is meaningful under mock mode",
             "suspect the expectation before the agent",
         ):
             with self.subTest(phrase=phrase):
@@ -1856,22 +2012,95 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "never use `--all`",
             "every optimization ever logged on the machine",
-            "do not go looking through the sdk's private storage layout",
+            "do not inspect private storage",
+            "baseline_results.sync_session_id",
+            "successful sync json",
             "traigent/traigent issue 2020",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_both_runs_are_reported_with_their_own_link(self) -> None:
+    def test_local_baseline_checkpoint_states_exactly_what_is_known(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "only after that first result is on screen, ask for the traigent key",
+            "local fixed grid, not traigent choosing the trials",
+            "best configuration and tuning score",
+            "executed and failed trial counts",
+            "or `not measured`",
+            "no validation comparison or improvement claim exists yet",
+            "this phase created no portal experiment",
+            "this checkpoint is a valid place to stop",
+            "baseline-only, not as a completed traigent optimization",
+            "only after that checkpoint, ask for the traigent key",
             "full access rather than the read-only default",
-            "upload the baseline that already ran instead of paying to repeat it",
-            "never present one link as though it covered both",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        self.assertIn(
+            "for the generated walkthrough, run the credible small space as one local fixed grid",
+            " ".join(SDK_EXECUTION.read_text().casefold().split()),
+        )
+
+    def test_final_report_layers_facts_limits_and_the_latest_next_action(
+        self,
+    ) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "**outcome** - baseline versus enhanced result",
+            "**what the evidence establishes**",
+            "**current state and limits**",
+            "**next action** - one action selected from the latest closing evidence",
+            "**details** - configurations, objectives, trials, failures, cost",
+            "only fields actually returned",
+            "verified run-scoped platform artifact actually returned them",
+            "latest validated state",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        for phrase in (
+            "verified facts, evidence-backed inferences, and untested hypotheses",
+            "cause not established by this run",
+        ):
+            self.assertIn(phrase, safety)
+
+    def test_validation_visibility_is_never_overstated(self) -> None:
+        documents = {
+            "guide": " ".join((ROOT / "GUIDE.md").read_text().casefold().split()),
+            "skill": " ".join(SKILL.read_text().casefold().split()),
+            "sdk": " ".join(SDK_EXECUTION.read_text().casefold().split()),
+        }
+        for name, text in documents.items():
+            with self.subTest(document=name):
+                self.assertIn("sealed", text)
+                self.assertIn("hidden", text)
+                self.assertIn("non-blind", text)
+                self.assertNotIn("assistant-authored untouched holdout", text)
+
+        run_plan = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "validation rows and visibility",
+            "local baseline checkpoint",
+            "successful cli url, or `local-only` with reason",
+            "validation comparison - paired outcomes, visibility",
+        ):
+            self.assertIn(phrase, run_plan)
+
+    def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("according to the documented sdk/service contract", readme)
+        self.assertIn("does not independently audit network packets", readme)
+        self.assertIn(
+            "stops if observed runtime behavior contradicts that contract", readme
+        )
+        self.assertIn(
+            "privacy wording describes traigent's documented payload contract", safety
+        )
+        self.assertIn("never a raw traceback", safety)
+        self.assertIn("sanitized provider message", safety)
 
     def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
         """Pinning the connected search to a local algorithm would gut it.
@@ -1888,7 +2117,8 @@ class SkillPackageTests(unittest.TestCase):
             "this applies to the local baseline only",
             'the connected search under "broader optimization" must stay on `auto`',
             'keep `algorithm="auto"` here, and never pin `grid` or `random`',
-            "it resolves to a local-only intent, so a valid key is bypassed",
+            "explicit `grid` or `random` selects configurations locally",
+            "a valid key may still portal-track that local search",
             "the pinning rule is therefore per phase, not global",
         ):
             with self.subTest(phrase=phrase):
@@ -1898,7 +2128,7 @@ class SkillPackageTests(unittest.TestCase):
         """Guard the code itself, not only the prose around it."""
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
         self.assertIn('algorithm="auto"', enhanced)
         self.assertNotIn('algorithm="grid"', enhanced)
         self.assertNotIn('algorithm="random"', enhanced)
@@ -1906,17 +2136,18 @@ class SkillPackageTests(unittest.TestCase):
     def test_absent_cost_is_never_reported_as_zero(self) -> None:
         """A stated $0.00 reads as "this was free", which is a false claim."""
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
-        self.assertIn("report cost as not measured", normalized)
-        self.assertIn("`total_cost` as absent rather than zero", normalized)
+        self.assertIn("an absent cost is `not measured`", normalized)
+        self.assertIn("never turn absence into `$0.00`", normalized)
+        self.assertIn("provider-reported zero with nonzero token usage", normalized)
 
     def test_local_baseline_is_free_of_traigent_not_free_of_spend(self) -> None:
         """The preview needs no Traigent key but still spends real provider money."""
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "needs only the user's own provider credential",
-            "before any traigent account exists",
-            "free of traigent, not free of spend",
-            "the same combined approval and the same running total",
+            "needs only the user's provider credential",
+            "without a traigent key in that process",
+            "it is local, not free",
+            "spend from the same approved total",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -1939,6 +2170,40 @@ class SkillPackageTests(unittest.TestCase):
             "the first ```python fence in sdk-execution.md is no longer the "
             "decorator-contract block; a fence was inserted above it, which "
             "silently changes what the exec'd-fence tests run",
+        )
+
+    def test_run_phase_removes_portal_key_before_traigent_import(self) -> None:
+        """The local-first guarantee must survive a stale key in ``.env``.
+
+        Removing the key only in the later baseline call block is too late if
+        an import-time SDK client has already captured it. The process phase is
+        therefore read before dotenv, and the fail-safe baseline removes the
+        portal key before the Traigent import.
+        """
+        text = SDK_EXECUTION.read_text()
+        decorator = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        phase = decorator.index("FIRST_RUN_PHASE = os.environ.get(")
+        dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
+        remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
+        import_traigent = decorator.index("import traigent")
+        self.assertLess(phase, dotenv)
+        self.assertLess(dotenv, remove_key)
+        self.assertLess(remove_key, import_traigent)
+        self.assertIn('if FIRST_RUN_PHASE == "baseline":', decorator)
+
+        baseline = text[text.index("## Small baseline sweep") :]
+        baseline = baseline[: baseline.index("## Reading the result for insight")]
+        connected = text[text.index("## Broader optimization") :]
+        connected = connected[: connected.index("## Validation and result checks")]
+        self.assertIn('assert FIRST_RUN_PHASE == "baseline"', baseline)
+        self.assertIn('assert FIRST_RUN_PHASE == "connected"', connected)
+        self.assertIn(
+            "supplied by the process and never by `.env`",
+            " ".join(baseline.split()),
+        )
+        self.assertIn(
+            "supplied by the process and never by `.env`",
+            " ".join(connected.split()),
         )
 
     def test_first_json_fence_is_the_calibration_matrix(self) -> None:
@@ -2152,7 +2417,7 @@ class SkillPackageTests(unittest.TestCase):
         """
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
         serialize = enhanced.find("config_space_document(ENHANCED_SPACE)")
         search = enhanced.find("optimized_results = agent.optimize_sync(")
         write = enhanced.find("Path(CONFIG_SPACE_DOCUMENT).write_text(")
@@ -2248,7 +2513,7 @@ class SkillPackageTests(unittest.TestCase):
         producer = self._template_producer_namespace()
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Holdout and result checks")]
+        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
         fence = re.search(r"```python\n(.*?)\n```", enhanced, re.DOTALL)
         self.assertIsNotNone(fence, "the enhanced search must still be a python fence")
         block = compile(fence.group(1), "<sdk-enhanced-search>", "exec")
@@ -2273,7 +2538,8 @@ class SkillPackageTests(unittest.TestCase):
                 {
                     "json": json,
                     "Path": Path,
-                    "os": SimpleNamespace(environ={}),
+                    "os": SimpleNamespace(environ={"TRAIGENT_API_KEY": "test-key"}),
+                    "FIRST_RUN_PHASE": "connected",
                     "agent": SimpleNamespace(optimize_sync=optimize_sync),
                     "OPTIMIZATION_TIMEOUT_SECONDS": 60.0,
                     "OPTIMIZED_RESULTS": str(
@@ -2452,6 +2718,7 @@ class SkillPackageTests(unittest.TestCase):
         namespace = {
             "litellm": _Stub,
             "provider_reported_cost": lambda response: 0.0,
+            "require_nonzero_token_usage": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
@@ -2931,15 +3198,52 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             name: " ".join(text.casefold().split()) for name, text in documents.items()
         }
 
+    def conversation(self) -> dict[str, str]:
+        """Public promises plus every assistant-facing instruction."""
+        documents = {
+            path.name: path.read_text() for path in conversation_contract_documents()
+        }
+        return {
+            name: " ".join(text.casefold().split()) for name, text in documents.items()
+        }
+
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
             "when the Traigent key is required",
-            ("only after that first result is on screen, ask for the traigent key",),
+            ("only after that checkpoint, ask for the traigent key",),
             (
                 "ask the user to enter both keys locally",
                 "before the first paid trial, run a zero-llm portal-tracking probe",
+                "keys they already hold",
+                "both local secret pastes",
+                "provide only the required account/key destination",
+                "blank selected-provider and traigent key entries",
+                "two keys go into your local .env",
             ),
+        ),
+        (
+            "whether both default measurements are connected",
+            ("two measurements",),
+            (
+                "two connected optimization experiments",
+                "exactly two connected optimization experiments",
+            ),
+        ),
+        (
+            "whether a user-owned baseline receives the generated model ladder",
+            (
+                "the three-tier ladder applies only when this walkthrough supplies a missing baseline",
+            ),
+            (
+                "the ladder adds the tiers below it",
+                "add the cheaper ladder tiers below it",
+            ),
+        ),
+        (
+            "whether a synchronous run promises a 30-minute pause",
+            ("never promise a pause at minute 30",),
+            ("reaching that ceiling is a decision point",),
         ),
         (
             "what an absent `wired` list attests",
@@ -2959,10 +3263,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ("score the dataset, not the subset",),
             ("select before preflight, not after",),
         ),
+        (
+            "who creates temporary walkthrough components",
+            ("temporary walkthrough substitute created by the coding assistant",),
+            (
+                "temporary walkthrough substitute created by traigent",
+                "traigent will create the coherent walkthrough substitutes",
+                "state what traigent will create for the walkthrough",
+                "if traigent generates temporary components",
+                "traigent generated an agent for this walkthrough",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
-        joined = " ".join(self.guidance().values())
+        joined = " ".join(self.conversation().values())
         for decision, agreed, contradicting in self.CONTRADICTIONS:
             with self.subTest(decision=decision):
                 self.assertTrue(

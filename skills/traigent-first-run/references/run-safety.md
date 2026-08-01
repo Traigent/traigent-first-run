@@ -65,15 +65,18 @@ targets provides.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
 - After every applicable free component, capability, and safe mock check, build one minimal `.env`
-  with blank selected-provider and Traigent key entries. If it exists, preserve existing values,
-  comments and unrelated keys and append only missing blank entries. Before opening it, require
-  mode `0600` on POSIX. Stop once for both local secret pastes.
+  with only the missing selected-provider entry blank. Preserve existing values, comments,
+  unrelated keys, blank alternate-provider entries, and any Traigent key already present. Before
+  opening it, require mode `0600` on POSIX. Stop once for the provider secret. Add or request the
+  Traigent key only after the local baseline checkpoint.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Hand the file off unambiguously: open `.env` for the user (`xdg-open`/`open`/`notepad`) and, on a
   headless box, print its absolute path; name the target line by key prefix - the `sk-`/`sk-or-`
-  provider key after its `..._API_KEY=` line, the `uk_` portal key after `TRAIGENT_API_KEY=` - so two
-  blank `KEY=` lines cannot be swapped.
-- Prompts, examples, and outputs are not sent to Traigent by the optimization service.
+  provider key after its `..._API_KEY=` line; at the later portal gate, name
+  `TRAIGENT_API_KEY=` separately.
+- According to the documented SDK/service contract, prompts, examples, and outputs are not sent to
+  Traigent by the optimization service. This guide does not independently inspect network packets;
+  stop if observed runtime behavior contradicts that contract.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
   model calls.
 - With OpenRouter, OpenRouter receives the request as the gateway and the selected upstream
@@ -222,7 +225,8 @@ Use this gate order:
    that no material ambiguity remains and continue without a generic semantic-review stop.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
    containing the combined tuning and holdout rows, so local structure and quality problems are
-   checked without importing user modules.
+   checked without importing user modules. Use the same resolved `--evaluator-method` here and in
+   readiness; if unresolved, omit it and require expected outputs.
    Record local structure, per-split size/resolution, and quality findings independently of
    SDK/package findings. This pass does not claim exact SDK compatibility, and a missing Traigent
    SDK cannot block it.
@@ -262,15 +266,15 @@ Use this gate order:
     is intercepted and no external side effect can occur. Otherwise record the check as deferred;
     do not over-prescribe execution.
 11. After every applicable free check is complete, create the minimal `.env` or minimally update
-    the existing one securely as described above, then stop once for both local secret pastes.
-12. Present one combined approval covering the smallest live provider/key check, any LLM-judge
-    calibration, baseline, bounded optimization, and baseline-versus-winner holdout calls.
-13. After approval, run the live check first. When the portal key is already in hand, start with the
-    zero-LLM portal-tracking probe (see Connected-run readiness below), then the smallest live
-    provider/key check. When it is not - the user registers only after seeing the baseline result -
-    run the smallest live provider/key check now, and the probe later, before the first trial meant
-    to reach the portal. The probe gates connected work, not provider spend. Continue only if every
-    check that ran passed.
+    the existing one securely as described above, then stop once for the selected-provider secret.
+    Do not request a Traigent key or route an account state yet.
+12. Present one combined approval covering the smallest live provider-credential check, any LLM-judge
+    calibration, baseline, bounded optimization, and baseline-versus-winner validation calls,
+    including whether that validation is sealed or non-blind.
+13. After approval, run the provider check and local fixed baseline without a Traigent key in that
+    process. Show its checkpoint. Only then request or reuse the Traigent key, run the zero-LLM
+    portal-tracking probe, attempt an exact capability-gated baseline sync, and start connected
+    optimization. The probe gates connected work, not provider spend.
 
 Do not split paid work into repeated approvals unless the plan materially changes.
 
@@ -462,9 +466,11 @@ Do not ask the user to design a budget, retry policy, or timeout policy during s
 paid/provider work, show one concise approval for the full planned first run:
 
 - The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
-  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced
-  winner holdout.
-- Dataset rows, maximum trials, and approximate total agent/evaluator calls.
+  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced winner
+  validation comparison.
+- Tuning/validation rows, validation visibility, maximum trials, and approximate calls.
+- The primary metric; objective directions and weights; fixed baseline space and added enhanced
+  controls; how Traigent chooses trials; and the rule for recommending among tradeoffs.
 - Approximate runtime and estimated spend.
 - One total walkthrough ceiling, defaulting to `$5.00`.
 - Any untracked-cost path; for such a path, call the ceiling a conservative execution stop target,
@@ -509,9 +515,9 @@ model, never replace it silently; present the limitation and one recommended alt
 For manual live-probe and holdout calls, prefer cost returned in the provider's public response or
 provider-reported response metadata. Do not recalculate a completed OpenRouter response with
 `litellm.completion_cost()`: a missing local model-map entry can raise after the provider has
-already billed the call. If the response has no usable provider-reported cost, stop before scaling
-the paid run and use only the conservative approved deduction; the SDK result remains authoritative
-for SDK-managed baseline/search cost.
+already billed the call. If cost is absent but usage proves a real call, mark it untracked and
+deduct the approved estimate; if both are absent, stop. The SDK result remains authoritative for
+SDK-managed baseline/search cost.
 
 ## Connected-run readiness
 
@@ -522,7 +528,7 @@ to local-only tracking: `results.cloud_url` is `None`, no experiment reaches the
 trials keep running and a results table still prints - so a user with a valid key reasonably believes
 the run reached the portal when it did not.
 
-Prove the tracking path before spending, with a zero-LLM probe:
+Prove the tracking path before connected spending, with a zero-LLM probe:
 
 1. Build a trivial stub agent that returns a constant and makes no provider call, so the probe costs
    `$0` in LLM spend.
@@ -530,10 +536,9 @@ Prove the tracking path before spending, with a zero-LLM probe:
    two trials) and confirm each rung in order: the portal key is present, it authenticates, it is
    scoped for `experiment.write`, a session is created, the first trial is accepted, and a
    `cloud_url` is returned.
-3. If any rung fails, surface the backend's reason verbatim and stop before any paid trial. On the
-   pinned SDK the client already prints the backend's precise `details.reason` inline - for example a
-   config value "outside the declared categorical domain" - and no longer substitutes a hardcoded
-   metric-name guess; report that reason as-is rather than paraphrasing or guessing at it.
+3. If any rung fails, stop before any connected paid trial. Show a sanitized reason and stable
+   status/request id when available. Preserve the useful diagnostic category, but remove secrets,
+   prompts, examples, outputs, and personal data before showing or saving external error text.
 
 This probe is general readiness, not a workaround for any single validation rule: the installed SDK
 owns the local pre-checks (config-in-space, numeric-type, `example_id` uniqueness) and the loud
@@ -547,14 +552,15 @@ let a connected run finish spending and only then reveal that nothing reached th
 
 Use one honest comparison:
 
-1. Baseline: the user's existing baseline or fixed configuration exactly as defined. Only when
-   Traigent creates the missing configuration, use a credible six-row manual-style sweep that
-   includes the generated initial configuration.
+1. Baseline: a local fixed-selection run over the user's existing baseline exactly as defined.
+   Only when the baseline is missing does the assistant prepare a credible six-row manual-style
+   sweep containing its initial configuration.
 2. Optimization: one broader search containing all baseline values plus meaningful added knobs,
    targeting 10-13 visible trials with an internal default cap of 12.
 
-Use the same tuning slice, evaluator, objective definitions, and call path for both. Run both
-connected once if portal comparison matters. Do not:
+Use the same tuning slice, evaluator, objective definitions, and call path for both. After the
+checkpoint and portal probe, sync that exact baseline without rerunning only when the installed
+public result exposes its session id; otherwise report it local-only. Do not:
 
 - Run a local baseline and then pay to repeat it only for portal appearance.
 - Intentionally weaken the baseline or replace user-defined values with strawman choices.
@@ -574,13 +580,14 @@ for every model. The enhanced space keeps the identical model list, extends swep
 the baseline's top rows while retaining every baseline value, and adds multiple prompt
 policies plus a native boolean self-check branch, keeping the space materially larger than the
 12 trials Traigent tests by default - so an enhanced win is attributable to knobs and the managed
-search, never to a model the baseline did not measure. Explain the ladder in one line before the
+search, never to a model the baseline did not measure. Explain this generated-only ladder in one line before the
 approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
-the ready next rung for a later run if the task proves hard enough to need it. When the preserved agent already uses
-the flagship, keep that model exactly as the measured anchor and add the cheaper tiers below it;
-never remove or swap the user's model silently. For preserved agents, add task-relevant controls
-only to the enhanced space, such as context format, retrieval depth, few-shot count, tool policy,
-or repair behavior; do not force the generated example's controls onto an unrelated task.
+available for a separately disclosed later comparison if the evidence supports one. A preserved
+baseline keeps its exact model set, including a flagship when present. Do not add cheaper tiers or
+any other model unless a separate model comparison is disclosed and approved. For preserved
+agents, add task-relevant non-model controls only to the enhanced space by default, such as context
+format, retrieval depth, few-shot count, tool policy, or repair behavior; do not force the
+generated example's controls onto an unrelated task.
 
 This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
 levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
@@ -592,10 +599,10 @@ capability.
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
 knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
 sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
-controls to keep the baseline meaningful in that case. A provider's default temperature is about 1.0
-(random), not 0, so a preserved agent that never sets temperature is non-deterministic; set
-`temperature=0` explicitly rather than assuming an unset value is deterministic when diagnosing score
-wobble. Multi-call composite controls multiply
+controls to keep an assistant-prepared baseline meaningful in that case. Preserve a user-owned
+baseline's temperature behavior exactly, including an unset provider default; record resulting
+nondeterminism as a limitation rather than silently changing the baseline. Multi-call composite
+controls multiply
 cost and require a concrete failure-mode justification; the generated default's self-check stays
 within one provider call.
 
@@ -608,9 +615,9 @@ score.
 Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
 not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `auto`, `grid`, or
-`random` unless a named selector is confirmed to run consistently on the installed SDK. For a generated baseline, use connected `grid` so all
-six distinct rows are predictable. For a user-owned baseline, preserve its space and behavior
-exactly while using a connected execution path compatible with the portal comparison. Use
+`random` unless a named selector is confirmed to run consistently on the installed SDK. For an
+assistant-prepared baseline, use local `grid` so all six distinct rows are predictable. For a
+user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
 connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
 count and stop reason. Fewer than 10
 enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
@@ -633,40 +640,29 @@ Before claiming success, verify:
 3. Best configuration exists.
 4. Declared objective measures appear and vary meaningfully.
 5. Real calls do not show the mock's constant response pattern.
-6. `total_cost` is positive, or explicitly state that cost was not tracked. Zero/`None` is not
-   proof of a free run.
+6. Provider calls have nonzero token usage. Report `total_cost` as positive, provider-reported zero
+   for a genuine free route, or untracked; cost alone does not prove whether a run was real.
 7. No output was truncated.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
-10. The pre-paid portal-tracking probe passed and tracking did not silently drop to local-only during
+10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to
+    local-only during
     the run; any such degradation halted further paid work rather than surfacing only at the end.
-11. Tuning and holdout results are separated.
+11. Tuning and validation results are separated, and validation visibility is named.
 
-An optimized winner that does not beat the baseline is a valid no-boost result. Report it
-honestly and name the likely cause instead of a bare flat delta: an uninformative or too-small
-search space, a dataset ceiling or too-easy data, an over-strict or mismatched evaluator, controls
-the search never varied (the winning knob - repair, self-consistency, or similarity-selected
-retrieval - was absent from the space), reasoning-model output truncation
-(`finish_reason == "length"`), generated walkthrough data with no real headroom where every
-configuration scores the same in both runs, or a base model that is not capable enough for a
-genuinely hard task - where a stronger (SOTA) model or a higher reasoning-effort level, not more
-config search, is the lever (keep the user's capable model in the enhanced space; if none was tried,
-name "did not try a stronger model" as the candidate reason). Rule these out in order before calling
-it a ceiling: re-run the semantic-equivalence probe, then widen to the structural knobs above, then
-raise the model tier or reasoning effort - the walkthrough ladder deliberately stopped one step
-below the vendor's flagship, so the flagship is the ready next rung for that single deliberate
-iteration. Only once all are ruled out is a low number the honest
-difficulty ceiling of a genuinely hard task - many top out well below 100% even for the best systems
-- and it is reported plainly, not as a broken agent. Sharply separate a genuinely-hard item (a
-correct reference the model cannot yet match - a stronger model or higher reasoning effort is the
-lever) from a misleading one (an ambiguous, wrong, or degenerate reference that no correct answer
-matches, or that only rewards a less-correct answer for reproducing the reference's own mistake).
-Attribute a misleading item to the misleading question itself, not to model capability or
-reasoning-effort level - a stronger model will not, and should not, reproduce a misleading reference
-- and never "fix" a validated metric to reward it. Do not invent improvement. A flat result on demonstration data shows the workflow
-ran honestly, not that the production workload cannot improve; on real data the same run would
-likely look different. Show that cause to the user beside the number, never a bare delta the user
-must interpret alone.
+An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
+delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
+Candidate hypotheses include an uninformative space, limited or easy data, evaluator mismatch,
+controls the search never varied, output truncation, generated data with no headroom, or insufficient
+model capability. Use the checks below to choose the next test, but say `cause not established by
+this run` unless evidence rules one in. A flat demonstration result says only that this comparison
+found no lift on its evidence; it does not predict production.
+
+Investigate in order: verify semantic equivalence and references, inspect truncation and whether
+every declared control varied, add one structural knob tied to a failure mode, then consider a
+separately disclosed stronger-model comparison. Distinguish a genuinely hard item from a
+demonstrably ambiguous, wrong, or degenerate reference. Attribute the latter to the reference, not
+model capability, and never change a validated metric merely to manufacture a win.
 
 Frame no-lift for a first run too: a bounded getting-familiar pass deliberately searches a few
 relevant knobs on a small budget, so a flat result can simply be a normal first look rather than a
@@ -682,11 +678,11 @@ can look identical to a production one.
   link before discarding anything.
 - Portal persistence `failed`: recover/sync the existing run when supported; do not repay for a
   rerun by default.
-- Permanent HTTP validation error or missing `cloud_url`: surface the precise backend reason; do
-  not replace it with a guessed explanation or claim portal success.
+- Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
+  reason; do not replace it with a guessed explanation or claim portal success.
 - Tracking degraded to local-only during a connected run - missing `cloud_url`, a `rejected`
   persistence state, HTTP 403 without the `experiment.write` scope, or a permanent HTTP 400: halt
-  further paid work at once, surface the backend reason verbatim, and report the degradation. Do not
+  further paid work at once, surface a sanitized backend reason, and report the degradation. Do not
   keep spending on trials that no longer reach the portal.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
@@ -704,8 +700,8 @@ can look identical to a production one.
 - Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
   do not retry or describe every case as "no tokens." An unfunded OpenRouter key returns HTTP 402 and
   silently fails trials - verify funding before paid work; a free-tier optimization-sample quota
-  rejection means shrink the run, not retry blindly. For an uncategorized provider error, surface the
-  provider's message verbatim rather than guessing a category.
+  rejection means shrink the run, not retry blindly. For an uncategorized provider error, surface a
+  sanitized provider message rather than guessing a category.
 - Timeout with completed trials: show the best partial result before offering one additional
   bounded pass with its extra approximate time and cost.
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before

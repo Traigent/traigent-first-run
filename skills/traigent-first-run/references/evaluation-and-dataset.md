@@ -8,7 +8,7 @@ Use this reference whenever creating or validating a dataset or evaluation metho
 2. Mandatory calibration
 3. Quality diagnosis and repair choice
 4. Dataset construction
-5. Holdout and claims
+5. Validation split and claims
 
 ## Evaluation selection
 
@@ -226,10 +226,10 @@ Use concrete evidence:
 | Corrupted rows | Invalid count, total count, percentage, and representative line errors | Some cases never reach the agent/evaluator; reported accuracy is incomplete |
 | Duplicate or narrow cases | Duplicate counts, dominant scenarios/labels, representative rows | Repetition overweights one behavior and can manufacture a high score |
 | Easy-only coverage | Cite representative trivial cases and name absent boundary/failure modes | Most plausible configurations may tie near 100%, leaving no measurable headroom |
-| Missing or contaminated holdout | Split sizes and overlap evidence | Improvement cannot be separated from tuning-set fit |
+| Missing or overlapping validation split | Split sizes and overlap evidence | No independent generalization claim is supported |
 | Task-inappropriate evaluator | Show the exact rule and one valid answer it rejects or bad answer it accepts | Optimization rewards the wrong behavior |
 | Degenerate evaluator | Four-probe scores, exceptions, or constant/inverted ordering | Candidate configurations cannot be ranked reliably |
-| Baseline ceiling | Baseline score, number and type of failures, and score resolution | The search may have nothing measurable to improve |
+| Baseline ceiling | Baseline score, number and type of failures, and per-example outcomes | This sample/evaluator may show little headroom; the cause is not established |
 
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which
 decision boundaries, realistic noise, edge cases, or known failure modes are absent. If that
@@ -414,17 +414,16 @@ Five rules make the subset honest:
    re-score after local validation - run on the **whole** dataset. The subset is chosen afterwards,
    as run scoping, immediately before the paid comparison. Getting this backwards makes the user's
    data wear the run's limitation: measured on 500 labelled, difficulty-tagged production rows, the
-   dataset pillar reads 98 with `249 examples - roughly +/-5pp`; the same dataset scored as an
-   18-row subset reads 80 with `8 comparable examples - a wiring check, not a score`. That sentence
+   dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row subset sees
+   only 8 and calls it `a wiring check, not a score`. That sentence
    is true of the run and false of the dataset, and the recorded opening-to-closing transition would
    show an 18-point drop that is nothing but our own sampling. Difficulty and diversity survive a
-   compliant sample; it is precision that collapses, so precision is what must be attributed
-   correctly.
-2. **Report the run's own resolution separately.** The subset limits what this comparison can
-   resolve, and that belongs in the run's report, not in the dataset's score: "this run compares
-   configurations on 18 of your 4,812 rows, so it resolves differences of roughly 16 percentage
-   points; your dataset itself supports about 5, and a full optimization uses all of it." One
-   sentence, and neither fact borrows the other's authority.
+   compliant sample; evidence volume collapses, so that limitation must be attributed correctly.
+2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
+   dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small
+   difference as directional unless paired uncertainty from the completed outputs supports it."
+   Sample size alone cannot supply a confidence interval or minimum detectable effect for a paired
+   comparison, so never invent a percentage-point threshold before those outcomes exist.
 3. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
    the holdout rows from the holdout split, keeping them disjoint. A subset drawn over the combined
    set can pull the same input into both sides and fabricate a tune/holdout overlap that the
@@ -448,22 +447,26 @@ representative, and that limitation belongs in the report.
 The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
 it; this bound exists only so the first run finishes.
 
-## Holdout and claims
+## Validation split and claims
 
-Reserve the holdout before optimization. Keep the same split across all comparisons and
-iterations.
+Reserve validation data before optimization and keep the same split across comparisons. Call it a
+sealed holdout only when its split and labels were fixed and hidden from component design, tuning,
+and winner selection until the candidate was locked. If the assistant inspected or authored it,
+call it held-back, non-blind validation.
 
-For generated 24-row walkthrough data, a practical split is 18 tuning / 6 holdout, stratified
-across difficulty and scenario. The holdout checks whether the walkthrough configuration
-generalizes to unseen synthetic examples. It does not validate production performance.
+For assistant-prepared 24-row walkthrough data, a practical split is 18 tuning / 6 validation,
+stratified across difficulty and scenario. The held-back six rows check behavior outside the
+tuning subset, but the assistant inspected or authored them, so the result is non-blind and does
+not independently establish generalization or production performance.
 
-Synthetic examples may enter a production holdout only after independent human review against
-the real task. This is a later production-promotion safeguard, not a calibration gate or a reason
-to pause the first walkthrough. Until then:
+Synthetic examples may support later promotion validation only after independent human review
+against the real task and only when the split and labels remained sealed from design, tuning, and
+winner selection. This is a later production-promotion safeguard, not a calibration gate or a
+reason to pause the first walkthrough. Until then:
 
-- Report them as synthetic holdout evidence.
+- Report them as synthetic, non-blind validation evidence.
 - Do not promote the result to production.
 - Do not describe the measured lift as expected customer lift.
 
-For small real holdouts, state the resolution honestly: an observed difference smaller than
-roughly one example's contribution is directional, not decisive.
+For small validation sets, report the paired outcome counts. State a difference as directional
+unless a justified paired uncertainty analysis supports a stronger claim.

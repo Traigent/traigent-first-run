@@ -66,8 +66,8 @@ When creating an agent:
 4. Keep behavior plausible enough to produce differences, but do not intentionally cripple the
    baseline to manufacture improvement.
 5. Put generated code in `traigent-runs/walkthrough_agent.py`.
-6. State: "Traigent generated an agent for this walkthrough." Do not call it a sample agent as if
-   it were equivalent to the user's production behavior.
+6. State: "I prepared a temporary agent for this walkthrough." Do not call it a sample agent as if
+   it were equivalent to the user's production behavior or imply Traigent created it.
 
 If the user gives no preference, recommend a structured classification or extraction task. It is
 easy to score deterministically and demonstrates optimization without paying for an LLM judge.

@@ -5,14 +5,13 @@ Run a guided Traigent optimization in one sitting, from whatever your project ha
 Your coding assistant inspects the project, preserves any real agent, dataset, and evaluation
 method it finds, and checks whether those components can support a meaningful comparison. If a
 real dataset or evaluator is too small, corrupted, narrow, trivial, or logically mismatched, the
-assistant explains the evidence and offers to repair a working copy and revalidate it. If Traigent
-generates temporary walkthrough material, it remains clearly marked so a demonstration is never
-mistaken for production evidence. When an optimization does not beat your existing baseline, that
-no-lift result is reported plainly rather than dressed up as a win - together with the likely
-reason, such as a ceiling effect, an over-strict or too-easy evaluator, or generated walkthrough
-data with no real headroom, where every configuration scores the same in both runs. A flat result
-on demonstration data shows the workflow ran honestly, not that your production workload has
-nothing to gain - on real data the same run would likely look different.
+assistant explains the evidence and offers to repair a working copy and revalidate it. The
+assistant labels any temporary walkthrough material so it cannot be mistaken for production
+evidence. When an optimization does not beat your existing baseline, that no-lift result is
+reported plainly rather than dressed up as a win. Verified facts are separated
+from inferences and hypotheses such as a ceiling effect, an uninformative evaluator, or a weak
+search space; when the run cannot establish a cause, it says so. A flat result on demonstration
+data does not establish what production performance would be.
 
 ## Start with one prompt
 
@@ -34,7 +33,8 @@ The assistant performs the technical work and asks only when it needs:
   one made.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
-Traigent generates a coherent substitute around everything that already exists.
+the assistant prepares a coherent substitute around everything that already exists, then Traigent
+runs the managed optimization.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
@@ -71,24 +71,28 @@ Node.js is needed only for this optional installation command, not for the Traig
 6. Preserves an existing baseline or creates a credible small parameter sweep, then runs a
    broader optimization with additional meaningful knobs when the evaluator can distinguish
    configurations.
-7. Retains the connected experiments and reports the result, limitations, artifacts, and verified
-   portal links so they remain available for comparison.
+7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and
+   verified portal links; an unsynced baseline is clearly labelled local-only.
 
 Everything before that approval - inspecting the project, setting up any missing components, and
 validating them locally - makes no provider calls and spends nothing, so the full setup is visible
-before you decide to pay. Once you approve, the run first confirms your experiments are actually
-recording to the portal and stops rather than spend on trials it cannot track.
+before you decide to pay. Once approved, a provider-paid local fixed baseline runs first and shows
+its result before any Traigent account/key request. After that checkpoint, the guide verifies
+portal tracking with a zero-LLM probe before the connected enhanced optimization spends anything.
 
-The default generated comparison is two connected optimization experiments: six standard
-parameter combinations in the first, then 10-13 trials from a materially broader space with added
-knobs in the second. If the user already has a baseline, the first experiment preserves it exactly
-instead of padding it with invented rows. Both runs use the same data and evaluator, followed by an
-untouched holdout check. Any later iteration is optional, not required.
+The default generated comparison is two measurements: six local fixed-grid configurations first,
+then 10-13 connected managed trials from a materially broader space with added knobs. If you
+already have a baseline, the first measurement preserves its exact rows and models instead of
+padding it. The assistant attempts an exact upload without rerunning that baseline only when the
+installed public SDK exposes its sync id; otherwise it remains local. Both measurements use the
+same data, evaluator, and objectives, followed by held-back validation. Validation is called sealed
+only when its split and labels stayed hidden until the candidate was locked. Any later iteration is
+optional, not required.
 
 On a dataset larger than about 100 usable rows, the paid comparison is bounded to a small subset
 spread across the difficulty range - drawn inside each split so it cannot invent an overlap, with
 the selected row ids recorded so the run can be repeated. The report names that subset size beside
-your full row count, and gives the run's own resolution as its own sentence.
+your full row count, and states the resulting sample-size limitation separately.
 
 Your readiness score is never taken on that subset. Both scores read the whole dataset, because the
 score is a statement about your data and the subset is a limit on this one comparison - scoring the
@@ -117,13 +121,14 @@ evaluator is usually what moves it.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
-shares examples with the holdout, a dataset that is mostly or entirely generated, or simply too few
-comparable examples to tell one configuration from another. A cap is a ceiling on the result, not a
+shares examples with validation, a dataset that is mostly or entirely generated, or simply too few
+comparable examples for a stable comparison. A cap is a ceiling on the result, not a
 deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
 number simply cannot claim more than the evidence supports.
 
-The card labels the two kinds differently, and the label is the whole message. `BLOCKED` means
-something is broken and paid work measured against it would measure the wrong thing - fix it first.
+The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
+means something is broken and paid work measured against it would measure the wrong thing - fix it
+first.
 `LIMITED TO 89` means nothing is wrong with your setup, the result simply cannot claim more than your
 data supports, and it names the number so "why is this 89" has an answer on the same line.
 
@@ -140,36 +145,37 @@ is credited above data a model wrote, and a dataset that declares nothing is not
 production data. A mixture is scored as a mixture - a few generated rows among real ones cost a
 little, they do not condemn the set.
 
-The card also names what it cannot use. If half your expected answers are `-` or `?`, the line that
-counts them says so - "100/100 rows carry an expected output, but 50 of them are placeholders" - so
-a row count can never be read as that many usable answers. The precision figure beside it is still
-computed from the row count rather than the usable subset: it is qualified, not withheld. Treating a
-symbol as unlabelled would change the score for every dataset that uses one as a real class label,
-so that stays a deliberate open question rather than a silent reinterpretation of your data.
+The card also names what it cannot infer. If half your expected answers are `-` or `?`, it calls
+them symbol-only outputs that need confirmation. They remain in the labelled and sample-size counts
+because a symbol can be a legitimate class label; the guide does not silently reinterpret them as
+placeholders or claim they are unusable.
 
 ## Requirements
 
 - Python 3.11-3.13 in an isolated environment.
 - The tested first-run SDK stack pinned in
   [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt).
-- One supported LLM-provider key with a small amount of credit for the real run. The sweep
+- One supported LLM-provider key with a small amount of credit for the real run. When the assistant
+  must prepare a missing baseline, that generated sweep
   ladders that provider's models - a fast tier, a mid tier, and a strong tier one step below its
   newest flagship - and deliberately skips the flagship itself so the first run stays quick and
-  cheap; the flagship remains the natural next rung for a later, deeper run. Both runs use the
-  same three models, so an optimization win comes from Traigent's search and knobs, not from a
-  hidden model upgrade.
+  cheap. A user-owned baseline instead keeps its exact model set in both measurements; the
+  enhanced run adds no model unless that separate comparison is disclosed and approved.
 - A Traigent portal key for connected optimization and portal results. You are asked for it *after*
   the first result is on screen, not before. The baseline runs locally on your own provider key and
   needs no Traigent account, so you see a real number from your own project before deciding whether
   to register.
 
-Your assistant preserves or creates an owner-only local `.env`, adds only missing key names for the
-chosen provider and Traigent, and asks you to paste the values there. Never paste secrets into chat.
+Your assistant preserves or creates an owner-only local `.env`, asks for only the provider key
+before the local baseline, and adds or requests the Traigent key after the checkpoint. Never paste
+secrets into chat.
 
 ## Privacy
 
-Traigent receives configuration identifiers, numeric measures, and run status needed for connected
-optimization and portal history. It does not need the agent's prompts, examples, or outputs.
+According to the documented SDK/service contract, Traigent receives configuration identifiers,
+numeric measures, and run status needed for connected optimization and portal history, not the
+agent's prompts, examples, or outputs. This walkthrough does not independently audit network
+packets; it stops if observed runtime behavior contradicts that contract.
 
 The selected LLM provider still receives the content the agent normally sends during model calls.
 Your assistant explains which services receive data and asks before paid calls or private-data

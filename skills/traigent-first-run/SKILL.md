@@ -47,13 +47,17 @@ unversioned `traigent` package.
 
 - Treat this as the user's **first Traigent run**, not as evidence about their expertise.
 - Never classify or announce the user's expertise level.
-- Speak for a capable system: "Traigent will generate..." and "I will validate...", not
-  "Traigent can use a sample..."
+- Name the actor truthfully: "I will prepare the walkthrough dataset" for assistant-created
+  artifacts, and "Traigent will run the managed search" only for work the service performs.
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
 - After task intent is anchored, put generated artifacts under `traigent-runs/` and add that
   directory to the project `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
+- At each stage boundary, and before and after any step that may take more than about a minute,
+  give a compact `Done / Now / Next` update. Use only observed milestones. Report trial counts,
+  the current best, spend, or remaining time only when the running SDK exposes those values;
+  never invent a percentage or ETA to fill silence.
 - Explain a blocked step in plain language and give one recommended recovery.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
@@ -71,7 +75,7 @@ approval.
 | Create `traigent-runs/` artifacts and add that path to `.gitignore` | Proceed only after inspection and once task intent is anchored; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, and unrelated keys; append only missing selected-provider and Traigent key names with blank values. Before opening it, require mode `0600` on POSIX, then stop once for local secret entry. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX, then stop once for that local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves the evaluator path is local-only or every mock model call is intercepted, with no external side effects. |
@@ -83,7 +87,7 @@ approval.
 Track two different facts:
 
 1. **Real-world readiness** - whether the project contains a real, validated component.
-2. **Walkthrough setup** - whether Traigent prepared a temporary substitute to demonstrate the
+2. **Walkthrough setup** - whether the assistant prepared a temporary substitute to demonstrate the
    workflow.
 
 Use exactly these meanings:
@@ -91,7 +95,7 @@ Use exactly these meanings:
 - `✅` - real component found and validated.
 - `❗` - real component is missing, failed validation, or exists with evidence too limited for a
   credible optimization claim.
-- `🛠️` - temporary walkthrough substitute created by Traigent.
+- `🛠️` - temporary walkthrough substitute created by the coding assistant.
 
 Never mark synthetic material `✅`, never count it as real-world-ready, and never say "3/3 ready"
 when any component is synthetic.
@@ -111,9 +115,9 @@ Example when nothing exists:
 >
 > **Walkthrough setup**
 >
-> Traigent will generate a coherent agent, varied dataset, and suitable evaluation method for
-> this walkthrough. The result will demonstrate the optimization workflow, not expected
-> production performance.
+> I will prepare a coherent agent, varied dataset, and suitable evaluation method for this
+> walkthrough, then Traigent will optimize that system. The result will demonstrate the
+> optimization workflow, not expected production performance.
 
 After creation, keep the three `❗` lines and add three `🛠️` lines describing the substitutes.
 For mixed states, show real components as `✅` and only generated substitutes as `🛠️`.
@@ -148,7 +152,8 @@ stage-5 environment is the interpreter the connected run is judged on. Score rea
 actually exists: run the bundled static preflight with `--defer-missing-sdk` over whatever dataset
 was discovered - omitting `--dataset` entirely when no dataset exists rather than passing a path
 that does not exist yet - then run `scripts/readiness.py` on that preflight JSON plus any
-calibration or config-space evidence already present. Every guided run does this, the zero-anchor
+calibration or config-space evidence already present. Pass the same resolved
+`--evaluator-method` to both scripts. Every guided run does this, the zero-anchor
 walkthrough included, and this opening score is not skippable. It always reports all three
 pillars; a project with no dataset, no calibration, and no config-space document still scores -
 typically 0 and `NOT READY` - and that capped baseline is the honest opening the closing report is
@@ -214,8 +219,8 @@ conversation; recording it is a write and waits for the answer.
    - ❗ **Agent** - no production agent is connected.
    - ❗ **Dataset** - no real examples are connected.
    - ❗ **Evaluation** - no validated grading method is connected.
-2. State that Traigent will create the coherent walkthrough substitutes after the user chooses
-   the task, and that synthetic results will demonstrate workflow rather than production
+2. State that the coding assistant will create coherent walkthrough substitutes after the user
+   chooses the task, and that synthetic results demonstrate workflow rather than production
    performance.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices and recommend a structured, deterministically scoreable task.
@@ -239,7 +244,7 @@ entry, before any substitute exists.
 For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
 render it again before the user answers. For every other starting state, render the initial
 real-world readiness board after inspection. Show the rendered card beside that board, as printed.
-State what Traigent will create for the walkthrough.
+State what the coding assistant will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
 changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
 instead of replacing the initial board with a green one.
@@ -373,7 +378,9 @@ rather than the condition id:
 - `dataset-no-expected-outputs` - the rows are `limited` and stay `❗`; recommend repairing a
   labelled working copy. Adding or changing expected outputs is judgment-dependent and needs the
   explicit approval the action table already requires. Do not optimize against the unchanged
-  input-only data.
+  input-only data with a reference-requiring evaluator. A genuinely reference-free rubric or
+  pointwise/pairwise judge does not fire this cap; disclose the absent independent answer key
+  without claiming there is nothing to score.
 - `dataset-integrity-fail` - treat the dataset as invalid: repair and revalidate a working copy,
   or use a clearly labeled `🛠️` substitute; do not optimize against the unrepaired file.
 - `dataset-tune-holdout-overlap` - repair a disjoint split in the working copy and revalidate;
@@ -388,15 +395,11 @@ rather than the condition id:
   model, so the score measures agreement with that model rather than correctness. Recommend that a
   person reviews a sample of the answers before any accuracy claim leaves the run, and make no
   correctness claim on the unreviewed key.
-- `dataset-below-measurable-size` - there are too few comparable examples to tell any configuration
-  from any other. Say that plainly before the run rather than after it: the walkthrough can still
-  demonstrate the mechanics end to end, and that is worth doing, but no result it produces is
-  evidence about which configuration is better. Adding examples is the only thing that changes this,
-  and the first few dozen buy most of the resolution.
-- `dataset-coarse-resolution` - the comparison can only see large differences. Name the size of the
-  difference it *could* detect when presenting the result, so a flat outcome reads as "too close to
-  call on this much data" rather than as "the configurations are equivalent". The two are not the
-  same claim and only one of them is supported.
+- `dataset-below-measurable-size` - there are too few comparable examples for a stable comparison.
+  The walkthrough can still demonstrate verified phases, but treat any ranking as exploratory.
+- `dataset-coarse-resolution` - the comparison set is small. Do not invent a detectable-effect
+  threshold from row count alone; after the paired outputs exist, report paired outcome counts and
+  justified uncertainty, or call a small/flat difference directional or inconclusive.
 
 Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
 paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
@@ -413,7 +416,8 @@ Only after the standard-library-only component checks:
    already present, select that provider so the walkthrough needs no second account or key. If no
    route exists and no single direct credential is present, default to OpenRouter because one key
    can exercise multiple model vendors. Do not create a separate provider-choice question; mention
-   that the user may request a direct provider instead. If the current route is clear but its credential is absent while a
+   that the user may request a direct provider instead. If the current route is clear but its
+   credential is absent while a
    different provider credential is present, stop with one clear mismatch: recommend adding the
    current route's key, and offer an explicit route change as the alternative. Never rewrite the
    model identifier or provider prefix merely to match an available key.
@@ -470,29 +474,24 @@ Only after the standard-library-only component checks:
    services, tools, and custom judges are not free merely because mock mode is enabled. Exit the
    mock process and never reuse it for a real run.
 6. After every applicable free check is complete, create the minimal `.env` when none exists, or
-   append only missing selected-provider and Traigent key names to the existing file. Leave new
-   entries blank; never replace existing values, comments, unrelated keys, or blank alternate
-   provider entries. Create a new file with a restrictive umask and mode `0600` on POSIX; correct
-   any other existing mode before opening the file.
-   Stop once and ask the user to enter the keys they already hold locally, never in chat. Do not
-   send a user who has no Traigent account through registration at this step: the provider key is
-   all the baseline needs, and the account ask belongs after that first result (stage 7). If the
-   portal key is not yet available, provide only the required account/key destination and resume
-   from this step afterward. If the user has already completed portal registration and created
-   their key in the portal, skip the create-account and generate-key ask and have
-   them paste that key. If they have not registered yet, route them by
-   which of the four account states they are in per `references/run-safety.md` - do not assume the
-   emailed access code was ever used. The key authenticates the run; the account's portal access
-   period is what authorizes it, so do not treat a valid key as proof the run will be accepted.
+   append only the missing selected-provider key name to the existing file. Leave the new entry
+   blank; never replace existing values, comments, unrelated keys, blank alternate-provider
+   entries, or a Traigent key already present. Create a new file with a restrictive umask and mode
+   `0600` on POSIX; correct any other existing mode before opening it. Stop once and ask the user
+   to enter only the selected-provider secret locally, never in chat. Do not request a Traigent
+   key, route an account state, or send the user to an account/key destination here. The local
+   baseline needs no Traigent account; that handoff belongs after its checkpoint in stage 7.
 
 With OpenRouter, OpenRouter is the gateway and an automatically selected upstream inference
 provider may also receive the prompts, examples, and outputs. Name OpenRouter and every allowed
 upstream provider or route in the later approval, disclose whether fallback routing is enabled,
 and pin allowed routes and disable fallbacks when the user requires an exact recipient set.
 
-Explain truthfully:
+Explain the documented data path, and label it as a contract rather than a packet audit:
 
-- Prompts, examples, and outputs are not sent to Traigent by the optimization service.
+- According to the documented SDK/service contract, prompts, examples, and outputs are not sent
+  to Traigent by the optimization service. This walkthrough does not independently inspect
+  network packets; if observed runtime behavior contradicts that contract, stop and report it.
 - The selected direct provider receives the content the agent normally sends during model calls.
   For OpenRouter, both the OpenRouter gateway and the selected upstream inference provider may
   receive it.
@@ -506,24 +505,28 @@ least four from each difficulty band, drawn within each split rather than across
 runtime and spend from that subset, not from the full row count.
 
 The window matters in both directions. It comes *after* the stage-4 re-score, because the score is a
-statement about the user's dataset and a score taken on our sample would report this run's precision
+statement about the user's dataset and a score taken on our sample would report this run's sample-size
 limit as though it were a property of their data. It comes *before* the approval below, because an
 estimate priced on 4,812 rows and then run on 18 asks the user to approve a run that never happens -
 and a decision made on a number that large may simply be no.
 
-Record the chosen row ids, report the subset size beside the full row count, and give the run's own
-resolution as its own sentence rather than letting it colour the dataset's score. A first run shows
-the capability; it does not exhaust the dataset.
+Record the chosen row ids, report the subset size beside the full row count, and state that the
+small first-run sample limits what the comparison can establish. A first run shows the workflow; it
+does not exhaust the dataset.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
 Prepare one concise combined approval immediately before paid work containing:
 
-- What will run: the smallest live provider/key check, any required LLM-judge calibration,
+- What will run: the smallest live provider-credential check, any required LLM-judge calibration,
   the preserved baseline or a generated six-row sweep, one broader bounded optimization, and
-  baseline winner versus enhanced winner holdout comparison.
-- Tuning/holdout sizes, trial limit, and approximate total calls.
-- The walkthrough model ladder in play: the three tiers both runs share, and that the vendor's
-  newest flagship is deliberately not among the selected models, with the one-line reason below.
+  baseline winner versus enhanced winner validation comparison.
+- Tuning/validation sizes, validation visibility, trial limit, and approximate total calls.
+- The primary metric, each objective's direction and weight, the fixed baseline space, the added
+  enhanced controls, how Traigent chooses trials, and the rule used to recommend a final
+  configuration when accuracy, cost, or latency trade off.
+- For an assistant-prepared baseline, the three-tier generated model ladder and why it omits the
+  vendor's newest flagship. For a user-owned baseline, list its exact preserved models and state
+  that the enhanced run adds no model unless that separate comparison is disclosed and approved.
 - Approximate runtime and estimated spend.
 - A `$5.00` total walkthrough ceiling by default.
 - Any call path whose cost is untracked; describe the ceiling as a stop target rather than a
@@ -531,36 +534,18 @@ Prepare one concise combined approval immediately before paid work containing:
 - What leaves the machine and every service or route that may receive it. For OpenRouter, name
   OpenRouter plus every allowed upstream inference provider/route and disclose fallback behavior.
 
-Give time a stated ceiling as well as money, and put both in the same approval. The walkthrough
-promises one sitting, so budget the whole paid phase at about **30 minutes** - roughly 10 for the
-baseline and 20 for the enhanced run - and say the numbers out loud rather than only the cost. A user
-who knows the run is bounded at half an hour reads a pause differently from one watching an
-open-ended process.
+Put the runtime estimate and the default **30-minute completion target** in the same approval as the
+money ceiling. This is an estimate and an up-front sizing target, not a hard wall-clock guarantee.
+The default synchronous enhanced run may expose neither an interruptible checkpoint nor live
+partial results, so never promise a pause at minute 30. Size the run to fit before it starts.
 
-Reaching that ceiling is a decision point, not an automatic stop. Ending the run because a clock
-expired takes the choice away from the person paying for it - and the answer is often "keep going, I
-have ten more minutes". So pause at the boundary, hold the completed work, and ask.
+When the installed SDK exposes trustworthy live progress, status updates may name completed trials,
+the current best, tracked spend, and an ETA recalculated from completed work. Otherwise report only
+observable phase milestones. If an actual configured timeout returns completed trials, present that
+partial result and offer two choices: stop and report the measured subset, or continue with a named
+additional time/spend budget. Never invent progress or quietly drop validation to make the target.
 
-Give them the three things they need to answer in one screen, in their terms rather than the
-scheduler's:
-
-- **What is done** - "9 of 13 configurations tested so far", not a percentage or an elapsed time.
-- **What the current best looks like**, with the same honesty the final report owes: the leading
-  configuration, its score, and whether it has beaten the baseline yet.
-- **What finishing would take** - the approximate remaining time and spend for the untested
-  configurations, derived from the ones already measured rather than from the original estimate.
-
-Then offer exactly two choices: stop here and report what has been measured, or continue with a named
-additional budget. Do not offer a third path that quietly abandons the holdout - a smaller comparison
-with a holdout beats a larger one without, and the holdout is what makes any of it a claim rather
-than an anecdote.
-
-If they stop, the report says so in the same breath as the result: "tested 9 of 13 configurations
-within the approved time; the winner below is the best of those 9, and the 4 not reached are listed".
-A partial comparison that names what it never tried is honest. The same comparison presented as
-complete is not, and a reader cannot tell the difference unless the run says which it is.
-
-If the estimated first run exceeds `$5.00` or about 30 minutes, first recommend a smaller
+If the estimated first run exceeds `$5.00` or the 30-minute completion target, first recommend a smaller
 representative tuning slice while preserving meaningful difficulty and a holdout. Reduce the
 generated six-row baseline or the 10-13-trial enhanced target only when the approved ceiling,
 runtime, or plan quota still binds, and disclose that reduced comparison in the approval. Ask
@@ -582,23 +567,24 @@ conservative estimate when cost is untracked. Before the next phase, compare its
 remaining total ceiling. Stop before exceeding it and ask only if more paid work is required.
 Never call the walkthrough ceiling a hard provider-billing cap.
 
-After approval and before the first connected paid trial, run a zero-LLM portal-tracking probe with
-a trivial stub agent that makes no provider call: confirm the whole connected path in one pass - the
-portal key is present and authenticated, is scoped for `experiment.write`, a session is created, the
-first trial is accepted, and a `cloud_url` comes back. The baseline is not gated on this probe. It
-runs on the user's own provider credential with no portal key at all, so a user who has not
-registered yet still reaches a first real result without front-loading the account funnel; run the
-probe once that key is in hand, before the first trial meant to reach the portal. Paid is not the
-trigger - reaching the portal is. A baseline spends real provider money and has no tracking to lose;
-a connected trial does. A present-but-unscoped key (HTTP 403 without
+The combined approval covers a zero-LLM portal-tracking probe later, but do not request the
+Traigent key or run that probe yet. First run the local baseline and show its checkpoint. After the
+stage-7 account/key handoff, run the probe before the first connected paid trial with a trivial stub
+agent that makes no provider call: confirm the whole connected path in one pass - the portal key is
+present and authenticated, is scoped for `experiment.write`, a session is created, the first trial
+is accepted, and a `cloud_url` comes back. Paid is not the trigger - reaching the portal is. A local
+baseline spends real provider money and has no tracking to lose; a connected trial does. A
+present-but-unscoped key (HTTP 403 without
 `experiment.write`) and a rejected config (HTTP 400) both otherwise degrade silently to local-only
-tracking while paid trials keep running and never reach the portal. If any rung fails, surface the
-backend reason verbatim and stop before any paid trial. Treat any degradation to local-only tracking
-that appears later in the connected run the same way: halt further paid work at once and report it in
-the result, never discovered afterward. The connected-run readiness detail is in
+tracking while paid trials keep running and never reach the portal. If any rung fails, show a
+sanitized reason and stable status/request identifier when available, then stop before any connected
+paid trial. Remove secrets, prompts, examples, outputs, and personal data from externally supplied
+error text before showing or saving it. Treat any degradation to local-only tracking that appears
+later in the connected run the same way: halt further paid work at once and report it in the result,
+never discovered afterward. The connected-run readiness detail is in
 `references/run-safety.md`.
 
-After the approved live probe, derive internal request and optimization time bounds from observed
+After the approved live provider probe, derive internal request and optimization time bounds from observed
 latency, rows, trials, calls per example, and concurrency. Do not show or ask the user to choose
 those implementation values. If the measured runtime no longer fits the approved estimate,
 offer either a smaller run or the additional approximate time/cost. On SDK timeout, report a
@@ -612,35 +598,27 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
 
 1. **Baseline** - preserve the user's existing baseline or fixed configuration exactly as defined,
    including its original row count. Do not add variants to make it look fuller. Only when the
-   configuration is missing and Traigent creates it, generate a credible quick manual-style sweep
-   of six distinct configurations: by default, three credible models by two safe temperature
-   values, with enhanced-only controls pinned to their ordinary/off values. The three models are
-   the fast, mid, and strong rungs of the walkthrough model ladder below, never the vendor's
-   newest flagship.
+   configuration is missing, prepare a credible quick manual-style sweep of six distinct
+   configurations: by default, three credible models by two safe temperature values, with
+   enhanced-only controls pinned to their ordinary/off values. Those generated models are the
+   fast, mid, and strong rungs of the walkthrough ladder, never the vendor's newest flagship.
 2. **Enhanced Traigent optimization** - a materially larger space that contains every baseline
    value and adds meaningful controls that the agent actually consumes. Target 10-13 visible
    trials, using 12 as the internal default cap. For the generated walkthrough, keep the model
-   list identical to the baseline's, add prompt-policy
-   choices and a native boolean self-check control without adding another model call, and refine
-   swept values around the baseline's top rows - the added value hugs a winner rather than a far
-   point - while keeping every baseline value, so an
-   enhanced win is attributable to the added knobs and the managed search, never to a
-   quietly upgraded model. For a real
-   agent, prefer task-specific controls tied to observed failure modes, such as retrieval depth,
-   context format, few-shot count, tool policy, or repair behavior.
+   list identical to the baseline's, add prompt-policy choices and a native boolean self-check
+   control without adding another model call, and refine swept values around the baseline's top
+   rows. For a user-owned baseline, preserve every baseline model and row exactly and add
+   non-model, task-relevant controls by default. Adding a new model is a separately disclosed
+   experiment, not a silent part of optimization. These rules keep a win attributable to the
+   added controls and managed search rather than to a quietly upgraded model.
 
-Both runs share the models Traigent selects: a deliberate ladder inside the selected route of one
-fast low-cost tier, one mid-tier workhorse, and one strong tier one step below the vendor's newest
-flagship, the strong tier at a pinned reasoning effort in both runs when it is a reasoning model -
-temperature is then dropped as a swept knob for the whole walkthrough and two prompt styles form
-the baseline's second axis instead, per the sdk-execution reference.
-Never auto-select the flagship itself, and say why in one line when presenting the plan:
-a first run is for seeing the workflow and the cost-accuracy tradeoff quickly, so it stays faster
-and cheaper by searching down the ladder, and the flagship remains the ready next rung for a later
-run if the task proves hard enough to need it. When the user's own agent already calls the
-flagship, that choice is preserved exactly - it is the baseline being measured - and the ladder
-adds the tiers below it; never remove or swap the user's model, and give the same one-line
-explanation before the approval so the cheaper added tiers read as deliberate, not as a downgrade.
+The three-tier ladder applies only when this walkthrough supplies a missing baseline. Keep one fast
+low-cost tier, one mid-tier workhorse, and one strong tier one step below the newest flagship; when
+the strong tier is a reasoning model, pin its supported calling convention across both generated
+spaces. Say why the flagship is omitted: this first run stays faster and cheaper while showing the
+cost-quality tradeoff. A user-owned baseline is different evidence - preserve its exact model set,
+including a flagship if present, and do not add cheaper tiers without the separate disclosure and
+approval above.
 
 Frame the enhanced run the same honest way in the plan and in the report: a deliberately small
 enhancement for a first look - a few added knobs plus swept values refined from the baseline's own
@@ -649,22 +627,35 @@ capability. The deeper layers - richer task-specific spaces and the recommendati
 system - come after this run, so the small scope reads as a deliberate first taste rather than the
 product's limit.
 
-The baseline needs only the user's own provider credential. It runs locally as an explicit grid, so
-it produces a first real result before any Traigent account exists - deliberately the shortest path
-from "nothing set up" to "a number I can see". Say plainly that this first measurement is the
-local half of the SDK: a fixed grid over a small space, not Traigent choosing what to test. It is
-free of Traigent, not free of spend - the provider calls are real money and stay inside the same
-combined approval and the same running total as everything else.
+The baseline needs only the user's provider credential. Run its explicit fixed grid without a
+Traigent key in that process, preserving any existing key on disk, so it produces the shortest
+path from "nothing set up" to "a number I can see". Say plainly that this is a **local fixed
+grid**, not Traigent choosing which configurations to test. It is local, not free: provider calls
+spend from the same approved total.
 
-Only after that first result is on screen, ask for the Traigent key. The order is the point: the
-user has already seen the tool work before being asked to create an account. Tell them the key needs
-full access rather than the read-only default, because a read-only key still spends on the run and
-then records nothing. Once it is in place, upload the baseline that already ran instead of paying to
-repeat it, then run the enhanced search connected so the portal holds both. Report each run with its
-own link, name which is which, and never present one link as though it covered both. If the user has
+Immediately after it returns, show a **Local baseline checkpoint** before any Traigent-key or
+account request:
+
+- If any component is `🛠️`, put the provenance limitation before the numbers.
+- State what ran: a local fixed grid, not Traigent choosing the trials.
+- Show the best configuration and tuning score, executed and failed trial counts, and tracked cost
+  - or `not measured` when the provider/SDK did not report cost.
+- State that no validation comparison or improvement claim exists yet and that this phase created no
+  portal experiment.
+- Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
+  exact baseline upload without rerunning it when the installed public API supports that, then run
+  the connected enhanced optimization.
+
+This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
+the run as baseline-only, not as a completed Traigent optimization.
+
+Only after that checkpoint, ask for the Traigent key. The order is the point: the user has already
+seen a provider-backed result before being asked to create an account. Tell them the key needs full
+access rather than the read-only default, because a read-only key can leave a paid connected run
+unrecorded. If the user has
 already completed portal registration and still has the key created there, skip the create-account and
-generate-key ask - have them paste that key into `.env`, never into chat, and upload the baseline as
-above. Registering is not the same as holding a key: the key is created on the API-key page and is
+generate-key ask - have them paste that key into `.env`, never into chat. Registering is not the
+same as holding a key: the key is created on the API-key page and is
 shown once, so a user who registered but did not save it creates a fresh full-access one - from the
 portal's top-bar key control, or `https://portal.traigent.ai/management/api-keys` - rather than
 hunting for the original. Ask which
@@ -678,6 +669,14 @@ key from the portal's top-bar key control - highlighted on a first visit - and s
 shown; only then come back and paste it. If they have not started
 at all, they begin at the Traigent site, and the registration page will refuse them until a code
 exists. `references/run-safety.md` holds the four states in full.
+
+Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
+on the completed baseline result. When it exists, dry-run an exact one-session sync, perform the
+real sync with machine-readable output, and take the baseline portal link from that sync result.
+When the installed SDK exposes no supported exact id, keep the baseline local and say so; never
+inspect private storage or use `--all`. Run the enhanced optimization connected and require its
+own verified portal link. Report a direct link for every run actually persisted, and never imply
+the enhanced link also covers a local-only baseline.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
@@ -700,14 +699,16 @@ and never present offline checks as a completed optimization. Resume the connect
 failure is resolved.
 
 Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
-one-row before and stays unchanged. A Traigent-generated walkthrough must not proceed with a one-
+one-row before and stays unchanged. An assistant-prepared walkthrough must not proceed with a one-
 row baseline; generate enough real controls for the six-configuration default.
 
 After the baseline, check whether the dataset and evaluator can distinguish configurations. If
 the baseline is perfect or nearly perfect and has no informative failures, stop before the search
-and explain the likely ceiling effect. Recommend adding realistic boundary, failure, and harder
-cases, then revalidate. Continue only if the user accepts that the run is a workflow
-demonstration and may have no measurable room to improve.
+and report the observation: this sample/evaluator shows little or no accuracy headroom. A ceiling
+effect is a hypothesis, not an established cause; name other live possibilities and say when the
+cause is not established. Recommend realistic boundary, failure, and harder cases, then revalidate.
+Continue only if the user accepts that the run is a workflow demonstration and may have no
+measurable room to improve.
 
 One exception pivots that decision: when the objectives include cost, saturated accuracy caps
 only the accuracy axis, not the run. An equal-accuracy configuration at materially lower cost is
@@ -728,8 +729,10 @@ reveals a specific, worthwhile hypothesis.
 Before saying the run succeeded, verify:
 
 - Trials executed and no silent mock response leaked into the real run.
-- Real provider cost is positive or explicitly reported as untracked.
-- The user's existing baseline was preserved exactly, or the Traigent-generated baseline produced
+- Real provider calls executed with nonzero usage; cost may be positive, provider-reported zero
+  for a genuine free route, or explicitly untracked. Never use cost alone to decide whether a run
+  was real.
+- The user's existing baseline was preserved exactly, or the assistant-prepared baseline produced
   six distinct rows including its initial configuration. If the approved plan explicitly reduced
   that default, the executed count matches the disclosed reduction and still includes the initial
   configuration.
@@ -738,42 +741,53 @@ Before saying the run succeeded, verify:
 - The optimized result has a best configuration and non-degenerate measures.
 - No trial silently truncated.
 - Portal persistence completed or a precise degraded/failed state is reported.
-- The pre-paid portal-tracking probe passed, and connected tracking never silently fell back to
+- The pre-connected-run portal-tracking probe passed, and connected tracking never silently fell back to
   local-only during the run; any such degradation halted further paid work rather than surfacing
   only at the end.
 - Any portal link is present before claiming the result is visible there.
 
-Report:
+Lead with a layered summary whose opening layers are enough for a quick read and whose details are
+auditable:
+
+1. **Outcome** - baseline versus enhanced result and whether a recommendation is supported.
+2. **What the evidence establishes** - tuning result, validation result, and actual persisted runs.
+3. **Current state and limits** - component provenance, exclusions, uncertainty, and incomplete
+   phases.
+4. **Next action** - one action selected from the latest closing evidence.
+5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
+   verified links.
+
+Include:
 
 - Best small-sweep configuration versus best enhanced configuration on the tuning set.
-- Holdout result separately, when a valid holdout exists.
+- Validation result separately, including whether it was sealed or held-back and non-blind.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 - The readiness transition: the recorded opening score and band, the closing score and band, and
   which caps cleared and which remain.
-- When the enhanced run does not beat the baseline, name the likely cause and show it beside the
-  number - an uninformative search space, a dataset ceiling, an over-strict evaluator, controls the
-  search never varied, generated data with no headroom, or a base model not capable enough for a
-  genuinely hard task where a stronger model or higher reasoning effort is the lever (rule-out order
-  and full list in `references/run-safety.md`) - never a bare flat delta. Only after ruling those out
-  is a low number the honest difficulty ceiling, reported plainly, not a broken agent. And when the
-  reference itself is misleading (ambiguous, wrong, or degenerate), say the question is misleading -
-  do not blame the model or reasoning-effort level for failing to match it. A flat result on
-  demonstration data shows the workflow ran honestly, not that the production workload cannot improve.
+- When the enhanced run does not beat the baseline, report the observed flat/negative delta first,
+  then separate verified facts, evidence-backed inferences, and untested hypotheses. Use
+  `cause not established by this run` unless the evidence rules a cause in. The hypotheses and
+  rule-out order in `references/run-safety.md` guide the next test; they are not mandatory
+  diagnoses. When the reference is demonstrably ambiguous, wrong, or degenerate, say so rather
+  than blaming the model. A flat result on demonstration data shows only that this comparison ran
+  and found no lift on its evidence, not that production cannot improve.
 
-Retain the customer's baseline and optimization experiments in the Traigent portal so the user can
-open and compare them after the walkthrough. Never delete portal experiments as automatic teardown
-or cleanup. Delete one only after the user explicitly requests that destructive action; otherwise,
-finish by giving the user the direct link to every persisted first-run experiment.
+Retain every experiment that was actually persisted in the Traigent portal. Never delete one as
+automatic teardown or cleanup. Give the user a direct verified link for each persisted run and
+label the baseline local-only when exact sync was unsupported or failed.
 
 If any substitute was used, lead the interpretation with:
 
-> This run demonstrates that the Traigent optimization workflow works end to end. Because
-> `<components>` were generated for the walkthrough, the measured improvement is not evidence of
-> expected production performance.
+> Completed in this run: `<verified phases>`. Not completed or independently verified:
+> `<missing phases>`. Because `<components>` were prepared as walkthrough substitutes, the
+> measured result is not evidence of expected production performance.
 
 Do not promote a configuration from a fully synthetic run. For real components, promotion still
-requires the untouched holdout and explicit user approval.
+requires explicit user approval and a sealed validation set: the split and labels were fixed and
+hidden from component design, tuning, and winner selection until the candidate was locked. When
+the assistant inspected or authored that material, call it **held-back, non-blind validation**,
+not an untouched holdout, and do not present it as independent production-promotion evidence.
 
 Name every row the comparison did not score, with its id: rows excluded as degenerate references,
 and the ids of the bounded subset when one was drawn. A result quoted on 25 of 30 rows is a
@@ -788,36 +802,21 @@ naming the caps that cleared and the caps that remain. Pass
 was emitted; without it the agent pillar scores from absent evidence and the transition understates
 the run's own work. Any gain earned by a `🛠️` substitute is
 walkthrough setup and is never presented as real-world readiness. Restate what was weak, what
-Traigent filled in, and what that costs in the real world - a dataset of a dozen generated
+the assistant prepared for the walkthrough, and what that costs in the real world - a dataset of a dozen generated
 examples measures the workflow, not the product, however good the number looks. The opening score
 and the closing recap are the same conversation: the user should leave knowing which gap to close
 first and why it matters, not just what the run produced.
 
-Two local, free reads make that concrete rather than generic, and both come from the completed runs
-without another call. The per-example audit names specific examples that no configuration ever got
-right, and the optimization insights name which control actually moved the result. Report those by
-example and by knob; see `references/sdk-execution.md` for what the installed SDK exposes. Say
-plainly that this is what the SDK alone can see.
+After a completed run, feature-detect the installed SDK's local per-example audit and optimization
+insights. Report only fields actually returned, attribute each finding to that artifact, and name
+the evidence behind any inference. If the helper or required evidence is absent, say that no
+verified local insight artifact was available and omit specific claims.
 
-Then, and only as what comes next rather than what was withheld, name what Traigent adds on top of a
-connected run: it scores every example from the run to show which are informative, which are
-redundant, and which look mislabelled, and it audits the evaluator itself. Describe those as signals
-and curation advice, not as numbers - do not promise a numeric dataset-quality score, and never
-imply the platform can grade a dataset that has not been run. Say plainly that this layer is
-run-scoped and shows its full power only once the enhanced run has finished - and that what it can
-honestly recommend grows with the readiness score: over real components it advises about the
-product, over walkthrough substitutes it can only describe the walkthrough. That ties the small
-first run to the next one: readier components and a finished enhanced run are what unlock stronger
-recommendations.
-
-Artifact-2 template B (DEEPER-INSIGHTS) is the post-optimization-run form of that layer, never a
-pre-run one: once the enhanced run has finished, surface the run-scoped analysis per question - name
-the examples that were informative, the ones that were redundant, and the ones that look mislabelled,
-and pair each with one line of curation advice (keep, drop, relabel, or add a harder sibling).
-Describe those as signals and curation advice, not as numbers - do not promise a numeric
-dataset-quality score, and never imply the platform can grade a dataset that has not been run. Carry
-no numeric pre-run dataset-quality score into this message; it reads the finished run, not an unrun
-dataset.
+Treat connected deeper insights the same way. Surface informative, redundant, or possibly
+mislabelled-example signals and curation advice only when a verified run-scoped platform artifact
+actually returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer labels
+from a flat score, promise a numeric dataset-quality score, or imply the platform graded an unrun
+dataset. Over walkthrough substitutes, any returned insight describes only the walkthrough.
 
 Close by saying what a further run would be worth, grounded in the two facts already on the table:
 the gaps the opening readiness score named, and which of them this run actually closed. Name the
@@ -826,16 +825,18 @@ difficulty spread, a substitute component still standing in for a real one - so 
 the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
 cannot close, say that plainly instead of implying a further run would fix it.
 
-Then give the one next action their *starting* state earns, not generic advice. The opening score
-already measured which gap is largest, so name the specific move and what it would buy:
+Then give the one next action the **latest validated state** earns, not generic advice. Re-rank the
+remaining closing caps and observed run limitations; do not repeat an opening gap that this run
+cleared. Name the specific move and what it would buy:
 
 - Generated or mostly generated data - collect or export a real sample of the same task and re-run.
   This is the gap that ceilings the score no matter how good everything else is, so it is first
   whenever it applies.
 - Real inputs with model-written answers - have a person review a sample of the answer key. Until
   then the accuracy number measures agreement with a model, not correctness.
-- Rows without expected outputs, or placeholder answers - label a slice rather than the whole set;
-  the power bands mean the first few dozen scoreable rows buy most of the resolution.
+- Rows without expected outputs when the evaluator requires references - label a representative
+  slice rather than the whole set. Symbol-only outputs are an explicit verification question, not
+  silently discarded labels.
 - One difficulty band, or answers that are nearly all the same - add examples where the agent
   currently fails, which is also where a search has room to win.
 - A substitute component still standing in for a real one - connect the production agent, dataset or
@@ -880,6 +881,6 @@ The first run is complete only when:
 - Free checks made no provider calls.
 - Paid work had explicit combined approval.
 - Baseline and optimization used the same tuning data and evaluator.
-- Result claims match the provenance and holdout evidence.
+- Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were
   actually verified.

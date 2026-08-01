@@ -31,6 +31,11 @@ NEAR_DUPLICATE_THRESHOLD = 0.9
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
+REFERENCE_FREE_METHODS = {
+    "llm-judge-pointwise",
+    "llm-judge-pairwise",
+    "llm-judge-rubric",
+}
 COMMON_OUTCOME_FIELDS = (
     "label",
     "category",
@@ -362,11 +367,13 @@ def normalize_dataset_row(
     row: dict[str, Any],
     input_field: str = "input",
     expected_field: str = "output",
+    require_expected: bool = True,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Project explicitly selected fields into the local quality-check shape.
 
     This deliberately does not assert SDK compatibility. Exact dataset normalization
-    belongs to the installed SDK's public validation and loading paths.
+    belongs to the installed SDK's public validation and loading paths. A declared
+    reference-free evaluator may project a missing expectation to ``None``.
     """
 
     if input_field == expected_field:
@@ -383,11 +390,13 @@ def normalize_dataset_row(
         )
 
     expected_found, expected_value = dataset_field_value(row, expected_field)
-    if not expected_found:
+    if not expected_found and require_expected:
         return (
             None,
             f"missing selected expected-output field '{expected_field}'",
         )
+    if not expected_found:
+        expected_value = None
 
     normalized = dict(row)
     normalized["input"] = input_value
@@ -432,6 +441,15 @@ def dataset_row_is_labelled(
 def normalized_text(value: Any) -> str:
     text = stable_json(value) if not isinstance(value, str) else value
     return " ".join(re.findall(r"\w+", text.casefold()))
+
+
+def normalized_identity(value: Any) -> str:
+    """Normalize equality without collapsing distinct symbol-only values."""
+    words = normalized_text(value)
+    if words:
+        return words
+    text = value if isinstance(value, str) else stable_json(value)
+    return text.strip().casefold()
 
 
 def token_set(value: Any) -> set[str]:
@@ -715,16 +733,18 @@ def emit_dataset_provenance(
             "generated_answer_rows": generated_answer_rows,
             "answerable_rows": len(answerable),
             "sources": sorted(declared_sources),
+            "unrecognised_sources": sorted(unrecognised),
         },
     )
     if unrecognised:
-        # Scored as collected, so say so rather than let an unknown word quietly
-        # earn the production band.
+        # Scored as collected for backward compatibility, so say so rather than
+        # let an unknown word quietly earn the production band.
         emit(
             "dataset-provenance-vocabulary",
             WARN,
             f"{sorted(unrecognised)} is not a recognised provenance word and was "
-            "read as collected real data; declare generated data with a "
+            "treated as collected by the compatibility rule, not verified as real; "
+            "declare generated data with a "
             "'synthetic'/'generated' token if that is wrong",
         )
     return synthetic
@@ -735,11 +755,13 @@ def check_dataset(
     outcome_field: str | None = None,
     input_field: str = "input",
     expected_field: str = "output",
+    evaluator_method: str | None = None,
 ) -> list[dict[str, Any]] | None:
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
         return None
 
+    reference_free = evaluator_method in REFERENCE_FREE_METHODS
     rows: list[dict[str, Any]] = []
     present_rows: list[dict[str, Any]] = []
     invalid_rows: list[tuple[int, str]] = []
@@ -761,6 +783,7 @@ def check_dataset(
             row,
             input_field=input_field,
             expected_field=expected_field,
+            require_expected=not reference_free,
         )
         if normalization_error is not None:
             invalid_rows.append((line_number, normalization_error))
@@ -865,7 +888,9 @@ def check_dataset(
 
     normalized_inputs: dict[str, list[int]] = {}
     for index, row in enumerate(rows, 1):
-        normalized_inputs.setdefault(normalized_text(row["input"]), []).append(index)
+        normalized_inputs.setdefault(normalized_identity(row["input"]), []).append(
+            index
+        )
     exact_duplicates = [
         positions for positions in normalized_inputs.values() if len(positions) > 1
     ]
@@ -904,96 +929,88 @@ def check_dataset(
             f"{len(rows)} rows exceeds the local pairwise-check limit of {MAX_NEAR_DUPLICATE_ROWS}",
         )
 
-    # Emptiness is answered by `dataset_row_is_labelled`, the same predicate the
-    # aggregate and per-split counts use, so this check can no longer contradict
-    # them. It used to test `normalized_text(...)`, which keeps only word
-    # characters - so a punctuation-only placeholder ("-", "?", "...") was empty
-    # here and labelled there, and one card reported "100/100 rows carry an
-    # expected output" beside "one or more expected outputs are empty" (#70).
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
-    # A separate question, kept because it is a real signal: an output with no
-    # word characters at all is a placeholder, not an answer. Reported as its own
-    # check rather than folded into emptiness, so neither claim contradicts the
-    # row counts and each says what it actually found.
-    placeholder_outputs = [
-        row
-        for row in rows
-        if dataset_row_is_labelled(row) and not normalized_text(row["output"])
-    ]
-    if placeholder_outputs:
-        emit(
-            "dataset-output-placeholders",
-            WARN,
-            f"{len(placeholder_outputs)}/{len(rows)} expected outputs carry no "
-            'word characters (for example "-", "?" or "...") - a placeholder '
-            "is not an answer the evaluator can score against",
-            {"placeholder_rows": len(placeholder_outputs), "rows": len(rows)},
-        )
-    # #68: dominance is a question about the answers that exist. Counting an
-    # unlabelled row's output made `normalized_text(None)` -> "null" a legitimate
-    # dominant value, so a 100-row set with 10 answers was docked twice - once
-    # correctly on power, once as a false "one expected output dominates" - and
-    # the card called the same 90 rows both unlabelled and identically-answered.
     scoreable_rows = [row for row in rows if dataset_row_is_labelled(row)]
-    scoreable_outputs = [normalized_text(row["output"]) for row in scoreable_rows]
-    output_counts = Counter(scoreable_outputs)
-    if unlabelled:
+    if reference_free:
         emit(
             "dataset-outputs",
-            FAIL,
-            f"{len(unlabelled)}/{len(rows)} expected outputs are empty",
-        )
-    elif len(set(scoreable_outputs)) == 1:
-        emit(
-            "dataset-outputs",
-            FAIL if synthetic else WARN,
-            "every expected output is identical; evaluator discrimination is likely degenerate",
+            SKIP,
+            f"{evaluator_method} is reference-free; expected outputs are not required",
         )
     else:
-        emit(
-            "dataset-outputs",
-            PASS,
-            f"{len(set(scoreable_outputs))} distinct expected outputs",
-        )
-        dominant_count = max(output_counts.values())
-        dominant_ratio = dominant_count / len(scoreable_outputs)
-        if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
+        placeholder_outputs = [
+            row for row in scoreable_rows if not normalized_text(row["output"])
+        ]
+        if placeholder_outputs:
             emit(
-                "dataset-ceiling-risk",
+                "dataset-output-placeholders",
                 WARN,
-                f"{dominant_count}/{len(scoreable_outputs)} expected outputs "
-                f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
-                "could hide meaningful failures",
+                f"{len(placeholder_outputs)}/{len(rows)} expected outputs carry no "
+                'word characters (for example "-", "?" or "...") - confirm '
+                "whether these are intentional symbolic labels or placeholders; "
+                "they remain in the labelled counts",
+                {"placeholder_rows": len(placeholder_outputs), "rows": len(rows)},
             )
-
-    structured = structured_outcomes(scoreable_rows, outcome_field)
-    if structured:
-        field, values = structured
-        normalized_values = [normalized_text(value) for value in values]
-        value_counts = Counter(normalized_values)
-        dominant_count = max(value_counts.values())
-        dominant_ratio = dominant_count / len(normalized_values)
-        if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
+        scoreable_outputs = [
+            normalized_identity(row["output"]) for row in scoreable_rows
+        ]
+        output_counts = Counter(scoreable_outputs)
+        if unlabelled:
             emit(
-                "dataset-ceiling-risk",
-                WARN,
-                f"{dominant_count}/{len(values)} values ({dominant_ratio:.1%}) in "
-                f"output field '{field}' are identical; a majority-only strategy "
-                "could hide meaningful failures",
+                "dataset-outputs",
+                FAIL,
+                f"{len(unlabelled)}/{len(rows)} expected outputs are empty",
+            )
+        elif len(output_counts) == 1:
+            emit(
+                "dataset-outputs",
+                FAIL if synthetic else WARN,
+                "every expected output is identical; evaluator discrimination is likely degenerate",
             )
         else:
             emit(
-                "dataset-outcome-field",
+                "dataset-outputs",
                 PASS,
-                f"output field '{field}' has {len(value_counts)} distinct values",
+                f"{len(output_counts)} distinct expected outputs",
             )
+            dominant_count = max(output_counts.values())
+            dominant_ratio = dominant_count / len(scoreable_outputs)
+            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
+                emit(
+                    "dataset-ceiling-risk",
+                    WARN,
+                    f"{dominant_count}/{len(scoreable_outputs)} expected outputs "
+                    f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
+                    "could hide meaningful failures",
+                )
+
+        structured = structured_outcomes(scoreable_rows, outcome_field)
+        if structured:
+            field, values = structured
+            value_counts = Counter(normalized_identity(value) for value in values)
+            dominant_count = max(value_counts.values())
+            dominant_ratio = dominant_count / len(values)
+            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
+                emit(
+                    "dataset-ceiling-risk",
+                    WARN,
+                    f"{dominant_count}/{len(values)} values ({dominant_ratio:.1%}) in "
+                    f"output field '{field}' are identical; a majority-only strategy "
+                    "could hide meaningful failures",
+                )
+            else:
+                emit(
+                    "dataset-outcome-field",
+                    PASS,
+                    f"output field '{field}' has {len(value_counts)} distinct values",
+                )
 
     splits: dict[str, set[str]] = {}
     split_counts: Counter[str] = Counter()
     labelled_split_counts: Counter[str] = Counter()
-    # Iterates `present_rows`, not the normalized `rows` (#66). A row that omits
-    # the expected-output field entirely is rejected by `normalize_dataset_row`
-    # and never reaches `rows`, so a holdout declared that way was invisible:
+    # Iterates `present_rows`, not only normalized scoreable rows (#66). Under a
+    # reference-requiring method, a row with no output never reaches `rows`, so a
+    # holdout declared that way used to be invisible:
     # preflight reported "no explicit tuning/holdout split was found" about a
     # dataset where every row declared one, and readiness scored it through the
     # no-split branch.
@@ -1010,7 +1027,7 @@ def check_dataset(
             if dataset_row_is_labelled(row, expected_field):
                 labelled_split_counts[split_name] += 1
             _, input_value = dataset_field_value(row, input_field)
-            splits.setdefault(split_name, set()).add(normalized_text(input_value))
+            splits.setdefault(split_name, set()).add(normalized_identity(input_value))
     tune_names = {"tune", "tuning", "train", "search"}
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(
@@ -1038,14 +1055,18 @@ def check_dataset(
             for name, count in labelled_split_counts.items()
             if name in holdout_names
         )
+        tuning_scoreable = tuning_count if reference_free else tuning_labelled
+        holdout_scoreable = holdout_count if reference_free else holdout_labelled
         tuning_suffix = (
-            "" if tuning_labelled == tuning_count else f", {tuning_labelled} scoreable"
+            ""
+            if tuning_scoreable == tuning_count
+            else f", {tuning_scoreable} scoreable"
         )
         tuning_metrics = {
             "tuning_rows": tuning_count,
             "tuning_labelled_rows": tuning_labelled,
         }
-        if tuning_labelled < 10:
+        if tuning_scoreable < 10:
             emit(
                 "dataset-tuning-size",
                 WARN,
@@ -1064,7 +1085,7 @@ def check_dataset(
             "holdout_rows": holdout_count,
             "holdout_labelled_rows": holdout_labelled,
         }
-        if holdout_labelled == 0:
+        if holdout_scoreable == 0:
             # Dividing 100 by the *total* holdout size claimed a per-example
             # resolution the evaluator cannot deliver; with no scoreable holdout
             # row there is no resolution to quote at all, and the old divisor
@@ -1073,20 +1094,20 @@ def check_dataset(
                 f"{holdout_count} holdout rows, none scoreable; no holdout row "
                 "carries an expected output, so this split resolves nothing"
             )
-        elif holdout_labelled == holdout_count:
+        elif holdout_scoreable == holdout_count:
             holdout_detail = (
                 f"{holdout_count} holdout rows; one example changes the score by "
                 f"{(100 / holdout_count):.1f} percentage points"
             )
         else:
             holdout_detail = (
-                f"{holdout_count} holdout rows, {holdout_labelled} scoreable; one "
+                f"{holdout_count} holdout rows, {holdout_scoreable} scoreable; one "
                 f"scoreable example changes the score by "
-                f"{(100 / holdout_labelled):.1f} percentage points"
+                f"{(100 / holdout_scoreable):.1f} percentage points"
             )
         emit(
             "dataset-holdout-resolution",
-            WARN if holdout_labelled < 10 else PASS,
+            WARN if holdout_scoreable < 10 else PASS,
             holdout_detail,
             holdout_metrics,
         )
@@ -1193,6 +1214,13 @@ def parse_args() -> argparse.Namespace:
         help="dot path for a structured discrete outcome, such as category or result.label",
     )
     parser.add_argument(
+        "--evaluator-method",
+        help=(
+            "declared method; pointwise, pairwise, and rubric LLM judges allow "
+            "input-only rows, while absent or other values require expected outputs"
+        ),
+    )
+    parser.add_argument(
         "--json", action="store_true", help="emit machine-readable results"
     )
     parser.add_argument(
@@ -1223,6 +1251,7 @@ def main() -> int:
             outcome_field=args.outcome_field,
             input_field=args.input_field,
             expected_field=args.expected_field,
+            evaluator_method=args.evaluator_method,
         )
 
     if args.json:
