@@ -592,6 +592,13 @@ class AgentFacts:
     # verified here, only read.
     wired: tuple[str, ...] | None = None
     bounds: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Whether a config-space document reached the scorer at all. Distinct from
+    # whether it declared knobs, and the distinction is the whole point: the
+    # guide deliberately withholds a document found before this run's search
+    # (traigent-first-run#105), so the common opening state is "nothing was
+    # supplied" - and the card was reporting that as "no knobs declared", which
+    # is a claim about the user's project rather than about this score's input.
+    config_space_supplied: bool = False
 
 
 def round_half_up(value: float) -> int:
@@ -973,7 +980,8 @@ def score_provenance(
         if "unknown" in facts.sources or not facts.sources:
             return (
                 UNDECLARED_ROW_POINTS,
-                "provenance undeclared - not credited as production data",
+                "no row says whether it was collected or generated, so none "
+                "counts as evidence about real traffic",
                 [],
             )
         return (
@@ -1075,6 +1083,21 @@ def provenance_evidence(
     if facts.undeclared_rows:
         parts.append(f"{facts.undeclared_rows} undeclared")
     mixture = f"{', '.join(parts)} of {counted} rows"
+    if facts.undeclared_rows:
+        # "Undeclared" is a category name; on its own it tells a reader nothing
+        # they can act on. The line is about trust - a row that does not say
+        # where it came from cannot be credited as real traffic - so the
+        # consequence is spelled once here rather than folded into the count,
+        # which produced "30 not saying whether they were collected or
+        # generated of 30 rows".
+        # Deliberately avoids naming either origin. An existing guard refuses
+        # the word "collected" on a line about undeclared inputs, because a
+        # reader skimming it takes the word for a claim that the rows are real -
+        # which is the misreading this whole sub-score exists to prevent.
+        mixture += (
+            " (undeclared means the row does not record where it came from, so "
+            "it cannot count as evidence about real traffic)"
+        )
     if facts.generated_answer_rows:
         if not uses_expected_outputs:
             return (
@@ -1239,7 +1262,10 @@ def score_dataset(
         points *= 0.8
         if effective < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
-        evidence = f"no declared tuning/holdout split; {evidence}"
+        evidence = (
+            "no split into a set to tune on and a separate set to check the "
+            f"result on; {evidence}"
+        )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # Deducting alone let the card say "a wiring check, not a score" and return
     # STRONG in the same breath (#88). The ceiling is what stops a result
@@ -1291,7 +1317,11 @@ def score_dataset(
                 round(max(0.0, earned), 2),
                 20.0,
                 True,
-                "; ".join(problems) if problems else "no duplicate or dominance signal",
+                (
+                    "; ".join(problems)
+                    if problems
+                    else "no repeated questions, and no single answer used by most rows"
+                ),
             )
         )
     else:
@@ -1463,7 +1493,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         )
     else:
         subs.append(
-            SubScore("probe-spread", 0.0, 15.0, False, "no probe scores available")
+            SubScore(
+                "probe-spread",
+                0.0,
+                15.0,
+                False,
+                "no good-vs-bad examples were scored yet",
+            )
         )
 
     if facts.timed_out:
@@ -1556,7 +1592,21 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     # whether or not it carries a `wired` key. Swapping the two branches would
     # silently reword the emptiest document in the file.
     if not facts.knobs:
-        return nothing_to_search_pillar("no knobs declared"), [NOTHING_WIRED_CAP], []
+        # Say which of the two this is. "No knobs declared" is a claim about the
+        # user's project, and the guide deliberately withholds a config-space
+        # document found before this run's search (#105) - so the ordinary
+        # opening state is that nothing was supplied, and the card was reporting
+        # it as though the project declared nothing. A user looking at an agent
+        # with five knobs on screen reads that as the score being wrong.
+        #
+        # Same class as the calibration line (#121); this is its sibling, and
+        # the phrase-list test written there was too narrow to catch it.
+        evidence = (
+            "the settings document lists no settings"
+            if facts.config_space_supplied
+            else "no settings document was provided to this score yet"
+        )
+        return nothing_to_search_pillar(evidence), [NOTHING_WIRED_CAP], []
 
     if facts.wired is None:
         # Declared knobs, unattested wiring. The document lists controls but
@@ -2781,6 +2831,10 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
             else tuple(dict.fromkeys(_canonical(name) for name in facts.wired))
         ),
         bounds=bounds,
+        # Carried, not defaulted. This function rebuilds the dataclass, so a
+        # field it forgets is silently reset - and `score_agent` calls it before
+        # reading anything, so the reset would be invisible and total.
+        config_space_supplied=facts.config_space_supplied,
     )
 
 
@@ -2890,6 +2944,8 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
             knobs=knobs,
             wired=wired,
             bounds=bounds,
+            # Reaching this line is the proof: a document was read.
+            config_space_supplied=True,
         )
     )
     # Against the collapsed space, and reporting the spelling the author wrote.
