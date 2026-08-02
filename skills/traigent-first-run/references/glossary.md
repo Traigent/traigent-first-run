@@ -207,22 +207,26 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   repaired - and again after each repair or creation, so the closing report can
   show an honest opening-to-closing change. It decides what the run does next:
   repair, create, or continue as a clearly labeled walkthrough. A low number
-  alone does not stop a safe walkthrough, but a cap that says the grading signal
-  is broken does stop paid optimization against that signal.
+  alone does not stop a safe walkthrough, but a blocking cap does stop paid
+  optimization when the current components or evidence cannot support a
+  trustworthy comparison.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
-  Some caps say something is missing or broken - a broken evaluator, no dataset.
-  Others say only that a small comparison set limits claim strength until the
+  Some caps block because something is missing or invalid, or because there is
+  too little comparable evidence for a trustworthy paid comparison - a broken
+  evaluator, no dataset, or fewer than ten comparable examples. Others say only
+  that a small but measurable comparison set limits claim strength until the
   completed paired outcomes support an uncertainty analysis. That limits what
   the result may claim without saying anything is wrong with your setup.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
   limit to" is one that only starts to matter once something lower is cleared.
-  Blocked: the flag the card shows when a cap of the first kind fired - something
-  is broken, and paid work measured against it would measure the wrong thing. A
-  cap that only limits the claim does not set it, because the run is still worth
+  Blocked: the flag the card shows when a blocking cap fired. It does not mean
+  every component is broken; it means the current state is missing, invalid, or
+  has too little comparable evidence for a trustworthy paid comparison. A cap
+  that only limits the claim does not set it, because the run is still worth
   making. Either way the card names the specific thing rather than only lowering
   a number.
 

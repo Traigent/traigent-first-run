@@ -811,9 +811,14 @@ class SkillPackageTests(unittest.TestCase):
             (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
         )
         self.assertNotIn("whenever at least one cap fired", glossary)
+        self.assertNotIn("only a broken grading signal", glossary)
+        self.assertNotIn("something is broken, and paid work", glossary)
         for phrase in (
-            "some caps say something is missing or broken",
+            "something is missing or invalid",
+            "too little comparable evidence for a trustworthy paid comparison",
+            "fewer than ten comparable examples",
             "limits what the result may claim without saying anything is wrong",
+            "it does not mean every component is broken",
             "a cap that only limits the claim does not set it",
         ):
             with self.subTest(phrase=phrase):
@@ -1854,7 +1859,21 @@ class SkillPackageTests(unittest.TestCase):
             )
         )
         self.assertEqual(preflight_methods, set(READINESS.REFERENCE_FREE_METHODS))
-        self.assertIn("same resolved `--evaluator-method`", skill)
+        for phrase in (
+            "resolved evaluator method as run-scoped validation state",
+            "same current `--evaluator-method` value to every paired preflight/readiness invocation",
+            "omit the flag from both",
+        ):
+            self.assertIn(phrase, skill)
+        stage_four = skill.split("### 4. validate components locally", 1)[1].split(
+            "### 5. validate sdk integration", 1
+        )[0]
+        for phrase in (
+            "apply the run-scoped evaluator-method rule above",
+            "resolve its method again",
+            "this preflight and the paired readiness invocation in step 5",
+        ):
+            self.assertIn(phrase, stage_four)
         for document in (skill, safety):
             self.assertIn("preflight", document)
             self.assertIn("expected outputs", document)

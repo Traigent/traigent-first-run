@@ -143,6 +143,11 @@ Perform safe, read-only discovery without asking for approval:
 
 Only ask which agent to use if multiple credible candidates remain.
 
+Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
+selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
+the same current `--evaluator-method` value to every paired preflight/readiness invocation. When no
+evaluator method exists, omit the flag from both; never let one half infer a different method.
+
 #### Opening readiness gate
 
 After the read-only inventory and before any component creation or repair, select the opening
@@ -158,7 +163,8 @@ for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
-any applicable calibration result. Pass the same resolved `--evaluator-method` to both scripts.
+any applicable calibration result. Apply the run-scoped evaluator-method rule above to both
+scripts.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
@@ -296,7 +302,10 @@ Follow this order:
    checked without importing user modules. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
-   data and task; do not infer SDK aliases. This heuristic check does not assert SDK compatibility.
+   data and task; do not infer SDK aliases. Apply the run-scoped evaluator-method rule above: if
+   the evaluator was created or changed, resolve its method again, then pass that same current
+   `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
+   omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Run deterministic calibration only after a `sufficient` semantic-coverage verdict. A
    non-executing evaluator must have a fully inspected local-only, side-effect-free call path and
    run in the credential-stripped calibration subprocess. An execution evaluator waits until the
