@@ -195,6 +195,9 @@ if FIRST_RUN_PHASE == "baseline":
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
+# SDK 0.25.0 otherwise stores query/response/expected text in local per-example
+# logs. The first-run record needs ids and metrics, not another copy of content.
+os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
 import litellm
 import traigent
@@ -689,10 +692,12 @@ the alternative and strong models from the same approved provider route when gen
 walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
 a reasoning-effort control, and pin the same value for both runs. A new route
-or recipient requires revised data-egress approval. Every search variable must affect the actual
-agent call for every model in the space; when the strong tier runs as a reasoning model,
-temperature is inert for it - follow the ladder section above and sweep uniform knobs instead of
-a knob only some models honor.
+or recipient requires revised data-egress approval. In the generated default, every search
+variable must affect the actual agent call for every model in the space. A preserved conditional
+dimension may affect only the models that support it, but the request probe must report that
+partial coverage and the run record must name those models. When the strong tier runs as a
+reasoning model, temperature is inert for it - follow the ladder section above and sweep uniform
+knobs instead of making the generated comparison conditional.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline performs a credible six-point standard

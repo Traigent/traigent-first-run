@@ -30,6 +30,8 @@ MAX_NEAR_DUPLICATE_ROWS = 500
 NEAR_DUPLICATE_THRESHOLD = 0.9
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
+MAX_REPORTED_DATASET_IDS = 10
+WIRING_CHECK_EXAMPLES = 10
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
 REFERENCE_FREE_METHODS = {
     "llm-judge-pointwise",
@@ -750,6 +752,72 @@ def emit_dataset_provenance(
     return synthetic
 
 
+def stable_id_is_missing(value: Any) -> bool:
+    """Treat absent, empty, and whitespace-only IDs as unusable identifiers."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def emit_dataset_id_findings(
+    row_records: list[tuple[int, dict[str, Any]]],
+) -> None:
+    """Validate IDs across every input-bearing row, including unlabelled rows."""
+    missing_records: list[tuple[int, dict[str, Any]]] = []
+    ids: list[str] = []
+    for line_number, row in row_records:
+        value = row_metadata_value(row, "id")
+        if stable_id_is_missing(value):
+            missing_records.append((line_number, row))
+        else:
+            ids.append(
+                stable_json(value) if isinstance(value, (dict, list)) else str(value)
+            )
+    if missing_records:
+        missing_lines = [line_number for line_number, _row in missing_records]
+        generated_missing = sum(
+            1
+            for _line_number, row in missing_records
+            if classify_provenance(row_provenance(row))[0] == PROVENANCE_SYNTHESISED
+        )
+        shown_lines = missing_lines[:MAX_REPORTED_DATASET_IDS]
+        location = (
+            f"source line {shown_lines[0]}"
+            if len(missing_lines) == 1
+            else f"source lines {shown_lines}"
+        )
+        suffix = (
+            ""
+            if len(missing_lines) <= len(shown_lines)
+            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+        )
+        noun = "row" if len(missing_lines) == 1 else "rows"
+        verb = "has" if len(missing_lines) == 1 else "have"
+        generated_noun = "row" if generated_missing == 1 else "rows"
+        generated_verb = "requires" if generated_missing == 1 else "require"
+        generated_detail = (
+            f"; {generated_missing} generated {generated_noun} "
+            f"{generated_verb} an id"
+            if generated_missing
+            else ""
+        )
+        emit(
+            "dataset-ids",
+            FAIL if generated_missing else WARN,
+            f"{len(missing_lines)} {noun} at {location}{suffix} {verb} "
+            "no stable id; add stable ids in a working copy before excluding rows "
+            f"or selecting a bounded subset, then re-run validation{generated_detail}",
+        )
+    id_counts = Counter(ids)
+    duplicate_ids = sorted(value for value, count in id_counts.items() if count > 1)
+    if duplicate_ids:
+        emit(
+            "dataset-ids",
+            FAIL,
+            f"duplicate ids: {duplicate_ids[:MAX_REPORTED_DATASET_IDS]}",
+        )
+    elif not missing_records:
+        emit("dataset-ids", PASS, "stable ids are unique")
+
+
 def check_dataset(
     path: Path,
     outcome_field: str | None = None,
@@ -764,6 +832,7 @@ def check_dataset(
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
     rows: list[dict[str, Any]] = []
     present_rows: list[dict[str, Any]] = []
+    present_row_records: list[tuple[int, dict[str, Any]]] = []
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
     candidate_count = 0
@@ -795,12 +864,14 @@ def check_dataset(
             expected_found, _ = dataset_field_value(row, expected_field)
             if input_found and not expected_found and input_field != expected_field:
                 present_rows.append(row)
+                present_row_records.append((line_number, row))
                 unlabelled_present += 1
             continue
         if normalized_row is None:
             raise RuntimeError("dataset normalization returned no row without an error")
         rows.append(normalized_row)
         present_rows.append(row)
+        present_row_records.append((line_number, row))
 
     malformed_rows = len(invalid_rows) - unlabelled_present
     if invalid_rows:
@@ -829,6 +900,7 @@ def check_dataset(
             # (a partial score) instead of "no dataset at all", then stop - there
             # are no labelled rows to run the remaining quality checks against.
             emit_dataset_provenance(present_rows, labelled=0)
+            emit_dataset_id_findings(present_row_records)
             emit(
                 "dataset-shape",
                 FAIL,
@@ -840,7 +912,7 @@ def check_dataset(
         return None
     if not invalid_rows:
         emit("dataset-shape", PASS, f"{len(rows)} valid JSONL rows")
-    if len(rows) < 10:
+    if len(rows) < WIRING_CHECK_EXAMPLES:
         emit(
             "dataset-size",
             WARN,
@@ -865,26 +937,7 @@ def check_dataset(
     synthetic = emit_dataset_provenance(
         present_rows, labelled=labelled, scored_rows=rows
     )
-    raw_ids = [row_metadata_value(row, "id") for row in rows]
-    missing_ids = [
-        index + 1 for index, value in enumerate(raw_ids) if value in (None, "")
-    ]
-    ids = [
-        stable_json(value) if isinstance(value, (dict, list)) else str(value)
-        for value in raw_ids
-        if value not in (None, "")
-    ]
-    if missing_ids:
-        status = FAIL if synthetic else WARN
-        emit("dataset-ids", status, f"{len(missing_ids)} rows have no stable id")
-    id_counts = Counter(ids)
-    duplicate_ids = sorted(
-        str(value) for value, count in id_counts.items() if count > 1
-    )
-    if duplicate_ids:
-        emit("dataset-ids", FAIL, f"duplicate ids: {duplicate_ids[:10]}")
-    elif not missing_ids:
-        emit("dataset-ids", PASS, "stable ids are unique")
+    emit_dataset_id_findings(present_row_records)
 
     normalized_inputs: dict[str, list[int]] = {}
     for index, row in enumerate(rows, 1):
@@ -1066,7 +1119,7 @@ def check_dataset(
             "tuning_rows": tuning_count,
             "tuning_labelled_rows": tuning_labelled,
         }
-        if tuning_scoreable < 10:
+        if tuning_scoreable < WIRING_CHECK_EXAMPLES:
             emit(
                 "dataset-tuning-size",
                 WARN,
@@ -1078,7 +1131,9 @@ def check_dataset(
             emit(
                 "dataset-tuning-size",
                 PASS,
-                f"{tuning_count} tuning rows{tuning_suffix}",
+                f"{tuning_count} tuning rows{tuning_suffix}; clears the "
+                f"{WIRING_CHECK_EXAMPLES}-row static wiring boundary; "
+                "readiness rates comparison size separately",
                 tuning_metrics,
             )
         holdout_metrics = {
@@ -1107,7 +1162,7 @@ def check_dataset(
             )
         emit(
             "dataset-holdout-resolution",
-            WARN if holdout_scoreable < 10 else PASS,
+            WARN if holdout_scoreable < WIRING_CHECK_EXAMPLES else PASS,
             holdout_detail,
             holdout_metrics,
         )

@@ -18,18 +18,21 @@ The skill routes its bundled references at the stage where each is needed; do no
 before starting inspection.
 
 The same directory is what the Agent Skill installer copies, so the clone and installed-skill
-paths follow one canonical workflow.
+paths follow one canonical workflow. Resolve the **absolute directory containing the loaded
+`SKILL.md`** from the path the coding assistant actually loaded. Keep every tool's working
+directory at the user's project root and interpolate that literal absolute skill directory into
+each invocation; do not depend on an exported variable surviving a later tool call. In a clone the
+resolved directory ends in `skills/traigent-first-run`; after Agent Skill installation it may live
+elsewhere.
 
 Use the bundled tools:
 
-- Static/free validation:
-  `python3 skills/traigent-first-run/scripts/preflight.py --help`
+- Static/free validation: invoke `scripts/preflight.py --help` through the selected Python using
+  the script's literal absolute path under the resolved skill directory.
 - Mandatory readiness score (opening gate, re-scored after repair/creation) and state planning:
-  `python3 skills/traigent-first-run/scripts/readiness.py --help`
-- Compact internal run record:
-  `skills/traigent-first-run/assets/run-plan.md`
-- Tested first-run SDK stack:
-  `skills/traigent-first-run/assets/requirements-first-run.txt`
+  invoke `scripts/readiness.py --help` the same way.
+- Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
+- Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
 ## User-facing promise
 

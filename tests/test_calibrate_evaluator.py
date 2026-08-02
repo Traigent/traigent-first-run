@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -751,6 +752,18 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             self.assertEqual(process.returncode, 2)
             self.assertIn("greater than zero", process.stderr)
 
+    def test_timeout_help_discloses_the_two_deterministic_phase_budgets(self) -> None:
+        process = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        normalized = " ".join(process.stdout.split())
+        self.assertIn("authored calibration phase", normalized)
+        self.assertIn("one separate total budget of the same size", normalized)
+        self.assertIn("worst-case wall time is roughly twice", normalized)
+
     def test_evaluator_exception_keeps_type_and_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "raising_scorer.py"
@@ -766,6 +779,539 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 1)
         self.assertIn("ValueError: rubric label missing", process.stderr)
         self.assertNotIn("score contract", process.stderr)
+
+    def test_silent_exception_to_zero_is_reported_without_rewriting_verdict(
+        self,
+    ) -> None:
+        """A green four-probe matrix must still surface hidden evaluator errors."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "silent_exception_scorer.py"
+            scorer.write_text(
+                "import json\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    try:\n"
+                "        if isinstance(output, str):\n"
+                "            json.loads(output)\n"
+                "        required = set(expected)\n"
+                "        actual = set(output)\n"
+                "        return len(required & actual) / len(required)\n"
+                "    except Exception:\n"
+                "        return 0.0\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"], "authored probes still own the verdict")
+        probes = payload["exception_probes"]
+        self.assertEqual(
+            {probe["kind"] for probe in probes},
+            {
+                "value-error",
+                "type-error",
+                "syntax-error",
+                "json-decode-error",
+                "runtime-error",
+            },
+        )
+        self.assertTrue(all(probe["score"] == 0.0 for probe in probes))
+        self.assertTrue(all(probe["error"] is None for probe in probes))
+        self.assertTrue(all(probe["outcome"] == "returned-zero" for probe in probes))
+        self.assertTrue(all(not probe["distinguished_from_zero"] for probe in probes))
+        self.assertIn("exception_probe_advisory", payload)
+        advisory = payload["exception_probe_advisory"]
+        self.assertIn("ordinary 0.0", advisory)
+        self.assertIn("consistent with a swallowed", advisory)
+        self.assertIn("can also be a deliberate rejection", advisory)
+        self.assertIn("does not prove the cause or change calibration PASS", advisory)
+
+    def test_each_supplemental_probe_isolates_imported_dependency_state(self) -> None:
+        """A scorer reload is insufficient when its imported helper is cached."""
+        cases = [
+            {
+                "name": "first fields",
+                "expected": "a 1 b 2",
+                "metadata": {
+                    "poison": True,
+                    "scores": {
+                        "a 1 b 2": 1.0,
+                        "A 1 B 2": 0.9,
+                        "a 1": 0.5,
+                        "wrong-a": 0.0,
+                    },
+                },
+                "probes": {
+                    "good": "a 1 b 2",
+                    "equivalent_good": "A 1 B 2",
+                    "partial": "a 1",
+                    "bad": "wrong-a",
+                },
+            },
+            {
+                "name": "second fields",
+                "expected": "w 3 x 4",
+                "metadata": {
+                    "poison": False,
+                    "scores": {
+                        "w 3 x 4": 1.0,
+                        "W 3 X 4": 0.9,
+                        "w 3": 0.5,
+                        "wrong-b": 0.0,
+                    },
+                },
+                "probes": {
+                    "good": "w 3 x 4",
+                    "equivalent_good": "W 3 X 4",
+                    "partial": "w 3",
+                    "bad": "wrong-b",
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            helper = Path(directory) / "evaluator_state.py"
+            helper.write_text("poisoned = False\n")
+            scorer = Path(directory) / "stateful_scorer.py"
+            scorer.write_text(
+                "import evaluator_state\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if type(output) is str and output in metadata['scores']:\n"
+                "        return metadata['scores'][output]\n"
+                "    if metadata['poison']:\n"
+                "        evaluator_state.poisoned = True\n"
+                "        return 0.0\n"
+                "    if evaluator_state.poisoned:\n"
+                "        return 0.0\n"
+                "    raise ValueError('fresh dependency state')\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    json.dumps(cases),
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        self.assertTrue(all(case["passed"] for case in payload["cases"]))
+        first, second = payload["cases"]
+        self.assertEqual(first["permutation_probe"]["score"], 0.0)
+        self.assertIsNone(first["permutation_probe"]["error"])
+        self.assertIsNone(second["permutation_probe"]["score"])
+        self.assertIn("fresh dependency state", second["permutation_probe"]["error"])
+        self.assertTrue(
+            all(
+                probe["outcome"] == "returned-zero"
+                for probe in first["exception_probes"]
+            )
+        )
+        self.assertTrue(
+            all(
+                probe["outcome"] == "propagated-error"
+                for probe in second["exception_probes"]
+            )
+        )
+
+    def test_propagated_exception_is_distinct_from_an_ordinary_zero(self) -> None:
+        """A scorer that fails loudly must not receive the silent-error warning."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "loud_scorer.py"
+            scorer.write_text(
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if isinstance(output, str):\n"
+                "        raise ValueError('malformed text remains an error')\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [
+                    *self.command(scorer),
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        probes = payload["exception_probes"]
+        self.assertTrue(all(probe["score"] is None for probe in probes))
+        self.assertTrue(all(probe["error"] is not None for probe in probes))
+        self.assertTrue(all(probe["outcome"] == "propagated-error" for probe in probes))
+        self.assertTrue(all(probe["distinguished_from_zero"] for probe in probes))
+        self.assertNotIn("exception_probe_advisory", payload)
+
+    def test_exception_family_probe_finds_a_value_error_specific_swallow(self) -> None:
+        """One custom RuntimeError cannot exercise an except ValueError path."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "value_error_scorer.py"
+            scorer.write_text(
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if isinstance(output, str):\n"
+                "        raise RuntimeError('malformed text is not the target')\n"
+                "    try:\n"
+                "        if type(output).__name__ == 'AdversarialOutputProbe':\n"
+                "            str(output)\n"
+                "        required = set(expected)\n"
+                "        actual = set(output)\n"
+                "        return len(required & actual) / len(required)\n"
+                "    except ValueError:\n"
+                "        return 0.0\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        probes = {probe["kind"]: probe for probe in payload["exception_probes"]}
+        self.assertEqual(probes["value-error"]["outcome"], "returned-zero")
+        for kind in (
+            "type-error",
+            "syntax-error",
+            "json-decode-error",
+            "runtime-error",
+        ):
+            self.assertEqual(probes[kind]["outcome"], "propagated-error")
+        self.assertIn("exception_probe_advisory", payload)
+
+    def test_malformed_python_probe_reaches_ast_and_compile_syntax_errors(
+        self,
+    ) -> None:
+        """A str subclass passes parser type guards that rejected the old object."""
+        parser_calls = (
+            "ast.parse(output)",
+            "compile(output, '<calibration-probe>', 'exec')",
+        )
+        for parser_call in parser_calls:
+            with self.subTest(
+                parser_call=parser_call
+            ), tempfile.TemporaryDirectory() as directory:
+                scorer = Path(directory) / "python_parser_scorer.py"
+                scorer.write_text(
+                    "import ast\n\n"
+                    "def score(output, expected, input_data=None, metadata=None):\n"
+                    "    if isinstance(output, str):\n"
+                    "        try:\n"
+                    f"            {parser_call}\n"
+                    "        except SyntaxError:\n"
+                    "            return 0.0\n"
+                    "        raise RuntimeError('unexpected valid generated source')\n"
+                    "    required = set(expected)\n"
+                    "    actual = set(output)\n"
+                    "    return len(required & actual) / len(required)\n"
+                )
+                process = subprocess.run(
+                    [*self.command(scorer), "--allow-execution"],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            payload = json.loads(process.stdout)
+            probes = {probe["kind"]: probe for probe in payload["exception_probes"]}
+            self.assertEqual(probes["syntax-error"]["outcome"], "returned-zero")
+            self.assertIn("exception_probe_advisory", payload)
+
+    def test_malformed_text_subclasses_preserve_native_parser_errors(self) -> None:
+        """Overridden classifier operations must not replace parser diagnostics."""
+        import ast
+
+        sys.path.insert(0, str(SCRIPT.parent))
+        try:
+            from calibrate_evaluator import exception_probe_output
+        finally:
+            sys.path.pop(0)
+
+        python_probe = exception_probe_output("syntax-error")
+        with self.assertRaises(SyntaxError) as ast_error:
+            ast.parse(python_probe)
+        self.assertEqual(ast_error.exception.msg, "invalid syntax")
+        with self.assertRaises(SyntaxError) as compile_error:
+            compile(python_probe, "<calibration-probe>", "exec")
+        self.assertEqual(compile_error.exception.msg, "invalid syntax")
+
+        json_probe = exception_probe_output("json-decode-error")
+        with self.assertRaises(json.JSONDecodeError) as json_error:
+            json.loads(json_probe)
+        self.assertEqual(json_error.exception.msg, "Expecting value")
+
+    def test_malformed_json_probe_reaches_json_decode_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "json_parser_scorer.py"
+            scorer.write_text(
+                "import json\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if isinstance(output, str):\n"
+                "        try:\n"
+                "            json.loads(output)\n"
+                "        except json.JSONDecodeError:\n"
+                "            return 0.0\n"
+                "        raise RuntimeError('unexpected valid generated JSON')\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        probes = {probe["kind"]: probe for probe in payload["exception_probes"]}
+        self.assertEqual(probes["json-decode-error"]["outcome"], "returned-zero")
+        self.assertIn("exception_probe_advisory", payload)
+
+    def test_malformed_text_probes_do_not_look_like_normal_wrong_labels(self) -> None:
+        """Healthy exact-label paths must propagate the probe, not return zero."""
+        scorer_bodies = (
+            "return float(output.casefold() == expected.casefold())",
+            "return float(output == expected)",
+        )
+        for body in scorer_bodies:
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as directory:
+                scorer = Path(directory) / "exact_label_scorer.py"
+                scorer.write_text(
+                    "def score(output, expected, input_data=None, metadata=None):\n"
+                    f"    {body}\n"
+                )
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--scorer",
+                        f"{scorer}:score",
+                        "--good",
+                        '"positive"',
+                        "--equivalent-good",
+                        '"positive"',
+                        "--partial",
+                        '"mixed"',
+                        "--bad",
+                        '"negative"',
+                        "--expected",
+                        '"positive"',
+                        "--score-mode",
+                        "binary",
+                        "--allow-execution",
+                        "--json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            payload = json.loads(process.stdout)
+            probes = {probe["kind"]: probe for probe in payload["exception_probes"]}
+            for kind in ("syntax-error", "json-decode-error"):
+                self.assertEqual(probes[kind]["outcome"], "propagated-error")
+            self.assertNotIn("exception_probe_advisory", payload)
+
+    def test_probe_error_with_unprintable_input_remains_advisory(self) -> None:
+        """Formatting a probe-triggered exception must not fail calibration."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "unprintable_error_scorer.py"
+            scorer.write_text(
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if isinstance(output, str):\n"
+                "        raise ValueError('malformed text')\n"
+                "    if type(output).__name__ == 'AdversarialOutputProbe':\n"
+                "        raise ValueError(output)\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        probes = payload["exception_probes"]
+        self.assertTrue(all(probe["outcome"] == "propagated-error" for probe in probes))
+        self.assertEqual(
+            {probe["kind"] for probe in probes},
+            {
+                "value-error",
+                "type-error",
+                "syntax-error",
+                "json-decode-error",
+                "runtime-error",
+            },
+        )
+        object_probes = [
+            probe
+            for probe in probes
+            if probe["kind"] in {"value-error", "type-error", "runtime-error"}
+        ]
+        self.assertTrue(
+            all(
+                "ValueError: <message unavailable" in probe["error"]
+                for probe in object_probes
+            )
+        )
+        self.assertTrue(
+            any("AdversarialProbeAccess" in probe["error"] for probe in object_probes)
+        )
+
+    def test_keyboard_interrupt_from_supplemental_probe_is_not_swallowed(self) -> None:
+        """Cancellation is control flow, not evaluator evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "interrupting_scorer.py"
+            scorer.write_text(
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if type(output).__name__ == 'AdversarialOutputProbe':\n"
+                "        raise KeyboardInterrupt()\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        object_probes = [
+            probe
+            for probe in payload["exception_probes"]
+            if probe["kind"] in {"value-error", "type-error", "runtime-error"}
+        ]
+        self.assertTrue(
+            all(probe["outcome"] == "unavailable" for probe in object_probes)
+        )
+        self.assertTrue(
+            all(
+                "KeyboardInterrupt" in probe["unavailable"]["detail"]
+                for probe in object_probes
+            )
+        )
+        self.assertIn("supplemental_probe_advisory", payload)
+        self.assertEqual(process.stderr, "")
+
+    def test_supplemental_import_failure_is_unavailable_and_preserves_pass(
+        self,
+    ) -> None:
+        """A non-idempotent import belongs to the advisory, not the verdict."""
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "first-import.complete"
+            scorer = Path(directory) / "single_import_scorer.py"
+            scorer.write_text(
+                "from pathlib import Path\n\n"
+                f"MARKER = Path({str(marker)!r})\n"
+                "if MARKER.exists():\n"
+                "    raise RuntimeError('repeat import rejected')\n"
+                "MARKER.write_text('loaded')\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        probes = payload["exception_probes"]
+        self.assertTrue(all(probe["outcome"] == "unavailable" for probe in probes))
+        self.assertTrue(
+            all(
+                probe["unavailable"]["reason"] == "worker-failed"
+                and "repeat import rejected" in probe["unavailable"]["detail"]
+                for probe in probes
+            )
+        )
+        self.assertIn("supplemental_probe_advisory", payload)
+
+    def test_supplemental_phase_has_one_cumulative_budget_and_preserves_pass(
+        self,
+    ) -> None:
+        """Five hanging attempts may consume one extra timeout, not five."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "hanging_supplemental_scorer.py"
+            scorer.write_text(
+                "import time\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if type(output).__name__ in {\n"
+                "        'AdversarialOutputProbe', 'MalformedTextOutputProbe'\n"
+                "    }:\n"
+                "        time.sleep(10)\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            started = time.monotonic()
+            process = subprocess.run(
+                [
+                    *self.command(scorer),
+                    "--timeout",
+                    "1",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            elapsed = time.monotonic() - started
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertLess(
+            elapsed, 4.0, "supplemental attempts exceeded one shared budget"
+        )
+        payload = json.loads(process.stdout)
+        self.assertTrue(payload["passed"])
+        probes = payload["exception_probes"]
+        self.assertTrue(all(probe["outcome"] == "unavailable" for probe in probes))
+        reasons = [probe["unavailable"]["reason"] for probe in probes]
+        self.assertEqual(reasons.count("timeout"), 1)
+        self.assertEqual(reasons.count("budget-exhausted"), len(probes) - 1)
+        self.assertIn("supplemental_probe_advisory", payload)
+
+    def test_nonzero_probe_score_is_reported_as_the_third_advisory_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "nonzero_exception_scorer.py"
+            scorer.write_text(
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    try:\n"
+                "        if not isinstance(output, list):\n"
+                "            raise TypeError('unsupported probe')\n"
+                "        required = set(expected)\n"
+                "        actual = set(output)\n"
+                "        return len(required & actual) / len(required)\n"
+                "    except Exception:\n"
+                "        return 0.1\n"
+            )
+            process = subprocess.run(
+                [*self.command(scorer), "--allow-execution"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        probes = payload["exception_probes"]
+        self.assertTrue(all(probe["score"] == 0.1 for probe in probes))
+        self.assertTrue(all(probe["error"] is None for probe in probes))
+        self.assertTrue(all(probe["outcome"] == "returned-nonzero" for probe in probes))
+        self.assertTrue(all(probe["distinguished_from_zero"] for probe in probes))
+        self.assertNotIn("exception_probe_advisory", payload)
 
     def test_nonnumeric_return_uses_score_contract_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -909,13 +1455,13 @@ class TimeoutIsReportableTests(unittest.TestCase):
         self.assertFalse(payload["passed"])
         self.assertEqual(payload["timeout_seconds"], 2)
 
-    def test_a_timeout_is_scoped_to_the_whole_calibration_not_a_case(self) -> None:
+    def test_a_timeout_is_scoped_to_the_authored_calibration_not_a_case(self) -> None:
         """#71 point 2: decide what a timeout means when cases are mixed.
 
-        It is whole-calibration. Every case's probes share one subprocess, so
-        when the budget expires the parent has no partial output to attribute -
-        it cannot say which case was slow or whether any finished, and a
-        per-case breakdown would have to be invented.
+        It is whole-authored-calibration. Every case's authored probes share one
+        subprocess, so when the budget expires the parent has no partial output
+        to attribute - it cannot say which case was slow or whether any
+        finished, and a per-case breakdown would have to be invented.
 
         `cases` is therefore empty because nothing could be attributed, not
         because none were requested. A reader has no way to tell those apart
@@ -925,7 +1471,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
             process = self._run_slow_calibration(Path(raw))
         payload = json.loads(process.stdout)
 
-        self.assertEqual(payload["timeout_scope"], "calibration")
+        self.assertEqual(payload["timeout_scope"], "authored-calibration")
         self.assertEqual(payload["cases"], [])
         self.assertEqual(payload["cases_requested"], len(self.CASES))
 
@@ -1030,10 +1576,6 @@ def _load_constants() -> dict:
         ):
             exec(compile(ast.Module([node], []), "<calibrator>", "exec"), namespace)
     return namespace
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PermutationProbeTests(unittest.TestCase):
@@ -1172,7 +1714,11 @@ class PermutationProbeTests(unittest.TestCase):
             self.calibrate(directory, counting, "--kind", "deterministic")
             free_calls = len(log.read_text().splitlines())
         self.assertEqual(paid_calls, 8, "4 probes x 2 cases, and nothing added")
-        self.assertEqual(free_calls, 10, "the deterministic path adds one per case")
+        self.assertEqual(
+            free_calls,
+            20,
+            "the deterministic path adds one binding and five exception probes per case",
+        )
 
     def test_a_permutation_is_never_the_expected_answer(self) -> None:
         """A probe equal to the expectation SHOULD score 1.0.
@@ -1323,3 +1869,7 @@ class PermutationProbeTests(unittest.TestCase):
         # `not None` is True, so a two-state filter would have asked the
         # "does not distinguish" question about a probe that never scored.
         self.assertNotIn("permutation_question", payload)
+
+
+if __name__ == "__main__":
+    unittest.main()

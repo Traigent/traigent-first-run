@@ -25,8 +25,10 @@ Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 The assistant performs the technical work and asks only when it needs:
 
 - A choice that materially changes the task.
-- A key pasted into a local, git-ignored `.env` file.
+- A key pasted into an owner-only local `.env` file, ignored when your project uses Git.
 - Approval before paid model calls or private-data egress.
+- Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
+  and before destructive or production-affecting actions.
 - Confirmation before installing into a virtual environment other work of yours depends on, rather
   than one created for this run. It always names the full path first, either way, so you know which
   directory is about to change - and a repeat run does not re-ask about the environment the last
@@ -59,6 +61,9 @@ Use $traigent-first-run to run my first Traigent optimization.
 ```
 
 Node.js is needed only for this optional installation command, not for the Traigent Python run.
+The assistant resolves bundled files from the installed skill's absolute directory while keeping
+your project as the working directory; installing the skill does not require cloning it into or
+changing out of your project.
 
 ## What the run does
 
@@ -66,8 +71,11 @@ Node.js is needed only for this optional installation command, not for the Traig
    repaired.
 2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
-4. Validates compatibility and evaluator discrimination.
-5. Shows one concise runtime, cost-ceiling, and data-egress approval immediately before paid work.
+4. Validates compatibility and every safely local evaluator-discrimination check; any LLM-judge or
+   external calibration remains inside the paid/data-egress approval.
+5. Shows one concise approval immediately before paid work with runtime, estimated spend, a total
+   execution stop target (`$5` by default), and data egress. When any cost is untracked, that target
+   is a conservative control, not a guaranteed provider-billing cap.
 6. Preserves an existing baseline or creates a credible small parameter sweep, then runs a
    broader optimization with additional meaningful knobs when the evaluator can distinguish
    configurations.
@@ -80,14 +88,17 @@ before you decide to pay. Once approved, a provider-paid local fixed baseline ru
 its result before any Traigent account/key request. After that checkpoint, the guide verifies
 portal tracking with a zero-LLM probe before the connected enhanced optimization spends anything.
 
-The default generated comparison is two measurements: six local fixed-grid configurations first,
-then 10-13 connected managed trials from a materially broader space with added knobs. If you
-already have a baseline, the first measurement preserves its exact rows and models instead of
-padding it. The assistant attempts an exact upload without rerunning that baseline only when the
-installed public SDK exposes its sync id; otherwise it remains local. Both measurements use the
-same data, evaluator, and objectives, followed by held-back validation. Validation is called sealed
-only when its split and labels stayed hidden until the candidate was locked. Any later iteration is
-optional, not required.
+The default generated comparison has two planned measurements: six local fixed-grid configurations
+first, followed by a connected managed search targeting 10-13 trials (12 by default) in a
+materially broader space with added knobs. A disclosed runtime, cost, or plan limit can make the
+approved comparison smaller; the report gives the actual trial count and any concrete shortfall
+reason. If you already have a baseline, the first measurement preserves its exact rows and models
+instead of padding it.
+The assistant attempts an exact upload without rerunning that baseline only when the installed
+public SDK exposes its sync id; otherwise it remains local. Both measurements use the same data,
+evaluator, and objectives, followed by held-back validation. Validation is called sealed only when
+its split and labels stayed hidden until the candidate was locked. Any later iteration is optional,
+not required.
 
 On a dataset larger than about 100 usable rows, the paid comparison is bounded to a small subset
 spread across the difficulty range - drawn inside each split so it cannot invent an overlap, with
@@ -127,10 +138,11 @@ deduction and not a refusal: the run continues, the pre-cap average stays in the
 number simply cannot claim more than the evidence supports.
 
 The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
-means something is broken and paid work measured against it would measure the wrong thing - fix it
-first.
-`LIMITED TO 89` means nothing is wrong with your setup, the result simply cannot claim more than your
-data supports, and it names the number so "why is this 89" has an answer on the same line.
+means the current components or evidence cannot yet support a trustworthy paid comparison - either
+something is missing or invalid, or too little comparable evidence exists. Follow the named repair
+or evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the
+available evidence bounds what the result may claim; it names the number so "why is this 89" has an
+answer on the same line.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - below every other ceiling, and below your average. A ceiling that is real but is not currently
@@ -156,26 +168,45 @@ placeholders or claim they are unusable.
 - The tested first-run SDK stack pinned in
   [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt).
 - One supported LLM-provider key with a small amount of credit for the real run. When the assistant
-  must prepare a missing baseline, that generated sweep
-  ladders that provider's models - a fast tier, a mid tier, and a strong tier one step below its
-  newest flagship - and deliberately skips the flagship itself so the first run stays quick and
-  cheap. A user-owned baseline instead keeps its exact model set in both measurements; the
-  enhanced run adds no model unless that separate comparison is disclosed and approved.
-- A Traigent portal key for connected optimization and portal results. You are asked for it *after*
-  the first result is on screen, not before. The baseline runs locally on your own provider key and
-  needs no Traigent account, so you see a real number from your own project before deciding whether
-  to register.
+  must prepare a missing baseline, that generated sweep uses one model family available through the
+  selected route by default - a fast tier, a mid tier, and a strong tier one step below that
+  family's newest flagship. If a missing rung requires a second family, the additional upstream
+  recipient is disclosed and approved. The newest flagship is deliberately skipped so the first
+  run stays quick and cheap. A user-owned baseline instead keeps its exact model set in both
+  measurements; the enhanced run adds no model unless that separate comparison is disclosed and
+  approved.
+- A Traigent portal key that can write experiments for connected optimization and portal results.
+  It is activated *after* the first result is on screen, not before; if no key is already present,
+  the assistant asks you to add a full-access key then. The baseline runs locally on your own
+  provider key and needs no Traigent account, so you see a real number from your own project before
+  deciding whether to register.
 
-Your assistant preserves or creates an owner-only local `.env`, asks for only the provider key
-before the local baseline, and adds or requests the Traigent key after the checkpoint. Never paste
-secrets into chat.
+Your assistant preserves or creates an owner-only local `.env`, verifies it is untracked and
+effectively ignored when your project uses Git, asks for only the provider key before the local
+baseline, and activates a preserved Traigent key or asks you to add one after the checkpoint. Never
+paste secrets into chat.
 
 ## Privacy
 
-According to the documented SDK/service contract, Traigent receives configuration identifiers,
-numeric measures, and run status needed for connected optimization and portal history, not the
-agent's prompts, examples, or outputs. This walkthrough does not independently audit network
-packets; it stops if observed runtime behavior contradicts that contract.
+According to the
+[pinned SDK 0.25.0 telemetry contract](https://github.com/Traigent/Traigent/blob/v0.25.0/docs/api-reference/telemetry.md),
+connected runs can send tuned configuration keys and values, numeric metrics, trial/run state, and
+content-free metadata needed for optimization and portal history. Except for content deliberately
+placed in a tuned configuration value and any observability content the project explicitly opts
+into recording, the contract says the SDK does not send user prompts or inputs,
+evaluation-dataset contents, expected outputs, model responses, source code, or credentials to the
+Traigent backend.
+Because configuration choices are synchronized, this walkthrough maps prompt variants to short
+content-free labels inside the agent; raw prompt text is not used as a configuration value. This
+walkthrough does not independently audit network packets; it stops if observed runtime behavior
+contradicts that contract.
+
+That backend boundary is separate from local retention. SDK 0.25.0 normally writes each example's
+`query`, `response`, and `expected` text to local optimization logs. The walkthrough sets
+`TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
+example ids and metrics but writes those three content fields as `null`, and keeps
+assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined
+results folder is honored and named.
 
 The selected LLM provider still receives the content the agent normally sends during model calls.
 Your assistant explains which services receive data and asks before paid calls or private-data
@@ -188,6 +219,7 @@ egress.
 | [`GUIDE.md`](GUIDE.md) | Entry point for a cloned-repository run |
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
+| `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 
 After the first result, the assistant can offer the advanced

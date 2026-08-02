@@ -114,8 +114,8 @@ those paths and this concise summary in `traigent-runs/run-plan.md`:
 
 Script/schema validation proves only that the matrix is well formed. The assistant's review must
 connect the selected probes to the product's meaning of correctness. If the evidence supports a
-`sufficient` verdict, proceed without asking or pausing: run static preflight and then local
-deterministic calibration.
+`sufficient` verdict, proceed without asking or pausing. Run static preflight immediately, then
+follow SKILL stage 4 for calibration sequencing.
 
 If the evidence leaves unresolved product-grading ambiguity that would materially change which
 output is correct or how candidate configurations rank, record an `ambiguous` verdict, ask
@@ -127,8 +127,12 @@ labels, expected answers, examples, or rubric policy, show the exact judgment-de
 and obtain explicit approval before editing it.
 
 The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
-to the real task, save the JSON as `traigent-runs/calibration-cases.json`, and run the command from
-the repository root only after the evaluator-execution gate:
+to the real task and save the JSON as `traigent-runs/calibration-cases.json`. Keep the command's
+working directory at the **user's project root** so default imports resolve from that project.
+Resolve the selected Python interpreter to an absolute path and resolve the absolute directory
+containing the loaded `SKILL.md`; substitute those actual paths into the assignments below after
+the evaluator-execution gate. Never execute the illustrative assignments unchanged, fall back to
+an arbitrary `python3`, or assume the skill is inside the user's project:
 
 ```json
 [
@@ -162,7 +166,9 @@ the repository root only after the evaluator-execution gate:
 ```
 
 ```bash
-python3 skills/traigent-first-run/scripts/calibrate_evaluator.py \
+TRAIGENT_FIRST_RUN_PYTHON="/absolute/path/to/the-selected-python"
+TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
+"$TRAIGENT_FIRST_RUN_PYTHON" "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
   --allow-execution \
@@ -186,11 +192,24 @@ The exact thresholds depend on the metric, but reject all of these:
 - Bad output receiving a passing score.
 - Parse/evaluator exceptions converted silently to an ordinary zero.
 
-For deterministic evaluators, first inspect the complete invoked call path and establish that it
-is local-only and has no external side effects. Then run probes in an isolated subprocess with
-provider keys removed. Removing keys is defense in depth, not proof of isolation. If any invoked
-path is uncertain or external, treat calibration as an egress or paid action and obtain the
-combined approval before executing it.
+For deterministic calibration, the helper runs authored probes in a credential-stripped child.
+Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
+process-local scorer and dependency state from other attempts. This is process separation, not
+sandbox isolation. Its supplemental phase may use one additional `--timeout` budget. Follow the
+SKILL stage-4 gate for permitted paths; `run-safety.md` owns execution-evaluator containment.
+
+Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
+`ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that
+reaches `SyntaxError` or `JSONDecodeError` when the scorer uses those parsers; it is not exhaustive.
+A returned zero is consistent with a swallowed parser/evaluator exception but can also be a
+deliberate unsupported-input rejection; the probes cannot prove which. Inspect the scorer's error
+path with a task-valid malformed case and ensure genuine parser/runtime failures remain distinct
+before optimizing. The advisory never changes the authored probes' PASS by itself.
+
+Read `supplemental_probe_advisory` as unavailable evidence: setup failure, timeout-budget
+exhaustion, or a worker crash prevented one or more generated probes from answering their question.
+It never changes authored PASS. Do not count an unavailable probe as distinguished; inspect or
+rerun it before relying on that supplemental evidence.
 
 For LLM judges:
 

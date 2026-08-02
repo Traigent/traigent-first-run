@@ -16,29 +16,26 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ### Why the install sits where it does
 
-It is the slowest unattended step in the run and it overlaps nothing: stage 4 runs every
-standard-library-only check *before* the environment exists, and both stage-5 steps after the
-install need the installed SDK. There is nothing left to run beside it.
-
-Moving it earlier is the obvious way to win that time back, and is deliberately not done. Two
-things have to be true before an install is the right thing to do, and both are established by the
-work that precedes it. The target has to be resolved - starting the moment *some* environment is
-found is how dependencies land in the wrong project, and a tree with several environments is
-exactly where that stays invisible. And the run has to be one worth installing for: ahead of stage
-4 nothing has shown the project is scoreable at all, and in the zero-anchor opening the user has
-not chosen the task, so an early install spends their disk and time on a walkthrough that may never
-be run. A minute of honest waiting is the cheaper of the two.
-
-Not a sub-agent either, and not one reached for to make the wait feel shorter. There is nothing to
-run beside it, so a second agent would only wait too - and it is one command with an exit code and
-a diagnostic on failure, which has to reach the reader intact: a summary of a resolver conflict is
-not a resolver conflict. Nothing in this guide requires sub-agents, which not every assistant it
-targets provides.
+Stage 4 first establishes that the project is scoreable and stage 5 resolves the target
+environment. Installing earlier can therefore modify the wrong environment or spend time on a
+walkthrough whose task is not yet anchored. After that point, the remaining capability and mock
+checks need the installed SDK, so no useful independent work overlaps the install. Keep this one
+foreground command with its complete resolver diagnostic; explain the wait and do not delegate it.
+Nothing in this guide requires sub-agents, which not every supported assistant provides.
 
 ### Rules
 
 - Reuse an existing compatible isolated environment. When none exists, use the conventional
   `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
+- Resolve every candidate recorded during inventory before touching one, and name the selected
+  environment by absolute path. Prefer the single compatible environment inside the project root.
+  Ignore environments owned by another project or by the assistant's tooling; a current-project
+  environment managed outside the root is an external candidate, not an ignored one. More than one
+  compatible candidate, or external-only environments, get one question with a recommendation and
+  every candidate path.
+  Before adopting an environment with other dependents, name the exact install and confirm once,
+  offering a separate `.venv-traigent`; a run-created environment or one containing only this
+  walkthrough's pinned set proceeds without repeating that question.
 - Create and then activate the environment before installing: `source .venv/bin/activate` on
   macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows PowerShell (a first run there may need
   `Set-ExecutionPolicy -Scope Process RemoteSigned`). Confirm `sys.prefix` points inside the
@@ -67,23 +64,43 @@ targets provides.
 - After every applicable free component, capability, and safe mock check, build one minimal `.env`
   with only the missing selected-provider entry blank. Preserve existing values, comments,
   unrelated keys, blank alternate-provider entries, and any Traigent key already present. Before
-  opening it, require mode `0600` on POSIX. Stop once for the provider secret. Add or request the
-  Traigent key only after the local baseline checkpoint.
+  opening it, require mode `0600` on POSIX. In a Git worktree, run
+  `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop;
+  continue only on exit 1 with no match, and stop on any other status. Preserve the project-root
+  `.gitignore` while ensuring it contains an effective `/.env` rule, then require
+  `git -C "<project-root>" check-ignore -q -- .env` to succeed. Stop before secret entry if the
+  effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
+  `.gitignore`. Stop once for the provider secret. Add or request the Traigent key only after the
+  local baseline checkpoint.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
-- Hand the file off unambiguously: open `.env` for the user (`xdg-open`/`open`/`notepad`) and, on a
-  headless box, print its absolute path; name the target line by key prefix - the `sk-`/`sk-or-`
-  provider key after its `..._API_KEY=` line; at the later portal gate, name
-  `TRAIGENT_API_KEY=` separately.
-- According to the documented SDK/service contract, prompts, examples, and outputs are not sent to
-  Traigent by the optimization service. This guide does not independently inspect network packets;
-  stop if observed runtime behavior contradicts that contract.
+- Hand the file off unambiguously. In a graphical session, launch the opener detached and
+  non-blocking: pass the absolute `.env` path as one safely quoted argument, redirect stdin,
+  stdout, and stderr away from the assistant's pipes, and start it in the background. On POSIX,
+  the `xdg-open` or `open` launch must end with `</dev/null >/dev/null 2>&1 &`; on Windows
+  PowerShell, use `Start-Process`. Do not wait for the editor process or interpret its continued
+  lifetime as failure; print the absolute path immediately and stop for the user. In a headless
+  session, or when no graphical handler is available, skip the opener and print the absolute path
+  as the fallback. Name the target line by key prefix - the `sk-`/`sk-or-` provider key after its
+  `..._API_KEY=` line; at the later portal gate, name `TRAIGENT_API_KEY=` separately.
+- According to the documented SDK/service contract, connected runs send configuration keys and
+  values, numeric measures, run state, and content-free metadata to the Traigent backend. Except
+  for content deliberately placed in a tuned configuration value and observability content the
+  project explicitly opts into recording, the contract excludes user prompts/inputs, dataset
+  contents and expected outputs, model responses, source code, and credentials from that backend
+  transmission. This guide does not independently inspect network packets; stop if observed
+  runtime behavior contradicts that contract.
+- Treat backend transmission and local persistence as separate boundaries. SDK 0.25.0 writes
+  per-example `query`, `response`, and `expected` text to local optimization logs by default. In
+  the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
+  Traigent; this retains example ids and metrics while writing those content fields as `null`.
+  Keep assistant-created logs beneath ignored `traigent-runs/`; honor and name a preserved
+  project-defined results folder. Do not re-enable example-content logging unless the user asks
+  after being told the local path, retained content, and deletion responsibility.
 - A selected direct LLM provider still receives whatever content the agent normally sends in
   model calls.
 - With OpenRouter, OpenRouter receives the request as the gateway and the selected upstream
   inference provider may also receive prompts, examples, and outputs. Automatic routing and
   fallbacks can change that upstream recipient.
-- Connected Traigent runs transmit configuration identifiers, numeric measures, run state, and
-  content-free metadata needed for optimization and portal history.
 - Encode prompt variants as short labels mapped to the text inside the agent function; never put raw
   prompt text as configuration-space values. Configuration choices are synced to Traigent's
   optimizer, so labels keep the actual prompts on the machine.
@@ -170,9 +187,10 @@ active and your 10-day portal access period has started. Next, create your API k
 control in the top bar - grant it full access, and save it when it appears, because it is shown
 only once."
 
-The Traigent key must be able to write experiments, not only read them. A connected run records the
-baseline and the optimization, so a read-only key is rejected at submit time and the run silently
-drops to local-only tracking - real money is spent and nothing appears in the portal. This governs
+The Traigent key must be able to write experiments, not only read them. The connected optimization,
+and an exact baseline sync when the installed public API supports one, need that scope. A read-only
+key can be rejected at submit time while the optimization drops to local-only tracking - real money
+is spent and nothing appears in the portal. This governs
 the user's very first key, not just a later one, because registration hands over no key at all.
 A manually created key defaults to read-only, so grant it full access rather than accepting
 the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
@@ -183,100 +201,33 @@ Nothing else belongs in `.env`. Do not add a backend or API URL - the installed 
 at the production service, and a stray override silently sends a paid run somewhere the user cannot
 see it.
 
-The opening readiness score is computed earlier, after read-only inventory and before any creation
-or repair. It is a static local action, required even when no component exists yet; in a
-zero-anchor run it is recorded only after task intent is anchored. It uses the host `python3`
-interpreter as a narrow bootstrap for every bundled script that runs before the isolated
-environment exists - the standard-library-only static checks and the calibration adapter alike;
-nothing is installed into the host interpreter. Every `python-version` result from those
-pre-environment passes therefore describes that host bootstrap interpreter and is provisional; the
-environment selected or created for the connected run is the interpreter that run is judged on.
+SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
+readiness score. The environment selected or created in stage 5 remains authoritative for the
+connected run.
 
-Use this gate order:
+Follow SKILL stages 4-7 for ordering; this reference does not define a second flow.
 
-1. After component creation, define the calibration matrix and thresholds, then have the coding
-   assistant perform and record the evidence-backed semantic-coverage review. Record the reviewer
-   and evidence, materially distinct inputs, outcomes, and rubric/schema branches, mode and
-   threshold rationale, known gaps, and a `sufficient` or `ambiguous` verdict.
+For the stage-4 semantic-coverage review, use this outcome inventory rather than an unrecorded
+impression. Name the applicable classes in each case's `outcome_classes`, so `sufficient` records
+what was examined and an absent class stays visible:
 
-   Review against the list below, not against your own sense of having looked. The mechanical
-   checks say plainly that they are structural and that correctness rests on this review, which
-   means its coverage is whatever the author thought of on the day - strongest where they already
-   understood the task, and weakest on the outcome class they did not consider, which is exactly
-   where evaluator bugs live. Name the classes covered in each case's `outcome_classes`, so
-   `sufficient` records what was examined rather than that someone examined it, and an absent
-   class is visible to a reader instead of being invisible to everyone.
+| If the answer is | Speak to |
+|---|---|
+| rows, sets, or lists | label/value binding, duplicate rows, ordering, empty result, partial overlap |
+| numeric | tolerance edges, sign, units, formatting and rounding |
+| a classification | near-miss labels, an absent label, case and whitespace |
+| free text | omission, contradiction, added claims not in the input |
+| structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
+| code or SQL | parse or compile failure, correct but materially different implementation, full test pass, partial test pass, wrong result after a clean exit, runtime error, timeout or resource-limit breach, forbidden side effect |
 
-   | If the answer is | Speak to |
-   |---|---|
-   | rows, sets, or lists | label/value binding, duplicate rows, ordering, empty result, partial overlap |
-   | numeric | tolerance edges, sign, units, formatting and rounding |
-   | a classification | near-miss labels, an absent label, case and whitespace |
-   | free text | omission, contradiction, added claims not in the input |
-   | structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
+Binding is first because a token comparison cannot see a correct value paired to the wrong key.
+The deterministic permutation probe asks about that one class mechanically; the rest still needs
+the recorded semantic review.
 
-   Binding is first because it is the one a token-comparison evaluator cannot see at all: an
-   answer that pairs every right value with the wrong key contains exactly the expected tokens.
-   `calibrate_evaluator.py` now probes that one automatically for deterministic evaluators and
-   asks about it, because it needs no understanding of the task - the rest of the list still
-   needs yours.
-2. If unresolved product-grading ambiguity would materially change correctness or candidate
-   ranking, ask exactly one product-grading question and stop for the answer. Otherwise record
-   that no material ambiguity remains and continue without a generic semantic-review stop.
-3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
-   containing the combined tuning and holdout rows, so local structure and quality problems are
-   checked without importing user modules. Use the same resolved `--evaluator-method` here and in
-   readiness; if unresolved, omit it and require expected outputs.
-   Record local structure, per-split size/resolution, and quality findings independently of
-   SDK/package findings. This pass does not claim exact SDK compatibility, and a missing Traigent
-   SDK cannot block it.
-4. Run deterministic evaluator calibration only when the semantic-coverage verdict is
-   `sufficient` and the complete inspected import and call path is local-only, side-effect-free,
-   and needs no unavailable third-party package. Do not execute an LLM judge or any uncertain or
-   external evaluator; keep it behind explicit combined approval.
-5. Run `scripts/readiness.py` on the fresh preflight JSON plus the calibration results and
-   config-space document, whichever exist, and record the overall score, band, and every binding
-   cap. Branch on each active cap before continuing. This is a static local read; `--strict` is
-   not a substitute for taking the branch.
-6. Determine the current provider route from the agent's actual model call and configuration;
-   inventory provider credential names separately. Credential presence never changes an existing
-   route. When no route exists, prefer the one supported direct provider whose credential is
-   already present so no second account is needed; with no such single credential, default to
-   OpenRouter without a separate choice question. The user may
-   request a direct provider instead. If the current route lacks its credential but another
-   provider credential exists, stop with the mismatch instead of changing the route silently. If
-   OpenRouter is selected, identify every allowed upstream inference provider/route, disclose
-   fallback behavior, and pin allowed routes and disable fallbacks when an exact recipient set is
-   required.
-7. Reuse an existing compatible isolated environment, or create the conventional `.venv` with Python
-   3.11-3.13 without fetching packages. Only if an incompatible `.venv` already exists, preserve it
-   and use `.venv-traigent` as the non-destructive fallback without making its name a user choice.
-8. Install the exact declared dependencies under the narrow package-artifact authorization: use
-   compatible exact project declarations or the skill's `assets/requirements-first-run.txt`.
-9. Use the installed SDK's public dataset validator/loader, decorator, and evaluation models, plus
-   a public no-execution contract validator when the installed version provides one. Let those
-   public paths own normalization, injection, agent-call, and evaluator-callback behavior. Never
-   mirror SDK aliases or binding fallbacks in the first-run skill. Pass resolved absolute paths to
-   SDK 0.25.0's public dataset validator as a temporary workaround for its tracked nested-relative
-   path defect. If the installed version lacks
-   a full no-execution contract validator, record that limitation and use the safe mock plumbing
-   check for end-to-end compatibility. Run any local deterministic calibration deferred solely for
-   an installed dependency.
-10. Run a fresh-process Traigent mock plumbing check only when inspection proves every model call
-    is intercepted and no external side effect can occur. Otherwise record the check as deferred;
-    do not over-prescribe execution.
-11. After every applicable free check is complete, create the minimal `.env` or minimally update
-    the existing one securely as described above, then stop once for the selected-provider secret.
-    Do not request a Traigent key or route an account state yet.
-12. Present one combined approval covering the smallest live provider-credential check, any LLM-judge
-    calibration, baseline, bounded optimization, and baseline-versus-winner validation calls,
-    including whether that validation is sealed or non-blind.
-13. After approval, run the provider check and local fixed baseline without a Traigent key in that
-    process. Show its checkpoint. Only then request or reuse the Traigent key, run the zero-LLM
-    portal-tracking probe, attempt an exact capability-gated baseline sync, and start connected
-    optimization. The probe gates connected work, not provider spend.
-
-Do not split paid work into repeated approvals unless the plan materially changes.
+Identify execution evaluators from their complete call path. A scorer enters that path when it
+executes or imports candidate/model output as code, shells out with it, or submits it to a code or
+SQL engine. Apply the containment contract below before calibration; if it cannot be met, do not
+run that evaluator in calibration, mock, baseline, optimization, or validation.
 
 ## Static and mock validation
 
@@ -298,15 +249,49 @@ deferred SDK finding, not as a failure of dataset-quality checks. Dataset heuris
 `--input-field` and `--expected-field` from the user's schema. Those choices configure only the
 local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 
-Deterministic calibration is a separate execution gate. Run it before environment setup only when
-the assistant has recorded a `sufficient` evidence-backed semantic-coverage verdict and inspection
-proves its complete call path is local-only, side-effect-free, and standard-library-only. A
-generic outside-review wait is not a gate. Pause only for the one product-grading question when an
-unresolved ambiguity would materially change correctness or ranking. If calibration needs a
-declared local dependency, defer it until that dependency is installed, but still run it before
-creating `.env` or requesting a provider key. Do not execute an LLM judge or an uncertain or
-external evaluator without the explicit combined approval for its recipients, data, calls,
-runtime, and spend.
+### Execution-evaluator containment
+
+Treat model-written code or SQL as untrusted active content whenever an evaluator executes it.
+This requirement applies to calibration and every scored callback in baseline, optimization, and
+validation, including generated or preserved evaluators. Never execute that content inside the
+assistant, SDK, optimizer, or evaluator-orchestration process, or in an ordinary subprocess that
+shares the host's access.
+
+Use a fresh disposable sandbox for each candidate, or reset it to an equivalent clean state, with:
+
+- Network disabled; no provider, Traigent, or project credentials; and a minimal environment.
+- No writable host home or project mount. Mount only required tests and fixtures read-only, plus a
+  bounded disposable scratch directory.
+- An unprivileged identity, no elevated capabilities or privilege escalation, and an OS-enforced
+  container, VM, or sandbox boundary appropriate to the host.
+- Hard limits on wall-clock time, CPU time, memory, process count, open files, file size and scratch
+  space, and captured output.
+- Terminate the whole descendant process tree on completion or any limit breach, then dispose of
+  the sandbox. Run SQL only against a disposable seeded database, never a production
+  connection or credential.
+
+Record the boundary, limits, mounted inputs, and permitted side effects in the run plan. Report a
+runtime error, timeout or resource-limit breach, forbidden side effect, and sandbox failure as
+distinct outcomes; never retry one outside containment. A virtual environment, stripped builtins,
+removed keys, proxy blackholing, an ordinary subprocess, or a timeout alone is not a sandbox.
+Resource limits alone do not provide isolation from the filesystem, network, or secrets. The
+calibration helper's child process separates scorer imports from the assistant, but a scorer that
+executes candidate content must still delegate that execution to the declared sandbox. If no
+available boundary enforces these properties, do not run the execution evaluator or paid
+optimization against it; use non-executing static/parser/compile checks or pause for a safe runner.
+
+### Deterministic calibration and mock plumbing
+
+Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
+evidence-backed semantic-coverage verdict. Before environment setup, run only a non-executing
+evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. An
+execution evaluator waits until its declared local dependencies and sandbox are available; every
+candidate execution must satisfy the containment contract above. A non-executing evaluator that
+needs a declared local dependency also waits until that dependency is installed. Run either before
+creating `.env` or requesting a provider key. A generic outside-review wait is not a gate; pause
+only when one unresolved product-grading ambiguity would materially change correctness or ranking.
+Do not execute an LLM judge or an uncertain or external evaluator without the explicit combined
+approval for its recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
@@ -334,18 +319,17 @@ free-tier run as mocked.
 
 ### Config-space document
 
-`scripts/readiness.py --config-space` scores the agent pillar from the space a run actually built,
-so it needs that space as a file. The file means one thing and nothing else: *this is the space the
-search that just completed received*. The generated wrapper holds it to that meaning in three steps
-- serialize the finalized enhanced space just before the connected search, remove any earlier
-document before that search starts, and write `traigent-runs/config-space.json` only once the search
-has returned trials. So the file describes exactly the space the call received, and it cannot
-outlive a search that raised, a retry over a changed space, or a return that executed nothing.
-Until that write happens there is nothing to score: the agent pillar is honestly scored
-from absent evidence and `agent-no-varying-knobs` stays binding. Report it that way - not yet
-measured - rather than describing the run's knobs as if the score had seen them. A run that
-legitimately stops before the enhanced search, or whose search raises, emits no document and keeps
-the cap, which is the honest outcome.
+`scripts/readiness.py --config-space` scores the agent pillar from the space this run actually
+built. A file found before the current enhanced search - including one left by an earlier guided
+run - is historical context only. Its existence, timestamp, hash, or non-empty `wired` list cannot
+prove current wiring. Record its provenance, omit it from opening and stage-4 readiness, and report
+the pillar as not yet measured.
+
+A scoreable file means one thing: *this is the space the search that just completed received*.
+The generated wrapper serializes the finalized space, removes any earlier file before the call, and
+writes `traigent-runs/config-space.json` only after the search returns nonzero trials. Only that
+current-run file enters closing readiness. A stopped, failed, or zero-trial search emits none, so
+the agent pillar remains honestly scored from absent evidence and its cap stays binding.
 
 These are the only fields the scorer reads; anything else in the file is ignored whole, never
 half-read. A field that is present but malformed is refused with a message naming it (exit 2), never
@@ -477,6 +461,9 @@ paid/provider work, show one concise approval for the full planned first run:
   not a provider-billing guarantee.
 - Services receiving data. For OpenRouter this means the OpenRouter gateway plus every allowed
   upstream inference provider/route, with fallback routing disclosed.
+- For an execution evaluator, the repeated execution of model-written code or SQL; where it runs;
+  which tests and fixtures enter the sandbox; the enforced limits and residual risk; and any
+  external sandbox service or data recipient.
 
 Keep the default `$5.00` ceiling without asking the user to choose a number. If the plan exceeds
 it or is materially long, recommend a smaller representative tuning slice or fewer trials first.
@@ -550,23 +537,8 @@ let a connected run finish spending and only then reveal that nothing reached th
 
 ## Baseline and optimization
 
-Use one honest comparison:
-
-1. Baseline: a local fixed-selection run over the user's existing baseline exactly as defined.
-   Only when the baseline is missing does the assistant prepare a credible six-row manual-style
-   sweep containing its initial configuration.
-2. Optimization: one broader search containing all baseline values plus meaningful added knobs,
-   targeting 10-13 visible trials with an internal default cap of 12.
-
-Use the same tuning slice, evaluator, objective definitions, and call path for both. After the
-checkpoint and portal probe, sync that exact baseline without rerunning only when the installed
-public result exposes its session id; otherwise report it local-only. Do not:
-
-- Run a local baseline and then pay to repeat it only for portal appearance.
-- Intentionally weaken the baseline or replace user-defined values with strawman choices.
-- Add a variable that does not affect the agent merely to manufacture portal rows.
-- Require a third optimization pass before showing the result.
-- Compare different datasets or evaluators.
+Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoint, and exact-sync
+decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
 space unchanged, even when it contains one row. For a generated walkthrough, the default small
@@ -649,6 +621,9 @@ Before claiming success, verify:
     local-only during
     the run; any such degradation halted further paid work rather than surfacing only at the end.
 11. Tuning and validation results are separated, and validation visibility is named.
+12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
+    limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
+    than retried outside containment.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
@@ -689,12 +664,13 @@ can look identical to a production one.
   the stop reason; do not report it as a failure or silently drop the paid trials.
 - SDK or optimizer exception mid-run, including a Rust/pyo3 panic during result serialization (a
   known class): surface the error in plain language with one recommended recovery, never a raw
-  traceback. Completed trials were already paid and written to `TRAIGENT_RESULTS_FOLDER` under
-  `traigent-runs/`; recover them and, for a connected run, upload the partial session with
-  `traigent sync <session_id>` before reporting - never present already-paid work as a total loss. A
-  foreground command timeout (harnesses often kill at about five minutes) can kill `optimize_sync`
-  mid-run without rolling back its spend, so run a long paid optimization detached and poll its log
-  rather than letting the tool timeout abandon paid trials.
+  traceback. Completed trials were already paid and written to the selected
+  `TRAIGENT_RESULTS_FOLDER` - beneath `traigent-runs/` for the generated wrapper, or at the named
+  preserved project path. Recover them and, for a connected run, upload the partial session with
+  `traigent sync <session_id>` before reporting - never present already-paid work as a total loss.
+  A foreground command timeout (harnesses often kill at about five minutes) can kill
+  `optimize_sync` mid-run without rolling back its spend, so run a long paid optimization detached
+  and poll its log rather than letting the tool timeout abandon paid trials.
 - Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
   classification; do not add a duplicate retry loop.
 - Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
@@ -717,7 +693,8 @@ local optimization logs and state remain inside the ignored walkthrough director
 project already configures another SDK results folder, honor and record it instead. Store no
 secrets, raw private content in run names, or prompts/outputs in numeric telemetry.
 
-Privacy wording describes Traigent's documented payload contract, not an independent packet audit.
-Keep metrics, metadata, experiment names, and errors content-free. Verify the installed SDK's
-privacy/offline controls when available; if payload behavior cannot be inspected, say that the
-contract was followed rather than claiming network traffic was independently audited.
+Privacy wording describes Traigent's documented backend-payload contract, not an independent
+packet audit. Keep metrics, metadata, experiment names, and errors content-free. Verify the
+installed SDK's privacy/offline and local-content-logging controls when available; if payload
+behavior cannot be inspected, say that the contract was followed rather than claiming network
+traffic was independently audited.
