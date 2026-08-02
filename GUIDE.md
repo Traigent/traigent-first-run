@@ -34,6 +34,10 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
+When the minimal `.env` is created, treat it as a local handoff: if a GUI handler is available,
+open the file explicitly for the user; if the session is headless, print the absolute path and
+stop rather than implying a popup happened.
+
 ## User-facing promise
 
 Use this short opening, adapting only what inspection already established:
