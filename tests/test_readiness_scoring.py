@@ -2707,30 +2707,48 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
         wording asserting the user did not do something is a claim the absence
         of an input cannot support.
         """
-        source = Path(MODULE.__file__).read_text(encoding="utf-8")
-        # A CLASS, not a list of instances. The version of this test written
-        # with #121 hardcoded two calibration phrases and called itself a class
-        # check; the identical defect on the agent pillar - "no knobs declared"
-        # printed at a project that declared five - walked straight past it.
+        # A CLASS, not a list of instances - and asserted on what the scorer
+        # PRODUCES, not on what its source spells.
         #
-        # The shape is: an unmeasured check asserting the USER did not do
-        # something, when all it knows is that it was handed nothing. Each entry
-        # is a verb of absence that only a claim about the project can carry.
+        # Two earlier versions failed for the same reason. #121 hardcoded two
+        # calibration phrases, so the identical defect on the agent pillar
+        # walked past. Widening that list did not help either: the test parsed
+        # the module for literal `SubScore(...)` arguments, and the agent pillar
+        # builds its evidence in a variable - so the string was never in the
+        # parser's reach and the check reported green while the defect shipped.
+        #
+        # It drives the real states and reads the evidence they emit.
         forbidden = (
             "was not calibrated",
             "has not been calibrated",
             "no knobs declared",
             "knobs are not declared",
         )
-        for node in ast.walk(ast.parse(source)):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "SubScore"
-                and len(node.args) >= 5
-                and isinstance(node.args[4], ast.Constant)
-            ):
-                evidence = str(node.args[4].value)
-                for phrase in forbidden:
-                    with self.subTest(evidence=evidence[:40]):
-                        self.assertNotIn(phrase, evidence)
+        produced: list[str] = []
+
+        for facts in (
+            MODULE.AgentFacts(),
+            MODULE.AgentFacts(config_space_supplied=True),
+            MODULE.AgentFacts(
+                knobs={"temperature": [0.0, 1.0]}, config_space_supplied=True
+            ),
+        ):
+            pillar, _, _ = MODULE.score_agent(facts)
+            produced.extend(sub.evidence for sub in pillar.subscores)
+
+        for payload in (
+            None,
+            {"cases": [], "passed": False},
+            {"timed_out": True, "cases": [], "passed": False},
+        ):
+            facts = MODULE.evaluation_facts_from_calibration(
+                payload, method="execution", task_kind="code-sql"
+            )
+            pillar, _ = MODULE.score_evaluation(facts)
+            produced.extend(sub.evidence for sub in pillar.subscores)
+
+        self.assertTrue(produced, "drove no state, so this proves nothing")
+        for evidence in produced:
+            for phrase in forbidden:
+                with self.subTest(evidence=evidence[:40], phrase=phrase):
+                    self.assertNotIn(phrase, evidence)
