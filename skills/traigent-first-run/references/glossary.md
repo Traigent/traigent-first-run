@@ -201,18 +201,26 @@ The lines under each pillar on the card
                                  run is deliberately not counted, so an opening
                                  score usually reports that none was provided
                                  yet rather than that your agent has none.
-    a set to tune on / a set to check the result on
+    tuning set / held-back test set
                                - two halves of your examples. The search is
                                  allowed to see the first half while it looks
                                  for a better configuration; the second half is
                                  kept back so the final number is measured on
                                  examples the search never optimized against.
-                                 Without the split, a good score may only mean
-                                 the search fitted the examples it could see.
+                                 Without it, a good score may only mean the
+                                 search fitted the examples it could see. It is
+                                 the train/test idea, except nothing is trained:
+                                 Traigent searches configurations rather than
+                                 fitting a model. The guide's files call the
+                                 second half the holdout; the card says held
+                                 back, and they are the same rows.
     good-vs-bad examples       - answers already known to be right and known to
-                                 be wrong, scored to check the evaluator can
-                                 tell them apart. They come from calibrating the
-                                 evaluator, which happens later in the run.
+                                 be wrong, run through your evaluator to see how
+                                 far apart it scores them. Near 1.00 it
+                                 separates quality cleanly; a narrow gap means
+                                 any improvement the run reports could sit
+                                 inside the evaluator's own noise. They come
+                                 from calibration, later in the run.
     undeclared row             - a row that does not record where it came from.
                                  It is not counted against you, but it cannot be
                                  counted for you either: nothing says whether it
