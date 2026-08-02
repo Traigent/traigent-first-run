@@ -755,6 +755,18 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         name: sum(row["difficulty"] == name for row in rows)
         for name in ("easy", "medium", "hard", "very-hard")
     }
+    tuning_difficulty_counts = {
+        name: sum(
+            row["difficulty"] == name and row["split"] == "tune" for row in rows
+        )
+        for name in ("easy", "medium", "hard", "very-hard")
+    }
+    holdout_difficulty_counts = {
+        name: sum(
+            row["difficulty"] == name and row["split"] == "holdout" for row in rows
+        )
+        for name in ("easy", "medium", "hard", "very-hard")
+    }
     if len(rows) != 28 or len(tuning) != 18 or len(holdout) != 10:
         raise ContractError("generated dataset must contain 28 rows with an 18/10 split")
     if len(set(ids)) != 28 or len(set(inputs)) != 28:
@@ -764,6 +776,24 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
     if difficulty_counts != {name: 7 for name in difficulty_counts}:
         raise ContractError(
             "generated dataset must contain seven rows at each difficulty"
+        )
+    if tuning_difficulty_counts != {
+        "easy": 3,
+        "medium": 5,
+        "hard": 5,
+        "very-hard": 5,
+    }:
+        raise ContractError(
+            "generated dataset must contain 3 easy, 5 medium, 5 hard, and 5 very-hard tuning rows"
+        )
+    if holdout_difficulty_counts != {
+        "easy": 2,
+        "medium": 3,
+        "hard": 3,
+        "very-hard": 2,
+    }:
+        raise ContractError(
+            "generated dataset must contain 2 easy, 3 medium, 3 hard, and 2 very-hard holdout rows"
         )
     if {row["id"] for row in tuning} & {row["id"] for row in holdout}:
         raise ContractError("tuning and holdout ids overlap")
@@ -789,6 +819,8 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         "tuning": len(tuning),
         "holdout": len(holdout),
         "difficulty_counts": difficulty_counts,
+        "tuning_difficulty_counts": tuning_difficulty_counts,
+        "holdout_difficulty_counts": holdout_difficulty_counts,
         "coverage_branches": len({row["coverage"] for row in rows}),
         "provenance": "synthetic-walkthrough",
     }
@@ -1149,8 +1181,10 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
             generated["rows"] != expected["dataset_rows"]
             or generated["tuning"] != expected["tuning_rows"]
             or generated["holdout"] != expected["holdout_rows"]
-            or set(generated["difficulty_counts"].values())
-            != {expected["rows_per_difficulty"]}
+            or generated["tuning_difficulty_counts"]
+            != expected["tuning_difficulty_counts"]
+            or generated["holdout_difficulty_counts"]
+            != expected["holdout_difficulty_counts"]
         ):
             raise ContractError(
                 "partial scenario dataset counts violated its declaration"

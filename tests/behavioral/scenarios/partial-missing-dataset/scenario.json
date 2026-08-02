@@ -30,7 +30,18 @@
     "dataset_rows": 28,
     "tuning_rows": 18,
     "holdout_rows": 10,
-    "rows_per_difficulty": 7,
+    "tuning_difficulty_counts": {
+      "easy": 3,
+      "medium": 5,
+      "hard": 5,
+      "very-hard": 5
+    },
+    "holdout_difficulty_counts": {
+      "easy": 2,
+      "medium": 3,
+      "hard": 3,
+      "very-hard": 2
+    },
     "semantic_review": "sufficient",
     "calibration": "pass",
     "provenance": "synthetic-walkthrough",

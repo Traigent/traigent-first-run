@@ -1,8 +1,8 @@
 {"id":"walkthrough-e-01","input":"Where can I download last month's invoice?","output":"billing","source":"synthetic-walkthrough","difficulty":"easy","coverage":"billing-invoice","split":"tune"}
 {"id":"walkthrough-e-02","input":"I was charged twice today.","output":"billing","source":"synthetic-walkthrough","difficulty":"easy","coverage":"billing-duplicate","split":"tune"}
 {"id":"walkthrough-e-03","input":"Please cancel my subscription.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"easy","coverage":"cancel-direct","split":"tune"}
-{"id":"walkthrough-e-04","input":"Close my account now.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"easy","coverage":"cancel-account","split":"tune"}
-{"id":"walkthrough-e-05","input":"The app will not open after updating.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"easy","coverage":"technical-app","split":"tune"}
+{"id":"walkthrough-e-04","input":"Close my account now.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"medium","coverage":"cancel-account","split":"holdout"}
+{"id":"walkthrough-e-05","input":"The app will not open after updating.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"hard","coverage":"technical-app","split":"tune"}
 {"id":"walkthrough-e-06","input":"I cannot sign in with my password.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"easy","coverage":"technical-login","split":"holdout"}
 {"id":"walkthrough-m-01","input":"My refund is approved but has not arrived.","output":"billing","source":"synthetic-walkthrough","difficulty":"medium","coverage":"billing-refund","split":"tune"}
 {"id":"walkthrough-m-02","input":"The annual renewal amount looks wrong.","output":"billing","source":"synthetic-walkthrough","difficulty":"medium","coverage":"billing-renewal","split":"tune"}
@@ -20,7 +20,7 @@
 {"id":"walkthrough-v-02","input":"The consolidated invoice omits one child workspace's credit.","output":"billing","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"billing-consolidated","split":"tune"}
 {"id":"walkthrough-v-03","input":"End the parent contract but retain the separately billed sandbox.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"cancel-contract-scope","split":"tune"}
 {"id":"walkthrough-v-04","input":"Revoke renewal despite a pending ownership transfer.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"cancel-transfer","split":"tune"}
-{"id":"walkthrough-v-05","input":"After key rotation only background jobs receive authorization errors.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"technical-api-key","split":"holdout"}
+{"id":"walkthrough-v-05","input":"After key rotation only background jobs receive authorization errors.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"technical-api-key","split":"tune"}
 {"id":"walkthrough-v-06","input":"Regional users see stale data after failover while writes succeed.","output":"technical-support","source":"synthetic-walkthrough","difficulty":"very-hard","coverage":"technical-failover","split":"holdout"}
 {"id":"walkthrough-e-07","input":"My receipt is missing the tax line.","output":"billing","source":"synthetic-walkthrough","difficulty":"easy","coverage":"billing-receipt-tax","split":"holdout"}
 {"id":"walkthrough-m-07","input":"Pause the shared plan for one department but keep the rest active.","output":"cancellation","source":"synthetic-walkthrough","difficulty":"medium","coverage":"cancel-department-pause","split":"holdout"}

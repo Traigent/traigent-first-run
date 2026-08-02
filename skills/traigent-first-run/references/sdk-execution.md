@@ -128,7 +128,10 @@ evaluator-safe temperatures, with `prompt_style` and `self_check` fixed to one v
 only varying dimensions are model and temperature. If the strong tier is a reasoning model,
 temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
 reasoning calling convention pinned; either way, the baseline stays at six rows and the first
-result stays quick and cheap. The enhanced space keeps the identical model list and expands beyond
+result stays quick and cheap. On the 28-row walkthrough dataset, that baseline consumes 18 tuning
+rows split as 3 easy, 5 medium, 5 hard, and 5 very hard, while the held-back 10 rows are split as
+2 easy, 3 medium, 3 hard, and 2 very hard. The enhanced space keeps the identical model list and
+expands beyond
 the baseline: once the baseline result is in, refine the swept values around its top rows - the
 one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
 rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced

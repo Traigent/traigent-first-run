@@ -298,10 +298,8 @@ Prefer, in order:
 
 For a fully generated walkthrough, create 28 examples by default:
 
-- 7 easy.
-- 7 medium.
-- 7 hard.
-- 7 very hard but still unambiguously solvable.
+- 3 easy, 5 medium, 5 hard, 5 very hard for tuning.
+- 2 easy, 3 medium, 3 hard, 2 very hard for the held-back validation set.
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
@@ -474,9 +472,10 @@ and winner selection until the candidate was locked. If the assistant inspected 
 call it held-back, non-blind validation.
 
 For assistant-prepared 28-row walkthrough data, a practical split is 18 tuning / 10 validation,
-stratified across difficulty and scenario. The held-back ten rows check behavior outside the
-tuning subset, but the assistant inspected or authored them, so the result is non-blind and does
-not independently establish generalization or production performance.
+with the tuning rows distributed as 3 easy, 5 medium, 5 hard, 5 very hard and the held-back rows
+distributed as 2 easy, 3 medium, 3 hard, 2 very hard. The held-back ten rows check behavior
+outside the tuning subset, but the assistant inspected or authored them, so the result is
+non-blind and does not independently establish generalization or production performance.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and
