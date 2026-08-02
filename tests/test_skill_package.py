@@ -1866,7 +1866,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill)
         stage_four = skill.split("### 4. validate components locally", 1)[1].split(
-            "### 5. validate sdk integration", 1
+            "### 5. prepare the environment and finish free checks", 1
         )[0]
         for phrase in (
             "apply the run-scoped evaluator-method rule above",
