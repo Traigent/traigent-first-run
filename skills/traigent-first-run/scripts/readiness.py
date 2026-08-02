@@ -1350,7 +1350,8 @@ def score_dataset(
             Cap(
                 "dataset-integrity-fail",
                 35,
-                "The dataset failed a structural check.",
+                "Some rows could not be read as data - malformed lines, or missing "
+                "the input or expected-answer field.",
             )
         )
     return combine("dataset", subs), caps
@@ -1674,8 +1675,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             Cap(
                 "agent-no-varying-knobs",
                 45,
-                "Every declared knob has a single effective value, so no "
-                "configuration differs from any other.",
+                "Every setting has only one value to try, so every configuration "
+                "would be identical.",
             )
         )
 
