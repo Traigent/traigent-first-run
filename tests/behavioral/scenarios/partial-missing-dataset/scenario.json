@@ -27,10 +27,10 @@
     "task-contract.md"
   ],
   "assertions": {
-    "dataset_rows": 24,
+    "dataset_rows": 28,
     "tuning_rows": 18,
-    "holdout_rows": 6,
-    "rows_per_difficulty": 6,
+    "holdout_rows": 10,
+    "rows_per_difficulty": 7,
     "semantic_review": "sufficient",
     "calibration": "pass",
     "provenance": "synthetic-walkthrough",

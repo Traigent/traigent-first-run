@@ -755,15 +755,15 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         name: sum(row["difficulty"] == name for row in rows)
         for name in ("easy", "medium", "hard", "very-hard")
     }
-    if len(rows) != 24 or len(tuning) != 18 or len(holdout) != 6:
-        raise ContractError("generated dataset must contain 24 rows with an 18/6 split")
-    if len(set(ids)) != 24 or len(set(inputs)) != 24:
+    if len(rows) != 28 or len(tuning) != 18 or len(holdout) != 10:
+        raise ContractError("generated dataset must contain 28 rows with an 18/10 split")
+    if len(set(ids)) != 28 or len(set(inputs)) != 28:
         raise ContractError(
             "generated dataset ids and normalized inputs must be unique"
         )
-    if difficulty_counts != {name: 6 for name in difficulty_counts}:
+    if difficulty_counts != {name: 7 for name in difficulty_counts}:
         raise ContractError(
-            "generated dataset must contain six rows at each difficulty"
+            "generated dataset must contain seven rows at each difficulty"
         )
     if {row["id"] for row in tuning} & {row["id"] for row in holdout}:
         raise ContractError("tuning and holdout ids overlap")

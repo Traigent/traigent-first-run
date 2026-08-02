@@ -133,7 +133,7 @@ Tuning split vs holdout (validation) split
   be trusted (this is "leakage"). Call validation a sealed holdout only if its
   split and labels were hidden until the candidate was locked; assistant-inspected
   or assistant-authored validation is held-back and non-blind. When the assistant
-  prepares walkthrough data, the default is 24 rows split 18 tuning / 6 validation.
+  prepares walkthrough data, the default is 28 rows split 18 tuning / 10 validation.
 
 Provenance
   Plain: where the data came from - real production data, real inputs with
