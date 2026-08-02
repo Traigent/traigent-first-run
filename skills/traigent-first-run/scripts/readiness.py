@@ -1252,7 +1252,7 @@ def score_dataset(
             effective = scoreable(split_floor, labelled)
             marker = f"{labelled} scoreable"
         points, evidence = size_points(effective)
-        prefix = f"{facts.tuning_rows} tuning / {facts.holdout_rows} holdout"
+        prefix = f"{facts.tuning_rows} to tune on / {facts.holdout_rows} held back"
         if effective < split_floor:
             prefix = f"{prefix}, {marker}"
         evidence = f"{prefix}; {evidence}"
@@ -1263,8 +1263,8 @@ def score_dataset(
         if effective < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = (
-            "no split into a set to tune on and a separate set to check the "
-            f"result on; {evidence}"
+            "no tuning set and held-back test set, so the result would be "
+            f"measured on the same rows the search used; {evidence}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # Deducting alone let the card say "a wiring check, not a score" and return
@@ -1340,8 +1340,9 @@ def score_dataset(
             Cap(
                 "dataset-tune-holdout-overlap",
                 50,
-                "Tuning and holdout share examples, so the holdout score is "
-                "inflated - a believable wrong number.",
+                "The same examples appear in both the set the search tunes on "
+                "and the set held back to check it, so the final score is "
+                "flattered - a believable wrong number.",
             )
         )
     if facts.integrity_failed:
@@ -1488,7 +1489,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 round(15.0 * min(1.0, widest), 2),
                 15.0,
                 True,
-                f"widest good-to-bad separation across probes: {widest:.2f}",
+                f"scores a right answer {widest:.2f} above a wrong one, out of 1.00",
             )
         )
     else:
@@ -1498,7 +1499,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 0.0,
                 15.0,
                 False,
-                "no good-vs-bad examples were scored yet",
+                "not yet measured how far apart it scores a right and a wrong answer",
             )
         )
 

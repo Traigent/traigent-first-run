@@ -304,7 +304,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(collapsed.value, 5.0)
         self.assertEqual(
             collapsed.evidence,
-            "50 tuning / 50 holdout, 50/0 scoreable; 0 comparable examples - "
+            "50 to tune on / 50 held back, 50/0 scoreable; 0 comparable examples - "
             "a wiring check, not a score",
         )
 
@@ -370,7 +370,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(power.value, 18.4)
         self.assertEqual(
             power.evidence,
-            "no split into a set to tune on and a separate set to check the result on; 100 examples - substantial "
+            "no tuning set and held-back test set, so the result would be measured on the same rows the search used; 100 examples - substantial "
             "comparison set",
         )
 
