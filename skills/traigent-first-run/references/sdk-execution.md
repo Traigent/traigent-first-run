@@ -121,19 +121,19 @@ generated-walkthrough cost and latency; do not imply it has no value. State that
 price any flagship comparison separately. Every selected model runs in the baseline grid and must
 fit the approved time and cost envelope.
 
-Both generated spaces use the same three models. The baseline grids them against two evaluator-safe
-temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
-generated initial configuration - and it keeps the pre-account first result quick and cheap. The
-enhanced space keeps the identical model list and grows along the other axes: once the baseline
-result is in, refine the swept values around its top rows - the one added temperature becomes a
-close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a farther point - while
-keeping every baseline value, so the comparison stays contained and the configuration count is
-unchanged; then add the prompt-policy and self-check controls. The coding assistant performs this
-refinement itself between the two runs; the user is never asked to pick values or edit the
-wrapper. Because the enhanced run never gets a model the baseline did not measure, a measured
-difference cannot be explained by quietly upgrading the model. The assistant adds the disclosed
-controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
-in the report.
+Both generated spaces use the same three models. The baseline is a six-row sweep the user could
+credibly run by hand: at most three models, at most three wired knobs, and at most two values per
+baseline knob, with the mid tier as the generated initial configuration so the pre-account first
+result stays quick and cheap. The enhanced space keeps the identical model list and grows along the
+other axes: once the baseline result is in, refine the swept values around its top rows - the one
+added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather
+than a farther point - while keeping every baseline value, so the comparison stays contained and
+the configuration count is unchanged; then add the prompt-policy and self-check controls. The
+coding assistant performs this refinement itself between the two runs; the user is never asked to
+pick values or edit the wrapper. Because the enhanced run never gets a model the baseline did not
+measure, a measured difference cannot be explained by quietly upgrading the model. The assistant
+adds the disclosed controls; Traigent performs managed, cost-aware selection among them. Keep
+those actors separate in the report.
 
 Sweep only knobs that are real for every model in the space. When one model ignores a knob the
 others honor, the winner comparison is confounded - a configuration can win on a prompt or
