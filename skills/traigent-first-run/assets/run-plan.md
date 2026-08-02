@@ -25,7 +25,7 @@ The coding assistant maintains this concise internal record at
 
 - Current configuration:
 - Search dimensions and maximum trials:
-- Tuning / holdout rows:
+- Tuning / validation rows and visibility (`sealed holdout` or `held-back, non-blind`):
 - Agent and evaluator/judge calls per example:
 - Services/routes receiving data:
 - Approximate runtime:
@@ -35,12 +35,14 @@ The coding assistant maintains this concise internal record at
 
 ## Running state
 
-- Portal-tracking probe (zero-LLM): pass/fail and backend reason if failed:
+- Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Tracked spend, or conservative deduction where untracked:
 - Remaining total ceiling:
-- Baseline run ID, result, and portal link:
-- Optimization run ID, partial/final result, stop reason, and portal link:
-- Holdout result:
+- Local baseline checkpoint - artifact, best configuration/tuning score, executed/failed trials,
+  provider-reported cost or `not measured`, and limits:
+- Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
+- Connected optimization run ID, partial/final result, stop reason, and verified portal link:
+- Validation comparison - paired outcomes, visibility, and justified claim strength:
 
 ## Interpretation
 

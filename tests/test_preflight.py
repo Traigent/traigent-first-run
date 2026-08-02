@@ -382,6 +382,142 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(tuning.status, MODULE.WARN)
         self.assertIn("8 tuning rows", tuning.detail)
 
+    def test_ten_scoreable_rows_pass_only_the_static_wiring_boundary(self) -> None:
+        """A preflight PASS must not read as a readiness-resolution verdict."""
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"case {index} token{index}",
+                "output": f"answer {index % 3}",
+                "split": "tune" if index < 10 else "holdout",
+            }
+            for index in range(20)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        tuning = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
+        )
+        self.assertEqual(tuning.status, MODULE.PASS)
+        self.assertIn("10-row static wiring boundary", tuning.detail)
+        self.assertIn("readiness rates comparison size separately", tuning.detail)
+
+    def test_missing_stable_ids_route_to_the_reversible_working_copy_repair(
+        self,
+    ) -> None:
+        rows = [
+            {
+                "input": f"case {index} token{index}",
+                "output": f"answer {index}",
+                "source": "production",
+            }
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
+        self.assertEqual(ids.status, MODULE.WARN)
+        self.assertIn("add stable ids in a working copy", ids.detail)
+        self.assertIn("before excluding rows or selecting a bounded subset", ids.detail)
+        self.assertIn("re-run validation", ids.detail)
+
+    def test_id_repair_includes_unlabelled_rows_and_whitespace_ids(self) -> None:
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"labelled case {index}",
+                "output": f"answer {index}",
+                "source": "production",
+            }
+            for index in range(10)
+        ] + [
+            {"id": "   ", "input": "unlabelled whitespace id", "source": "production"},
+            {"input": "unlabelled missing id", "source": "production"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = [result for result in MODULE.RESULTS if result.check == "dataset-ids"]
+        self.assertEqual(len(ids), 1)
+        self.assertEqual(ids[0].status, MODULE.WARN)
+        self.assertIn("2 rows at source lines [11, 12]", ids[0].detail)
+        self.assertIn("add stable ids in a working copy", ids[0].detail)
+
+    def test_generated_row_without_id_fails_inside_a_mixed_dataset(self) -> None:
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"collected case {index}",
+                "output": f"answer {index}",
+                "source": "production",
+            }
+            for index in range(9)
+        ]
+        rows.append(
+            {
+                "input": "generated case without an id",
+                "output": "generated answer",
+                "source": "synthetic",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
+        self.assertEqual(ids.status, MODULE.FAIL)
+        self.assertIn("1 row at source line 10 has no stable id", ids.detail)
+        self.assertIn("1 generated row requires an id", ids.detail)
+
+    def test_duplicate_ids_include_unlabelled_rows(self) -> None:
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"labelled case {index}",
+                "output": f"answer {index}",
+                "source": "production",
+            }
+            for index in range(10)
+        ]
+        rows.append(
+            {
+                "id": "row-0",
+                "input": "unlabelled duplicate",
+                "source": "production",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = [result for result in MODULE.RESULTS if result.check == "dataset-ids"]
+        self.assertTrue(
+            any(
+                result.status == MODULE.FAIL and "row-0" in result.detail
+                for result in ids
+            ),
+            ids,
+        )
+
+    def test_all_unlabelled_dataset_still_routes_missing_ids_to_repair(self) -> None:
+        rows = [
+            {"input": "first unlabelled case", "source": "production"},
+            {"id": "kept", "input": "second unlabelled case", "source": "production"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
+        self.assertEqual(ids.status, MODULE.WARN)
+        self.assertIn("source line 1", ids.detail)
+        self.assertIn("before excluding rows or selecting a bounded subset", ids.detail)
+
     def test_explicit_local_quality_fields_do_not_rewrite_dataset(self) -> None:
         rows = [
             {

@@ -10,6 +10,8 @@ report honestly:
 * a dataset with malformed rows must fire the structural-integrity cap (35);
 * declared real provenance must score the full 10-point production band, while
   declared-synthetic provenance scores 3 and is capped.
+* input-only rows remain fully inspectable for a declared reference-free judge,
+  including split-overlap detection.
 """
 
 from __future__ import annotations
@@ -54,9 +56,13 @@ def _preflight_records(dataset: Path, *extra: str) -> list[dict]:
     return json.loads(process.stdout)
 
 
-def _score(dataset: Path, extra: tuple[str, ...] = ()) -> dict:
+def _score(
+    dataset: Path,
+    extra: tuple[str, ...] = (),
+    preflight_extra: tuple[str, ...] = (),
+) -> dict:
     """Replay preflight JSON into readiness and return the parsed score."""
-    preflight_json = json.dumps(_preflight_records(dataset))
+    preflight_json = json.dumps(_preflight_records(dataset, *preflight_extra))
     process = subprocess.run(
         [sys.executable, str(READINESS), "--preflight", "-", "--json", *extra],
         input=preflight_json,
@@ -196,7 +202,9 @@ HEALTHY_SPACE = {
 
 
 class ReadinessAdapterReplayTests(unittest.TestCase):
-    def _healthy_context(self, directory: Path) -> tuple[str, ...]:
+    def _healthy_context(
+        self, directory: Path, method: str = "exact"
+    ) -> tuple[str, ...]:
         calibration = directory / "calibration.json"
         space = directory / "space.json"
         calibration.write_text(json.dumps(HEALTHY_CALIBRATION))
@@ -207,7 +215,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             "--config-space",
             str(space),
             "--evaluator-method",
-            "exact",
+            method,
             "--task-kind",
             "closed-label",
         )
@@ -259,6 +267,96 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             conditions = {cap["condition"] for cap in score["caps"]}
             self.assertIn("dataset-no-expected-outputs", conditions)
             self.assertNotIn("dataset-absent", conditions)
+
+    def test_reference_free_input_only_rows_keep_quality_and_split_evidence(
+        self,
+    ) -> None:
+        """A rubric judge scores inputs without inventing answer keys."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"review request {index} token{index}",
+                    "split": "tune" if index < 50 else "validation",
+                    "metadata": {
+                        "provenance": "production",
+                        "difficulty": ("easy", "medium", "hard")[index % 3],
+                    },
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "reference-free.jsonl", rows)
+            method_args = ("--evaluator-method", "llm-judge-rubric")
+            records = _preflight_records(dataset, *method_args)
+            statuses = {record["check"]: record["status"] for record in records}
+
+            self.assertEqual(statuses["dataset-shape"], "PASS")
+            self.assertEqual(statuses["dataset-outputs"], "SKIP")
+            self.assertEqual(statuses["dataset-split"], "PASS")
+            self.assertEqual(statuses["dataset-ids"], "PASS")
+            self.assertFalse(
+                any(record["check"] == "dataset-integrity" for record in records)
+            )
+            tuning = next(
+                record for record in records if record["check"] == "dataset-tuning-size"
+            )
+            validation = next(
+                record
+                for record in records
+                if record["check"] == "dataset-holdout-resolution"
+            )
+            self.assertEqual(tuning["metrics"]["tuning_rows"], 50)
+            self.assertEqual(tuning["metrics"]["tuning_labelled_rows"], 0)
+            self.assertEqual(validation["metrics"]["holdout_rows"], 50)
+            self.assertEqual(validation["metrics"]["holdout_labelled_rows"], 0)
+
+            score = _score(
+                dataset,
+                self._healthy_context(directory, method="llm-judge-rubric"),
+                preflight_extra=method_args,
+            )
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertNotIn("dataset-no-expected-outputs", conditions)
+            self.assertNotIn("dataset-integrity-fail", conditions)
+            power = _dataset_subscore(score, "power")
+            self.assertIn("50 tuning / 50 holdout", power["evidence"])
+            self.assertIn("50 examples", power["evidence"])
+
+    def test_reference_free_input_only_split_still_detects_leakage(self) -> None:
+        """Optional references must not disable input-overlap detection."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": (
+                        "shared request"
+                        if index in (0, 50)
+                        else f"distinct request {index} token{index}"
+                    ),
+                    "split": "tune" if index < 50 else "validation",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(100)
+            ]
+            dataset = _write_jsonl(directory, "reference-free-overlap.jsonl", rows)
+            method_args = ("--evaluator-method", "llm-judge-rubric")
+            records = _preflight_records(dataset, *method_args)
+            split = next(
+                record for record in records if record["check"] == "dataset-split"
+            )
+            self.assertEqual(split["status"], "FAIL")
+            self.assertIn("1 inputs overlap", split["detail"])
+
+            score = _score(
+                dataset,
+                self._healthy_context(directory, method="llm-judge-rubric"),
+                preflight_extra=method_args,
+            )
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-tune-holdout-overlap", conditions)
+            self.assertNotIn("dataset-no-expected-outputs", conditions)
 
     def test_malformed_rows_fire_the_integrity_cap_35(self) -> None:
         """C2: labelled rows mixed with malformed rows fire the 35 cap."""
@@ -947,6 +1045,38 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             # "llm-written" must read as generated, not as an unknown word.
             self.assertEqual(_dataset_subscore(score, "provenance")["value"], 6.0)
 
+    def test_reference_free_judge_ignores_a_model_written_optional_key(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"real question {index} token{index}",
+                    "output": f"optional answer {index % 4}",
+                    "metadata": {
+                        "provenance": "production",
+                        "output_provenance": "llm-written",
+                    },
+                }
+                for index in range(30)
+            ]
+            dataset = _write_jsonl(directory, "unused-generated-key.jsonl", rows)
+            method_args = ("--evaluator-method", "llm-judge-rubric")
+            score = _score(
+                dataset,
+                self._healthy_context(directory, method="llm-judge-rubric"),
+                preflight_extra=method_args,
+            )
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertNotIn("dataset-generated-answer-key", conditions)
+            labels = _dataset_subscore(score, "labels")
+            provenance = _dataset_subscore(score, "provenance")
+            self.assertFalse(labels["measured"])
+            self.assertEqual(provenance["value"], 10.0)
+            self.assertIn(
+                "present but unused by this evaluator", provenance["evidence"]
+            )
+
     def test_an_unrecognised_provenance_word_is_flagged_not_silently_credited(
         self,
     ) -> None:
@@ -973,10 +1103,16 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             self.assertEqual(len(vocabulary), 1)
             self.assertEqual(vocabulary[0]["status"], "WARN")
             self.assertIn("crm-export", vocabulary[0]["detail"])
+            provenance = _provenance_metric(records)
+            self.assertEqual(provenance["unrecognised_sources"], ["crm-export"])
+
             # Unchanged score: the word list must not silently demote a project.
-            self.assertEqual(
-                _dataset_subscore(_score(dataset), "provenance")["value"], 10.0
-            )
+            # The uncertainty must survive the adapter and appear beside that
+            # score, rather than disappearing between preflight and readiness.
+            scored = _dataset_subscore(_score(dataset), "provenance")
+            self.assertEqual(scored["value"], 10.0)
+            self.assertIn("unverified declaration", scored["evidence"])
+            self.assertIn("crm-export", scored["evidence"])
 
     def test_an_impossible_provenance_count_is_refused_not_absorbed(self) -> None:
         """A negative count must not quietly change the denominator.
@@ -1117,8 +1253,49 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             # without reclassifying them, which would move the score for every
             # dataset using a symbol as a legitimate label.
             labels = _dataset_subscore(_score(dataset), "labels")
-            self.assertIn("50 of them are placeholders", labels["evidence"])
+            self.assertIn("50 are symbol-only", labels["evidence"])
+            self.assertIn("retained in these counts", labels["evidence"])
             self.assertEqual(labels["value"], 30.0)
+
+    def test_distinct_symbolic_labels_are_not_collapsed_to_one_output(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index}",
+                    "output": "+" if index % 2 else "-",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(20)
+            ]
+            dataset = _write_jsonl(directory, "symbol-classes.jsonl", rows)
+            records = _preflight_records(dataset)
+            outputs = next(
+                record for record in records if record["check"] == "dataset-outputs"
+            )
+            placeholders = next(
+                record
+                for record in records
+                if record["check"] == "dataset-output-placeholders"
+            )
+            self.assertEqual(outputs["status"], "PASS")
+            self.assertEqual(outputs["detail"], "2 distinct expected outputs")
+            self.assertEqual(placeholders["metrics"]["placeholder_rows"], 20)
+
+            repeated = _write_jsonl(
+                directory,
+                "one-symbol.jsonl",
+                [{**row, "output": "-"} for row in rows],
+            )
+            repeated_outputs = next(
+                record
+                for record in _preflight_records(repeated)
+                if record["check"] == "dataset-outputs"
+            )
+            self.assertIn(
+                "every expected output is identical", repeated_outputs["detail"]
+            )
 
     def test_unlabelled_rows_do_not_trip_the_ceiling_risk(self) -> None:
         """#68: `normalized_text(None)` -> "null" became a dominant value.

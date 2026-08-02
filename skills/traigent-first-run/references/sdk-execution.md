@@ -10,7 +10,7 @@ Use this reference after component creation and before writing the run wrapper.
 4. Decorator contract
 5. Small baseline sweep
 6. Broader optimization
-7. Holdout and result checks
+7. Validation and result checks
 
 ## Capability discovery
 
@@ -113,17 +113,15 @@ phase ledger.
 
 ## Walkthrough model ladder
 
-Select the models Traigent chooses as a ladder within the selected provider route, from model ids
+This section applies only when the assistant prepares a missing baseline. Select its models as a
+ladder within the selected provider route, from model ids
 the route currently lists: one fast low-cost tier, one mid-tier workhorse, and one strong tier one
-step below the vendor's newest flagship. Do not select the flagship itself - the newest, most
-expensive model the vendor currently markets as its best. A first run exists to show the workflow
-and the cost-accuracy tradeoff quickly, and the flagship makes every trial slower and more
-expensive without teaching more about either; say that in one line when presenting the plan.
-Capping the ladder one step down is also what keeps the comparison honest and affordable: every
-selected model must run in the baseline grid, so every selected model has to be quick and cheap
-enough to grid.
+step below the vendor's newest flagship. Do not select the flagship itself. Omitting it bounds
+generated-walkthrough cost and latency; do not imply it has no value. State that in the plan and
+price any flagship comparison separately. Every selected model runs in the baseline grid and must
+fit the approved time and cost envelope.
 
-Both runs use the same three models. The baseline grids them against two evaluator-safe
+Both generated spaces use the same three models. The baseline grids them against two evaluator-safe
 temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
 generated initial configuration - and it keeps the pre-account first result quick and cheap. The
 enhanced space keeps the identical model list and grows along the other axes: once the baseline
@@ -132,9 +130,10 @@ close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a fart
 keeping every baseline value, so the comparison stays contained and the configuration count is
 unchanged; then add the prompt-policy and self-check controls. The coding assistant performs this
 refinement itself between the two runs; the user is never asked to pick values or edit the
-wrapper.
-Because the enhanced run never gets a model the baseline did not measure, a win is attributable to
-Traigent's added knobs and managed, cost-aware search - never to quietly upgrading the model.
+wrapper. Because the enhanced run never gets a model the baseline did not measure, a measured
+difference cannot be explained by quietly upgrading the model. The assistant adds the disclosed
+controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
+in the report.
 
 Sweep only knobs that are real for every model in the space. When one model ignores a knob the
 others honor, the winner comparison is confounded - a configuration can win on a prompt or
@@ -148,17 +147,13 @@ inert for it, drop temperature as a swept knob for the whole walkthrough: pin on
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
 prompt-policy plus self-check controls in the enhanced space.
 
-When the inspected agent already calls the vendor's flagship, keep it exactly where it is: it is
-the current configuration, so it anchors the baseline being measured and stays in the enhanced
-space. Add the cheaper ladder tiers below it instead of more flagship-tier models - in that shape
-the three models are the preserved flagship plus the mid and strong rungs below it - and tell the
-user why before the approval: the first run stays fast and cheap by searching down the ladder,
-and the interesting first question becomes whether a cheaper tier holds the flagship's accuracy, a
-legitimate cost-side win. Never remove or replace the user's model choice silently. The
-pinned-calling-convention rule for reasoning models applies to every reasoning model in the
-space, the preserved flagship included, not only the strong slot in the generated fence.
+When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
+row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
+model changes the experiment and attribution, so do it only as a separately disclosed and approved
+model comparison. Preserve an existing flagship and its calling convention exactly; never replace
+or augment it silently.
 
-Build the ladder inside one model family. One family keeps the result readable - "the mid tier
+For the generated ladder, use one model family. One family keeps the result readable - "the mid tier
 held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
 keeps a single company receiving the user's prompts, and keeps one bill. When several direct
 provider credentials exist, pick one family, name it and the reason in the plan, and let the
@@ -185,10 +180,24 @@ from dotenv import load_dotenv
 
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
+# Read before dotenv: a stale .env cannot opt into connected work. Baseline is
+# the fail-safe default.
+FIRST_RUN_PHASE = os.environ.get(
+    "TRAIGENT_FIRST_RUN_PHASE", "baseline"
+).strip().casefold()
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
+if FIRST_RUN_PHASE not in {"baseline", "connected"}:
+    raise ValueError("TRAIGENT_FIRST_RUN_PHASE must be 'baseline' or 'connected'")
+if FIRST_RUN_PHASE == "baseline":
+    # Remove before import so no client can capture a portal key locally.
+    os.environ.pop("TRAIGENT_API_KEY", None)
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
+# SDK 0.25.0 otherwise stores query/response/expected text in local per-example
+# logs. The first-run record needs ids and metrics, not another copy of content.
+os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
 import litellm
 import traigent
@@ -413,7 +422,7 @@ def task_score(prediction, expected, input_data) -> float:
     ...
 
 
-def provider_reported_cost(response) -> float:
+def provider_reported_cost(response) -> float | None:
     usage = getattr(response, "usage", None)
     reported = getattr(usage, "cost", None)
     if reported is None and isinstance(usage, dict):
@@ -423,17 +432,58 @@ def provider_reported_cost(response) -> float:
         headers = hidden.get("additional_headers", {}) or {}
         reported = headers.get("llm_provider-x-litellm-response-cost")
     if reported is None:
-        raise RuntimeError(
-            "The provider response did not include a usable per-response cost; "
-            "stop before scaling this paid run rather than guessing from a model map"
-        )
+        return None
+    if isinstance(reported, bool):
+        raise RuntimeError("The provider returned malformed response-cost metadata")
     try:
         cost = float(reported)
     except (TypeError, ValueError) as error:
         raise RuntimeError("The provider returned malformed response-cost metadata") from error
-    if not math.isfinite(cost) or cost <= 0:
+    if not math.isfinite(cost) or cost < 0:
         raise RuntimeError("The provider returned an invalid per-response cost")
     return cost
+
+
+def require_nonzero_token_usage(response) -> None:
+    """Distinguish a real free-route response from a canned or missing call."""
+    usage = getattr(response, "usage", None)
+
+    def usage_field(name: str):
+        if isinstance(usage, dict):
+            return usage.get(name)
+        return getattr(usage, name, None)
+
+    total_tokens = usage_field("total_tokens")
+    if total_tokens is None:
+        # Some provider adapters expose only the two component counts. They
+        # still prove a real call when every reported component is valid and
+        # their sum is nonzero.
+        components = [
+            value
+            for value in (
+                usage_field("prompt_tokens"),
+                usage_field("completion_tokens"),
+            )
+            if value is not None
+        ]
+        if components and all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and value >= 0
+            for value in components
+        ):
+            total_tokens = sum(components)
+    if (
+        isinstance(total_tokens, bool)
+        or not isinstance(total_tokens, (int, float))
+        or not math.isfinite(total_tokens)
+        or total_tokens <= 0
+    ):
+        raise RuntimeError(
+            "The provider response did not report nonzero token usage; "
+            "stop before treating this as a real call"
+        )
 
 
 def build_request(message: str, config: dict) -> dict:
@@ -469,8 +519,9 @@ def build_request(message: str, config: dict) -> dict:
     }
 
 
-def call_agent(message: str, config: dict) -> tuple[str, float]:
+def call_agent(message: str, config: dict) -> tuple[str, float | None]:
     response = litellm.completion(**build_request(message, config))
+    require_nonzero_token_usage(response)
     cost = provider_reported_cost(response)
     return response.choices[0].message.content or "", cost
 
@@ -641,10 +692,12 @@ the alternative and strong models from the same approved provider route when gen
 walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
 a reasoning-effort control, and pin the same value for both runs. A new route
-or recipient requires revised data-egress approval. Every search variable must affect the actual
-agent call for every model in the space; when the strong tier runs as a reasoning model,
-temperature is inert for it - follow the ladder section above and sweep uniform knobs instead of
-a knob only some models honor.
+or recipient requires revised data-egress approval. In the generated default, every search
+variable must affect the actual agent call for every model in the space. A preserved conditional
+dimension may affect only the models that support it, but the request probe must report that
+partial coverage and the run record must name those models. When the strong tier runs as a
+reasoning model, temperature is inert for it - follow the ladder section above and sweep uniform
+knobs instead of making the generated comparison conditional.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline performs a credible six-point standard
@@ -661,8 +714,11 @@ space, based on the existing agent and observed failure modes. Useful additions 
 format, retrieval depth, few-shot count, tool policy, or repair behavior. Do not add no-op fields,
 string-encoded booleans, or multi-call composite behavior merely to increase the portal row count.
 
-Use the provider's public response cost when it is present. The fallback above reads OpenRouter's
-provider-reported response-cost header as surfaced by LiteLLM. Do not call
+Require nonzero token usage for every provider call; cost metadata alone does not prove the model
+ran. Use public response cost when present. Reported `0` is valid with nonzero usage. The
+fallback above reads OpenRouter's provider-reported response-cost header as surfaced by LiteLLM.
+When cost is absent but nonzero usage proves a real call, return `None`, report `not measured`, and
+deduct the approved estimate. Do not call
 `litellm.completion_cost()` here: a real OpenRouter response can be billable and valid even when a
 local model-price lookup fails. If neither public usage nor a provider-reported cost is available,
 stop before baseline/search instead of scaling an untracked path.
@@ -686,10 +742,13 @@ path.
 
 ## Small baseline sweep
 
-For the generated walkthrough, run the credible small space as one connected grid. The generated
-initial configuration must be one of its points:
+For the generated walkthrough, run the credible small space as one local fixed grid containing its
+initial configuration. Start a fresh process with `TRAIGENT_FIRST_RUN_PHASE=baseline` (the
+fail-safe default), supplied by the process and never by `.env`. The contract removes
+`TRAIGENT_API_KEY` before importing Traigent while preserving its file value for later:
 
 ```python
+assert FIRST_RUN_PHASE == "baseline", "baseline must run in the local phase"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run standard sweep"
 require_current_route_credential()
 baseline_results = agent.optimize_sync(
@@ -732,9 +791,9 @@ After the baseline, add its tracked cost to the single running total. If cost is
 deduct the conservative estimate. Do not start the search if it cannot fit the remaining total
 ceiling.
 
-Read cost as a number only when the SDK reports one. A run with no captured provider spend returns
-`total_cost` as absent rather than zero, so report cost as not measured instead of printing `$0.00`
-- a stated zero reads as "this was free", which is a different and false claim.
+Read cost as a number only when the SDK reports one. An absent cost is `not measured`, while an
+explicit provider-reported zero with nonzero token usage is a genuine free-route result. Never turn
+absence into `$0.00`.
 
 ## Reading the result for insight
 
@@ -750,9 +809,10 @@ treat an absent name as unavailable rather than assumed.
   not. A knob that never changed the outcome is worth reporting - it tells the user where not to
   spend effort next time.
 
-Both need at least two completed configurations to say anything, which the baseline already
-provides. Neither is meaningful under mock mode: canned responses make every configuration score
-identically, so a flag there describes the mock, not the dataset.
+Comparison reads need two completed configurations. The generated grid qualifies; a preserved
+baseline with one row must wait for the enhanced result or report insight unavailable.
+Neither read is meaningful under mock mode: identical canned responses describe the mock, not the
+dataset.
 
 Do not call the result's `analyze()` method. It requires a separate plugin that this run does not
 install and raises `ImportError` without it, so calling it turns a finished run into a crash at the
@@ -760,21 +820,24 @@ reporting step.
 
 ## Carrying the local baseline into the portal
 
-A baseline that ran before the Traigent key existed is logged locally, so it can be uploaded
-afterwards instead of being paid for a second time:
+A baseline that ran without a Traigent key is logged locally. Upload it without another provider
+call only when the installed public result exposes an exact sync id:
 
 ```bash
-traigent sync "$SESSION_ID" --dry-run   # names the run and its trial count; no upload, no key
-traigent sync "$SESSION_ID"             # upload that one run
+traigent sync "$SESSION_ID" --dry-run --json
+traigent sync "$SESSION_ID" --json
 ```
 
 Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
-baseline. Always dry-run first so the wrong session is caught before anything leaves the machine.
+baseline. Always inspect the dry-run before anything leaves the machine. Parse the real command's
+JSON and use its `cloud_url` as the baseline portal link; syncing does not mutate the earlier
+`baseline_results.cloud_url`.
 
-Take `SESSION_ID` from whatever the installed SDK exposes for it. If the installed version offers no
-supported way to obtain the id for the run just completed, leave the baseline local and report it
-from the local results - do not go looking through the SDK's private storage layout, and do not
-substitute `--all`. Tracked upstream as Traigent/Traigent issue 2020.
+Use `baseline_results.sync_session_id` only after feature-detecting that public attribute and a
+non-empty value. If unavailable, leave the baseline local and report it from the saved local
+results - do not inspect private storage or substitute `--all`. The pinned 0.25.0 release does not
+expose this id; support is capability-gated for a later release. Tracked upstream as
+Traigent/Traigent issue 2020.
 
 ## Broader optimization
 
@@ -804,9 +867,14 @@ all, and the closing score honestly reports the agent pillar as not yet measured
 document whenever the space changes. Its shape is documented in `references/run-safety.md`, and the
 finished file is passed to the closing readiness score with `--config-space`.
 
-Run one connected search using the same decorated function, tuning dataset, and evaluator:
+After the account/key handoff, start a fresh process with
+`TRAIGENT_FIRST_RUN_PHASE=connected`, supplied by the process and never by `.env`. It loads the
+updated `.env`; the earlier process cannot see that edit. Run the zero-LLM portal probe, then one
+connected search with the same function, tuning dataset, and evaluator:
 
 ```python
+assert FIRST_RUN_PHASE == "connected", "optimization must run in the connected phase"
+assert os.environ.get("TRAIGENT_API_KEY", "").strip(), "Traigent key is not active"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
 # Frozen from the space this call receives; persisted only once this search has
 # returned trials of its own.
@@ -829,11 +897,9 @@ Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 
 Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is
 the managed path: it resolves to a cloud-brain execution intent and lets Traigent pick the method,
-which is the entire point of the second run. Naming a local algorithm explicitly does the opposite
-of an optimization - it resolves to a local-only intent, so a valid key is bypassed, the search
-drops back to the same exhaustive or random sweep the baseline already ran, and the enhanced run
-stops being a Traigent optimization at all. The managed methods are not registered in the local
-SDK, so they are only reachable through `auto` on a connected run.
+which is the entire point of the second run. Explicit `grid` or `random` selects configurations
+locally; a valid key may still portal-track that local search, but it does not turn it into managed
+configuration selection. The managed methods are reachable through `auto` on a connected run.
 
 The pinning rule is therefore per phase, not global: pin the baseline so it is reproducible, leave
 the enhanced run on `auto` so it is actually optimized. If a connected search reports a local
@@ -855,11 +921,14 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Holdout and result checks
+## Validation and result checks
 
 Evaluate the selected small-sweep configuration and selected enhanced configuration on the
-untouched holdout with the same agent path and evaluator. A holdout check is not another
-optimization search. Generate `holdout_agent_input` from the installed public loader's observed
+held-back validation set with the same agent path and evaluator. Call it a sealed holdout only when
+the split and labels were fixed and hidden from component design, tuning, and winner selection
+until the candidate was locked. If the assistant inspected or authored it, report non-blind
+validation instead. This check is not another optimization search. Generate
+`holdout_agent_input` from the installed public loader's observed
 `input_data` shape and the inspected agent signature. The canonical `input`/`output` JSONL shape
 loads a scalar; the mapping branch below is only for the example agent's explicit `message` input
 contract, not an SDK alias:
@@ -875,16 +944,19 @@ def holdout_agent_input(input_data) -> str:
     )
 
 
-def evaluate_holdout(config: dict) -> tuple[float, float]:
+def evaluate_holdout(config: dict) -> tuple[float, float | None]:
     scores = []
-    tracked_cost = 0.0
+    tracked_cost: float | None = 0.0
     holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
     for example in holdout.examples:
         input_data = example.input_data
         expected = example.expected_output
         output, call_cost = call_agent(holdout_agent_input(input_data), config)
         scores.append(task_score(output, expected, input_data))
-        tracked_cost += call_cost
+        if call_cost is None:
+            tracked_cost = None
+        elif tracked_cost is not None:
+            tracked_cost += call_cost
     return sum(scores) / len(scores), tracked_cost
 
 
@@ -908,7 +980,6 @@ assert baseline_results.trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
 assert baseline_results.best_config is not None, "no baseline winner selected"
 assert optimized_results.best_config is not None, "no best configuration selected"
-assert baseline_results.cloud_url is not None, "baseline is not available in the portal"
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
@@ -917,7 +988,8 @@ returned all six intended distinct rows including its initial configuration. For
 approved reduced plan, verify the disclosed lower count and initial configuration instead. Verify
 that the enhanced run returned 10-13 rows, the disclosed reduced target, or a concrete shortfall
 reason. Inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
-persistence status as defined in `run-safety.md`. Keep both experiments in the portal and report
-their direct `cloud_url` values; portal experiment deletion is never walkthrough teardown and
+persistence status as defined in `run-safety.md`. The baseline portal URL, when exact sync was
+supported, comes from the successful sync JSON; otherwise label it local-only. Keep and link every
+experiment actually persisted. Portal experiment deletion is never walkthrough teardown and
 requires a later explicit user request. Do not apply the best configuration automatically. Export
 it as a candidate and ask before any production change.

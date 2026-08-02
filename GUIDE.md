@@ -18,18 +18,21 @@ The skill routes its bundled references at the stage where each is needed; do no
 before starting inspection.
 
 The same directory is what the Agent Skill installer copies, so the clone and installed-skill
-paths follow one canonical workflow.
+paths follow one canonical workflow. Resolve the **absolute directory containing the loaded
+`SKILL.md`** from the path the coding assistant actually loaded. Keep every tool's working
+directory at the user's project root and interpolate that literal absolute skill directory into
+each invocation; do not depend on an exported variable surviving a later tool call. In a clone the
+resolved directory ends in `skills/traigent-first-run`; after Agent Skill installation it may live
+elsewhere.
 
 Use the bundled tools:
 
-- Static/free validation:
-  `python3 skills/traigent-first-run/scripts/preflight.py --help`
+- Static/free validation: invoke `scripts/preflight.py --help` through the selected Python using
+  the script's literal absolute path under the resolved skill directory.
 - Mandatory readiness score (opening gate, re-scored after repair/creation) and state planning:
-  `python3 skills/traigent-first-run/scripts/readiness.py --help`
-- Compact internal run record:
-  `skills/traigent-first-run/assets/run-plan.md`
-- Tested first-run SDK stack:
-  `skills/traigent-first-run/assets/requirements-first-run.txt`
+  invoke `scripts/readiness.py --help` the same way.
+- Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
+- Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
 ## User-facing promise
 
@@ -38,9 +41,9 @@ Use this short opening, adapting only what inspection already established:
 > I will inspect what you already have, preserve it, and prepare anything missing for a complete
 > walkthrough. If an existing dataset or evaluation method has a material limitation, I will
 > explain the evidence and offer to repair and revalidate a working copy before any paid model
-> calls. I will then show one combined estimate for the baseline and optimization. If Traigent
-> generates temporary components, I will keep them clearly separate from real-world readiness so
-> the result is not overclaimed.
+> calls. I will then show one combined estimate for the baseline and optimization. If I prepare
+> temporary components, I will keep them clearly separate from real-world readiness so the result
+> is not overclaimed.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
@@ -71,22 +74,28 @@ approval gates.
 
 ## Default run
 
-The default paid path uses exactly two connected optimization experiments with the same tuning
-data, evaluator, objectives, and agent call path:
+The default paid path uses two measurements with the same tuning data, evaluator, objectives, and
+agent call path:
 
-1. The user's existing baseline/configuration exactly as defined. Only when Traigent creates the
-   missing baseline does it generate a credible small sweep of six distinct standard parameter
-   combinations, including the generated current configuration.
-2. One broader Traigent optimization that contains the baseline values, adds meaningful knobs,
-   and targets 10-13 trials (12 by default) from a materially larger search space.
+1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
+   when no baseline exists does the assistant prepare a credible six-configuration sweep. The
+   user sees its best configuration, tuning score, trial/failure count, and tracked or unmeasured
+   cost before any Traigent account/key request.
+2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
+   contains every baseline value, adds meaningful non-model knobs by default, and targets 10-13
+   trials (12 by default) from a materially larger search space.
 
-Then compare the two selected configurations on the untouched holdout; this is validation, not
-another optimization search. Include all calls in the combined approval. Trial counts and knob
-selection are assistant-owned implementation choices, not new user questions.
+The assistant attempts to upload the completed baseline without rerunning it only when the
+installed SDK exposes a public exact sync id; otherwise that result remains local. Then it compares
+the two selected configurations on held-back validation data. That validation is called sealed only
+when its split and labels were hidden until the candidate was locked; assistant-inspected or
+assistant-authored data is explicitly non-blind. Include all calls in the combined approval. Trial
+counts and knob selection are assistant-owned implementation choices, not new user questions.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
-the user actually defined. When Traigent generates the walkthrough agent and its missing baseline,
+the user actually defined. When the assistant prepares the walkthrough agent and its missing
+baseline,
 generate enough real controls for the six-row baseline and add further controls to the enhanced
 run. Another iteration is optional only after the result identifies a specific hypothesis.
 
@@ -101,8 +110,8 @@ Always report the component provenance:
 If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not
 evidence of expected production performance. A synthetic holdout is still synthetic evidence.
 
-Keep the customer's connected baseline and optimization experiments in the portal and finish with
-their direct links. Do not delete them as walkthrough cleanup; deletion requires an explicit later
-request from the user.
+Keep every experiment actually persisted in the portal and finish with its verified direct link.
+Label an unsynced baseline local-only. Do not delete portal experiments as walkthrough cleanup;
+deletion requires an explicit later request from the user.
 
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

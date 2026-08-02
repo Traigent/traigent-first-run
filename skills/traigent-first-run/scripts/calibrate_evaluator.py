@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Execute evaluator probes in an isolated, explicitly approved subprocess.
+"""Execute evaluator probes in an explicitly authorized child process.
 
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
+For deterministic calibration the child is credential-stripped, but process separation is not a
+sandbox. A scorer that executes candidate code or SQL must delegate that content to the
+execution-evaluator containment required by ``references/run-safety.md``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +76,166 @@ MATRIX_COVERAGE_NOTE = (
 )
 PROBE_NAMES = ("good", "equivalent_good", "partial", "bad")
 SCORE_MODES = ("graded", "binary")
+
+
+class AdversarialProbeAccess(RuntimeError):
+    """Raised when a scorer tries to consume the adversarial output probe."""
+
+
+EXCEPTION_PROBE_KINDS = (
+    "value-error",
+    "type-error",
+    "syntax-error",
+    "json-decode-error",
+    "runtime-error",
+)
+MALFORMED_PYTHON_OUTPUT = "def :\n"
+MALFORMED_JSON_OUTPUT = '{"unterminated":'
+
+
+class AdversarialOutputProbe:
+    """Reject common value operations so evaluator error handling becomes visible.
+
+    This is deliberately not described as guaranteed to raise inside every
+    scorer. A scorer may type-check the object and return zero without touching
+    it. That makes a returned zero advisory evidence consistent with swallowed
+    exceptions, not proof of one.
+    """
+
+    def __init__(self, error_kind: str):
+        self._error_kind = error_kind
+
+    def _raise(self, *_args, **_kwargs):
+        message = f"the evaluator consumed the {self._error_kind} output probe"
+        if self._error_kind == "value-error":
+            raise ValueError(message)
+        if self._error_kind == "type-error":
+            raise TypeError(message)
+        if self._error_kind == "runtime-error":
+            raise AdversarialProbeAccess(message)
+        raise RuntimeError(f"unknown adversarial probe kind: {self._error_kind}")
+
+    __str__ = _raise
+    __repr__ = _raise
+    __bytes__ = _raise
+    __format__ = _raise
+    __bool__ = _raise
+    __len__ = _raise
+    __iter__ = _raise
+    __contains__ = _raise
+    __getitem__ = _raise
+    __getattr__ = _raise
+    __call__ = _raise
+    __eq__ = _raise
+    __ne__ = _raise
+    __lt__ = _raise
+    __le__ = _raise
+    __gt__ = _raise
+    __ge__ = _raise
+    __hash__ = _raise
+    __int__ = _raise
+    __float__ = _raise
+    __index__ = _raise
+    __fspath__ = _raise
+    __add__ = _raise
+    __radd__ = _raise
+    __mul__ = _raise
+    __rmul__ = _raise
+
+
+class MalformedTextOutputProbe(str):
+    """Malformed parser input that rejects ordinary non-parser consumption.
+
+    ``ast.parse``/``compile`` and ``json.loads`` accept ``str`` subclasses and
+    inspect the underlying text directly, so these values reach the real parser
+    errors. Common classifier/exact-match operations are overridden to raise
+    the corresponding family instead of looking like an ordinary wrong answer
+    that correctly scored zero.
+    """
+
+    def __new__(cls, value: str, error_kind: str):
+        instance = super().__new__(cls, value)
+        instance._error_kind = error_kind
+        return instance
+
+    def _raise(self, *_args, **_kwargs):
+        message = f"the evaluator consumed the {self._error_kind} output probe"
+        if self._error_kind == "syntax-error":
+            raise SyntaxError(message)
+        if self._error_kind == "json-decode-error":
+            raise json.JSONDecodeError(message, MALFORMED_JSON_OUTPUT, 0)
+        raise RuntimeError(f"unknown malformed-text probe kind: {self._error_kind}")
+
+    __str__ = _raise
+    __repr__ = _raise
+    __bytes__ = _raise
+    __format__ = _raise
+    __bool__ = _raise
+    __len__ = _raise
+    __iter__ = _raise
+    __contains__ = _raise
+    __getitem__ = _raise
+    __eq__ = _raise
+    __ne__ = _raise
+    __lt__ = _raise
+    __le__ = _raise
+    __gt__ = _raise
+    __ge__ = _raise
+    __hash__ = _raise
+    __add__ = _raise
+    __radd__ = _raise
+    __mul__ = _raise
+    __rmul__ = _raise
+    casefold = _raise
+    lower = _raise
+    upper = _raise
+    strip = _raise
+    lstrip = _raise
+    rstrip = _raise
+    split = _raise
+    rsplit = _raise
+    splitlines = _raise
+    replace = _raise
+    translate = _raise
+    join = _raise
+    partition = _raise
+    rpartition = _raise
+    find = _raise
+    index = _raise
+    rindex = _raise
+
+
+def probe_error_text(error: BaseException) -> str:
+    """Serialize a supplemental-probe error without consuming its input again."""
+    try:
+        detail = str(error)
+    except (KeyboardInterrupt, GeneratorExit):
+        raise
+    except BaseException as formatting_error:  # noqa: BLE001 - defensive boundary
+        detail = (
+            "<message unavailable; formatting raised "
+            f"{type(formatting_error).__name__}>"
+        )
+    return f"{type(error).__name__}: {detail}"
+
+
+def exception_probe_output(kind: str) -> Any:
+    """Return a stimulus that can reach the named real parser/error path.
+
+    A custom object's dunder cannot force ``ast.parse`` or ``json.loads`` past
+    their input-type guards. The malformed strings are accepted by those
+    parsers and make the parser itself raise ``SyntaxError`` or
+    ``JSONDecodeError``. The object probes retain the broader value/type/runtime
+    coverage used by non-parser evaluators.
+    """
+    if kind == "syntax-error":
+        return MalformedTextOutputProbe(MALFORMED_PYTHON_OUTPUT, kind)
+    if kind == "json-decode-error":
+        return MalformedTextOutputProbe(MALFORMED_JSON_OUTPUT, kind)
+    if kind in {"value-error", "type-error", "runtime-error"}:
+        return AdversarialOutputProbe(kind)
+    raise ValueError(f"unknown exception probe kind: {kind}")
+
 
 # A wrong answer built from the expected one by moving its tokens, keeping every
 # character between them. Same multiset, same punctuation, same line breaks -
@@ -225,58 +389,57 @@ def run_worker() -> int:
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
             function = load_function(request["scorer"])
-            case_results = []
-            for case in request["cases"]:
-                scores = {
-                    label: bind_call(
-                        function,
-                        value,
-                        case["expected"],
-                        case.get("input_data"),
-                        case.get("metadata"),
-                    )
-                    for label, value in case["probes"].items()
-                }
-                # Deliberately NOT a member of `scores`: `non_constant` reduces
-                # over that dict, so a fifth entry would change the value of a
-                # check the author's four probes are supposed to decide. It is
-                # also not one of the six checks at all - it asks a question.
-                #
-                # Isolated, because this probe is the only input to the scorer
-                # the AUTHOR did not write. Plenty of correct scorers parse what
-                # they are given and raise on anything else, and an unguarded
-                # call let a generated probe fail the whole calibration - a run
-                # that passed before this existed, reported as
-                # "Evaluator execution failed: invalid literal for int()", which
-                # names the user's evaluator and never mentions that the input
-                # was ours. A probe that only asks a question must not be able
-                # to answer "your evaluator is broken" by crashing.
-                permutation = case.get("permutation")
-                permutation_score = None
-                permutation_error = None
-                if permutation is not None:
-                    try:
-                        permutation_score = bind_call(
+            operation = request.get("operation", "authored")
+            if operation == "authored":
+                case_results = []
+                for case in request["cases"]:
+                    scores = {
+                        label: bind_call(
                             function,
-                            permutation,
+                            value,
                             case["expected"],
                             case.get("input_data"),
                             case.get("metadata"),
                         )
-                    except Exception as error:  # noqa: BLE001 - probe, not a check
-                        permutation_error = f"{type(error).__name__}: {error}"
-                case_results.append(
-                    {
-                        "name": case["name"],
-                        "scores": scores,
-                        "permutation_score": permutation_score,
-                        "permutation_error": permutation_error,
+                        for label, value in case["probes"].items()
                     }
-                )
+                    case_results.append({"name": case["name"], "scores": scores})
+                response = {"cases": case_results}
+            elif operation == "supplemental":
+                case = request["case"]
+                probe = request["probe"]
+                if probe["type"] == "permutation":
+                    output = probe["output"]
+                elif probe["type"] == "exception":
+                    output = exception_probe_output(probe["kind"])
+                else:
+                    raise ValueError(
+                        f"unknown supplemental probe type: {probe['type']}"
+                    )
+                score = None
+                error_text = None
+                try:
+                    score = bind_call(
+                        function,
+                        output,
+                        case["expected"],
+                        case.get("input_data"),
+                        case.get("metadata"),
+                    )
+                except (KeyboardInterrupt, GeneratorExit):
+                    # Cancellation remains control flow. The parent reports the
+                    # crashed supplemental attempt as unavailable; it is never
+                    # converted into evaluator evidence or an ordinary zero.
+                    raise
+                except BaseException as error:  # SystemExit is probe evidence
+                    error_text = probe_error_text(error)
+                response = {"score": score, "error": error_text}
+            else:
+                raise ValueError(f"unknown worker operation: {operation}")
         print(
             json.dumps(
                 {
-                    "cases": case_results,
+                    **response,
                     "captured_stdout": captured_stdout.getvalue(),
                 }
             )
@@ -410,8 +573,10 @@ def parse_args() -> argparse.Namespace:
         type=positive_int,
         default=None,
         help=(
-            "seconds the calibration subprocess may take (default: "
-            f"{DEFAULT_TIMEOUT_SECONDS}; for --kind llm-judge, "
+            "seconds the authored calibration phase may take; deterministic "
+            "supplemental probes receive one separate total budget of the same "
+            "size, so worst-case wall time is roughly twice this value (default: "
+            f"{DEFAULT_TIMEOUT_SECONDS}); for --kind llm-judge, "
             f"{LLM_JUDGE_SECONDS_PER_PROBE}s per probe call, "
             f"{LLM_JUDGE_TIMEOUT_FLOOR_SECONDS}-"
             f"{LLM_JUDGE_TIMEOUT_CEILING_SECONDS}s)"
@@ -608,6 +773,131 @@ def calibration_checks(
     }
 
 
+def exception_probe_result(
+    kind: str,
+    score: float | None,
+    error: str | None,
+    unavailable: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify the advisory probe without claiming why a scorer returned zero."""
+    if unavailable is not None:
+        if score is not None or error is not None:
+            raise ValueError(
+                "an unavailable exception probe cannot also have a score or error"
+            )
+        return {
+            "kind": kind,
+            "score": None,
+            "error": None,
+            "outcome": "unavailable",
+            "distinguished_from_zero": None,
+            "available": False,
+            "unavailable": unavailable,
+        }
+    if (score is None) == (error is None):
+        raise ValueError(
+            "exception probe must return exactly one of a score or propagated error"
+        )
+    if error is not None:
+        outcome = "propagated-error"
+    elif score == 0.0:
+        outcome = "returned-zero"
+    else:
+        outcome = "returned-nonzero"
+    return {
+        "kind": kind,
+        "score": score,
+        "error": error,
+        "outcome": outcome,
+        "distinguished_from_zero": outcome != "returned-zero",
+        "available": True,
+        "unavailable": None,
+    }
+
+
+def unavailable_supplemental_attempt(reason: str, detail: str) -> dict[str, Any]:
+    """Describe infrastructure/setup failure without manufacturing probe evidence."""
+    return {
+        "score": None,
+        "error": None,
+        "unavailable": {"reason": reason, "detail": detail},
+    }
+
+
+def run_supplemental_attempt(
+    request: dict[str, Any],
+    *,
+    deadline: float,
+    phase_budget_seconds: int,
+    environment: dict[str, str],
+    cwd: Path,
+) -> dict[str, Any]:
+    """Run one advisory attempt in a disposable worker process.
+
+    A supplemental timeout, import failure, crash, or malformed worker response
+    is reported as unavailable. None can replace the authored calibration
+    verdict because the authored worker has already completed independently.
+    """
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        return unavailable_supplemental_attempt(
+            "budget-exhausted",
+            f"supplemental phase exhausted its {phase_budget_seconds}-second total budget",
+        )
+    try:
+        process = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            timeout=remaining_seconds,
+            env=environment,
+            cwd=cwd,
+        )
+    except subprocess.TimeoutExpired:
+        return unavailable_supplemental_attempt(
+            "timeout",
+            "supplemental worker exceeded the remaining "
+            f"{remaining_seconds:.3f} seconds of its phase budget",
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return unavailable_supplemental_attempt(
+            "worker-setup-failed",
+            f"supplemental worker could not be started or observed: {error}",
+        )
+    if process.returncode != 0:
+        reason = "worker-signal" if process.returncode < 0 else "worker-failed"
+        detail = process.stderr.strip() or (
+            f"supplemental worker exited with status {process.returncode}"
+        )
+        return unavailable_supplemental_attempt(reason, detail)
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        return unavailable_supplemental_attempt(
+            "invalid-worker-output",
+            f"supplemental worker returned invalid JSON: {error.msg}",
+        )
+    if not isinstance(payload, dict):
+        return unavailable_supplemental_attempt(
+            "invalid-worker-output",
+            "supplemental worker response was not a JSON object",
+        )
+    score = payload.get("score")
+    error = payload.get("error")
+    if (score is None) == (error is None):
+        return unavailable_supplemental_attempt(
+            "invalid-worker-output",
+            "supplemental worker did not return exactly one score or propagated error",
+        )
+    if error is not None and not isinstance(error, str):
+        return unavailable_supplemental_attempt(
+            "invalid-worker-output",
+            "supplemental worker error was not text",
+        )
+    return {"score": score, "error": error, "unavailable": None}
+
+
 def main() -> int:
     if "--_worker" in sys.argv:
         return run_worker()
@@ -661,24 +951,29 @@ def main() -> int:
         for case in cases:
             case["permutation"] = permuted_answer(case["expected"])
 
-    request = {
+    authored_request = {
+        "operation": "authored",
         "scorer": absolute_scorer,
         "cases": cases,
         "import_root": str(args.import_root),
     }
+    worker_environment = subprocess_environment(
+        allow_provider_access=args.kind == "llm-judge"
+    )
+    worker_cwd = Path(scorer_file).resolve().parent
     try:
         process = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
-            input=json.dumps(request),
+            input=json.dumps(authored_request),
             text=True,
             capture_output=True,
             timeout=args.timeout,
-            env=subprocess_environment(allow_provider_access=args.kind == "llm-judge"),
-            cwd=Path(scorer_file).resolve().parent,
+            env=worker_environment,
+            cwd=worker_cwd,
         )
     except subprocess.TimeoutExpired:
         message = (
-            f"Evaluator calibration exceeded {args.timeout} seconds. This does "
+            f"Authored evaluator calibration exceeded {args.timeout} seconds. This does "
             "not by itself mean the evaluator is broken - a reasoning judge can "
             "legitimately take longer. Re-run with a larger --timeout, or "
             "calibrate against a faster model, before concluding anything about "
@@ -695,11 +990,11 @@ def main() -> int:
         # The exit code stays 1 - the run still failed - and the payload is what
         # makes the failure legible.
         if args.json:
-            # Whole-calibration, not per-case (traigent-first-run#71, point 2).
-            # Every case's probes run inside ONE subprocess, so when the budget
-            # expires the parent has no partial output to attribute: it cannot
-            # say which case was slow, or whether any finished. Reporting a
-            # per-case breakdown would mean inventing one.
+            # Whole authored calibration, not per-case (traigent-first-run#71,
+            # point 2). Every case's authored probes run inside ONE subprocess,
+            # so when the budget expires the parent has no partial output to
+            # attribute: it cannot say which case was slow, or whether any
+            # finished. Reporting a per-case breakdown would mean inventing one.
             #
             # `cases` is empty for that reason and not because zero cases were
             # requested, which is a distinction a reader of this payload has no
@@ -709,7 +1004,7 @@ def main() -> int:
                 json.dumps(
                     {
                         "timed_out": True,
-                        "timeout_scope": "calibration",
+                        "timeout_scope": "authored-calibration",
                         "passed": False,
                         "timeout_seconds": args.timeout,
                         "kind": args.kind,
@@ -728,8 +1023,65 @@ def main() -> int:
         return 1
 
     payload = json.loads(process.stdout)
+
+    # Every deterministic supplemental attempt gets a new interpreter. A
+    # module reload in one interpreter does not isolate imported dependency
+    # modules, global registries, environment mutation, or control flow. A
+    # separate process does, for process-local state. Its budget is separate
+    # from the full authored budget and shared across the attempts, so generated
+    # advisory work can never consume the timeout that decides calibration.
+    supplemental_results = [
+        {"permutation": None, "exception_probes": []} for _case in cases
+    ]
+    if args.kind == "deterministic":
+        supplemental_deadline = time.monotonic() + args.timeout
+        for index, case in enumerate(cases):
+            worker_case = {
+                "name": case["name"],
+                "expected": case["expected"],
+                "input_data": case.get("input_data"),
+                "metadata": case.get("metadata"),
+            }
+            request_base = {
+                "operation": "supplemental",
+                "scorer": absolute_scorer,
+                "case": worker_case,
+                "import_root": str(args.import_root),
+            }
+            permutation = case.get("permutation")
+            if permutation is not None:
+                supplemental_results[index]["permutation"] = run_supplemental_attempt(
+                    {
+                        **request_base,
+                        "probe": {
+                            "type": "permutation",
+                            "output": permutation,
+                        },
+                    },
+                    deadline=supplemental_deadline,
+                    phase_budget_seconds=args.timeout,
+                    environment=worker_environment,
+                    cwd=worker_cwd,
+                )
+            for kind in EXCEPTION_PROBE_KINDS:
+                attempt = run_supplemental_attempt(
+                    {
+                        **request_base,
+                        "probe": {"type": "exception", "kind": kind},
+                    },
+                    deadline=supplemental_deadline,
+                    phase_budget_seconds=args.timeout,
+                    environment=worker_environment,
+                    cwd=worker_cwd,
+                )
+                supplemental_results[index]["exception_probes"].append(
+                    {"kind": kind, **attempt}
+                )
+
     case_results = []
-    for configured_case, case in zip(cases, payload["cases"], strict=True):
+    for configured_case, case, supplemental in zip(
+        cases, payload["cases"], supplemental_results, strict=True
+    ):
         score_mode = configured_case["score_mode"]
         checks = calibration_checks(case["scores"], score_mode, thresholds)
         result = {
@@ -747,12 +1099,20 @@ def main() -> int:
         # and the author answers something only they know.
         permutation = configured_case.get("permutation")
         if permutation is not None:
-            score = case.get("permutation_score")
-            error = case.get("permutation_error")
+            attempt = supplemental["permutation"]
+            if attempt is None:
+                raise RuntimeError(
+                    "a configured permutation has no supplemental result"
+                )
+            score = attempt["score"]
+            error = attempt["error"]
+            unavailable = attempt["unavailable"]
             result["permutation_probe"] = {
                 "probe": permutation,
                 "score": score,
                 "error": error,
+                "available": unavailable is None,
+                "unavailable": unavailable,
                 # Three states, not two. "Not distinguished" rather than
                 # "failed": the evaluator did not separate a rearrangement of
                 # the expected answer from the answer itself. `None` is the
@@ -761,10 +1121,20 @@ def main() -> int:
                 # invent a result out of an exception.
                 "distinguished": (
                     None
-                    if error is not None or score is None
+                    if unavailable is not None or error is not None or score is None
                     else score <= thresholds["bad_maximum"]
                 ),
             }
+        if args.kind == "deterministic":
+            result["exception_probes"] = [
+                exception_probe_result(
+                    probe["kind"],
+                    probe.get("score"),
+                    probe.get("error"),
+                    probe.get("unavailable"),
+                )
+                for probe in supplemental["exception_probes"]
+            ]
         case_results.append(result)
     if is_matrix:
         declared = sorted(
@@ -797,6 +1167,8 @@ def main() -> int:
         # case it came from or it would be the one shape that silently drops it.
         if "permutation_probe" in case_results[0]:
             result["permutation_probe"] = case_results[0]["permutation_probe"]
+        if "exception_probes" in case_results[0]:
+            result["exception_probes"] = case_results[0]["exception_probes"]
 
     # One list, both shapes, so neither can answer this differently.
     #
@@ -820,6 +1192,68 @@ def main() -> int:
             "label/value binding is a wrong answer that scores full marks. "
             "Confirm which this task is before optimizing against it."
         )
+    zero_exception_probes = [
+        (
+            case["name"],
+            [
+                probe["kind"]
+                for probe in case.get("exception_probes", [])
+                if probe["outcome"] == "returned-zero"
+            ],
+        )
+        for case in case_results
+        if any(
+            probe["outcome"] == "returned-zero"
+            for probe in case.get("exception_probes", [])
+        )
+    ]
+    if zero_exception_probes:
+        result["exception_probe_advisory"] = (
+            "This evaluator returned an ordinary 0.0 for one or more exception "
+            "or malformed-output probes in: "
+            + "; ".join(
+                f"{name} ({', '.join(kinds)})" for name, kinds in zero_exception_probes
+            )
+            + ". That is consistent with a swallowed parser or evaluator "
+            "exception, but it can also be a deliberate rejection of an "
+            "unsupported or malformed output with zero. This advisory does not "
+            "prove the cause or change calibration PASS. Inspect the exception "
+            "path and ensure genuine parser/runtime failures propagate distinctly "
+            "before optimizing."
+        )
+    unavailable_supplemental_probes = []
+    for case in case_results:
+        permutation_probe = case.get("permutation_probe")
+        if permutation_probe and permutation_probe["unavailable"] is not None:
+            unavailable_supplemental_probes.append(
+                {
+                    "case": case["name"],
+                    "probe": "permutation",
+                    **permutation_probe["unavailable"],
+                }
+            )
+        unavailable_supplemental_probes.extend(
+            {
+                "case": case["name"],
+                "probe": probe["kind"],
+                **probe["unavailable"],
+            }
+            for probe in case.get("exception_probes", [])
+            if probe["unavailable"] is not None
+        )
+    if unavailable_supplemental_probes:
+        result["supplemental_probe_unavailable"] = unavailable_supplemental_probes
+        result["supplemental_probe_advisory"] = (
+            "One or more deterministic supplemental probes were unavailable: "
+            + "; ".join(
+                f"{item['case']} ({item['probe']}: {item['reason']})"
+                for item in unavailable_supplemental_probes
+            )
+            + ". Their details are recorded in supplemental_probe_unavailable. "
+            "Supplemental setup, timeout, or crash evidence never changes the "
+            "authored calibration PASS; inspect or rerun unavailable probes before "
+            "relying on them."
+        )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif is_matrix:
@@ -842,6 +1276,17 @@ def main() -> int:
     if not args.json and "permutation_question" in result:
         print()
         print(f"QUESTION: {result['permutation_question']}")
+    if not args.json and "exception_probe_advisory" in result:
+        print()
+        print(f"ADVISORY: {result['exception_probe_advisory']}")
+    if not args.json and "supplemental_probe_advisory" in result:
+        print()
+        print(f"ADVISORY: {result['supplemental_probe_advisory']}")
+        for item in result["supplemental_probe_unavailable"]:
+            print(
+                f"UNAVAILABLE: [{item['case']}] {item['probe']} "
+                f"({item['reason']}): {item['detail']}"
+            )
     return 0 if result["passed"] else 1
 
 

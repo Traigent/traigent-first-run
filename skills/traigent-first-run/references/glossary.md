@@ -123,15 +123,17 @@ Optimization (optimization run)
 
 Baseline run vs enhanced run
   Plain: the baseline measures your current configuration (or a small standard
-  sweep when Traigent had to generate one); the enhanced run is the broader,
+  sweep when the assistant had to prepare one); the enhanced run is the broader,
   cloud-assisted search that looks for better configurations.
 
 Tuning split vs holdout (validation) split
-  Plain: the tuning part is what we optimize against; the holdout is kept aside
-  and only used at the end to check we did not just memorize the tuning part.
+  Plain: the tuning part is what we optimize against; validation data is kept
+  aside and used at the end to check we did not just memorize the tuning part.
   Note: if the same examples appear in both, the result is optimistic and cannot
-  be trusted (this is "leakage"). When Traigent generates walkthrough data, the
-  default is 24 rows split 18 tuning / 6 holdout.
+  be trusted (this is "leakage"). Call validation a sealed holdout only if its
+  split and labels were hidden until the candidate was locked; assistant-inspected
+  or assistant-authored validation is held-back and non-blind. When the assistant
+  prepares walkthrough data, the default is 24 rows split 18 tuning / 6 validation.
 
 Provenance
   Plain: where the data came from - real production data, real inputs with
@@ -156,8 +158,9 @@ The lines under each pillar on the card
                                  A row without one cannot say whether a
                                  configuration got it right.
     examples to compare on     - how many rows the two runs can actually be
-                                 compared on. Small numbers cannot separate a
-                                 real improvement from luck.
+                                 compared on. More examples add evidence, but
+                                 this pre-run count alone cannot calculate paired
+                                 uncertainty or prove a difference is real.
     range of difficulty        - whether the rows span easy to hard. If every
                                  row is easy, every configuration looks equally
                                  good.
@@ -204,22 +207,26 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   repaired - and again after each repair or creation, so the closing report can
   show an honest opening-to-closing change. It decides what the run does next:
   repair, create, or continue as a clearly labeled walkthrough. A low number
-  alone does not stop a safe walkthrough, but a cap that says the grading signal
-  is broken does stop paid optimization against that signal.
+  alone does not stop a safe walkthrough, but a blocking cap does stop paid
+  optimization when the current components or evidence cannot support a
+  trustworthy comparison.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
-  Some caps say something is missing or broken - a broken evaluator, no dataset.
-  Others say only that the data cannot support a strong claim: too few
-  comparable examples to tell a small improvement from noise. That limits what
+  Some caps block because something is missing or invalid, or because there is
+  too little comparable evidence for a trustworthy paid comparison - a broken
+  evaluator, no dataset, or fewer than ten comparable examples. Others say only
+  that a small but measurable comparison set limits claim strength until the
+  completed paired outcomes support an uncertainty analysis. That limits what
   the result may claim without saying anything is wrong with your setup.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
   limit to" is one that only starts to matter once something lower is cleared.
-  Blocked: the flag the card shows when a cap of the first kind fired - something
-  is broken, and paid work measured against it would measure the wrong thing. A
-  cap that only limits the claim does not set it, because the run is still worth
+  Blocked: the flag the card shows when a blocking cap fired. It does not mean
+  every component is broken; it means the current state is missing, invalid, or
+  has too little comparable evidence for a trustworthy paid comparison. A cap
+  that only limits the claim does not set it, because the run is still worth
   making. Either way the card names the specific thing rather than only lowering
   a number.
 
@@ -229,13 +236,13 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   and should not be shared or committed to git.
 
 Provider key vs Traigent portal key
-  Plain: two different keys live in your `.env`. The provider key (OpenAI,
-  Anthropic, OpenRouter, ...) pays for the model calls your agent makes. The
-  Traigent portal key (it starts with `uk_`) connects the run to your Traigent
-  account so the experiments and results appear in the portal.
-  Ask like this: "Two keys go into your local .env - your model provider's key
-  and your Traigent portal key. Paste them into the file directly, not into
-  chat."
+  Plain: two different keys may ultimately live in your `.env`, at different
+  gates. The provider key (OpenAI, Anthropic, OpenRouter, ...) pays for the local
+  baseline's model calls. Only after that result, the Traigent portal key (it
+  starts with `uk_`) connects the managed run to your Traigent account.
+  Ask for the provider key before the local baseline. Ask for the Traigent key
+  only after the baseline checkpoint. Each is pasted into the file directly,
+  never into chat.
 
 Portal
   Plain: the Traigent website where your account lives - it generates your

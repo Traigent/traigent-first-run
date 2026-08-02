@@ -16,7 +16,7 @@ an aggregate.
 The score is deliberately modest about itself. It runs before any optimization,
 from local evidence only, so it estimates rather than measures: a sub-score that
 cannot be computed is marked unmeasured and excluded rather than scored zero,
-and the reported confidence says how much of the pillar was actually observed.
+and the user-facing evidence coverage says how much of the pillar was actually observed.
 The config space's 'wired' list is the one input that is weaker than that: it is
 an attestation, taken at its word and never verified, because nothing here reads
 the agent's code. Declaring a knob is not a statement that the agent consumes
@@ -555,9 +555,12 @@ class DatasetFacts:
     answerable_rows: int = 0
     generated_answer_rows: int = 0
     # Rows whose expected output carries no word characters ("-", "?", "..."):
-    # labelled by the one oracle, but not an answer anyone can score against.
+    # kept as labels while their intentional-label/placeholder meaning is unverified.
     placeholder_rows: int = 0
     sources: tuple[str, ...] = ()
+    # Custom source tokens that preflight credited as collected for backward
+    # compatibility but could not verify from its vocabulary.
+    unrecognised_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -828,10 +831,10 @@ def knob_variation(
 # every other dimension to score 93", so provenance was capped instead. Power
 # was left with the identical structure and no cap.
 #
-# The thresholds reuse the bands `size_points` already draws, so there is one
-# table to move rather than two: under 10 comparable examples is the band the
-# scorer itself calls "a wiring check, not a score", and under 30 is the +/-16pp
-# band. The ceilings sit one point below a band edge because the claim is about
+# The thresholds reuse the planning bands `size_points` already draws. They
+# bound the strength of a claim from sample size alone; they do not pretend to
+# calculate paired uncertainty or a minimum detectable effect before outcomes
+# exist. The ceilings sit one point below a band edge because the claim is about
 # what the result may *present as*, not about the arithmetic.
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
@@ -840,12 +843,13 @@ COARSE_RESOLUTION_CEILING = 89  # cannot present as EXCELLENT
 
 
 def power_ceiling(effective_n: int | None) -> Cap | None:
-    """Bound the band by what the comparison can resolve, not just deduct points.
+    """Bound claim strength using a pre-run sample-size planning band.
 
-    Returns None when the dataset can resolve enough to speak for itself. The
-    count passed in is the *scoreable* one, which is why #88 was blocked on #67:
-    capping a number that under-states power for a reference-free judge would
-    convert a soft under-claim into a hard, band-changing false verdict.
+    Returns None outside the two small-set planning bands; that is not a claim
+    that uncertainty has been calculated. The count passed in is the *scoreable*
+    one, which is why #88 was blocked on #67: capping a number that under-states
+    power for a reference-free judge would convert a soft under-claim into a
+    hard, band-changing false verdict.
     """
     if effective_n is None:
         return None
@@ -854,16 +858,15 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
             "dataset-below-measurable-size",
             WIRING_CHECK_CEILING,
             f"{effective_n} comparable example(s) is a wiring check, not a "
-            "measurement - no difference between configurations can be "
-            "distinguished from noise at this size.",
+            "stable comparison; treat any difference as exploratory.",
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
             "dataset-coarse-resolution",
             COARSE_RESOLUTION_CEILING,
-            f"{effective_n} comparable examples resolve differences of roughly "
-            "16 percentage points; a smaller improvement cannot be told from "
-            "noise on this data.",
+            f"{effective_n} comparable examples is a small comparison set; "
+            "paired uncertainty must be calculated from completed paired "
+            "outcomes before claiming a lift.",
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
         )
@@ -871,27 +874,25 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
 
 
 def size_points(effective_n: int | None) -> tuple[float, str]:
-    """Band statistical power on the smaller *scoreable* split, not the row count.
+    """Place the smaller scoreable split in a pre-run sample-size planning band.
 
-    The question a first run answers is "can this separate config A from B",
-    whose resolution comes from the smaller split. The standard error of a
-    proportion is at most 0.5/sqrt(n): n=30 gives about +/-9pp, n=100 about
-    +/-5pp, n=384 about +/-2.5pp - so a large set never claims more precision
-    than it has.
+    Sample size alone cannot supply paired uncertainty or a detectable effect:
+    both depend on completed paired outcomes. These ordinal bands reward more
+    evidence without attaching an unsupported percentage-point claim.
     """
     if effective_n is None:
         return 0.0, "no usable split size"
     if effective_n < 10:
         return 5.0, f"{effective_n} comparable examples - a wiring check, not a score"
     if effective_n < 30:
-        return 12.0, f"{effective_n} examples - roughly +/-16pp of noise per result"
+        return 12.0, f"{effective_n} examples - small comparison set"
     if effective_n < 50:
-        return 18.0, f"{effective_n} examples - roughly +/-9pp of noise per result"
+        return 18.0, f"{effective_n} examples - limited comparison set"
     if effective_n < 100:
-        return 22.0, f"{effective_n} examples - roughly +/-7pp of noise per result"
+        return 22.0, f"{effective_n} examples - moderate comparison set"
     if effective_n < 300:
-        return 23.0, f"{effective_n} examples - roughly +/-5pp of noise per result"
-    return 25.0, f"{effective_n} examples - roughly +/-2.5pp of noise per result"
+        return 23.0, f"{effective_n} examples - substantial comparison set"
+    return 25.0, f"{effective_n} examples - large comparison set"
 
 
 # Per-row provenance credit, out of the sub-score's 10 points. The ladder is the
@@ -938,7 +939,9 @@ def _row_count(value: Any, name: str) -> int:
     return value
 
 
-def score_provenance(facts: DatasetFacts) -> tuple[float, str, list[Cap]]:
+def score_provenance(
+    facts: DatasetFacts, *, uses_expected_outputs: bool = True
+) -> tuple[float, str, list[Cap]]:
     """Credit provenance by share, and cap on how much of the data was invented.
 
     Scored per row and averaged rather than by an all-or-nothing test. The old
@@ -982,7 +985,11 @@ def score_provenance(facts: DatasetFacts) -> tuple[float, str, list[Cap]]:
     # An answer written by a model downgrades a row that was otherwise
     # collected; it cannot downgrade one already counted as synthesised, and
     # cannot rescue one either.
-    generated_answers = min(facts.generated_answer_rows, facts.collected_rows)
+    generated_answers = (
+        min(facts.generated_answer_rows, facts.collected_rows)
+        if uses_expected_outputs
+        else 0
+    )
     clean_collected = facts.collected_rows - generated_answers
     points = (
         clean_collected * COLLECTED_ROW_POINTS
@@ -1020,6 +1027,7 @@ def score_provenance(facts: DatasetFacts) -> tuple[float, str, list[Cap]]:
     # above both synthetic ones.
     if (
         facts.answerable_rows
+        and uses_expected_outputs
         and facts.generated_answer_rows
         >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
         and facts.synthesised_rows != counted
@@ -1033,10 +1041,18 @@ def score_provenance(facts: DatasetFacts) -> tuple[float, str, list[Cap]]:
             )
         )
 
-    return round(points, 2), provenance_evidence(facts, counted), caps
+    return (
+        round(points, 2),
+        provenance_evidence(
+            facts, counted, uses_expected_outputs=uses_expected_outputs
+        ),
+        caps,
+    )
 
 
-def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
+def provenance_evidence(
+    facts: DatasetFacts, counted: int, *, uses_expected_outputs: bool = True
+) -> str:
     """Name the mixture, so a share is never rounded away into one word.
 
     "mostly real" and "mostly generated" are the same word to a reader who
@@ -1045,6 +1061,12 @@ def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
     """
     if facts.synthesised_rows == counted:
         return "fully generated - cannot represent production traffic"
+    unverified = ""
+    if facts.unrecognised_sources:
+        unverified = (
+            "; unrecognized provenance tokens treated as collected on an "
+            f"unverified declaration: {', '.join(facts.unrecognised_sources)}"
+        )
     parts: list[str] = []
     if facts.collected_rows:
         parts.append(f"{facts.collected_rows} collected")
@@ -1054,32 +1076,35 @@ def provenance_evidence(facts: DatasetFacts, counted: int) -> str:
         parts.append(f"{facts.undeclared_rows} undeclared")
     mixture = f"{', '.join(parts)} of {counted} rows"
     if facts.generated_answer_rows:
+        if not uses_expected_outputs:
+            return (
+                f"{mixture}; {facts.generated_answer_rows} model-written expected "
+                f"answers are present but unused by this evaluator{unverified}"
+            )
         return (
             f"{mixture}; {facts.generated_answer_rows} of {facts.answerable_rows} "
-            "expected answers written by a model, not observed"
+            f"expected answers written by a model, not observed{unverified}"
         )
     if not facts.synthesised_rows:
-        return f"{mixture}; declared sources: {', '.join(facts.sources)}"
-    return mixture
+        return (
+            f"{mixture}; declared sources: {', '.join(facts.sources)}" f"{unverified}"
+        )
+    return f"{mixture}{unverified}"
 
 
 def labels_evidence(labelled: int, rows: int, placeholders: int) -> str:
-    """Name placeholder answers on the line that claims the rows are labelled.
+    """Name symbol-only outputs without guessing whether they are placeholders.
 
-    A punctuation-only output is a label by the one oracle - deliberately, so the
-    checks stop contradicting each other - but it is not an answer the evaluator
-    can score against. Without this clause the card printed "100/100 rows carry an
-    expected output" and a confident precision band over a set where half the
-    answers were "-" (traigent-first-run#70). It qualifies the sentence rather
-    than changing the number: reclassifying those rows would move the score for
-    every dataset that uses a symbol as a legitimate label.
+    A punctuation-only output can be an intentional class label. The scorer
+    therefore keeps it in the declared label/sample counts while making the
+    unresolved interpretation visible.
     """
     base = f"{labelled}/{rows} rows carry an expected output"
     if not placeholders:
         return base
     return (
-        f"{base}, but {placeholders} of them are placeholders with no word "
-        "characters - not answers a scorer can compare against"
+        f"{base}; {placeholders} are symbol-only and need confirmation as "
+        "intentional labels or placeholders (retained in these counts)"
     )
 
 
@@ -1121,8 +1146,20 @@ def score_dataset(
         return combine("dataset", subs), caps
 
     rows = facts.rows
+    reference_free = scores_without_a_reference(evaluator_method)
     labelled = facts.labelled_rows if facts.labelled_rows is not None else 0
-    if labelled == 0:
+    if reference_free:
+        subs.append(
+            SubScore(
+                "labels",
+                0.0,
+                30.0,
+                False,
+                "this reference-free evaluator does not use expected outputs"
+                + (f" ({labelled} present but unused)" if labelled else ""),
+            )
+        )
+    elif labelled == 0:
         caps.append(
             Cap(
                 "dataset-no-expected-outputs",
@@ -1157,13 +1194,10 @@ def score_dataset(
     #
     # The pillar therefore takes the resolved method. Before, `score_dataset`
     # received only DatasetFacts and structurally could not ask: a 100-row set
-    # with 10 reference answers reported "10 scoreable" and +/-16pp, while a
-    # rubric judge scored all 100 and the truthful band was +/-5pp. An
-    # under-claim of the same class as the over-claim the clamp was added to
-    # remove - and one that #88 would have converted into a hard, band-changing
-    # verdict once power starts bounding the band.
-    reference_free = scores_without_a_reference(evaluator_method)
-
+    # with 10 reference answers was put in the smallest planning band even when
+    # a rubric judge could score all 100. That under-claim is the same class of
+    # error as an over-claim, and a ceiling would turn it into a hard,
+    # band-changing false verdict.
     def scoreable(rows_available: int, labelled_available: int) -> int:
         return (
             rows_available
@@ -1265,7 +1299,9 @@ def score_dataset(
             SubScore("diversity", 0.0, 20.0, False, "duplication was not checked")
         )
 
-    provenance, evidence, provenance_caps = score_provenance(facts)
+    provenance, evidence, provenance_caps = score_provenance(
+        facts, uses_expected_outputs=not reference_free
+    )
     caps.extend(provenance_caps)
     subs.append(SubScore("provenance", provenance, 10.0, True, evidence))
 
@@ -1894,7 +1930,7 @@ def render_card(
     lines: list[str] = []
     headline = f"{score.overall}/100  {score.band}"
     if score.status == "BLOCKED":
-        headline += "  (BLOCKED)"
+        headline += "  (PAID RUN BLOCKED)"
     lines.append(f"TRAIGENT OPTIMIZATION READINESS{' ' * 8}{headline}")
     lines.append("")
     for pillar in score.pillars:
@@ -1966,7 +2002,7 @@ def render_card(
             # card saying the lowest ceiling wins. The subjunctive is the whole
             # fix - it says the ceiling is real without claiming it applies now.
             if cap.blocks:
-                label = f"{palette.bad}BLOCKED{palette.reset}"
+                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
             elif binds(cap, score.overall):
                 label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
             else:
@@ -1985,8 +2021,8 @@ def render_card(
             f"at {score.band}.{palette.reset}"
         )
     lines.append(
-        f"  {palette.dim}Approximate, from what runs on this machine. Traigent "
-        f"measures this properly after a real run.{palette.reset}"
+        f"  {palette.dim}Local pre-run planning estimate, not a probability or "
+        f"measured optimization result.{palette.reset}"
     )
     return "\n".join(lines)
 
@@ -2003,17 +2039,17 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
     lines.extend(
         [
             f"**{score.overall}/100 - {score.band}**"
-            + ("  ·  status: BLOCKED" if score.status == "BLOCKED" else ""),
+            + ("  ·  status: PAID RUN BLOCKED" if score.status == "BLOCKED" else ""),
             "",
             f"Weighted average before caps: {score.weighted_average}/100. "
-            f"Measured confidence: {score.confidence:.0%}.",
+            f"Evidence coverage: {score.confidence:.0%}.",
             "",
             "This is a first-pass estimate computed from local evidence only, "
             "before any optimization has run. It is an ordinal planning aid, not "
             "a calibrated probability. Weights are a judgment call and are listed "
             "below so the number stays auditable.",
             "",
-            "| Pillar | Score | Weight | Confidence |",
+            "| Pillar | Score | Weight | Evidence coverage |",
             "| --- | --- | --- | --- |",
         ]
     )
@@ -2286,6 +2322,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             provenance.get("generated_answer_rows"), "generated_answer_rows"
         ),
         sources=tuple(provenance.get("sources", ())),
+        unrecognised_sources=tuple(provenance.get("unrecognised_sources", ())),
     )
 
 

@@ -264,8 +264,9 @@ class DatasetScoringTests(unittest.TestCase):
         power = next(s for s in pillar.subscores if s.name == "power")
         self.assertEqual(power.value, 9.6)
         self.assertIn("100 rows, 10 scoreable", power.evidence)
-        self.assertIn("+/-16pp", power.evidence)
-        self.assertNotIn("+/-5pp", power.evidence)
+        self.assertIn("small comparison set", power.evidence)
+        for unsupported in ("+/-", "detect", "resolve"):
+            self.assertNotIn(unsupported, power.evidence.casefold())
 
     def test_power_uses_the_smaller_labelled_split_not_the_smaller_total_split(
         self,
@@ -369,8 +370,8 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(power.value, 18.4)
         self.assertEqual(
             power.evidence,
-            "no declared tuning/holdout split; 100 examples - roughly +/-5pp "
-            "of noise per result",
+            "no declared tuning/holdout split; 100 examples - substantial "
+            "comparison set",
         )
 
     def _power(self, facts: object) -> float:
@@ -1910,6 +1911,22 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(cap.condition, "dataset-coarse-resolution")
         self.assertLess(cap.ceiling, 90)
 
+    def test_pre_run_sample_size_never_claims_a_detectable_effect(self) -> None:
+        evidence = [MODULE.size_points(count)[1] for count in (3, 15, 30, 100)]
+        evidence.extend(
+            cap.reason
+            for count in (3, 15)
+            if (cap := MODULE.power_ceiling(count)) is not None
+        )
+        joined = " ".join(evidence).casefold()
+        for unsupported in (
+            "+/-",
+            "resolve differences",
+            "minimum detectable",
+            "confidence interval",
+        ):
+            self.assertNotIn(unsupported, joined)
+
     def test_a_ceiling_that_only_bounds_a_claim_does_not_block_the_run(self) -> None:
         """A bounded claim and a stopped run are different statements.
 
@@ -1979,7 +1996,8 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertNotIn("BLOCKED", advisory)
 
         blocking = rendered(MODULE.power_ceiling(3))
-        self.assertIn("BLOCKED", blocking)
+        self.assertIn("PAID RUN BLOCKED", blocking)
+        self.assertIn("FIX BEFORE PAID RUN", blocking)
         self.assertNotIn("LIMITED TO", blocking)
 
     def test_a_ceiling_that_is_not_the_limit_is_not_printed_as_one(self) -> None:
@@ -2335,6 +2353,36 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertFalse(MODULE.scores_without_a_reference(method))
 
+    def test_zero_reference_answers_do_not_become_nothing_to_score_for_a_judge(
+        self,
+    ) -> None:
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=100,
+            labelled_rows=0,
+            collected_rows=100,
+        )
+        reference_based, exact_caps = MODULE.score_dataset(facts, "exact")
+        reference_free, judge_caps = MODULE.score_dataset(facts, "llm-judge-rubric")
+
+        self.assertIn(
+            "dataset-no-expected-outputs",
+            {cap.condition for cap in exact_caps},
+        )
+        self.assertNotIn(
+            "dataset-no-expected-outputs",
+            {cap.condition for cap in judge_caps},
+        )
+        labels = next(sub for sub in reference_free.subscores if sub.name == "labels")
+        power = next(sub for sub in reference_free.subscores if sub.name == "power")
+        self.assertFalse(labels.measured)
+        self.assertIn("reference-free evaluator", labels.evidence)
+        self.assertIn("100 examples", power.evidence)
+        self.assertGreater(
+            power.value,
+            next(sub.value for sub in reference_based.subscores if sub.name == "power"),
+        )
+
     def test_the_clamp_follows_the_method_on_a_declared_split_too(self) -> None:
         """The common shape, and the one the first fix missed.
 
@@ -2383,6 +2431,41 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
             power_of(reference_free).value, power_of(reference_based).value
         )
         self.assertIn("100 examples", power_of(reference_free).evidence)
+
+    def test_reference_free_method_ignores_an_optional_generated_answer_key(
+        self,
+    ) -> None:
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=100,
+            labelled_rows=100,
+            collected_rows=100,
+            answerable_rows=100,
+            generated_answer_rows=100,
+        )
+        reference_based, exact_caps = MODULE.score_dataset(facts, "exact")
+        reference_free, judge_caps = MODULE.score_dataset(facts, "llm-judge-rubric")
+
+        self.assertIn(
+            "dataset-generated-answer-key",
+            {cap.condition for cap in exact_caps},
+        )
+        self.assertNotIn(
+            "dataset-generated-answer-key",
+            {cap.condition for cap in judge_caps},
+        )
+        labels = next(sub for sub in reference_free.subscores if sub.name == "labels")
+        provenance = next(
+            sub for sub in reference_free.subscores if sub.name == "provenance"
+        )
+        exact_provenance = next(
+            sub for sub in reference_based.subscores if sub.name == "provenance"
+        )
+        self.assertFalse(labels.measured)
+        self.assertIn("100 present but unused", labels.evidence)
+        self.assertEqual(provenance.value, 10.0)
+        self.assertEqual(exact_provenance.value, 6.0)
+        self.assertIn("present but unused by this evaluator", provenance.evidence)
 
 
 if __name__ == "__main__":
@@ -2537,6 +2620,23 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
     def calibration_line(self, facts) -> str:
         pillar, _ = MODULE.score_evaluation(facts)
         return next(s.evidence for s in pillar.subscores if s.name == "calibration")
+
+    def test_rendered_score_names_evidence_coverage_and_its_local_scope(self) -> None:
+        pillars = [
+            MODULE.combine(
+                name,
+                [MODULE.SubScore("x", 5.0, 10.0, True, "observed locally")],
+            )
+            for name in ("agent", "dataset", "evaluation")
+        ]
+        score = MODULE.aggregate(pillars, [], (), dict(MODULE.DEFAULT_WEIGHTS))
+        card = MODULE.render_card(score, palette=MODULE.PLAIN, unicode_ok=False)
+        report = MODULE.render_markdown(score)
+
+        self.assertIn("Local pre-run planning estimate", card)
+        self.assertNotIn("measures this properly", card.casefold())
+        self.assertIn("Evidence coverage", report)
+        self.assertNotIn("Measured confidence", report)
 
     def test_an_absent_payload_is_reported_as_an_absent_payload(self) -> None:
         facts = MODULE.evaluation_facts_from_calibration(
