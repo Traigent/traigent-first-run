@@ -193,6 +193,32 @@ The lines under each pillar on the card
     the settings that matter most - whether the settings known to move results
                                  for this kind of agent are among the ones being
                                  tried.
+  Words the evidence beside those lines uses:
+    settings document          - the file listing which of your agent's settings
+                                 the search may vary, and which of them the
+                                 agent actually reads. The run writes one after
+                                 a search completes; a file left by an earlier
+                                 run is deliberately not counted, so an opening
+                                 score usually reports that none was provided
+                                 yet rather than that your agent has none.
+    a set to tune on / a set to check the result on
+                               - two halves of your examples. The search is
+                                 allowed to see the first half while it looks
+                                 for a better configuration; the second half is
+                                 kept back so the final number is measured on
+                                 examples the search never optimized against.
+                                 Without the split, a good score may only mean
+                                 the search fitted the examples it could see.
+    good-vs-bad examples       - answers already known to be right and known to
+                                 be wrong, scored to check the evaluator can
+                                 tell them apart. They come from calibrating the
+                                 evaluator, which happens later in the run.
+    undeclared row             - a row that does not record where it came from.
+                                 It is not counted against you, but it cannot be
+                                 counted for you either: nothing says whether it
+                                 reflects real use, so it cannot be evidence
+                                 about real traffic.
+
   Why two of them are usually blank at the start: "checked on known-good and
   known-bad" and "separates good answers from bad" both come from calibrating
   the evaluator, which happens later in the run. At the opening score they have
