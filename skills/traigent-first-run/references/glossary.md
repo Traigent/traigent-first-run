@@ -193,6 +193,40 @@ The lines under each pillar on the card
     the settings that matter most - whether the settings known to move results
                                  for this kind of agent are among the ones being
                                  tried.
+  Words the evidence beside those lines uses:
+    settings document          - the file listing which of your agent's settings
+                                 the search may vary, and which of them the
+                                 agent actually reads. The run writes one after
+                                 a search completes; a file left by an earlier
+                                 run is deliberately not counted, so an opening
+                                 score usually reports that none was provided
+                                 yet rather than that your agent has none.
+    tuning set / held-back test set
+                               - two halves of your examples. The search is
+                                 allowed to see the first half while it looks
+                                 for a better configuration; the second half is
+                                 kept back so the final number is measured on
+                                 examples the search never optimized against.
+                                 Without it, a good score may only mean the
+                                 search fitted the examples it could see. It is
+                                 the train/test idea, except nothing is trained:
+                                 Traigent searches configurations rather than
+                                 fitting a model. The guide's files call the
+                                 second half the holdout; the card says held
+                                 back, and they are the same rows.
+    good-vs-bad examples       - answers already known to be right and known to
+                                 be wrong, run through your evaluator to see how
+                                 far apart it scores them. Near 1.00 it
+                                 separates quality cleanly; a narrow gap means
+                                 any improvement the run reports could sit
+                                 inside the evaluator's own noise. They come
+                                 from calibration, later in the run.
+    undeclared row             - a row that does not record where it came from.
+                                 It is not counted against you, but it cannot be
+                                 counted for you either: nothing says whether it
+                                 reflects real use, so it cannot be evidence
+                                 about real traffic.
+
   Why two of them are usually blank at the start: "checked on known-good and
   known-bad" and "separates good answers from bad" both come from calibrating
   the evaluator, which happens later in the run. At the opening score they have

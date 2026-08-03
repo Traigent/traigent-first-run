@@ -320,7 +320,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             self.assertNotIn("dataset-no-expected-outputs", conditions)
             self.assertNotIn("dataset-integrity-fail", conditions)
             power = _dataset_subscore(score, "power")
-            self.assertIn("50 tuning / 50 holdout", power["evidence"])
+            self.assertIn("50 to tune on / 50 held back", power["evidence"])
             self.assertIn("50 examples", power["evidence"])
 
     def test_reference_free_input_only_split_still_detects_leakage(self) -> None:
@@ -704,7 +704,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
             self.assertEqual(power["value"], 22.0)
-            self.assertIn("50 tuning / 50 holdout", power["evidence"])
+            self.assertIn("50 to tune on / 50 held back", power["evidence"])
 
     def test_an_overlapping_split_still_scores_through_the_no_split_branch(
         self,
@@ -729,7 +729,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
-            self.assertIn("no declared tuning/holdout split", power["evidence"])
+            self.assertIn("no tuning set and held-back test set", power["evidence"])
             conditions = {cap["condition"] for cap in score["caps"]}
             self.assertIn("dataset-tune-holdout-overlap", conditions)
 
@@ -751,7 +751,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
             self.assertEqual(power["value"], 17.6)
-            self.assertIn("no declared tuning/holdout split", power["evidence"])
+            self.assertIn("no tuning set and held-back test set", power["evidence"])
 
     def test_old_preflight_json_without_malformed_count_fails_loudly(self) -> None:
         """Version-skew guard: integrity FAIL without `malformed_rows` must not
