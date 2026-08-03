@@ -85,9 +85,9 @@ agent call path:
    when no baseline exists does the assistant prepare a credible six-configuration sweep. The
    assistant automatically uses the vendor the project already has configured when one is already
    available; the user only gets asked to choose if there is no usable vendor already configured
-   for the project. The user sees its best
-   configuration, tuning accuracy, cost, latency, trial/failure count, and a short plain-language
-   note for each knob before any Traigent account/key request.
+   for the project. The user sees its best configuration, primary tuning metric, cost, latency,
+   trial/failure count, and a short plain-language note for each knob before any Traigent
+   account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
    trials (12 by default) from a materially larger search space.
@@ -101,12 +101,6 @@ test data set aside so the best config found by tuning can be checked on unseen 
 than scored on the same rows it optimized against. Include all calls in the combined
 approval. Trial counts and knob selection are assistant-owned implementation choices, not new user
 questions.
-
-Before each baseline and optimization run, give the user a short run card: which models will be
-tested, which knobs will vary, the explicit values for each knob, a one-line plain-language note
-for each knob, and the total combination count. On the enhanced run, repeat the baseline knobs and
-their notes, then add a short note for every new knob. Keep that summary concise and exact so the
-user can see what is about to be tested before any paid work starts.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

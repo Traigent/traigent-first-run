@@ -380,10 +380,12 @@ Only after the standard-library-only component checks:
    existing route. Prefer the vendor already implied by the project or current agent wiring, and
    select models from that vendor automatically. If no usable vendor is already implied by the
    project or current agent wiring, ask the user which vendor they want and try to configure it
-   automatically from the available credentials. If the chosen vendor setup cannot supply a usable
-   three-model lineup and the user already has a second supported direct provider credential, offer
-   that as the minimal fallback; otherwise stop with one clear mismatch and ask for help. Never
-   rewrite the model identifier or provider prefix merely to match an available key.
+   automatically from the available credentials. Only when the walkthrough must prepare a missing
+   baseline, require the chosen vendor to supply the three-model ladder. If it cannot and the user
+   already has a second supported direct-provider credential, offer that for the missing rung;
+   otherwise stop with one clear mismatch and ask for help. A user-owned baseline requires only its
+   existing route and credential. Never rewrite the model identifier or provider prefix merely to
+   match an available key.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
@@ -434,6 +436,10 @@ generated six-row sweep, one broader bounded optimization, and baseline winner v
 winner validation comparison. Follow the complete disclosure checklist in
 `references/run-safety.md`; it owns the sizing, objectives, decision rule, model-space, cost,
 recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling by default.
+
+Immediately before each paid baseline and enhanced run, show a short run card with the model ids,
+each varying knob and its explicit values, one plain-language note per knob, and the total
+combination count. For the enhanced card, repeat the baseline knobs and label every addition new.
 
 Put the runtime estimate and the default **30-minute completion target** in the same approval as the
 money ceiling. This is an estimate and an up-front sizing target, not a hard wall-clock guarantee.
@@ -494,9 +500,9 @@ account request:
 
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration, tuning accuracy, cost, latency, executed and failed trial counts,
-  and any Pareto note if cost and accuracy trade off. Report cost as `not measured` when the
-  provider or SDK does not supply it.
+- Show the best configuration, the primary tuning metric by its actual name, cost, latency,
+  executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
+  cost or latency as `not measured` when the provider or SDK does not supply it.
 - Explain each baseline knob in one plain-language note.
 - State that no validation comparison or improvement claim exists yet and that this phase created no
   portal experiment.
@@ -533,9 +539,6 @@ per-input request-diff probe and explicit outside-request claims in
 space is final, follow that reference's freeze/remove/persist lifecycle. Save
 `traigent-runs/config-space.json` only after this search returns nonzero trials, from the exact
 space it received, and use only that current-run document for the closing `--config-space` score.
-
-When presenting the enhanced run, repeat the baseline knob notes first, then explain added knobs
-in the same style and label them new.
 
 If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
 failure and one recommended recovery. Never fall back automatically to mock or synthetic results,

@@ -1722,6 +1722,7 @@ class SkillPackageTests(unittest.TestCase):
             "never the vendor's newest flagship",
             "the three-tier ladder applies only when this walkthrough supplies a missing baseline",
             "do not add cheaper tiers without the separate disclosure",
+            "a user-owned baseline requires only its existing route and credential",
             "preserve its exact model set",
             "a deliberately small enhancement",
             "a small slice of what traigent can drive, not its full capability",
@@ -2448,9 +2449,9 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
             "local fixed grid, not traigent choosing the trials",
-            "best configuration, tuning accuracy, cost, latency",
+            "primary tuning metric by its actual name",
             "executed and failed trial counts",
-            "cost as `not measured`",
+            "cost or latency as `not measured`",
             "no validation comparison or improvement claim exists yet",
             "this phase created no portal experiment",
             "this checkpoint is a valid place to stop",
@@ -2464,6 +2465,19 @@ class SkillPackageTests(unittest.TestCase):
             "for the generated walkthrough, run the credible small space as one local fixed grid",
             " ".join(SDK_EXECUTION.read_text().casefold().split()),
         )
+
+    def test_each_paid_run_has_an_exact_run_card(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "immediately before each paid baseline and enhanced run",
+            "model ids",
+            "each varying knob and its explicit values",
+            "one plain-language note per knob",
+            "total combination count",
+            "repeat the baseline knobs and label every addition new",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
 
     def test_final_report_layers_facts_limits_and_the_latest_next_action(
         self,
@@ -3963,7 +3977,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # Raising this number is allowed and is a decision: change it here,
         # with the reason, in the same commit as the guidance that needs it.
-        budget = 215_000
+        # PRs #125 and #126 add user-facing explanations for readiness evidence
+        # and exact pre-run cards. Those are new contract surface, not duplicated
+        # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
+        budget = 220_000
         self.assertLess(
             total,
             budget,

@@ -765,6 +765,14 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         )
         for name in ("easy", "medium", "hard", "very-hard")
     }
+    tuning_output_counts = {
+        name: sum(row["output"] == name for row in tuning)
+        for name in ("billing", "cancellation", "technical-support")
+    }
+    holdout_output_counts = {
+        name: sum(row["output"] == name for row in holdout)
+        for name in ("billing", "cancellation", "technical-support")
+    }
     if len(rows) != 28 or len(tuning) != 18 or len(holdout) != 10:
         raise ContractError(
             "generated dataset must contain 28 rows with an 18/10 split"
@@ -817,6 +825,8 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         "difficulty_counts": difficulty_counts,
         "tuning_difficulty_counts": tuning_difficulty_counts,
         "holdout_difficulty_counts": holdout_difficulty_counts,
+        "tuning_output_counts": tuning_output_counts,
+        "holdout_output_counts": holdout_output_counts,
         "coverage_branches": len({row["coverage"] for row in rows}),
         "provenance": "synthetic-walkthrough",
     }
@@ -1181,6 +1191,8 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
             != expected["tuning_difficulty_counts"]
             or generated["holdout_difficulty_counts"]
             != expected["holdout_difficulty_counts"]
+            or generated["tuning_output_counts"] != expected["tuning_output_counts"]
+            or generated["holdout_output_counts"] != expected["holdout_output_counts"]
         ):
             raise ContractError(
                 "partial scenario dataset counts violated its declaration"
