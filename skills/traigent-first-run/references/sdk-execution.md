@@ -211,7 +211,7 @@ from traigent.api.decorators import EvaluationOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
-FOLLOWUP_DATASET = str(RUN_DIR / "followup.jsonl")
+HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
@@ -928,13 +928,44 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Reporting the result
+## Validation and result checks
+
+```python
+def holdout_agent_input(input_data):
+    if isinstance(input_data, str):
+        return input_data
+    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
+        return input_data["message"]
+    raise TypeError(
+        "Holdout input does not match the inspected agent(message: str) contract"
+    )
+
+
+def evaluate_holdout(config: dict) -> tuple[float, float | None]:
+    scores = []
+    tracked_cost: float | None = 0.0
+    holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
+    for example in holdout.examples:
+        input_data = example.input_data
+        expected = example.expected_output
+        output, call_cost = call_agent(holdout_agent_input(input_data), config)
+        scores.append(task_score(output, expected, input_data))
+        if call_cost is None:
+            tracked_cost = None
+        elif tracked_cost is not None:
+            tracked_cost += call_cost
+    return sum(scores) / len(scores), tracked_cost
+```
 
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
 and direct portal links for every persisted run. If you later add a separate validation track,
 label it as follow-up evidence and keep it distinct from the baseline/enhanced comparison because
-small walkthrough datasets can overfit quickly.
+small walkthrough datasets can overfit quickly. If that later comparison is ever fully blind, call
+it sealed only when the split and labels were fixed and hidden from component design, tuning, and
+winner selection until the candidate was locked. If the assistant inspected or authored it,
+treat it as non-blind. The baseline, search, and holdout must use the same selected public
+evaluation path, using the same installed public `traigent.Dataset.from_jsonl` loader.
 
 Before reporting:
 

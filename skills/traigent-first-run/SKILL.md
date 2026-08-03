@@ -357,7 +357,7 @@ rather than the condition id:
   reference-requiring evaluator; disclose a reference-free method's absent independent answer key.
 - `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
   labeled `🛠️` substitute.
-- `dataset-split-overlap` - repair a disjoint split and make no generalization claim yet.
+- `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
@@ -458,6 +458,10 @@ approval and keep it process-only. Follow `references/run-safety.md` for SDK lim
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop.
+
+If that later comparison is ever made fully separated and blind, call it sealed only when the split
+and labels were fixed and hidden from component design, tuning, and winner selection until the
+candidate was locked. If the assistant inspected or authored it, treat it as non-blind.
 never call the walkthrough ceiling a hard provider-billing cap.
 
 The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
