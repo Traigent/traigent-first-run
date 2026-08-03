@@ -50,6 +50,12 @@ unversioned `traigent` package.
 - Never classify or announce the user's expertise level.
 - Name the actor truthfully: "I will prepare the walkthrough dataset" for assistant-created
   artifacts, and "Traigent will run the managed search" only for work the service performs.
+- The loaded guide source is not automatically the target project. Resolve the user-selected agent's
+  root before every write or run; guide-source artifacts never count as its results.
+- Before readiness or results, state and record `Target project: <absolute path> · Agent: <absolute
+  path>:<function or command>`. A mismatched resumed artifact is historical, never current.
+- A user-named external credential file is the selected handoff: after safety checks add only
+  missing keys there; never copy or re-request values. Otherwise use the target `.env`.
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
 - After task intent is anchored, put generated artifacts under `traigent-runs/`. If
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
@@ -77,7 +83,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX. In a Git worktree, run `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve the project-root `.gitignore` while ensuring it contains an effective `/.env` rule, then require `git -C "<project-root>" check-ignore -q -- .env` to succeed; stop before secret entry if the effective-ignore check fails. Open the full absolute `.env` path, not a relative path or vague popup, so the user can see which file to edit. Outside Git, do not create `.gitignore`. Then stop once for the local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
+| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named handoff or target `.env`; preserve existing values and comments, append only its missing provider key, and require `0600` before opening. Resolve its path relative to its Git worktree: root `.env` uses `ls-files --error-unmatch -- .env`, exit 0 means tracked and must stop, continue only on exit 1 with no match, and stop on any other status; require effective `/.env` rule and `check-ignore -q -- .env`. Otherwise use the exact `<credential-file-relative-path>` and equivalent ignore check; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. `run-safety.md` owns the exact checks. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
@@ -134,6 +140,9 @@ Perform safe, read-only discovery without asking for approval:
   environment - not the first one found. A tree can hold several, under names no convention
   covers (`env`, `.direnv`, `.tox`, a tool-managed path outside the project), and stage 5 cannot
   choose between candidates it was never told about.
+- Record the chosen target project's absolute root and the selected agent's absolute path plus
+  callable or command. When an old artifact names another target or agent, preserve it as
+  historical context but exclude it from this run's score and report.
 - Find LLM/model call sites and the smallest scoreable agent function.
 - Find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
   and outcome checks.
@@ -375,12 +384,10 @@ then update the latest recorded result without overwriting the opening one.
 
 Only after the standard-library-only component checks:
 
-1. Determine the current provider route from the agent's actual model call and configuration. Treat
-   discovered credential names only as an availability inventory; they never select or change an
-   existing route. Prefer the vendor already implied by the project or current agent wiring, and
-   select models from that vendor automatically. If no usable vendor is already implied by the
-   project or current agent wiring, ask the user which vendor they want and try to configure it
-   automatically from the available credentials. Only when the walkthrough must prepare a missing
+1. Determine the route from the selected agent, never the guide source. Treat credential names only
+   as an availability inventory: prefer the agent's configured vendor; if it has none, use the vendor in
+   the user-named credential source without asking them to re-enter it. If neither identifies one,
+   ask the user which vendor they want and try to configure it automatically. Only when the walkthrough must prepare a missing
    baseline, require the chosen vendor to supply the three-model ladder. If it cannot and the user
    already has a second supported direct-provider credential, offer that for the missing rung;
    otherwise stop with one clear mismatch and ask for help. A user-owned baseline requires only its
@@ -405,10 +412,11 @@ Only after the standard-library-only component checks:
 5. Run calibration deferred solely for a local installed dependency. Then run a fresh-process
    Traigent mock plumbing check only when every model call and external side effect is intercepted;
    exit it and never reuse that process for a real run.
-6. After all applicable free checks, create or minimally update `.env` per
-   `references/run-safety.md`: preserve every existing value and unrelated entry, add only the
-   blank selected-provider key, require mode `0600` on POSIX, and stop once for only that secret
-   locally. Do not request or route the Traigent key before the stage-7 baseline checkpoint.
+6. After all applicable free checks, create or minimally update `.env`—the selected credential
+   handoff per `references/run-safety.md`: the user-named external file, or otherwise the target
+   project's `.env`. Preserve every existing value and unrelated entry, add only a genuinely missing
+   selected-provider key, require mode `0600` on POSIX, and stop once for only that secret locally.
+   Do not request or route the Traigent key before the stage-7 baseline checkpoint.
 
 Before approval, explain the recipients and content using `references/run-safety.md`: the selected
 provider receives its normal model-call content; OpenRouter and every allowed upstream inference
@@ -500,6 +508,7 @@ spend from the same approved total.
 Immediately after it returns, show a **Local baseline checkpoint** before any Traigent-key or
 account request:
 
+- Start with the recorded target project and selected agent identity.
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
 - Show the best configuration, the primary tuning metric by its actual name, cost, latency,
@@ -520,11 +529,13 @@ seen a provider-backed result before being asked to create an account. Tell them
 access rather than the read-only default, because a read-only key can leave a paid connected run
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
-handoff and have the user enter credentials locally, never in chat. Use the same `.env` file.
-Open that project-root `.env` once, using the first available GUI editor; if that is unavailable,
-fall back to the IDE or editor already associated with this project directory, and if headless,
-print the full path and stop. Open it only so the user can add `TRAIGENT_API_KEY=` for the
-enhanced run. Then refresh/reopen it so the new line is visible, and follow
+handoff and have the user enter credentials locally, never in chat. Use the same selected
+credential file: the target-project `.env`, or the user-named external source already used for
+the baseline. Open that exact absolute path once, using the first available GUI editor; if that is
+unavailable, fall back to the IDE or editor already associated with the selected project directory,
+and if headless, print the full path and stop. Open it only so the user can add
+`TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same file so the new line is
+visible, and follow
 `references/run-safety.md` for the clickable registration link and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id

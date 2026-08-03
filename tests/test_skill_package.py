@@ -430,6 +430,43 @@ class SkillPackageTests(unittest.TestCase):
             "never rewrite the model identifier or provider prefix", skill_text
         )
 
+    def test_selected_agent_identity_prevents_cross_project_result_confusion(
+        self,
+    ) -> None:
+        """The guide source can be separate from the project being optimized."""
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        plan_text = " ".join(
+            (SKILL.parent / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "not automatically the project being optimized",
+            "at run time; never substitute",
+            "target project: <absolute path>",
+            "agent: <absolute path>:<function or command>",
+            "historical — different agent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide_text)
+        for phrase in (
+            "loaded guide source is not automatically the target project",
+            "guide-source artifacts never count as its results",
+            "a mismatched resumed artifact is historical, never current",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+        self.assertIn(
+            "target project and selected agent (absolute path plus function or command)",
+            plan_text,
+        )
+        safety_text = " ".join(
+            (SKILL.parent / "references" / "run-safety.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("credential-file-relative-path", safety_text)
+
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,
     ) -> None:
