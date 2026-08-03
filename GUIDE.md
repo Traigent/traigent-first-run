@@ -40,10 +40,11 @@ run, compare that identity with the recorded artifact. If it differs, label the 
 **historical — different agent** and do not quote its scores as the current result.
 
 An already-supplied local credential file is an availability inventory, not an agent selection. If
-the user explicitly identifies a different owner-only local file as the credential source for this
-run, use it read-only in the run process without printing, copying, or asking them to
-paste its values again. Keep the agent, dataset, evaluator, and run artifacts in the chosen
-project. If no such source was identified, use the chosen project's local `.env` handoff.
+the user explicitly identifies a different owner-only local file as the credential handoff for
+this run, use that same file for the run and, after its safety checks, add only a genuinely
+missing key there. Never print, copy, or ask them to paste a value already in it. Keep the agent,
+dataset, evaluator, and run artifacts in the chosen project. If no such source was identified,
+use the chosen project's local `.env` handoff.
 
 Use the bundled tools:
 

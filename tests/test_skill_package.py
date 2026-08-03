@@ -434,6 +434,9 @@ class SkillPackageTests(unittest.TestCase):
         """The guide source can be separate from the project being optimized."""
         guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         skill_text = " ".join(SKILL.read_text().casefold().split())
+        plan_text = " ".join(
+            (SKILL.parent / "assets" / "run-plan.md").read_text().casefold().split()
+        )
         for phrase in (
             "not automatically the project being optimized",
             "target project: <absolute path>",
@@ -449,6 +452,10 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
+        self.assertIn(
+            "target project and selected agent (absolute path plus function or command)",
+            plan_text,
+        )
 
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,

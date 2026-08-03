@@ -61,18 +61,17 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   Dependency installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
-- After every applicable free component, capability, and safe mock check, first check any local
-  credential file the user explicitly identified for this run. It is a read-only source: verify
-  its owner-only mode, then check only key presence. Do not copy or move its values into the target
-  project or ask the user to enter an already available key again. If no such source supplies the
-  selected provider, build one minimal target-project `.env` with only the missing selected-provider
-  entry blank. Preserve existing values, comments, unrelated keys, blank alternate-provider
-  entries, and any Traigent key already present. Before opening a target-project `.env`, require
-  mode `0600` on POSIX. In a Git worktree, run
-  `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop;
-  continue only on exit 1 with no match, and stop on any other status. Preserve the project-root
-  `.gitignore` while ensuring it contains an effective `/.env` rule, then require
-  `git -C "<project-root>" check-ignore -q -- .env` to succeed. Stop before secret entry if the
+- After every applicable free component, capability, and safe mock check, select the credential
+  handoff file: a local file the user explicitly identified for this run, or otherwise the
+  target-project `.env`. Verify its owner-only mode, check only key presence, and do not copy or
+  move its values into another file or ask the user to enter an already available key again.
+  Preserve existing values, comments, unrelated keys, blank alternate-provider entries, and any
+  Traigent key already present; add only the genuinely missing selected-provider entry. Before
+  opening it, require mode `0600` on POSIX. In that file's Git worktree, run
+  `git -C "<credential-file-worktree>" ls-files --error-unmatch -- .env`: exit 0 means tracked
+  and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve
+  that worktree's `.gitignore` while ensuring it contains an effective `/.env` rule, then require
+  `git -C "<credential-file-worktree>" check-ignore -q -- .env` to succeed. Stop before secret entry if the
   effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
   `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
   after the local baseline checkpoint.
