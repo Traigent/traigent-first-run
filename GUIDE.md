@@ -98,9 +98,8 @@ The assistant attempts to upload the completed baseline without rerunning it onl
 the installed SDK exposes a public exact sync id; otherwise that result remains local. Then it
 shows the baseline result and the connected enhanced result side by side, both with verified
 links, and compares the best configs and their measured tuning behavior directly. If you later add
-a separate validation track, treat it as a follow-up because small datasets can overfit quickly.
-Do not call that follow-up sealed unless the split and labels were fixed and hidden until the
-candidate was locked. If the assistant inspected or authored it, treat it as non-blind.
+an independent validation track, treat it as a later follow-up rather than part of this first run:
+small datasets can overfit quickly.
 Include all calls in the combined approval. Trial counts and knob selection are assistant-owned
 implementation choices, not new user questions.
 

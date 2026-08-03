@@ -10,7 +10,7 @@ Use this reference after component creation and before writing the run wrapper.
 4. Decorator contract
 5. Small baseline sweep
 6. Broader optimization
-7. Validation and result checks
+7. Result checks
 
 ## Capability discovery
 
@@ -127,10 +127,8 @@ evaluator-safe temperatures, with `prompt_style` and `self_check` fixed to one v
 only varying dimensions are model and temperature. If the strong tier is a reasoning model,
 temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
 reasoning calling convention pinned; either way, the baseline stays at six rows and the first
-result stays quick and cheap. On the 28-row walkthrough dataset, that baseline consumes 18 tuning
-rows split as 3 easy, 5 medium, 5 hard, and 5 very hard, while the held-back 10 rows are split as
-2 easy, 3 medium, 3 hard, and 2 very hard. The enhanced space keeps the identical model list and
-expands beyond
+result stays quick and cheap. The synthesized walkthrough dataset contains 18 tuning rows: 3 easy,
+5 medium, 5 hard, and 5 very hard. The enhanced space keeps the identical model list and expands beyond
 the baseline: once the baseline result is in, refine the swept values around its top rows - the
 one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
 rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced
@@ -211,7 +209,6 @@ from traigent.api.decorators import EvaluationOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
-HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
@@ -733,8 +730,8 @@ stop before baseline/search instead of scaling an untracked path.
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
 
-Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
-(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
+Keep the dataset path absolute, as `TUNING_DATASET` above already is (`str(RUN_DIR / "...")`).
+On the installed SDK (through 0.25.0) a *relative* dataset path that
 contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
 onto its own resolved parent by dataset validation and doubles into
 `.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
@@ -928,44 +925,16 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Validation and result checks
-
-```python
-def holdout_agent_input(input_data):
-    if isinstance(input_data, str):
-        return input_data
-    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
-        return input_data["message"]
-    raise TypeError(
-        "Holdout input does not match the inspected agent(message: str) contract"
-    )
-
-
-def evaluate_holdout(config: dict) -> tuple[float, float | None]:
-    scores = []
-    tracked_cost: float | None = 0.0
-    holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
-    for example in holdout.examples:
-        input_data = example.input_data
-        expected = example.expected_output
-        output, call_cost = call_agent(holdout_agent_input(input_data), config)
-        scores.append(task_score(output, expected, input_data))
-        if call_cost is None:
-            tracked_cost = None
-        elif tracked_cost is not None:
-            tracked_cost += call_cost
-    return sum(scores) / len(scores), tracked_cost
-```
+## Result checks
 
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
-and direct portal links for every persisted run. If you later add a separate validation track,
-label it as follow-up evidence and keep it distinct from the baseline/enhanced comparison because
-small walkthrough datasets can overfit quickly. If that later comparison is ever fully blind, call
-it sealed only when the split and labels were fixed and hidden from component design, tuning, and
-winner selection until the candidate was locked. If the assistant inspected or authored it,
-treat it as non-blind. The baseline, search, and holdout must use the same selected public
-evaluation path, using the same installed public `traigent.Dataset.from_jsonl` loader.
+and direct portal links for every persisted run. Put the two results side by side, explain the
+knob differences, and state what changed in the measured tuning behavior. The baseline and
+enhanced search must use the same selected public evaluation path and the same installed public
+`traigent.Dataset.from_jsonl` loader. This first-run comparison does not establish generalization
+or expected production improvement: a small tuning dataset can overfit. Consider independent
+validation later only when it would change a real decision.
 
 Before reporting:
 

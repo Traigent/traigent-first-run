@@ -432,8 +432,8 @@ Do not repeat a provider choice already resolved in stage 5; keep the paid-work 
 combined.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
-generated six-row sweep, one broader bounded optimization, and baseline winner versus enhanced
-winner validation comparison. Follow the complete disclosure checklist in
+generated six-row sweep, one broader bounded optimization, and a baseline-versus-enhanced tuning
+comparison. Follow the complete disclosure checklist in
 `references/run-safety.md`; it owns the sizing, objectives, decision rule, model-space, cost,
 recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling by default.
 
@@ -452,16 +452,13 @@ completed trials yields an honest partial result and a stop-or-bounded-continuat
 trials requires diagnosis.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
-trial target while preserving meaningful difficulty and a later comparison split; disclose any
+trial target while preserving meaningful difficulty coverage; disclose any
 reduction from the six-row baseline or 10-13-trial enhanced target. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop.
 
-If that later comparison is ever made fully separated and blind, call it sealed only when the split
-and labels were fixed and hidden from component design, tuning, and winner selection until the
-candidate was locked. If the assistant inspected or authored it, treat it as non-blind.
 never call the walkthrough ceiling a hard provider-billing cap.
 
 The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
@@ -509,8 +506,8 @@ account request:
   executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
   cost or latency as `not measured` when the provider or SDK does not supply it.
 - Explain each baseline knob in one plain-language note.
-- State that no validation comparison or improvement claim exists yet and that this phase created no
-  portal experiment.
+- State that no generalization or production-improvement claim exists yet and that this phase
+  created no portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
   exact baseline upload without rerunning it when the installed public API supports that, then run
   the connected enhanced optimization.

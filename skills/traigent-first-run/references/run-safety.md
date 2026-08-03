@@ -454,8 +454,8 @@ paid/provider work, show one concise approval for the full planned first run:
 
 - The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
   or generated six-row sweep, one broader optimization, and baseline winner versus enhanced winner
-  validation comparison.
-- Tuning/validation rows, validation visibility, maximum trials, and approximate calls.
+  tuning comparison.
+- Tuning rows, their known limitations, maximum trials, and approximate calls.
 - The primary metric; objective directions and weights; fixed baseline space and added enhanced
   controls; how Traigent chooses trials; and the rule for recommending among tradeoffs.
 - Approximate runtime and estimated spend.
@@ -475,7 +475,7 @@ Ask about a larger/longer run only if the user prefers the expanded scope.
 Use the installed SDK's default per-optimization cost limit unless it is greater than the
 walkthrough's remaining total ceiling; then lower it for that process. Do not persist
 `TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process. The SDK enforces its
-optimization-call limit, but it does not yet share one cumulative budget with judge and holdout
+optimization-call limit, but it does not yet share one cumulative budget with calibration and other
 calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
 cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
@@ -502,7 +502,7 @@ provider for the same task and data, with unchanged-or-lower call counts and com
 spend. Record the replacement. Any other change requires revised approval. If the user chose the
 model, never replace it silently; present the limitation and one recommended alternative.
 
-For manual live-probe and holdout calls, prefer cost returned in the provider's public response or
+For manual live-probe and other provider calls outside SDK-managed searches, prefer cost returned in the provider's public response or
 provider-reported response metadata. Do not recalculate a completed OpenRouter response with
 `litellm.completion_cost()`: a missing local model-map entry can raise after the provider has
 already billed the call. If cost is absent but usage proves a real call, mark it untracked and
@@ -623,7 +623,8 @@ Before claiming success, verify:
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to
     local-only during
     the run; any such degradation halted further paid work rather than surfacing only at the end.
-11. Tuning and validation results are separated, and validation visibility is named.
+11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
+    named before any generalization claim.
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.

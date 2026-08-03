@@ -312,7 +312,7 @@ class SkillPackageTests(unittest.TestCase):
             "llm-judge calibration",
             "preserved baseline or a generated six-row sweep",
             "one broader bounded optimization",
-            "baseline winner versus enhanced winner validation comparison",
+            "baseline-versus-enhanced tuning comparison",
         ):
             self.assertIn(paid_phase, skill_text)
 
@@ -324,9 +324,8 @@ class SkillPackageTests(unittest.TestCase):
             "## live provider probe", 1
         )[0]
         for phrase in (
-            "baseline winner versus enhanced winner validation comparison",
-            "tuning/validation rows",
-            "validation visibility",
+            "baseline winner versus enhanced winner tuning comparison",
+            "tuning rows, their known limitations",
             "objective directions and weights",
             "fixed baseline space and added enhanced controls",
             "how traigent chooses trials",
@@ -1841,7 +1840,6 @@ class SkillPackageTests(unittest.TestCase):
             'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
             'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
-            'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
             "save_to=BASELINE_RESULTS",
             "save_to=OPTIMIZED_RESULTS",
             "ObjectiveSchema.from_objectives(",
@@ -1855,6 +1853,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
+        self.assertNotIn("HOLDOUT_DATASET", text)
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
@@ -2000,7 +1999,7 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
             call_agent("task", {})
 
-    def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
+    def test_sdk_comparison_uses_one_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
         functions = {}
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
@@ -2018,103 +2017,13 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "adapter around the preserved evaluator",
             "installed sdk's documented public `metric_functions` contract",
-            "baseline, search, and holdout must use the same selected public evaluation path",
+            "baseline and enhanced search must use the same selected public evaluation path",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
         self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
-        self.assertIn('HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")', text)
-        self.assertIn("def holdout_agent_input(input_data)", text)
-
-        holdout_node = functions["evaluate_holdout"]
-        holdout_module = ast.fix_missing_locations(
-            ast.Module(
-                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
-            )
-        )
-        examples = [
-            SimpleNamespace(
-                input_data="classify this",
-                expected_output="urgent",
-                metadata={
-                    "id": "case-1",
-                    "source": "reviewed",
-                    "difficulty": "hard",
-                    "coverage": "priority",
-                    "split": "holdout",
-                    "metadata": {"rubric_branch": "priority"},
-                },
-            ),
-            SimpleNamespace(
-                input_data={
-                    "message": "classify that",
-                },
-                expected_output="normal",
-                metadata={},
-            ),
-        ]
-        loaded_paths = []
-        agent_calls = []
-        scorer_calls = []
-
-        class Dataset:
-            @staticmethod
-            def from_jsonl(path):
-                loaded_paths.append(path)
-                return SimpleNamespace(examples=examples)
-
-        def call_agent(message, config):
-            agent_calls.append((message, config))
-            return "urgent" if message == "classify this" else "normal", 0.25
-
-        def task_score(output, expected, input_data):
-            scorer_calls.append((output, expected, input_data))
-            return 1.0
-
-        namespace = {
-            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
-            "call_agent": call_agent,
-            "task_score": task_score,
-            "traigent": SimpleNamespace(Dataset=Dataset),
-        }
-        exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
-
-        config = {"model": "preserved-current-model"}
-        score, cost = namespace["evaluate_holdout"](config)
-
-        self.assertEqual(score, 1.0)
-        self.assertEqual(cost, 0.5)
-        self.assertEqual(loaded_paths, ["/project/traigent-runs/holdout.jsonl"])
-        self.assertEqual(
-            agent_calls,
-            [("classify this", config), ("classify that", config)],
-        )
-        self.assertEqual(
-            scorer_calls,
-            [
-                (
-                    "urgent",
-                    examples[0].expected_output,
-                    "classify this",
-                ),
-                (
-                    "normal",
-                    examples[1].expected_output,
-                    examples[1].input_data,
-                ),
-            ],
-        )
-
-        untracked_costs = iter((0.25, None))
-
-        def call_agent_with_untracked_cost(message, config):
-            output = "urgent" if message == "classify this" else "normal"
-            return output, next(untracked_costs)
-
-        namespace["call_agent"] = call_agent_with_untracked_cost
-        score, cost = namespace["evaluate_holdout"](config)
-        self.assertEqual(score, 1.0)
-        self.assertIsNone(cost)
+        self.assertNotIn("HOLDOUT_DATASET", text)
+        self.assertNotIn("def evaluate_holdout", text)
 
     def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -2452,7 +2361,7 @@ class SkillPackageTests(unittest.TestCase):
             "primary tuning metric by its actual name",
             "executed and failed trial counts",
             "cost or latency as `not measured`",
-            "no validation comparison or improvement claim exists yet",
+            "no generalization or production-improvement claim exists yet",
             "this phase created no portal experiment",
             "this checkpoint is a valid place to stop",
             "baseline-only, not as a completed traigent optimization",
@@ -2502,7 +2411,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, safety)
 
-    def test_validation_visibility_is_never_overstated(self) -> None:
+    def test_optional_validation_is_not_part_of_the_default_run(self) -> None:
         documents = {
             "guide": " ".join((ROOT / "GUIDE.md").read_text().casefold().split()),
             "skill": " ".join(SKILL.read_text().casefold().split()),
@@ -2510,19 +2419,17 @@ class SkillPackageTests(unittest.TestCase):
         }
         for name, text in documents.items():
             with self.subTest(document=name):
-                self.assertIn("sealed", text)
-                self.assertIn("hidden", text)
-                self.assertIn("non-blind", text)
-                self.assertNotIn("assistant-authored untouched holdout", text)
+                self.assertNotIn("18 tuning / 10 validation", text)
+                self.assertNotIn("28 rows split", text)
 
         run_plan = " ".join(
             (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
         )
         for phrase in (
-            "validation rows and visibility",
+            "tuning rows, coverage, and known limitations",
             "local baseline checkpoint",
             "successful cli url, or `local-only` with reason",
-            "validation comparison - paired outcomes, visibility",
+            "baseline-versus-enhanced comparison - measured tuning behavior",
         ):
             self.assertIn(phrase, run_plan)
 
@@ -2607,7 +2514,7 @@ class SkillPackageTests(unittest.TestCase):
         """Guard the code itself, not only the prose around it."""
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
+        enhanced = enhanced[: enhanced.index("## Result checks")]
         self.assertIn('algorithm="auto"', enhanced)
         self.assertNotIn('algorithm="grid"', enhanced)
         self.assertNotIn('algorithm="random"', enhanced)
@@ -2673,7 +2580,7 @@ class SkillPackageTests(unittest.TestCase):
         baseline = text[text.index("## Small baseline sweep") :]
         baseline = baseline[: baseline.index("## Reading the result for insight")]
         connected = text[text.index("## Broader optimization") :]
-        connected = connected[: connected.index("## Validation and result checks")]
+        connected = connected[: connected.index("## Result checks")]
         self.assertIn('assert FIRST_RUN_PHASE == "baseline"', baseline)
         self.assertIn('assert FIRST_RUN_PHASE == "connected"', connected)
         self.assertIn(
@@ -2901,7 +2808,7 @@ class SkillPackageTests(unittest.TestCase):
         """
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
+        enhanced = enhanced[: enhanced.index("## Result checks")]
         serialize = enhanced.find("config_space_document(ENHANCED_SPACE)")
         search = enhanced.find("optimized_results = agent.optimize_sync(")
         write = enhanced.find("Path(CONFIG_SPACE_DOCUMENT).write_text(")
@@ -2997,7 +2904,7 @@ class SkillPackageTests(unittest.TestCase):
         producer = self._template_producer_namespace()
         text = SDK_EXECUTION.read_text()
         enhanced = text[text.index("## Broader optimization") :]
-        enhanced = enhanced[: enhanced.index("## Validation and result checks")]
+        enhanced = enhanced[: enhanced.index("## Result checks")]
         fence = re.search(r"```python\n(.*?)\n```", enhanced, re.DOTALL)
         self.assertIsNotNone(fence, "the enhanced search must still be a python fence")
         block = compile(fence.group(1), "<sdk-enhanced-search>", "exec")
