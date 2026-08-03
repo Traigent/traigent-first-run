@@ -430,7 +430,9 @@ class SkillPackageTests(unittest.TestCase):
             "never rewrite the model identifier or provider prefix", skill_text
         )
 
-    def test_selected_agent_identity_prevents_cross_project_result_confusion(self) -> None:
+    def test_selected_agent_identity_prevents_cross_project_result_confusion(
+        self,
+    ) -> None:
         """The guide source can be separate from the project being optimized."""
         guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -458,7 +460,10 @@ class SkillPackageTests(unittest.TestCase):
             plan_text,
         )
         safety_text = " ".join(
-            (SKILL.parent / "references" / "run-safety.md").read_text().casefold().split()
+            (SKILL.parent / "references" / "run-safety.md")
+            .read_text()
+            .casefold()
+            .split()
         )
         self.assertIn("credential-file-relative-path", safety_text)
 
