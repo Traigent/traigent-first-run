@@ -756,9 +756,7 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         for name in ("easy", "medium", "hard", "very-hard")
     }
     tuning_difficulty_counts = {
-        name: sum(
-            row["difficulty"] == name and row["split"] == "tune" for row in rows
-        )
+        name: sum(row["difficulty"] == name and row["split"] == "tune" for row in rows)
         for name in ("easy", "medium", "hard", "very-hard")
     }
     holdout_difficulty_counts = {
@@ -768,14 +766,12 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         for name in ("easy", "medium", "hard", "very-hard")
     }
     if len(rows) != 28 or len(tuning) != 18 or len(holdout) != 10:
-        raise ContractError("generated dataset must contain 28 rows with an 18/10 split")
+        raise ContractError(
+            "generated dataset must contain 28 rows with an 18/10 split"
+        )
     if len(set(ids)) != 28 or len(set(inputs)) != 28:
         raise ContractError(
             "generated dataset ids and normalized inputs must be unique"
-        )
-    if difficulty_counts != {name: 7 for name in difficulty_counts}:
-        raise ContractError(
-            "generated dataset must contain seven rows at each difficulty"
         )
     if tuning_difficulty_counts != {
         "easy": 3,

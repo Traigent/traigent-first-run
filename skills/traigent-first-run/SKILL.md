@@ -421,7 +421,8 @@ Select only after scoring the full dataset and before pricing the run. Record th
 report subset and full sizes, and state that the small first-run sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
-Do not create a separate provider-choice question; keep the approval request combined.
+Do not repeat a provider choice already resolved in stage 5; keep the paid-work approval request
+combined.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
 generated six-row sweep, one broader bounded optimization, and baseline winner versus enhanced
@@ -488,10 +489,10 @@ account request:
 
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration and tuning score, plus accuracy, cost, latency, executed and failed
-  trial counts, and any Pareto note if cost and accuracy trade off.
-- Use `or `not measured`` when provider or SDK cost is unavailable.
-- Explain each baseline knob in one plain note.
+- Show the best configuration, tuning accuracy, cost, latency, executed and failed trial counts,
+  and any Pareto note if cost and accuracy trade off. Report cost as `not measured` when the
+  provider or SDK does not supply it.
+- Explain each baseline knob in one plain-language note.
 - State that no validation comparison or improvement claim exists yet and that this phase created no
   portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an

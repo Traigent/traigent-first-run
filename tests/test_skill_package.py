@@ -133,6 +133,19 @@ class SkillPackageTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
 
+    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--", "traigent-runs"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(
+                f"could not inspect tracked run artifacts: {listed.stderr.strip()}"
+            )
+        self.assertEqual(listed.stdout.strip(), "")
+
     def test_user_facing_skill_language_does_not_label_the_user(self) -> None:
         combined = "\n".join(
             path.read_text() for path in SKILL_ROOT.rglob("*.md") if path.is_file()
@@ -279,7 +292,7 @@ class SkillPackageTests(unittest.TestCase):
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
         combined = f"{skill_text} {safety_text}"
         for phrase in (
-            "do not create a separate provider-choice question",
+            "do not repeat a provider choice already resolved in stage 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
             "one concise combined approval",
@@ -1701,7 +1714,7 @@ class SkillPackageTests(unittest.TestCase):
             "when the user already owns a baseline, do not apply this ladder",
             "adding a cheaper or stronger model changes the experiment",
             "for the generated ladder, use one model family",
-            "tiers are roles, not hardcoded ids",
+            "model slots are roles, not hardcoded ids",
         ):
             with self.subTest(document="sdk-execution", phrase=phrase):
                 self.assertIn(phrase, sdk)
@@ -2435,9 +2448,9 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
             "local fixed grid, not traigent choosing the trials",
-            "best configuration and tuning score",
+            "best configuration, tuning accuracy, cost, latency",
             "executed and failed trial counts",
-            "or `not measured`",
+            "cost as `not measured`",
             "no validation comparison or improvement claim exists yet",
             "this phase created no portal experiment",
             "this checkpoint is a valid place to stop",
