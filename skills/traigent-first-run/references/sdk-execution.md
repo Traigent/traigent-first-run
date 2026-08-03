@@ -211,7 +211,7 @@ from traigent.api.decorators import EvaluationOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
-HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
+FOLLOWUP_DATASET = str(RUN_DIR / "followup.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
@@ -744,8 +744,8 @@ Generate `task_score` as an adapter around the preserved evaluator using the ins
 documented public `metric_functions` contract; the example reflects the inspected three-argument
 contract. Do not infer aliases or positional fallbacks from SDK internals. When grading requires
 example metadata or full control of agent execution, use the installed SDK's public custom
-evaluator instead. The baseline, search, and holdout must use the same selected public evaluation
-path.
+evaluator instead. The baseline, search, and any later comparison run must use the same selected
+public evaluation path.
 
 ## Small baseline sweep
 
@@ -928,57 +928,13 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Validation and result checks
+## Reporting the result
 
-Evaluate the selected small-sweep configuration and selected enhanced configuration on the
-held-back validation set with the same agent path and evaluator. Call it a sealed holdout only when
-the split and labels were fixed and hidden from component design, tuning, and winner selection
-until the candidate was locked. If the assistant inspected or authored it, report non-blind
-validation instead. This check is not another optimization search. Generate
-`holdout_agent_input` from the installed public loader's observed
-`input_data` shape and the inspected agent signature. The canonical `input`/`output` JSONL shape
-loads a scalar; the mapping branch below is only for the example agent's explicit `message` input
-contract, not an SDK alias:
-
-```python
-def holdout_agent_input(input_data) -> str:
-    if isinstance(input_data, str):
-        return input_data
-    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
-        return input_data["message"]
-    raise TypeError(
-        "Holdout input does not match the inspected agent(message: str) contract"
-    )
-
-
-def evaluate_holdout(config: dict) -> tuple[float, float | None]:
-    scores = []
-    tracked_cost: float | None = 0.0
-    holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
-    for example in holdout.examples:
-        input_data = example.input_data
-        expected = example.expected_output
-        output, call_cost = call_agent(holdout_agent_input(input_data), config)
-        scores.append(task_score(output, expected, input_data))
-        if call_cost is None:
-            tracked_cost = None
-        elif tracked_cost is not None:
-            tracked_cost += call_cost
-    return sum(scores) / len(scores), tracked_cost
-
-
-baseline_holdout_score, baseline_holdout_cost = evaluate_holdout(
-    baseline_results.best_config
-)
-winner_holdout_score, winner_holdout_cost = evaluate_holdout(
-    optimized_results.best_config
-)
-```
-
-Before each holdout batch, ensure its conservative estimate fits the one remaining total. Add
-tracked holdout costs to the reported walkthrough total. Loading holdout through the same
-installed public `traigent.Dataset.from_jsonl` loader used for tuning preserves the SDK's
-normalization semantics.
+Report the selected baseline configuration and the selected enhanced configuration on the tuning
+evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
+and direct portal links for every persisted run. If you later add a separate validation track,
+label it as follow-up evidence and keep it distinct from the baseline/enhanced comparison because
+small walkthrough datasets can overfit quickly.
 
 Before reporting:
 
@@ -992,11 +948,10 @@ assert optimized_results.cloud_url is not None, "optimization is not available i
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
 returned all six intended distinct rows including its initial configuration. For an explicitly
-approved reduced plan, verify the disclosed lower count and initial configuration instead. Verify
-that the enhanced run returned 10-13 rows, the disclosed reduced target, or a concrete shortfall
-reason. Inspect failed trials, cost tracking, truncation, declared measures, stop reason, and
-persistence status as defined in `run-safety.md`. The baseline portal URL, when exact sync was
-supported, comes from the successful sync JSON; otherwise label it local-only. Keep and link every
-experiment actually persisted. Portal experiment deletion is never walkthrough teardown and
-requires a later explicit user request. Do not apply the best configuration automatically. Export
-it as a candidate and ask before any production change.
+approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
+failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
+as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from
+the successful sync JSON; otherwise label it local-only. Keep and link every experiment actually
+persisted. Portal experiment deletion is never walkthrough teardown and requires a later explicit
+user request. Do not apply the best configuration automatically. Export it as a candidate and ask
+before any production change.

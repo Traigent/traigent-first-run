@@ -95,14 +95,12 @@ agent call path:
    trials (12 by default) from a materially larger search space.
 
 The assistant attempts to upload the completed baseline without rerunning it only when the
-installed SDK exposes a public exact sync id; otherwise that result remains local. Then it compares
-the two selected configurations on held-back validation data. That validation is called sealed only
-when its split and labels were hidden until the candidate was locked; assistant-inspected or
-assistant-authored data is explicitly non-blind. In plain language, think of that split as
-test data set aside so the best config found by tuning can be checked on unseen examples rather
-than scored on the same rows it optimized against. Include all calls in the combined
-approval. Trial counts and knob selection are assistant-owned implementation choices, not new user
-questions.
+the installed SDK exposes a public exact sync id; otherwise that result remains local. Then it
+shows the baseline result and the connected enhanced result side by side, both with verified
+links, and compares the best configs and their measured tuning behavior directly. If you later add
+a separate validation track, treat it as a follow-up because small datasets can overfit quickly.
+Include all calls in the combined approval. Trial counts and knob selection are assistant-owned
+implementation choices, not new user questions.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
@@ -120,7 +118,8 @@ Always report the component provenance:
 - `🛠️` generated walkthrough substitute.
 
 If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not
-evidence of expected production performance. A synthetic holdout is still synthetic evidence.
+evidence of expected production performance. Any walkthrough-only substitute is still walkthrough
+evidence.
 
 Keep every experiment actually persisted in the portal and finish with its verified direct link.
 Label an unsynced baseline local-only. Do not delete portal experiments as walkthrough cleanup;
