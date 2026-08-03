@@ -1090,26 +1090,9 @@ def check_dataset(
         *(values for name, values in splits.items() if name in holdout_names)
     )
     overlap = tune_inputs & holdout_inputs
-    if overlap:
-        emit("dataset-split", FAIL, f"{len(overlap)} inputs overlap tuning and holdout")
-    elif tune_inputs and holdout_inputs:
-        emit("dataset-split", PASS, "tuning and holdout inputs are disjoint")
-        tuning_count = sum(
-            count for name, count in split_counts.items() if name in tune_names
-        )
-        holdout_count = sum(
-            count for name, count in split_counts.items() if name in holdout_names
-        )
-        tuning_labelled = sum(
-            count for name, count in labelled_split_counts.items() if name in tune_names
-        )
-        holdout_labelled = sum(
-            count
-            for name, count in labelled_split_counts.items()
-            if name in holdout_names
-        )
+
+    def emit_tuning_size(tuning_count: int, tuning_labelled: int) -> None:
         tuning_scoreable = tuning_count if reference_free else tuning_labelled
-        holdout_scoreable = holdout_count if reference_free else holdout_labelled
         tuning_suffix = (
             ""
             if tuning_scoreable == tuning_count
@@ -1136,6 +1119,32 @@ def check_dataset(
                 "readiness rates comparison size separately",
                 tuning_metrics,
             )
+
+    if overlap:
+        emit("dataset-split", FAIL, f"{len(overlap)} inputs overlap tuning and holdout")
+    elif tune_inputs and holdout_inputs:
+        emit(
+            "dataset-split",
+            PASS,
+            "tuning and holdout inputs are disjoint",
+            {"kind": "tuning-and-holdout"},
+        )
+        tuning_count = sum(
+            count for name, count in split_counts.items() if name in tune_names
+        )
+        holdout_count = sum(
+            count for name, count in split_counts.items() if name in holdout_names
+        )
+        tuning_labelled = sum(
+            count for name, count in labelled_split_counts.items() if name in tune_names
+        )
+        holdout_labelled = sum(
+            count
+            for name, count in labelled_split_counts.items()
+            if name in holdout_names
+        )
+        emit_tuning_size(tuning_count, tuning_labelled)
+        holdout_scoreable = holdout_count if reference_free else holdout_labelled
         holdout_metrics = {
             "holdout_rows": holdout_count,
             "holdout_labelled_rows": holdout_labelled,
@@ -1166,6 +1175,20 @@ def check_dataset(
             holdout_detail,
             holdout_metrics,
         )
+    elif tune_inputs:
+        tuning_count = sum(
+            count for name, count in split_counts.items() if name in tune_names
+        )
+        tuning_labelled = sum(
+            count for name, count in labelled_split_counts.items() if name in tune_names
+        )
+        emit(
+            "dataset-split",
+            PASS,
+            "tuning-only dataset; no independent validation split was declared",
+            {"kind": "tuning-only"},
+        )
+        emit_tuning_size(tuning_count, tuning_labelled)
     else:
         emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
 

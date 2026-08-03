@@ -200,8 +200,9 @@ The lines under each pillar on the card
                                  run is deliberately not counted, so an opening
                                  score usually reports that none was provided
                                  yet rather than that your agent has none.
-    tuning set / held-back test set
-                               - two halves of your examples. The search is
+    optional tuning set / held-back test set
+                               - when your project already has a separate test
+                                 set, two halves of your examples. The search is
                                  allowed to see the first half while it looks
                                  for a better configuration; the second half is
                                  kept back so the final number is measured on
@@ -210,9 +211,8 @@ The lines under each pillar on the card
                                  search fitted the examples it could see. It is
                                  the train/test idea, except nothing is trained:
                                  Traigent searches configurations rather than
-                                 fitting a model. The guide's files call the
-                                 second half the holdout; the card says held
-                                 back, and they are the same rows.
+                                 fitting a model. This is optional follow-up
+                                 evidence, not part of the default first run.
     good-vs-bad examples       - answers already known to be right and known to
                                  be wrong, run through your evaluator to see how
                                  far apart it scores them. Near 1.00 it

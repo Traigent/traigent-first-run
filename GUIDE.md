@@ -94,12 +94,13 @@ agent call path:
    contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
    trials (12 by default) from a materially larger search space.
 
-The assistant attempts to upload the completed baseline without rerunning it only when the
-the installed SDK exposes a public exact sync id; otherwise that result remains local. Then it
-shows the baseline result and the connected enhanced result side by side, both with verified
-links, and compares the best configs and their measured tuning behavior directly. If you later add
-an independent validation track, treat it as a later follow-up rather than part of this first run:
-small datasets can overfit quickly.
+The assistant uploads the completed baseline without rerunning it only when the installed SDK
+exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline
+result and the connected enhanced result side by side, with a verified portal link for every
+persisted run and an explicit `local-only` label for an unsynced baseline, and compares the best
+configs and their measured tuning behavior directly. If you later add an independent validation
+track, treat it as a later follow-up rather than part of this first run: small datasets can
+overfit quickly.
 Include all calls in the combined approval. Trial counts and knob selection are assistant-owned
 implementation choices, not new user questions.
 

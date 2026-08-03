@@ -1256,6 +1256,24 @@ def score_dataset(
         if effective < split_floor:
             prefix = f"{prefix}, {marker}"
         evidence = f"{prefix}; {evidence}"
+    elif facts.tuning_rows is not None:
+        tuning_labelled = (
+            facts.tuning_labelled_rows
+            if facts.tuning_labelled_rows is not None
+            else labelled
+        )
+        effective = scoreable(facts.tuning_rows, tuning_labelled)
+        points, evidence = size_points(effective)
+        points *= 0.8
+        if effective < facts.tuning_rows:
+            evidence = (
+                f"{facts.tuning_rows} tuning rows, {tuning_labelled} scoreable; "
+                f"{evidence}"
+            )
+        evidence = (
+            f"{facts.tuning_rows} tuning rows and no independent validation set, so the "
+            f"result would be measured on the same rows the search used; {evidence}"
+        )
     else:
         effective = scoreable(rows, labelled)
         points, evidence = size_points(effective)
@@ -2250,6 +2268,8 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     tuning_metrics = metrics.get("dataset-tuning-size", {})
     holdout_metrics = metrics.get("dataset-holdout-resolution", {})
+    split_metrics = metrics.get("dataset-split", {})
+    split_kind = split_metrics.get("kind")
     # A declared split whose per-split labelled counts are missing can only be
     # scored with the aggregate clamp, which demonstrably fails to lower the
     # score for a split whose labels sit entirely on one side. Refuse rather
@@ -2267,12 +2287,46 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # construction, so treating FAIL as a declared split would make every
     # overlapping dataset start refusing instead of scoring through the no-split
     # branch under its overlap cap. WARN means no split was found at all.
-    declares_split = (
-        "dataset-tuning-size" in metrics
-        or "dataset-holdout-resolution" in metrics
-        or statuses.get("dataset-split") == "PASS"
+    declares_tuning_only = split_kind == "tuning-only"
+    declares_tuning_and_holdout = (
+        "dataset-holdout-resolution" in metrics
+        or (
+            statuses.get("dataset-split") == "PASS"
+            and not declares_tuning_only
+        )
     )
-    if declares_split:
+    if declares_tuning_only:
+        def _usable_count(value: Any) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+        unusable = [
+            name
+            for name, source in (
+                ("tuning_rows", tuning_metrics),
+                ("tuning_labelled_rows", tuning_metrics),
+            )
+            if not _usable_count(source.get(name))
+        ]
+        if unusable or "dataset-holdout-resolution" in metrics:
+            problem = "/".join(unusable) or "holdout_rows"
+            raise PreflightInputError(
+                "tuning-only split metrics carry an unusable "
+                f"{problem} count - re-run preflight.py --json from the same "
+                "version as this script"
+            )
+        aggregate_labelled = provenance.get("labelled_rows")
+        tuning_labelled = tuning_metrics["tuning_labelled_rows"]
+        if (
+            aggregate_labelled is not None
+            and _usable_count(aggregate_labelled)
+            and tuning_labelled > aggregate_labelled
+        ):
+            raise PreflightInputError(
+                f"tuning-only split metrics report {tuning_labelled} labelled rows, "
+                f"more than the {aggregate_labelled} the dataset declares in total - "
+                "re-run preflight.py --json from the same version as this script"
+            )
+    elif declares_tuning_and_holdout:
         # Presence is not enough: score_dataset branches on value, so a key
         # carrying JSON null reaches the aggregate fallback exactly as an absent
         # key would. Demand a whole non-negative number for all four counts

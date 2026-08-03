@@ -154,6 +154,34 @@ def _declared_split_records(
     return records
 
 
+def _tuning_only_records() -> list[dict]:
+    return [
+        {
+            "check": "dataset-provenance",
+            "status": "PASS",
+            "detail": "declared sources: ['synthetic-walkthrough']",
+            "metrics": {
+                "rows": 18,
+                "labelled_rows": 18,
+                "synthetic": True,
+                "sources": ["synthetic-walkthrough"],
+            },
+        },
+        {
+            "check": "dataset-split",
+            "status": "PASS",
+            "detail": "tuning-only dataset; no independent validation split was declared",
+            "metrics": {"kind": "tuning-only"},
+        },
+        {
+            "check": "dataset-tuning-size",
+            "status": "PASS",
+            "detail": "18 tuning rows",
+            "metrics": {"tuning_rows": 18, "tuning_labelled_rows": 18},
+        },
+    ]
+
+
 def _split_rows(holdout_input: str) -> list[dict]:
     """50 labelled tuning rows against 50 labelled holdout rows.
 
@@ -219,6 +247,15 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             "--task-kind",
             "closed-label",
         )
+
+    def test_tuning_only_preflight_records_are_scored_as_tuning_only(self) -> None:
+        process = _run_readiness(_tuning_only_records())
+        self.assertEqual(process.returncode, 0, process.stderr)
+        score = json.loads(process.stdout)
+        dataset = next(pillar for pillar in score["pillars"] if pillar["name"] == "dataset")
+        power = next(subscore for subscore in dataset["subscores"] if subscore["name"] == "power")
+        self.assertIn("18 tuning rows and no independent validation set", power["evidence"])
+        self.assertNotIn("no tuning set", power["evidence"])
 
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:
         """C1: 150 real rows with inputs but no expected outputs.

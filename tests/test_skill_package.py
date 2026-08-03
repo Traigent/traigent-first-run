@@ -2416,11 +2416,29 @@ class SkillPackageTests(unittest.TestCase):
             "guide": " ".join((ROOT / "GUIDE.md").read_text().casefold().split()),
             "skill": " ".join(SKILL.read_text().casefold().split()),
             "sdk": " ".join(SDK_EXECUTION.read_text().casefold().split()),
+            "dataset": " ".join(
+                (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+                .read_text()
+                .casefold()
+                .split()
+            ),
+            "glossary": " ".join(
+                (SKILL_ROOT / "references" / "glossary.md")
+                .read_text()
+                .casefold()
+                .split()
+            ),
         }
         for name, text in documents.items():
             with self.subTest(document=name):
                 self.assertNotIn("18 tuning / 10 validation", text)
                 self.assertNotIn("28 rows split", text)
+                self.assertNotIn("create 28 examples by default", text)
+
+        dataset = documents["dataset"]
+        self.assertIn("create 18 tuning examples by default", dataset)
+        self.assertIn("do not create a held-back validation set", dataset)
+        self.assertIn("optional follow-up evidence", documents["glossary"])
 
         run_plan = " ".join(
             (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()

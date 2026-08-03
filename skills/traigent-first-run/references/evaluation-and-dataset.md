@@ -296,10 +296,10 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 28 examples by default:
-
-- 3 easy, 5 medium, 5 hard, 5 very hard for tuning.
-- 2 easy, 3 medium, 3 hard, 2 very hard for the held-back validation set.
+For a fully generated walkthrough, create 18 tuning examples by default: 3 easy, 5 medium,
+5 hard, and 5 very hard. Use those rows for the baseline and enhanced comparison; do not create a
+held-back validation set for the default first run. Independent validation is optional later, when
+the project already has that data or a real decision justifies collecting it.
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
