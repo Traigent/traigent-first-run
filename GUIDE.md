@@ -35,8 +35,8 @@ Use the bundled tools:
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
 When the minimal `.env` is created, treat it as a local handoff: if a GUI handler is available,
-open the file explicitly for the user; if the session is headless, print the absolute path and
-stop rather than implying a popup happened.
+open the full absolute path to that `.env` file; if the session is headless, print the same path
+and stop rather than implying a popup happened.
 
 ## User-facing promise
 

@@ -77,7 +77,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX. In a Git worktree, run `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve the project-root `.gitignore` while ensuring it contains an effective `/.env` rule, then require `git -C "<project-root>" check-ignore -q -- .env` to succeed; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Then stop once for the local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX. In a Git worktree, run `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve the project-root `.gitignore` while ensuring it contains an effective `/.env` rule, then require `git -C "<project-root>" check-ignore -q -- .env` to succeed; stop before secret entry if the effective-ignore check fails. Open the full absolute `.env` path, not a relative path or vague popup, so the user can see which file to edit. Outside Git, do not create `.gitignore`. Then stop once for the local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
@@ -488,10 +488,10 @@ account request:
 
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration and tuning score, plus tuning accuracy, cost, latency, executed and
-  failed trial counts, and any Pareto note if cost and accuracy trade off.
+- Show the best configuration and tuning score, plus accuracy, cost, latency, executed and failed
+  trial counts, and any Pareto note if cost and accuracy trade off.
 - Use `or `not measured`` when provider or SDK cost is unavailable.
-- Explain each baseline knob in one plain-language note.
+- Explain each baseline knob in one plain note.
 - State that no validation comparison or improvement claim exists yet and that this phase created no
   portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
@@ -528,8 +528,8 @@ space is final, follow that reference's freeze/remove/persist lifecycle. Save
 `traigent-runs/config-space.json` only after this search returns nonzero trials, from the exact
 space it received, and use only that current-run document for the closing `--config-space` score.
 
-When presenting the enhanced run, repeat the baseline knob notes first, then explain any added
-knobs in the same style and label them as new.
+When presenting the enhanced run, repeat the baseline knob notes first, then explain added knobs
+in the same style and label them new.
 
 If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
 failure and one recommended recovery. Never fall back automatically to mock or synthetic results,
