@@ -25,6 +25,26 @@ each invocation; do not depend on an exported variable surviving a later tool ca
 resolved directory ends in `skills/traigent-first-run`; after Agent Skill installation it may live
 elsewhere.
 
+## Keep the guide source separate from the project being optimized
+
+The clone or installed directory that supplies this guide is **not automatically the project being
+optimized**. Before making any change, identify the one project root that contains the agent the
+user chose to optimize. When the guide clone and that project are separate, use the chosen agent's
+project root for inspection, environments, `traigent-runs/`, tests, and every baseline or enhanced
+run. Do not create walkthrough artifacts for the guide clone or treat an old result beside the
+guide as a result for the user's agent.
+
+Before showing readiness, a baseline, or an optimization result, identify the target in one line:
+`Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
+run, compare that identity with the recorded artifact. If it differs, label the artifact
+**historical — different agent** and do not quote its scores as the current result.
+
+An already-supplied local credential file is an availability inventory, not an agent selection. If
+the user explicitly identifies a different owner-only local file as the credential source for this
+run, use it read-only in the run process without printing, copying, or asking them to
+paste its values again. Keep the agent, dataset, evaluator, and run artifacts in the chosen
+project. If no such source was identified, use the chosen project's local `.env` handoff.
+
 Use the bundled tools:
 
 - Static/free validation: invoke `scripts/preflight.py --help` through the selected Python using
@@ -34,12 +54,14 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
-When `.env` is created, treat it as a local handoff: open the project-root `.env` once, using the
-first available GUI editor; if that is unavailable, fall back to the IDE or editor already
-associated with this project directory, and if headless, print the full path and stop. Open it only
-so the user can add `TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen it so the new
-line is visible, and follow `references/run-safety.md` for the clickable registration link and the
-two 10-day windows.
+When a credential handoff is needed, use the selected credential source: normally the chosen
+project-root `.env`, or the external local file the user explicitly named for this run. Open that
+exact absolute path once, using the first available GUI editor; if that is unavailable, fall back
+to the IDE or editor associated with the chosen project directory, and if headless, print the full
+path and stop. Open it only for the missing key, never to duplicate one that is already available.
+For a new Traigent key after the baseline, refresh/reopen the same file so the new
+`TRAIGENT_API_KEY=` line is visible, then follow `references/run-safety.md` for the clickable
+registration link and the two 10-day windows.
 
 ## User-facing promise
 

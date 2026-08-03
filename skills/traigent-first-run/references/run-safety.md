@@ -61,17 +61,21 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   Dependency installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
   "today."
-- After every applicable free component, capability, and safe mock check, build one minimal `.env`
-  with only the missing selected-provider entry blank. Preserve existing values, comments,
-  unrelated keys, blank alternate-provider entries, and any Traigent key already present. Before
-  opening it, require mode `0600` on POSIX. In a Git worktree, run
+- After every applicable free component, capability, and safe mock check, first check any local
+  credential file the user explicitly identified for this run. It is a read-only source: verify
+  its owner-only mode, then check only key presence. Do not copy or move its values into the target
+  project or ask the user to enter an already available key again. If no such source supplies the
+  selected provider, build one minimal target-project `.env` with only the missing selected-provider
+  entry blank. Preserve existing values, comments, unrelated keys, blank alternate-provider
+  entries, and any Traigent key already present. Before opening a target-project `.env`, require
+  mode `0600` on POSIX. In a Git worktree, run
   `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop;
   continue only on exit 1 with no match, and stop on any other status. Preserve the project-root
   `.gitignore` while ensuring it contains an effective `/.env` rule, then require
   `git -C "<project-root>" check-ignore -q -- .env` to succeed. Stop before secret entry if the
   effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
-  `.gitignore`. Stop once for the provider secret. Add or request the Traigent key only after the
-  local baseline checkpoint.
+  `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
+  after the local baseline checkpoint.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
 - Hand the file off unambiguously. In a graphical session, launch the opener detached and
   non-blocking: pass the absolute `.env` path as one safely quoted argument, redirect stdin,

@@ -430,6 +430,26 @@ class SkillPackageTests(unittest.TestCase):
             "never rewrite the model identifier or provider prefix", skill_text
         )
 
+    def test_selected_agent_identity_prevents_cross_project_result_confusion(self) -> None:
+        """The guide source can be separate from the project being optimized."""
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "not automatically the project being optimized",
+            "target project: <absolute path>",
+            "agent: <absolute path>:<function or command>",
+            "historical — different agent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide_text)
+        for phrase in (
+            "loaded guide source is not automatically the target project",
+            "guide-source artifacts never count as its results",
+            "a mismatched resumed artifact is historical, never current",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,
     ) -> None:

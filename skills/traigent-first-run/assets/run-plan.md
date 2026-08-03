@@ -5,6 +5,7 @@ The coding assistant maintains this concise internal record at
 
 ## Objective and provenance
 
+- Target project and selected agent (absolute path plus function or command):
 - Task and primary success measure:
 - Unacceptable failure:
 - Agent (`real`/`limited`/`demo`/`missing`/`invalid`) - source, wrapper, evidence, gap:
