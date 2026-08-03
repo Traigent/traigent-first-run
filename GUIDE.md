@@ -93,8 +93,16 @@ The assistant attempts to upload the completed baseline without rerunning it onl
 installed SDK exposes a public exact sync id; otherwise that result remains local. Then it compares
 the two selected configurations on held-back validation data. That validation is called sealed only
 when its split and labels were hidden until the candidate was locked; assistant-inspected or
-assistant-authored data is explicitly non-blind. Include all calls in the combined approval. Trial
-counts and knob selection are assistant-owned implementation choices, not new user questions.
+assistant-authored data is explicitly non-blind. In plain language, think of that split as
+test data: rows kept aside so the best config found by tuning can be checked on unseen examples
+rather than scored on the same rows it optimized against. Include all calls in the combined
+approval. Trial counts and knob selection are assistant-owned implementation choices, not new user
+questions.
+
+Before each baseline and optimization run, give the user a short run card: which models will be
+tested, which knobs will vary, the explicit values for each knob, and the total combination count.
+Keep that summary concise and exact so the user can see what is about to be tested before any paid
+work starts.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

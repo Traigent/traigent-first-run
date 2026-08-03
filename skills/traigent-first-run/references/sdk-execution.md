@@ -113,13 +113,12 @@ phase ledger.
 
 ## Walkthrough model ladder
 
-This section applies only when the assistant prepares a missing baseline. Select its models as a
-ladder within the selected provider route, from model ids
-the route currently lists: one fast low-cost tier, one mid-tier workhorse, and one strong tier one
-step below the vendor's newest flagship. Do not select the flagship itself. Omitting it bounds
-generated-walkthrough cost and latency; do not imply it has no value. State that in the plan and
-price any flagship comparison separately. Every selected model runs in the baseline grid and must
-fit the approved time and cost envelope.
+This section applies only when the assistant prepares a missing baseline. Select its models from
+the provider route the user already has in hand: one fast low-cost tier, one mid-tier workhorse,
+and one strong tier one step below the vendor's newest flagship. Do not select the flagship
+itself. Omitting it bounds generated-walkthrough cost and latency; do not imply it has no value.
+State that in the plan and price any flagship comparison separately. Every selected model runs in
+the baseline grid and must fit the approved time and cost envelope.
 
 Both generated spaces use the same three models. Keep the baseline small: at most three models and
 at most three swept knobs, with no swept knob taking more than two values. In the walkthrough that
@@ -160,14 +159,14 @@ model changes the experiment and attribution, so do it only as a separately disc
 model comparison. Preserve an existing flagship and its calling convention exactly; never replace
 or augment it silently.
 
-For the generated ladder, use one model family. One family keeps the result readable - "the mid tier
-held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
-keeps a single company receiving the user's prompts, and keeps one bill. When several direct
-provider credentials exist, pick one family, name it and the reason in the plan, and let the
-combined approval - which already lists every data recipient - be the user's moment to switch. On
-the OpenRouter route one key reaches every family; still ladder within one family by default, and
-borrow a missing rung from a second family only when the chosen family lacks it, naming that
-extra upstream recipient in the approval.
+For the generated ladder, use one model family when the selected route can supply the full three
+rungs. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
+fraction of the cost" is a sentence the user can act on - keeps a single company receiving the
+user's prompts, and keeps one bill. If the chosen vendor route does not expose at least three
+usable rungs, ask the user to add a second vendor only for the missing rung(s), and name that extra
+upstream recipient in the approval. On the OpenRouter route one key reaches every family; still
+prefer one family by default, and borrow a missing rung from a second family only when the chosen
+family lacks it, naming that extra upstream recipient in the approval.
 
 Tiers are roles, not hardcoded ids: pick concrete model ids from what the selected route lists at
 run time, then verify each id is live and cost-tracked before scaling, as `run-safety.md` already
