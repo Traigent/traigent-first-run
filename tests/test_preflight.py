@@ -209,7 +209,9 @@ class StaticPreflightTests(unittest.TestCase):
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             MODULE.check_dataset(dataset)
 
-        split = next(result for result in MODULE.RESULTS if result.check == "dataset-split")
+        split = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-split"
+        )
         tuning = next(
             result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
         )
@@ -218,7 +220,9 @@ class StaticPreflightTests(unittest.TestCase):
             split.detail,
             "tuning-only dataset; no independent validation split was declared",
         )
-        self.assertEqual(tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18})
+        self.assertEqual(
+            tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}
+        )
         self.assertFalse(
             any(
                 result.check == "dataset-holdout-resolution"

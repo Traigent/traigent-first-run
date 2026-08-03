@@ -384,8 +384,12 @@ class DatasetScoringTests(unittest.TestCase):
                 tuning_labelled_rows=18,
             )
         )
-        power = next(subscore for subscore in pillar.subscores if subscore.name == "power")
-        self.assertIn("18 tuning rows and no independent validation set", power.evidence)
+        power = next(
+            subscore for subscore in pillar.subscores if subscore.name == "power"
+        )
+        self.assertIn(
+            "18 tuning rows and no independent validation set", power.evidence
+        )
         self.assertNotIn("no tuning set", power.evidence)
 
     def _power(self, facts: object) -> float:

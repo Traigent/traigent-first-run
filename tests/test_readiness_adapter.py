@@ -252,9 +252,15 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         process = _run_readiness(_tuning_only_records())
         self.assertEqual(process.returncode, 0, process.stderr)
         score = json.loads(process.stdout)
-        dataset = next(pillar for pillar in score["pillars"] if pillar["name"] == "dataset")
-        power = next(subscore for subscore in dataset["subscores"] if subscore["name"] == "power")
-        self.assertIn("18 tuning rows and no independent validation set", power["evidence"])
+        dataset = next(
+            pillar for pillar in score["pillars"] if pillar["name"] == "dataset"
+        )
+        power = next(
+            subscore for subscore in dataset["subscores"] if subscore["name"] == "power"
+        )
+        self.assertIn(
+            "18 tuning rows and no independent validation set", power["evidence"]
+        )
         self.assertNotIn("no tuning set", power["evidence"])
 
     def test_real_tuning_only_preflight_replays_into_readiness(self) -> None:
@@ -275,12 +281,16 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 ],
             )
             records = _preflight_records(dataset)
-            split = next(record for record in records if record["check"] == "dataset-split")
+            split = next(
+                record for record in records if record["check"] == "dataset-split"
+            )
             self.assertEqual(split["metrics"], {"kind": "tuning-only"})
             score = _score(dataset)
 
         power = _dataset_subscore(score, "power")
-        self.assertIn("18 tuning rows and no independent validation set", power["evidence"])
+        self.assertIn(
+            "18 tuning rows and no independent validation set", power["evidence"]
+        )
         self.assertNotIn("no tuning set", power["evidence"])
 
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:

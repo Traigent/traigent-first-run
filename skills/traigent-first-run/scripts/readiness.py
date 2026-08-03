@@ -2288,14 +2288,11 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # overlapping dataset start refusing instead of scoring through the no-split
     # branch under its overlap cap. WARN means no split was found at all.
     declares_tuning_only = split_kind == "tuning-only"
-    declares_tuning_and_holdout = (
-        "dataset-holdout-resolution" in metrics
-        or (
-            statuses.get("dataset-split") == "PASS"
-            and not declares_tuning_only
-        )
+    declares_tuning_and_holdout = "dataset-holdout-resolution" in metrics or (
+        statuses.get("dataset-split") == "PASS" and not declares_tuning_only
     )
     if declares_tuning_only:
+
         def _usable_count(value: Any) -> bool:
             return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
