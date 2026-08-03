@@ -34,9 +34,9 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
-When the minimal `.env` is created, treat it as a local handoff: if a GUI handler is available,
-open the full absolute path to that `.env` file; if the session is headless, print the same path
-and stop rather than implying a popup happened.
+When `.env` is created, treat it as a local handoff: if a GUI handler is available, open the
+project-root `.env`; if headless, print the path and stop. Reopen it on the enhanced run for the
+key.
 
 ## User-facing promise
 
@@ -86,8 +86,7 @@ agent call path:
    assistant automatically uses the vendor the project already has configured when one is already
    available; the user only gets asked to choose if there is no usable vendor already configured
    for the project. The user sees its best configuration, primary tuning metric, cost, latency,
-   trial/failure count, and a short plain-language note for each knob before any Traigent
-   account/key request.
+   trial/failure count, and a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
    trials (12 by default) from a materially larger search space.

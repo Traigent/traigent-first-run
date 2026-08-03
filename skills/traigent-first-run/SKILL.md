@@ -518,7 +518,8 @@ seen a provider-backed result before being asked to create an account. Tell them
 access rather than the read-only default, because a read-only key can leave a paid connected run
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
-handoff and have the user enter credentials locally, never in chat.
+handoff and have the user enter credentials locally, never in chat. Use the same `.env` file.
+Follow `references/run-safety.md`.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a
