@@ -456,6 +456,10 @@ class SkillPackageTests(unittest.TestCase):
             "target project and selected agent (absolute path plus function or command)",
             plan_text,
         )
+        safety_text = " ".join(
+            (SKILL.parent / "references" / "run-safety.md").read_text().casefold().split()
+        )
+        self.assertIn("credential-file-relative-path", safety_text)
 
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,

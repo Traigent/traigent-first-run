@@ -50,14 +50,12 @@ unversioned `traigent` package.
 - Never classify or announce the user's expertise level.
 - Name the actor truthfully: "I will prepare the walkthrough dataset" for assistant-created
   artifacts, and "Traigent will run the managed search" only for work the service performs.
-- The loaded guide source is not automatically the target project. Resolve the user-selected
-  agent's root before every write or run; guide-source artifacts never count as its results.
-- Before readiness or results, state and record `Target project: <absolute path> · Agent:
-  <absolute path>:<function or command>`. A mismatched resumed artifact is historical, never
-  current.
-- A user-named external credential file is the selected credential handoff: after the safety checks,
-  add only genuinely missing keys there and never copy or re-request its values. Otherwise use the
-  target project's `.env` as `run-safety.md` defines.
+- The loaded guide source is not automatically the target project. Resolve the user-selected agent's
+  root before every write or run; guide-source artifacts never count as its results.
+- Before readiness or results, state and record `Target project: <absolute path> · Agent: <absolute
+  path>:<function or command>`. A mismatched resumed artifact is historical, never current.
+- A user-named external credential file is the selected handoff: after safety checks add only
+  missing keys there; never copy or re-request values. Otherwise use the target `.env`.
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
 - After task intent is anchored, put generated artifacts under `traigent-runs/`. If
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
@@ -85,7 +83,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named external credential handoff, or otherwise the target project's `.env`; preserve existing values and comments, append only its genuinely missing selected-provider key, and require `0600` before opening. In the file's own Git worktree, `ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match; stop on any other status. Ensure an effective `/.env` rule and `check-ignore -q -- .env`; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. `run-safety.md` owns the exact checks. Add or request the Traigent key only after the baseline checkpoint. |
+| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named handoff or target `.env`; preserve existing values and comments, append only its missing provider key, and require `0600` before opening. Resolve its path relative to its Git worktree: root `.env` uses `ls-files --error-unmatch -- .env`, exit 0 means tracked and must stop, continue only on exit 1 with no match, and stop on any other status; require effective `/.env` rule and `check-ignore -q -- .env`. Otherwise use the exact `<credential-file-relative-path>` and equivalent ignore check; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. `run-safety.md` owns the exact checks. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |

@@ -67,12 +67,18 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   move its values into another file or ask the user to enter an already available key again.
   Preserve existing values, comments, unrelated keys, blank alternate-provider entries, and any
   Traigent key already present; add only the genuinely missing selected-provider entry. Before
-  opening it, require mode `0600` on POSIX. In that file's Git worktree, run
+  opening it, require mode `0600` on POSIX. Resolve the selected handoff file relative to its Git
+  worktree as `<credential-file-relative-path>`. Root `.env` uses
   `git -C "<credential-file-worktree>" ls-files --error-unmatch -- .env`: exit 0 means tracked
-  and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve
-  that worktree's `.gitignore` while ensuring it contains an effective `/.env` rule, then require
-  `git -C "<credential-file-worktree>" check-ignore -q -- .env` to succeed. Stop before secret entry if the
-  effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
+  and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve an
+  effective `/.env` rule and require `check-ignore -q -- .env`; stop before secret entry if the
+  effective-ignore check fails. Otherwise run
+  `git -C "<credential-file-worktree>" ls-files --error-unmatch -- "<credential-file-relative-path>"`.
+  Exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other
+  status. Preserve that worktree's `.gitignore` while ensuring it has an effective ignore rule for
+  that exact relative path, then require
+  `git -C "<credential-file-worktree>" check-ignore -q -- "<credential-file-relative-path>"` to succeed.
+  Stop before secret entry if the effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
   `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
   after the local baseline checkpoint.
 - Never paste or print secrets. Check only presence and safe key-shape prefixes.
