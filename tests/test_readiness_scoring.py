@@ -304,7 +304,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(collapsed.value, 5.0)
         self.assertEqual(
             collapsed.evidence,
-            "50 tuning / 50 holdout, 50/0 scoreable; 0 comparable examples - "
+            "50 to tune on / 50 held back, 50/0 scoreable; 0 comparable examples - "
             "a wiring check, not a score",
         )
 
@@ -370,7 +370,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(power.value, 18.4)
         self.assertEqual(
             power.evidence,
-            "no declared tuning/holdout split; 100 examples - substantial "
+            "no tuning set and held-back test set, so the result would be measured on the same rows the search used; 100 examples - substantial "
             "comparison set",
         )
 
@@ -781,7 +781,7 @@ class AgentScoringTests(unittest.TestCase):
         """Refusing an absent declaration must not refuse an empty one.
 
         `{"knobs": {}}` states that the space has no knobs - a claim the scorer
-        reads and reports as "no knobs declared" under
+        reads and reports as "the settings document lists no settings" under
         `agent-no-varying-knobs`. Only a document that declares neither key is
         unreadable.
         """
@@ -1189,7 +1189,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                 {"agent_type": "general", "knobs": {"model": []}, "wired": ["model"]}
             )
         self.assertIn("knobs['model']", str(raised.exception))
-        # an empty *space* still means "no knobs declared" and still scores
+        # an empty *space* still means the document lists no settings and still scores
         self.assertEqual(MODULE.agent_facts_from_config_space({"knobs": {}}).knobs, {})
 
     def test_bounds_are_validated_as_a_pair_not_only_edge_by_edge(self) -> None:
@@ -1496,7 +1496,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         """The emptiest document keeps the wording and confidence it always had.
 
         `not facts.knobs` is answered ahead of the `wired` branch, so both
-        spellings still say "no knobs declared" rather than the wiring message.
+        spellings still say the document lists no settings rather than the wiring message.
         Reordering those two branches would change that silently, so pin both.
         """
         for document in ({"knobs": {}}, {"knobs": {}, "wired": []}):
@@ -1518,14 +1518,15 @@ class DocumentedSchemaTests(unittest.TestCase):
                 self.assertEqual(pillar.score, 0)
                 self.assertEqual(pillar.confidence, 0.35)
                 self.assertEqual(
-                    {s.evidence for s in pillar.subscores}, {"no knobs declared"}
+                    {s.evidence for s in pillar.subscores},
+                    {"the settings document lists no settings"},
                 )
 
     def test_explicit_empty_wired_is_an_attested_zero(self) -> None:
         """`"wired": []` states something an absent list does not.
 
         It names zero wired knobs, so knob-count is a counted zero - and the
-        evidence must not repeat the "no knobs declared" line, because knobs
+        evidence must not repeat the empty-document line, because knobs
         *are* declared here; zero of them are attested as wired.
         """
         pillar, caps, _ = MODULE.score_agent(
@@ -1828,7 +1829,7 @@ class CliTests(unittest.TestCase):
 
         The negative assertions matter as much as the positive one: the card
         used to claim "1 of 1 wired knobs actually vary" about a knob nobody had
-        named, and "no knobs declared" is false whenever knobs are declared.
+        named, and an empty-document line is false whenever knobs are declared.
         Both strings live in branches that are still reachable, so pin their
         absence rather than trusting that this branch can no longer produce them.
         """
@@ -1840,7 +1841,7 @@ class CliTests(unittest.TestCase):
             _, output = self._run(["--config-space", str(space), "--color", "never"])
         self.assertIn("does not state which of them the agent consumes", output)
         self.assertNotIn("1 of 1 wired knobs", output)
-        self.assertNotIn("no knobs declared", output)
+        self.assertNotIn("lists no settings", output)
 
     def test_weights_are_configurable_and_reported(self) -> None:
         parsed = MODULE.parse_weights("50,30,20")
@@ -2572,9 +2573,27 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             score=0,
             confidence=0.35,
             subscores=(
-                MODULE.SubScore("coverage", 0.0, 25.0, False, "no knobs declared"),
-                MODULE.SubScore("knob-count", 0.0, 35.0, True, "no knobs declared"),
-                MODULE.SubScore("variation", 0.0, 40.0, False, "no knobs declared"),
+                MODULE.SubScore(
+                    "coverage",
+                    0.0,
+                    25.0,
+                    False,
+                    "no settings document was provided to this score yet",
+                ),
+                MODULE.SubScore(
+                    "knob-count",
+                    0.0,
+                    35.0,
+                    True,
+                    "no settings document was provided to this score yet",
+                ),
+                MODULE.SubScore(
+                    "variation",
+                    0.0,
+                    40.0,
+                    False,
+                    "no settings document was provided to this score yet",
+                ),
             ),
         )
         card = MODULE.render_card(
@@ -2582,7 +2601,9 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             palette=MODULE.Palette(),
             unicode_ok=False,
         )
-        self.assertEqual(card.count("no knobs declared"), 1)
+        self.assertEqual(
+            card.count("no settings document was provided to this score yet"), 1
+        )
 
     def test_a_single_check_keeps_its_label(self) -> None:
         """Collapsing needs repetition; one check has none to collapse.
@@ -2686,17 +2707,48 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
         wording asserting the user did not do something is a claim the absence
         of an input cannot support.
         """
-        source = Path(MODULE.__file__).read_text(encoding="utf-8")
-        forbidden = ("was not calibrated", "has not been calibrated")
-        for node in ast.walk(ast.parse(source)):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "SubScore"
-                and len(node.args) >= 5
-                and isinstance(node.args[4], ast.Constant)
-            ):
-                evidence = str(node.args[4].value)
-                for phrase in forbidden:
-                    with self.subTest(evidence=evidence[:40]):
-                        self.assertNotIn(phrase, evidence)
+        # A CLASS, not a list of instances - and asserted on what the scorer
+        # PRODUCES, not on what its source spells.
+        #
+        # Two earlier versions failed for the same reason. #121 hardcoded two
+        # calibration phrases, so the identical defect on the agent pillar
+        # walked past. Widening that list did not help either: the test parsed
+        # the module for literal `SubScore(...)` arguments, and the agent pillar
+        # builds its evidence in a variable - so the string was never in the
+        # parser's reach and the check reported green while the defect shipped.
+        #
+        # It drives the real states and reads the evidence they emit.
+        forbidden = (
+            "was not calibrated",
+            "has not been calibrated",
+            "no knobs declared",
+            "knobs are not declared",
+        )
+        produced: list[str] = []
+
+        for facts in (
+            MODULE.AgentFacts(),
+            MODULE.AgentFacts(config_space_supplied=True),
+            MODULE.AgentFacts(
+                knobs={"temperature": [0.0, 1.0]}, config_space_supplied=True
+            ),
+        ):
+            pillar, _, _ = MODULE.score_agent(facts)
+            produced.extend(sub.evidence for sub in pillar.subscores)
+
+        for payload in (
+            None,
+            {"cases": [], "passed": False},
+            {"timed_out": True, "cases": [], "passed": False},
+        ):
+            facts = MODULE.evaluation_facts_from_calibration(
+                payload, method="execution", task_kind="code-sql"
+            )
+            pillar, _ = MODULE.score_evaluation(facts)
+            produced.extend(sub.evidence for sub in pillar.subscores)
+
+        self.assertTrue(produced, "drove no state, so this proves nothing")
+        for evidence in produced:
+            for phrase in forbidden:
+                with self.subTest(evidence=evidence[:40], phrase=phrase):
+                    self.assertNotIn(phrase, evidence)

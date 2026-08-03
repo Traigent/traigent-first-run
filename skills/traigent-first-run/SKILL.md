@@ -172,6 +172,11 @@ its provenance and describe the agent pillar as not yet measured; a timestamp, h
 The opening score is not skippable, always reports all three pillars, and is the baseline the
 closing report measures against. Show it before anything is created or repaired.
 
+Announce it by what it does for the reader, not by the rule that binds you. "Mandatory" describes
+the assistant's obligation and tells the user nothing about their run; "static" is a word from the
+tooling. Say that it reads the project and changes nothing in it - which is the fact a reader
+actually wants before a tool inspects their code - and let the obligation stay internal.
+
 Show the script's rendered card verbatim in a code block, not a retyped table or the durable
 markdown report. Preserve its pillar bars, measured-check counts, and `LIMITED TO` versus
 `WOULD LIMIT TO` wording. Add the overall score, band, and each cap's plain-language reason around
