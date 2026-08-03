@@ -83,8 +83,10 @@ agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
    when no baseline exists does the assistant prepare a credible six-configuration sweep. The
-   user sees its best configuration, tuning score, trial/failure count, and tracked or unmeasured
-   cost before any Traigent account/key request.
+   assistant auto-selects the user's existing vendor route when one is already available; the user
+   only gets asked to choose if there is no usable route to inherit. The user sees its best
+   configuration, tuning score, trial/failure count, and tracked or unmeasured cost before any
+   Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model knobs by default, and targets 10-13
    trials (12 by default) from a materially larger search space.
