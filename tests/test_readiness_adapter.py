@@ -257,6 +257,32 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         self.assertIn("18 tuning rows and no independent validation set", power["evidence"])
         self.assertNotIn("no tuning set", power["evidence"])
 
+    def test_real_tuning_only_preflight_replays_into_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(
+                directory,
+                "tuning-only.jsonl",
+                [
+                    {
+                        "id": f"tune-{index}",
+                        "input": f"tuning question {index} token{index}",
+                        "output": f"answer {index % 3}",
+                        "split": "tune",
+                        "metadata": {"provenance": "synthetic-walkthrough"},
+                    }
+                    for index in range(18)
+                ],
+            )
+            records = _preflight_records(dataset)
+            split = next(record for record in records if record["check"] == "dataset-split")
+            self.assertEqual(split["metrics"], {"kind": "tuning-only"})
+            score = _score(dataset)
+
+        power = _dataset_subscore(score, "power")
+        self.assertIn("18 tuning rows and no independent validation set", power["evidence"])
+        self.assertNotIn("no tuning set", power["evidence"])
+
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:
         """C1: 150 real rows with inputs but no expected outputs.
 
