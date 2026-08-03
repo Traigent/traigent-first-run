@@ -34,6 +34,13 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
+When `.env` is created, treat it as a local handoff: open the project-root `.env` once, using the
+first available GUI editor; if that is unavailable, fall back to the IDE or editor already
+associated with this project directory, and if headless, print the full path and stop. Open it only
+so the user can add `TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen it so the new
+line is visible, and follow `references/run-safety.md` for the clickable registration link and the
+two 10-day windows.
+
 ## User-facing promise
 
 Use this short opening, adapting only what inspection already established:
@@ -79,18 +86,23 @@ agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
    when no baseline exists does the assistant prepare a credible six-configuration sweep. The
-   user sees its best configuration, tuning score, trial/failure count, and tracked or unmeasured
-   cost before any Traigent account/key request.
+   assistant automatically uses the vendor the project already has configured when one is already
+   available; the user only gets asked to choose if there is no usable vendor already configured
+   for the project. The user sees its best configuration, primary tuning metric, cost, latency,
+   trial/failure count, and a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
-   contains every baseline value, adds meaningful non-model knobs by default, and targets 10-13
+   contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
    trials (12 by default) from a materially larger search space.
 
 The assistant attempts to upload the completed baseline without rerunning it only when the
 installed SDK exposes a public exact sync id; otherwise that result remains local. Then it compares
 the two selected configurations on held-back validation data. That validation is called sealed only
 when its split and labels were hidden until the candidate was locked; assistant-inspected or
-assistant-authored data is explicitly non-blind. Include all calls in the combined approval. Trial
-counts and knob selection are assistant-owned implementation choices, not new user questions.
+assistant-authored data is explicitly non-blind. In plain language, think of that split as
+test data set aside so the best config found by tuning can be checked on unseen examples rather
+than scored on the same rows it optimized against. Include all calls in the combined
+approval. Trial counts and knob selection are assistant-owned implementation choices, not new user
+questions.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

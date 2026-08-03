@@ -113,22 +113,28 @@ phase ledger.
 
 ## Walkthrough model ladder
 
-This section applies only when the assistant prepares a missing baseline. Select its models as a
-ladder within the selected provider route, from model ids
-the route currently lists: one fast low-cost tier, one mid-tier workhorse, and one strong tier one
-step below the vendor's newest flagship. Do not select the flagship itself. Omitting it bounds
-generated-walkthrough cost and latency; do not imply it has no value. State that in the plan and
-price any flagship comparison separately. Every selected model runs in the baseline grid and must
-fit the approved time and cost envelope.
+This section applies only when the assistant prepares a missing baseline. Select its models from
+the provider route the user already has in hand: one fast low-cost tier, one mid-tier workhorse,
+and one strong tier one step below the vendor's newest flagship. Do not select the flagship
+itself. Omitting it bounds generated-walkthrough cost and latency; do not imply it has no value.
+State that in the plan and price any flagship comparison separately. Every selected model runs in
+the baseline grid and must fit the approved time and cost envelope.
 
-Both generated spaces use the same three models. The baseline grids them against two evaluator-safe
-temperatures - six rows, the sweep a user would credibly run by hand, with the mid tier as the
-generated initial configuration - and it keeps the pre-account first result quick and cheap. The
-enhanced space keeps the identical model list and grows along the other axes: once the baseline
-result is in, refine the swept values around its top rows - the one added temperature becomes a
-close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2, rather than a farther point - while
-keeping every baseline value, so the comparison stays contained and the configuration count is
-unchanged; then add the prompt-policy and self-check controls. The coding assistant performs this
+Both generated spaces use the same three models. Keep the baseline small: at most three models and
+at most three swept knobs, with no swept knob taking more than two values. In the walkthrough that
+usually becomes a six-row sweep the user could credibly run by hand: three models × two
+evaluator-safe temperatures, with `prompt_style` and `self_check` fixed to one value each so the
+only varying dimensions are model and temperature. If the strong tier is a reasoning model,
+temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
+reasoning calling convention pinned; either way, the baseline stays at six rows and the first
+result stays quick and cheap. On the 28-row walkthrough dataset, that baseline consumes 18 tuning
+rows split as 3 easy, 5 medium, 5 hard, and 5 very hard, while the held-back 10 rows are split as
+2 easy, 3 medium, 3 hard, and 2 very hard. The enhanced space keeps the identical model list and
+expands beyond
+the baseline: once the baseline result is in, refine the swept values around its top rows - the
+one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
+rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced
+run is therefore strictly larger than the baseline search. The coding assistant performs this
 refinement itself between the two runs; the user is never asked to pick values or edit the
 wrapper. Because the enhanced run never gets a model the baseline did not measure, a measured
 difference cannot be explained by quietly upgrading the model. The assistant adds the disclosed
@@ -153,18 +159,18 @@ model changes the experiment and attribution, so do it only as a separately disc
 model comparison. Preserve an existing flagship and its calling convention exactly; never replace
 or augment it silently.
 
-For the generated ladder, use one model family. One family keeps the result readable - "the mid tier
-held the strong tier's accuracy at a fraction of the cost" is a sentence the user can act on -
-keeps a single company receiving the user's prompts, and keeps one bill. When several direct
-provider credentials exist, pick one family, name it and the reason in the plan, and let the
-combined approval - which already lists every data recipient - be the user's moment to switch. On
-the OpenRouter route one key reaches every family; still ladder within one family by default, and
-borrow a missing rung from a second family only when the chosen family lacks it, naming that
-extra upstream recipient in the approval.
+For the generated ladder, use one model family when the selected route can supply all three model
+choices. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
+fraction of the cost" is a sentence the user can act on - keeps a single company receiving the
+user's prompts, and keeps one bill. If the chosen vendor does not expose at least three usable
+model choices, ask the user to add a second vendor only for the missing model(s), and name that
+extra provider in the approval. When using OpenRouter, one key reaches every family; still prefer
+one family by default, and borrow a missing model from a second family only when the chosen family
+lacks it, naming that extra provider in the approval.
 
-Tiers are roles, not hardcoded ids: pick concrete model ids from what the selected route lists at
-run time, then verify each id is live and cost-tracked before scaling, as `run-safety.md` already
-requires.
+These three model slots are roles, not hardcoded ids: pick concrete model ids from what the
+selected route lists at run time, then verify each id is live and cost-tracked before scaling, as
+`run-safety.md` already requires.
 
 ## Decorator contract
 
@@ -682,17 +688,18 @@ The process-only values above are selected by the coding assistant from the insp
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
 to six baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
 time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing the
-comparison back to one-versus-two rows. Derive
-`TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` from the current agent call, not from which credential names
-happen to exist. Call `require_current_route_credential()` immediately before the approved live
-probe. If another provider's credential is present instead, stop with the mismatch; never rewrite
-the current model identifier or provider prefix silently. Keep the real current model and parameter
+comparison back to one-versus-two rows. The assistant derives the current provider route from the
+existing vendor setup, the current agent call, and the route inventory, then populates the process
+variables used below; the user does not type route metadata into the run. Call
+`require_current_route_credential()` immediately before the approved live probe. If the discovered
+route cannot be populated from the existing vendor and there is no usable fallback ladder, stop and
+ask the user to add a vendor or choose a different one. Keep the real current model and parameter
 values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced dimension. Select
 the alternative and strong models from the same approved provider route when generating the
 walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
-a reasoning-effort control, and pin the same value for both runs. A new route
-or recipient requires revised data-egress approval. In the generated default, every search
+a reasoning-effort control, and pin the same value for both runs. A new route or recipient
+requires revised data-egress approval. In the generated default, every search
 variable must affect the actual agent call for every model in the space. A preserved conditional
 dimension may affect only the models that support it, but the request probe must report that
 partial coverage and the run record must name those models. When the strong tier runs as a

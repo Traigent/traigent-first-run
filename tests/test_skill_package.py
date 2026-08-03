@@ -133,6 +133,19 @@ class SkillPackageTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
 
+    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--", "traigent-runs"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(
+                f"could not inspect tracked run artifacts: {listed.stderr.strip()}"
+            )
+        self.assertEqual(listed.stdout.strip(), "")
+
     def test_user_facing_skill_language_does_not_label_the_user(self) -> None:
         combined = "\n".join(
             path.read_text() for path in SKILL_ROOT.rglob("*.md") if path.is_file()
@@ -279,7 +292,7 @@ class SkillPackageTests(unittest.TestCase):
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
         combined = f"{skill_text} {safety_text}"
         for phrase in (
-            "do not create a separate provider-choice question",
+            "do not repeat a provider choice already resolved in stage 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
             "one concise combined approval",
@@ -1701,7 +1714,7 @@ class SkillPackageTests(unittest.TestCase):
             "when the user already owns a baseline, do not apply this ladder",
             "adding a cheaper or stronger model changes the experiment",
             "for the generated ladder, use one model family",
-            "tiers are roles, not hardcoded ids",
+            "model slots are roles, not hardcoded ids",
         ):
             with self.subTest(document="sdk-execution", phrase=phrase):
                 self.assertIn(phrase, sdk)
@@ -1709,6 +1722,7 @@ class SkillPackageTests(unittest.TestCase):
             "never the vendor's newest flagship",
             "the three-tier ladder applies only when this walkthrough supplies a missing baseline",
             "do not add cheaper tiers without the separate disclosure",
+            "a user-owned baseline requires only its existing route and credential",
             "preserve its exact model set",
             "a deliberately small enhancement",
             "a small slice of what traigent can drive, not its full capability",
@@ -2435,9 +2449,9 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
             "local fixed grid, not traigent choosing the trials",
-            "best configuration and tuning score",
+            "primary tuning metric by its actual name",
             "executed and failed trial counts",
-            "or `not measured`",
+            "cost or latency as `not measured`",
             "no validation comparison or improvement claim exists yet",
             "this phase created no portal experiment",
             "this checkpoint is a valid place to stop",
@@ -2451,6 +2465,19 @@ class SkillPackageTests(unittest.TestCase):
             "for the generated walkthrough, run the credible small space as one local fixed grid",
             " ".join(SDK_EXECUTION.read_text().casefold().split()),
         )
+
+    def test_each_paid_run_has_an_exact_run_card(self) -> None:
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "immediately before each paid baseline and enhanced run",
+            "model ids",
+            "each varying knob and its explicit values",
+            "one plain-language note per knob",
+            "total combination count",
+            "repeat the baseline knobs and label every addition new",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
 
     def test_final_report_layers_facts_limits_and_the_latest_next_action(
         self,
@@ -3950,7 +3977,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # Raising this number is allowed and is a decision: change it here,
         # with the reason, in the same commit as the guidance that needs it.
-        budget = 215_000
+        # PRs #125 and #126 add user-facing explanations for readiness evidence
+        # and exact pre-run cards. Those are new contract surface, not duplicated
+        # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
+        budget = 220_000
         self.assertLess(
             total,
             budget,

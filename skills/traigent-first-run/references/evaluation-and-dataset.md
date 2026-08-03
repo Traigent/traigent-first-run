@@ -296,12 +296,10 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 24 examples by default:
+For a fully generated walkthrough, create 28 examples by default:
 
-- 6 easy.
-- 6 medium.
-- 6 hard.
-- 6 very hard but still unambiguously solvable.
+- 3 easy, 5 medium, 5 hard, 5 very hard for tuning.
+- 2 easy, 3 medium, 3 hard, 2 very hard for the held-back validation set.
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
@@ -473,10 +471,11 @@ sealed holdout only when its split and labels were fixed and hidden from compone
 and winner selection until the candidate was locked. If the assistant inspected or authored it,
 call it held-back, non-blind validation.
 
-For assistant-prepared 24-row walkthrough data, a practical split is 18 tuning / 6 validation,
-stratified across difficulty and scenario. The held-back six rows check behavior outside the
-tuning subset, but the assistant inspected or authored them, so the result is non-blind and does
-not independently establish generalization or production performance.
+For assistant-prepared 28-row walkthrough data, a practical split is 18 tuning / 10 validation,
+with the tuning rows distributed as 3 easy, 5 medium, 5 hard, 5 very hard and the held-back rows
+distributed as 2 easy, 3 medium, 3 hard, 2 very hard. The held-back ten rows check behavior
+outside the tuning subset, but the assistant inspected or authored them, so the result is
+non-blind and does not independently establish generalization or production performance.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and

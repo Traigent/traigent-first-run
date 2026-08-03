@@ -77,7 +77,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX. In a Git worktree, run `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve the project-root `.gitignore` while ensuring it contains an effective `/.env` rule, then require `git -C "<project-root>" check-ignore -q -- .env` to succeed; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Then stop once for the local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
+| Create or update a minimal `.env` | Proceed only after every applicable free component, capability, and safe mock check has run. Preserve existing values, comments, unrelated keys, and any Traigent key already present. Before the local baseline, append only the missing selected-provider key name with a blank value. Before opening it, require mode `0600` on POSIX. In a Git worktree, run `git -C "<project-root>" ls-files --error-unmatch -- .env`: exit 0 means tracked and must stop; continue only on exit 1 with no match, and stop on any other status. Preserve the project-root `.gitignore` while ensuring it contains an effective `/.env` rule, then require `git -C "<project-root>" check-ignore -q -- .env` to succeed; stop before secret entry if the effective-ignore check fails. Open the full absolute `.env` path, not a relative path or vague popup, so the user can see which file to edit. Outside Git, do not create `.gitignore`. Then stop once for the local secret. Add or request the Traigent key only after the baseline checkpoint in stage 7. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
@@ -377,15 +377,15 @@ Only after the standard-library-only component checks:
 
 1. Determine the current provider route from the agent's actual model call and configuration. Treat
    discovered credential names only as an availability inventory; they never select or change an
-   existing route. If no route exists and exactly one supported direct provider credential is
-   already present, select that provider so the walkthrough needs no second account or key. If no
-   route exists and no single direct credential is present, default to OpenRouter because one key
-   can exercise multiple model vendors. Do not create a separate provider-choice question; mention
-   that the user may request a direct provider instead. If the current route is clear but its
-   credential is absent while a different provider credential is present, stop with one clear
-   mismatch: recommend adding the
-   current route's key, and offer an explicit route change as the alternative. Never rewrite the
-   model identifier or provider prefix merely to match an available key.
+   existing route. Prefer the vendor already implied by the project or current agent wiring, and
+   select models from that vendor automatically. If no usable vendor is already implied by the
+   project or current agent wiring, ask the user which vendor they want and try to configure it
+   automatically from the available credentials. Only when the walkthrough must prepare a missing
+   baseline, require the chosen vendor to supply the three-model ladder. If it cannot and the user
+   already has a second supported direct-provider credential, offer that for the missing rung;
+   otherwise stop with one clear mismatch and ask for help. A user-owned baseline requires only its
+   existing route and credential. Never rewrite the model identifier or provider prefix merely to
+   match an available key.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
@@ -428,12 +428,18 @@ Select only after scoring the full dataset and before pricing the run. Record th
 report subset and full sizes, and state that the small first-run sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
+Do not repeat a provider choice already resolved in stage 5; keep the paid-work approval request
+combined.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
 generated six-row sweep, one broader bounded optimization, and baseline winner versus enhanced
 winner validation comparison. Follow the complete disclosure checklist in
 `references/run-safety.md`; it owns the sizing, objectives, decision rule, model-space, cost,
 recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling by default.
+
+Immediately before each paid baseline and enhanced run, show a short run card with the model ids,
+each varying knob and its explicit values, one plain-language note per knob, and the total
+combination count. For the enhanced card, repeat the baseline knobs and label every addition new.
 
 Put the runtime estimate and the default **30-minute completion target** in the same approval as the
 money ceiling. This is an estimate and an up-front sizing target, not a hard wall-clock guarantee.
@@ -450,6 +456,7 @@ trial target while preserving meaningful difficulty and a holdout; disclose any 
 six-row baseline or 10-13-trial enhanced target. Proceed after one explicit approval and keep it
 process-only. Follow `references/run-safety.md` for SDK limits and retries. Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
+do not layer another retry loop.
 never call the walkthrough ceiling a hard provider-billing cap.
 
 The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
@@ -493,8 +500,10 @@ account request:
 
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration and tuning score, executed and failed trial counts, and tracked cost
-  - or `not measured` when the provider/SDK did not report cost.
+- Show the best configuration, the primary tuning metric by its actual name, cost, latency,
+  executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
+  cost or latency as `not measured` when the provider or SDK does not supply it.
+- Explain each baseline knob in one plain-language note.
 - State that no validation comparison or improvement claim exists yet and that this phase created no
   portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
@@ -509,7 +518,12 @@ seen a provider-backed result before being asked to create an account. Tell them
 access rather than the read-only default, because a read-only key can leave a paid connected run
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
-handoff and have the user enter credentials locally, never in chat.
+handoff and have the user enter credentials locally, never in chat. Use the same `.env` file.
+Open that project-root `.env` once, using the first available GUI editor; if that is unavailable,
+fall back to the IDE or editor already associated with this project directory, and if headless,
+print the full path and stop. Open it only so the user can add `TRAIGENT_API_KEY=` for the
+enhanced run. Then refresh/reopen it so the new line is visible, and follow
+`references/run-safety.md` for the clickable registration link and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a

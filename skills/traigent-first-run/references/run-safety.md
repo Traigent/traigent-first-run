@@ -82,6 +82,9 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   session, or when no graphical handler is available, skip the opener and print the absolute path
   as the fallback. Name the target line by key prefix - the `sk-`/`sk-or-` provider key after its
   `..._API_KEY=` line; at the later portal gate, name `TRAIGENT_API_KEY=` separately.
+- When a readiness command is asked to write a report file, verify that the file exists after the
+  command returns. Some tooling still prints the score to stdout even when `--report` is supplied,
+  so stdout is evidence of the score, not proof that the requested file was written.
 - According to the documented SDK/service contract, connected runs send configuration keys and
   values, numeric measures, run state, and content-free metadata to the Traigent backend. Except
   for content deliberately placed in a tuned configuration value and observability content the
