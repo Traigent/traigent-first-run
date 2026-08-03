@@ -69,9 +69,9 @@ registration link and the two 10-day windows.
 
 Use this short opening, adapting only what inspection already established:
 
-> I will inspect what you have, preserve it, and automatically run free readiness research. It
-> checks the score and local setup—not agent accuracy or an optimization result. I explain details
-> only if action is needed. For a material dataset/evaluation limitation, I will show evidence and
+> I will inspect what you have, preserve it, and run free readiness research. It checks the score
+> and setup—not agent accuracy or an optimization result. I explain details only if action is
+> needed. For a material dataset/evaluation limitation, I will show evidence and
 > offer a working-copy repair before paid calls. Then I will show one baseline/optimization estimate
 > and keep temporary components separate from real-world readiness.
 
