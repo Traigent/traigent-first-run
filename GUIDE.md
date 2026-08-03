@@ -35,8 +35,8 @@ Use the bundled tools:
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
 When `.env` is created, treat it as a local handoff: if a GUI handler is available, open the
-project-root `.env`; if headless, print the path and stop. Reopen it on the enhanced run for the
-key.
+project-root `.env`; if headless, print the path and stop. On the enhanced run, write
+`TRAIGENT_API_KEY=` into that same file and refresh/reopen it so the user sees the new line.
 
 ## User-facing promise
 

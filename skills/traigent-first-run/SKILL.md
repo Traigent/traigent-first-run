@@ -519,7 +519,8 @@ access rather than the read-only default, because a read-only key can leave a pa
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
 handoff and have the user enter credentials locally, never in chat. Use the same `.env` file.
-Follow `references/run-safety.md`.
+On the enhanced run, write `TRAIGENT_API_KEY=` into that same file and refresh/reopen it so the
+user sees the new line. Follow `references/run-safety.md`.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a
