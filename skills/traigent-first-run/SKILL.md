@@ -377,8 +377,8 @@ Only after the standard-library-only component checks:
    project or current agent wiring, ask the user which vendor they want and try to configure it
    automatically from the available credentials. If the chosen vendor setup cannot supply a usable
    three-model lineup and the user already has a second supported direct provider credential, offer
-   that as the minimal fallback; otherwise ask for help. Never rewrite the model
-   identifier or provider prefix merely to match an available key.
+   that as the minimal fallback; otherwise stop with one clear mismatch and ask for help. Never
+   rewrite the model identifier or provider prefix merely to match an available key.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
@@ -421,6 +421,7 @@ Select only after scoring the full dataset and before pricing the run. Record th
 report subset and full sizes, and state that the small first-run sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
+Do not create a separate provider-choice question; keep the approval request combined.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
 generated six-row sweep, one broader bounded optimization, and baseline winner versus enhanced
@@ -443,6 +444,7 @@ trial target while preserving meaningful difficulty and a holdout; disclose any 
 six-row baseline or 10-13-trial enhanced target. Proceed after one explicit approval and keep it
 process-only. Follow `references/run-safety.md` for SDK limits and retries. Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
+do not layer another retry loop.
 never call the walkthrough ceiling a hard provider-billing cap.
 
 The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
@@ -486,8 +488,10 @@ account request:
 
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration and tuning score, executed and failed trial counts, and tracked cost
-  - or `not measured` when the provider/SDK did not report cost.
+- Show the best configuration and tuning score, plus tuning accuracy, cost, latency, executed and
+  failed trial counts, and any Pareto note if cost and accuracy trade off.
+- Use `or `not measured`` when provider or SDK cost is unavailable.
+- Explain each baseline knob in one plain-language note.
 - State that no validation comparison or improvement claim exists yet and that this phase created no
   portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
@@ -523,6 +527,9 @@ per-input request-diff probe and explicit outside-request claims in
 space is final, follow that reference's freeze/remove/persist lifecycle. Save
 `traigent-runs/config-space.json` only after this search returns nonzero trials, from the exact
 space it received, and use only that current-run document for the closing `--config-space` score.
+
+When presenting the enhanced run, repeat the baseline knob notes first, then explain any added
+knobs in the same style and label them as new.
 
 If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
 failure and one recommended recovery. Never fall back automatically to mock or synthetic results,
