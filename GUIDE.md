@@ -69,12 +69,11 @@ registration link and the two 10-day windows.
 
 Use this short opening, adapting only what inspection already established:
 
-> I will inspect what you already have, preserve it, and prepare anything missing for a complete
-> walkthrough. If an existing dataset or evaluation method has a material limitation, I will
-> explain the evidence and offer to repair and revalidate a working copy before any paid model
-> calls. I will then show one combined estimate for the baseline and optimization. If I prepare
-> temporary components, I will keep them clearly separate from real-world readiness so the result
-> is not overclaimed.
+> I will inspect what you have, preserve it, and automatically run free readiness research. It
+> checks the score and local setup—not agent accuracy or an optimization result. I explain details
+> only if action is needed. For a material dataset/evaluation limitation, I will show evidence and
+> offer a working-copy repair before paid calls. Then I will show one baseline/optimization estimate
+> and keep temporary components separate from real-world readiness.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:

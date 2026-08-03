@@ -467,6 +467,22 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertIn("credential-file-relative-path", safety_text)
 
+    def test_free_readiness_research_is_not_presented_as_a_result(self) -> None:
+        """Automatic checks validate readiness, not model performance."""
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("automatically run free readiness research", guide_text)
+        self.assertIn(
+            "score and local setup—not agent accuracy or an optimization result",
+            guide_text,
+        )
+        self.assertIn("i explain details", guide_text)
+        self.assertIn("only if action is needed", guide_text)
+        self.assertIn("keep passed readiness details internal", skill_text)
+        self.assertIn(
+            "these checks are not agent accuracy or an optimization result", skill_text
+        )
+
     def test_stdlib_component_checks_precede_environment_and_secret_gates(
         self,
     ) -> None:

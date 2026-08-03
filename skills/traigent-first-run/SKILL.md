@@ -333,9 +333,9 @@ Follow this order:
    result now and re-run the score immediately after that calibration.
 
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed unsupported SDK is
-a failure, and an optional provider package may defer only its own check. Record independent
-dataset-quality and safe-calibration results separately. Do not reproduce SDK normalization,
-injection, binding, or callback rules here.
+a failure, and an optional provider package may defer only its own check. Keep passed readiness
+details internal; explain only needed action or a user-requested detail. These checks are not agent
+accuracy or an optimization result.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
 pending behind the combined egress and paid approval; removing keys or setting offline flags does
