@@ -439,6 +439,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "not automatically the project being optimized",
+            "at run time; never substitute",
             "target project: <absolute path>",
             "agent: <absolute path>:<function or command>",
             "historical — different agent",

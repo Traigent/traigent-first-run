@@ -28,11 +28,12 @@ elsewhere.
 ## Keep the guide source separate from the project being optimized
 
 The clone or installed directory that supplies this guide is **not automatically the project being
-optimized**. Before making any change, identify the one project root that contains the agent the
-user chose to optimize. When the guide clone and that project are separate, use the chosen agent's
-project root for inspection, environments, `traigent-runs/`, tests, and every baseline or enhanced
-run. Do not create walkthrough artifacts for the guide clone or treat an old result beside the
-guide as a result for the user's agent.
+optimized**. Before work, resolve the user-selected project's root and agent callable or command at
+run time; never substitute a path, agent, dataset, or result from this guide or the assistant's
+workspace, or a prior run. When the guide clone and that project are separate, use the
+chosen agent's project root for inspection, environments,
+`traigent-runs/`, tests, and every baseline or enhanced run. Do not create walkthrough artifacts
+for the guide clone or treat an old result beside the guide as a result for the user's agent.
 
 Before showing readiness, a baseline, or an optimization result, identify the target in one line:
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
