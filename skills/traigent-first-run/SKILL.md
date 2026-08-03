@@ -372,15 +372,12 @@ Only after the standard-library-only component checks:
 
 1. Determine the current provider route from the agent's actual model call and configuration. Treat
    discovered credential names only as an availability inventory; they never select or change an
-   existing route. If no route exists and exactly one supported direct provider credential is
-   already present, select that provider so the walkthrough needs no second account or key. If no
-   route exists and no single direct credential is present, default to OpenRouter because one key
-   can exercise multiple model vendors. Do not create a separate provider-choice question; mention
-   that the user may request a direct provider instead. If the current route is clear but its
-   credential is absent while a different provider credential is present, stop with one clear
-   mismatch: recommend adding the
-   current route's key, and offer an explicit route change as the alternative. Never rewrite the
-   model identifier or provider prefix merely to match an available key.
+   existing route. Prefer the vendor route already implied by the project or current agent wiring,
+   and select models from that route automatically. If no route exists, ask the user which vendor
+   they want and try to configure it automatically from the available credentials. If the selected
+   route cannot supply a usable ladder and the user already has a second supported direct provider
+   credential, offer that as the minimal fallback; otherwise ask for help. Never rewrite the model
+   identifier or provider prefix merely to match an available key.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.

@@ -688,17 +688,18 @@ The process-only values above are selected by the coding assistant from the insp
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
 to six baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
 time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing the
-comparison back to one-versus-two rows. Derive
-`TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` from the current agent call, not from which credential names
-happen to exist. Call `require_current_route_credential()` immediately before the approved live
-probe. If another provider's credential is present instead, stop with the mismatch; never rewrite
-the current model identifier or provider prefix silently. Keep the real current model and parameter
+comparison back to one-versus-two rows. The assistant derives the current provider route from the
+existing vendor setup, the current agent call, and the route inventory, then populates the process
+variables used below; the user does not type route metadata into the run. Call
+`require_current_route_credential()` immediately before the approved live probe. If the discovered
+route cannot be populated from the existing vendor and there is no usable fallback ladder, stop and
+ask the user to add a vendor or choose a different one. Keep the real current model and parameter
 values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced dimension. Select
 the alternative and strong models from the same approved provider route when generating the
 walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
-a reasoning-effort control, and pin the same value for both runs. A new route
-or recipient requires revised data-egress approval. In the generated default, every search
+a reasoning-effort control, and pin the same value for both runs. A new route or recipient
+requires revised data-egress approval. In the generated default, every search
 variable must affect the actual agent call for every model in the space. A preserved conditional
 dimension may affect only the models that support it, but the request probe must report that
 partial coverage and the run record must name those models. When the strong tier runs as a

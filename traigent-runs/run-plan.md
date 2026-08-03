@@ -39,7 +39,7 @@
 - Remaining total ceiling: not started.
 - Minimal `.env`: created at `.env` with `OPENROUTER_API_KEY=` blank, mode `0600`, ignored by git.
 - Local baseline checkpoint - artifact, best configuration/tuning score, executed/failed trials, provider-reported cost or `not measured`, and limits: `traigent-runs/baseline-results.json`; baseline config `{"prompt_style":"direct","routing_bias":"balanced","fallback_label":"technical-support"}` scored 9/18 on tuning and 7/10 on held-back test data; 1 executed, 0 failed, cost not measured, local-only.
-- Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason: `local-only` because no route/model environment was supplied in this workspace.
+- Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason: `local-only` because this workspace has not yet been handed a connected route selection for a live run.
 - Connected optimization run ID, partial/final result, stop reason, and verified portal link: `traigent-runs/optimized-results.json`; best config `{"prompt_style":"criteria_first","routing_bias":"balanced","fallback_label":"cancellation"}` scored 13/18 on tuning and 4/10 on held-back test data; 27 executed, 0 failed, stop_reason `completed`, local-only.
 - Validation comparison - paired outcomes, visibility, and justified claim strength: held-back, non-blind test comparison on the 10-row test split; the best tuning config overfits test data relative to baseline, so the local search is useful as a walkthrough only.
 
