@@ -34,9 +34,12 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
-When `.env` is created, treat it as a local handoff: if a GUI handler is available, open the
-project-root `.env`; if headless, print the path and stop. On the enhanced run, write
-`TRAIGENT_API_KEY=` into that same file and refresh/reopen it so the user sees the new line.
+When `.env` is created, treat it as a local handoff: open the project-root `.env` once, using the
+first available GUI editor; if that is unavailable, fall back to the IDE or editor already
+associated with this project directory, and if headless, print the full path and stop. Open it only
+so the user can add `TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen it so the new
+line is visible, and follow `references/run-safety.md` for the clickable registration link and the
+two 10-day windows.
 
 ## User-facing promise
 
