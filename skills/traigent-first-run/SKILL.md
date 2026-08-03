@@ -372,11 +372,12 @@ Only after the standard-library-only component checks:
 
 1. Determine the current provider route from the agent's actual model call and configuration. Treat
    discovered credential names only as an availability inventory; they never select or change an
-   existing route. Prefer the vendor route already implied by the project or current agent wiring,
-   and select models from that route automatically. If no route exists, ask the user which vendor
-   they want and try to configure it automatically from the available credentials. If the selected
-   route cannot supply a usable ladder and the user already has a second supported direct provider
-   credential, offer that as the minimal fallback; otherwise ask for help. Never rewrite the model
+   existing route. Prefer the vendor already implied by the project or current agent wiring, and
+   select models from that vendor automatically. If no usable vendor is already implied by the
+   project or current agent wiring, ask the user which vendor they want and try to configure it
+   automatically from the available credentials. If the chosen vendor setup cannot supply a usable
+   three-model lineup and the user already has a second supported direct provider credential, offer
+   that as the minimal fallback; otherwise ask for help. Never rewrite the model
    identifier or provider prefix merely to match an available key.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none

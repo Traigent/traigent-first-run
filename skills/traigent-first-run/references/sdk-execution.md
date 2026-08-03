@@ -159,16 +159,17 @@ model changes the experiment and attribution, so do it only as a separately disc
 model comparison. Preserve an existing flagship and its calling convention exactly; never replace
 or augment it silently.
 
-For the generated ladder, use one model family when the selected route can supply the full three
-rungs. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
-fraction of the cost" is a sentence the user can act on - keeps a single company receiving the
-user's prompts, and keeps one bill. If the chosen vendor route does not expose at least three
-usable rungs, ask the user to add a second vendor only for the missing rung(s), and name that extra
-upstream recipient in the approval. On the OpenRouter route one key reaches every family; still
-prefer one family by default, and borrow a missing rung from a second family only when the chosen
-family lacks it, naming that extra upstream recipient in the approval.
+For the generated three-model lineup, use one model family when the selected route can supply all
+three model choices. One family keeps the result readable - "the mid tier held the strong tier's
+accuracy at a fraction of the cost" is a sentence the user can act on - keeps a single company
+receiving the user's prompts, and keeps one bill. If the chosen vendor does not expose at least
+three usable model choices, ask the user to add a second vendor only for the missing model(s), and
+name that extra provider in the approval. When using OpenRouter, one key reaches every family;
+still prefer one family by default, and borrow a missing model from a second family only when the
+chosen family lacks it, naming that extra provider in the approval.
 
-Tiers are roles, not hardcoded ids: pick concrete model ids from what the selected route lists at
+These three model slots are roles, not hardcoded ids: pick concrete model ids from what the
+selected route lists at
 run time, then verify each id is live and cost-tracked before scaling, as `run-safety.md` already
 requires.
 
