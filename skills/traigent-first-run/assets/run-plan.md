@@ -25,7 +25,7 @@ The coding assistant maintains this concise internal record at
 
 - Current configuration:
 - Search dimensions and maximum trials:
-- Tuning / validation rows and visibility (`sealed holdout` or `held-back, non-blind`):
+- Tuning rows, coverage, and known limitations:
 - Agent and evaluator/judge calls per example:
 - Services/routes receiving data:
 - Approximate runtime:
@@ -42,7 +42,7 @@ The coding assistant maintains this concise internal record at
   provider-reported cost or `not measured`, and limits:
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, partial/final result, stop reason, and verified portal link:
-- Validation comparison - paired outcomes, visibility, and justified claim strength:
+- Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
 
 ## Interpretation
 

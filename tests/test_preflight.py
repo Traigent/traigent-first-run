@@ -202,6 +202,34 @@ class StaticPreflightTests(unittest.TestCase):
             holdout.metrics, {"holdout_rows": 6, "holdout_labelled_rows": 6}
         )
 
+    def test_tuning_only_dataset_is_not_reported_as_an_undeclared_split(self) -> None:
+        rows = synthetic_rows()[:18]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+
+        split = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-split"
+        )
+        tuning = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-tuning-size"
+        )
+        self.assertEqual(split.status, MODULE.PASS)
+        self.assertEqual(
+            split.detail,
+            "tuning-only dataset; no independent validation split was declared",
+        )
+        self.assertEqual(
+            tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}
+        )
+        self.assertFalse(
+            any(
+                result.check == "dataset-holdout-resolution"
+                for result in MODULE.RESULTS
+            )
+        )
+
     def test_split_metrics_count_labelled_rows_separately(self) -> None:
         """A holdout whose rows carry no expected output resolves nothing.
 

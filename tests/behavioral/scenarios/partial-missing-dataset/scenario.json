@@ -27,30 +27,18 @@
     "task-contract.md"
   ],
   "assertions": {
-    "dataset_rows": 28,
+    "dataset_rows": 18,
     "tuning_rows": 18,
-    "holdout_rows": 10,
     "tuning_difficulty_counts": {
       "easy": 3,
       "medium": 5,
       "hard": 5,
       "very-hard": 5
     },
-    "holdout_difficulty_counts": {
-      "easy": 2,
-      "medium": 3,
-      "hard": 3,
-      "very-hard": 2
-    },
     "tuning_output_counts": {
       "billing": 6,
       "cancellation": 6,
       "technical-support": 6
-    },
-    "holdout_output_counts": {
-      "billing": 4,
-      "cancellation": 3,
-      "technical-support": 3
     },
     "semantic_review": "sufficient",
     "calibration": "pass",

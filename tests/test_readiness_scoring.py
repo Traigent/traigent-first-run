@@ -374,6 +374,24 @@ class DatasetScoringTests(unittest.TestCase):
             "comparison set",
         )
 
+    def test_tuning_only_dataset_names_its_missing_independent_validation(self) -> None:
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=18,
+                labelled_rows=18,
+                tuning_rows=18,
+                tuning_labelled_rows=18,
+            )
+        )
+        power = next(
+            subscore for subscore in pillar.subscores if subscore.name == "power"
+        )
+        self.assertIn(
+            "18 tuning rows and no independent validation set", power.evidence
+        )
+        self.assertNotIn("no tuning set", power.evidence)
+
     def _power(self, facts: object) -> float:
         pillar, _ = MODULE.score_dataset(facts)
         return next(s.value for s in pillar.subscores if s.name == "power")

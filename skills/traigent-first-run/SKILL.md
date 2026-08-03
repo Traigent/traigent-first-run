@@ -20,7 +20,7 @@ Load each reference when its stage begins:
 3. [`references/run-safety.md`](references/run-safety.md) - before environment changes,
    evaluator execution, mock checks, or any paid execution.
 4. [`references/sdk-execution.md`](references/sdk-execution.md) - only before writing the wrapper
-   or running the baseline, optimization, and holdout.
+   or running the baseline and optimization.
 5. [`references/glossary.md`](references/glossary.md) - not a stage: consult it whenever
    explaining a concept to the user or phrasing a confirmation question, so terms stay
    consistent across the run and depth is calibrated from evidence, never by asking the user
@@ -303,7 +303,7 @@ Follow this order:
    review pause. Clarification never authorizes changing real labels, examples, answers, or policy;
    follow `references/evaluation-and-dataset.md` for degenerate-row bounds and gold-repair rules.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
-   containing the combined tuning and holdout rows, so local structure and quality problems are
+   containing the combined tuning rows, so local structure and quality problems are
    checked without importing user modules. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
@@ -432,8 +432,8 @@ Do not repeat a provider choice already resolved in stage 5; keep the paid-work 
 combined.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
-generated six-row sweep, one broader bounded optimization, and baseline winner versus enhanced
-winner validation comparison. Follow the complete disclosure checklist in
+generated six-row sweep, one broader bounded optimization, and a baseline-versus-enhanced tuning
+comparison. Follow the complete disclosure checklist in
 `references/run-safety.md`; it owns the sizing, objectives, decision rule, model-space, cost,
 recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling by default.
 
@@ -452,11 +452,13 @@ completed trials yields an honest partial result and a stop-or-bounded-continuat
 trials requires diagnosis.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
-trial target while preserving meaningful difficulty and a holdout; disclose any reduction from the
-six-row baseline or 10-13-trial enhanced target. Proceed after one explicit approval and keep it
-process-only. Follow `references/run-safety.md` for SDK limits and retries. Maintain its single
+trial target while preserving meaningful difficulty coverage; disclose any
+reduction from the six-row baseline or 10-13-trial enhanced target. Proceed after one explicit
+approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
+Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop.
+
 never call the walkthrough ceiling a hard provider-billing cap.
 
 The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
@@ -504,8 +506,8 @@ account request:
   executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
   cost or latency as `not measured` when the provider or SDK does not supply it.
 - Explain each baseline knob in one plain-language note.
-- State that no validation comparison or improvement claim exists yet and that this phase created no
-  portal experiment.
+- State that no generalization or production-improvement claim exists yet and that this phase
+  created no portal experiment.
 - Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
   exact baseline upload without rerunning it when the installed public API supports that, then run
   the connected enhanced optimization.
@@ -574,23 +576,24 @@ six-row default (including its initial configuration) ran, subject only to an ap
 reduction; the enhanced run used real controls and either produced 10-13 trials, matched an
 explicitly approved and disclosed reduced target, or reports a concrete stop/failure reason; and a
 best configuration and non-degenerate measures exist. Report truncation and persistence failures,
-require the portal probe to have stayed green, and verify each portal link before claiming visibility.
+require the portal probe to have stayed green, and verify each portal link before claiming
+visibility.
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
 auditable:
 
 1. **Outcome** - baseline versus enhanced result and whether a recommendation is supported.
-2. **What the evidence establishes** - tuning result, validation result, and actual persisted runs.
-3. **Current state and limits** - component provenance, exclusions, uncertainty, and incomplete
-   phases.
+2. **What the evidence establishes** - baseline tuning result, enhanced tuning result, and actual
+   persisted runs.
+3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
+   phases, and any small-data overfitting risk.
 4. **Next action** - one action selected from the latest closing evidence.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
 
 Include:
 
-- Best small-sweep configuration versus best enhanced configuration on the tuning set.
-- Validation result separately, including whether it was sealed or held-back and non-blind.
+- Best baseline configuration versus best enhanced configuration on the tuning set.
 - Cost, trial count, failures, stop reason, and direct portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 - The readiness transition: the recorded opening score and band, the closing score and band, and
@@ -614,10 +617,10 @@ If any substitute was used, lead the interpretation with:
 > measured result is not evidence of expected production performance.
 
 Do not promote a configuration from a fully synthetic run. For real components, promotion still
-requires explicit user approval and a sealed validation set: the split and labels were fixed and
-hidden from component design, tuning, and winner selection until the candidate was locked. When
-the assistant inspected or authored that material, call it **held-back, non-blind validation**,
-not an untouched holdout, and do not present it as independent production-promotion evidence.
+requires explicit user approval and a later validation check that is tracked separately from the
+baseline/enhanced comparison. When the assistant inspected or authored that material, call it
+assistant-authored or assistant-inspected evidence and do not present it as independent
+production-promotion evidence.
 
 Name every row the comparison did not score, with its id: rows excluded as degenerate references,
 and the ids of the bounded subset when one was drawn. A result quoted on 25 of 30 rows is a

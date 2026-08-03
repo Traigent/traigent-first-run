@@ -132,10 +132,7 @@ Tuning split vs holdout (validation) split
   Note: if the same examples appear in both, the result is optimistic and cannot
   be trusted (this is "leakage"). Call validation a sealed holdout only if its
   split and labels were hidden until the candidate was locked; assistant-inspected
-  or assistant-authored validation is held-back and non-blind. When the assistant
-  prepares walkthrough data, the default is 28 rows split 18 tuning / 10 validation,
-  with tuning at 3 easy, 5 medium, 5 hard, 5 very hard and validation at 2 easy,
-  3 medium, 3 hard, 2 very hard.
+  or assistant-authored validation is held-back and non-blind.
 
 Provenance
   Plain: where the data came from - real production data, real inputs with
@@ -203,8 +200,9 @@ The lines under each pillar on the card
                                  run is deliberately not counted, so an opening
                                  score usually reports that none was provided
                                  yet rather than that your agent has none.
-    tuning set / held-back test set
-                               - two halves of your examples. The search is
+    optional tuning set / held-back test set
+                               - when your project already has a separate test
+                                 set, two halves of your examples. The search is
                                  allowed to see the first half while it looks
                                  for a better configuration; the second half is
                                  kept back so the final number is measured on
@@ -213,9 +211,8 @@ The lines under each pillar on the card
                                  search fitted the examples it could see. It is
                                  the train/test idea, except nothing is trained:
                                  Traigent searches configurations rather than
-                                 fitting a model. The guide's files call the
-                                 second half the holdout; the card says held
-                                 back, and they are the same rows.
+                                 fitting a model. This is optional follow-up
+                                 evidence, not part of the default first run.
     good-vs-bad examples       - answers already known to be right and known to
                                  be wrong, run through your evaluator to see how
                                  far apart it scores them. Near 1.00 it

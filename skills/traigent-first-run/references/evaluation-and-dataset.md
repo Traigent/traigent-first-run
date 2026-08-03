@@ -296,10 +296,10 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 28 examples by default:
-
-- 3 easy, 5 medium, 5 hard, 5 very hard for tuning.
-- 2 easy, 3 medium, 3 hard, 2 very hard for the held-back validation set.
+For a fully generated walkthrough, create 18 tuning examples by default: 3 easy, 5 medium,
+5 hard, and 5 very hard. Use those rows for the baseline and enhanced comparison; do not create a
+held-back validation set for the default first run. Independent validation is optional later, when
+the project already has that data or a real decision justifies collecting it.
 
 Adjust size when cost or task shape requires it, but keep all four bands represented.
 
@@ -464,18 +464,14 @@ representative, and that limitation belongs in the report.
 The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
 it; this bound exists only so the first run finishes.
 
-## Validation split and claims
+## Optional validation split and claims
 
-Reserve validation data before optimization and keep the same split across comparisons. Call it a
-sealed holdout only when its split and labels were fixed and hidden from component design, tuning,
-and winner selection until the candidate was locked. If the assistant inspected or authored it,
-call it held-back, non-blind validation.
-
-For assistant-prepared 28-row walkthrough data, a practical split is 18 tuning / 10 validation,
-with the tuning rows distributed as 3 easy, 5 medium, 5 hard, 5 very hard and the held-back rows
-distributed as 2 easy, 3 medium, 3 hard, 2 very hard. The held-back ten rows check behavior
-outside the tuning subset, but the assistant inspected or authored them, so the result is
-non-blind and does not independently establish generalization or production performance.
+When the project already has independent validation data, or when a later real decision warrants
+adding it, reserve that data before optimization and keep the same split across comparisons. It is
+not part of the default first-run walkthrough. Call it a sealed holdout only when its split and
+labels were fixed and hidden from component design, tuning, and winner selection until the
+candidate was locked. If the assistant inspected or authored it, call it held-back, non-blind
+validation.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and
