@@ -230,6 +230,63 @@ HEALTHY_SPACE = {
 
 
 class ReadinessAdapterReplayTests(unittest.TestCase):
+    def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
+        help_result = subprocess.run(
+            [sys.executable, str(READINESS), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        help_text = " ".join(help_result.stdout.split())
+        self.assertIn("use code for executable source", help_text)
+        self.assertIn("code-sql for SQL query output", help_text)
+
+        invalid = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--task-kind",
+                "sql",
+                "--json",
+            ],
+            input="[]",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("invalid choice: 'sql'", invalid.stderr)
+
+        accepted = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--evaluator-method",
+                "execution",
+                "--task-kind",
+                "code",
+                "--json",
+            ],
+            input="[]",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        score = json.loads(accepted.stdout)
+        evaluation = next(
+            pillar for pillar in score["pillars"] if pillar["name"] == "evaluation"
+        )
+        task_fit = next(
+            subscore
+            for subscore in evaluation["subscores"]
+            if subscore["name"] == "task-fit"
+        )
+        self.assertEqual(task_fit["value"], 25.0)
+        self.assertEqual(task_fit["evidence"], "execution suits code output")
+
     def _healthy_context(
         self, directory: Path, method: str = "exact"
     ) -> tuple[str, ...]:
