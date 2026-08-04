@@ -308,7 +308,9 @@ approval for its recipients, data, calls, runtime, and spend.
 A Traigent mock run is a separate plumbing check:
 
 - Use a fresh process.
-- Set offline/mock variables before importing Traigent.
+- Set `TRAIGENT_OFFLINE_MODE=true` and `LITELLM_LOCAL_MODEL_COST_MAP=true` before imports. Traigent
+  offline mode does not by itself suppress LiteLLM's import-time remote pricing-map fetch; use both
+  in every generated mock wrapper and every documented free mock invocation.
 - Confirm every agent and evaluator model path is interceptable. LiteLLM/LangChain paths may be
   intercepted; raw provider SDKs, subprocesses, HTTP services, tools, and custom judges may still
   make real calls.
@@ -316,6 +318,9 @@ A Traigent mock run is a separate plumbing check:
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
+- If mock validation says trial settings are not consumed, return to the stage-2
+  repair/continue/pause choice. Enter stage-3 adapter repair and revalidate only after the user
+  chooses its scope; do not open a credential file while optimization remains phantom.
 - Exit the process after mock validation. Mock state has no reliable public undo.
 
 Uniform mock scores can be expected for output-based evaluators. Plumbing success means trials

@@ -11,6 +11,7 @@ Use ``calibrate_evaluator.py`` separately to execute evaluator probes.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -818,6 +819,75 @@ def emit_dataset_id_findings(
         emit("dataset-ids", PASS, "stable ids are unique")
 
 
+def check_evaluator(path: Path) -> None:
+    """Static, non-executing structural check for the evaluator source file.
+
+    Parses the file with `ast.parse` only. That builds a syntax tree without
+    running a single line of the file - no import, no call, no module-level
+    side effect - so it never touches provider credentials and never invokes
+    whatever the evaluator's own logic does. That is also the honest limit of
+    what this check can claim: a file that parses is merely readable as
+    Python, not correct. Whether it behaves like a real evaluator - for
+    example, whether its score ever depends on the input - is a runtime
+    question, and this check does not attempt to answer it. That question
+    belongs to `calibrate_evaluator.py`, which answers it deliberately, in a
+    credential-stripped subprocess, only after explicit approval
+    (traigent-first-run#133).
+    """
+    if not path.exists():
+        emit("evaluator-shape", FAIL, f"{path} does not exist", {"exists": False})
+        return
+    try:
+        source = path.read_text()
+    except (OSError, UnicodeDecodeError) as error:
+        emit(
+            "evaluator-shape",
+            FAIL,
+            f"{path} could not be read as text: {error}",
+            {"exists": True, "parses": False},
+        )
+        return
+    try:
+        ast.parse(source, filename=str(path))
+    except SyntaxError as error:
+        emit(
+            "evaluator-shape",
+            FAIL,
+            f"{path} is not valid Python: {error}",
+            {"exists": True, "parses": False},
+        )
+        return
+    except (MemoryError, RecursionError, ValueError) as error:
+        # `ast.parse` refuses some inputs without calling them a SyntaxError,
+        # and an uncaught one takes the whole process down mid-run - emitting
+        # no JSON at all, which silently breaks the `--json` contract
+        # `readiness.py --preflight -` reads. A ~50 KB file of chained unary
+        # operators is enough: CPython raises `MemoryError: Parser stack
+        # overflowed`, not a SyntaxError. `RecursionError` and `ValueError`
+        # (older CPythons raise it for embedded null bytes) are the same
+        # class of refusal.
+        #
+        # Reported as `parses: False`, which is the fail-closed reading and
+        # the honest one: this check could not establish that the file
+        # parses. It deliberately does not claim the file is invalid Python -
+        # what happened is that parsing did not complete, and the detail says
+        # so, because the remedy either way is to inspect the file.
+        emit(
+            "evaluator-shape",
+            FAIL,
+            f"{path} could not be parsed: {type(error).__name__}: {error}",
+            {"exists": True, "parses": False},
+        )
+        return
+    emit(
+        "evaluator-shape",
+        PASS,
+        f"{path} parses as valid Python; this proves nothing about its "
+        "scoring behavior, which is not executed here",
+        {"exists": True, "parses": True},
+    )
+
+
 def check_dataset(
     path: Path,
     outcome_field: str | None = None,
@@ -1299,6 +1369,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--evaluator",
+        help=(
+            "path to the evaluator source file for a static, non-executing "
+            "syntax check (ast.parse only - never imported or run); pass this "
+            "whenever an evaluator file was found, even if --evaluator-method "
+            "is omitted because no method could be honestly declared for it"
+        ),
+    )
+    parser.add_argument(
         "--json", action="store_true", help="emit machine-readable results"
     )
     parser.add_argument(
@@ -1331,6 +1410,9 @@ def main() -> int:
             expected_field=args.expected_field,
             evaluator_method=args.evaluator_method,
         )
+
+    if args.evaluator:
+        check_evaluator(Path(args.evaluator))
 
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))
