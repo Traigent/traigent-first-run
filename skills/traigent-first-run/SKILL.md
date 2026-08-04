@@ -62,9 +62,9 @@ unversioned `traigent` package.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
-- Open with the five-stage journey from `GUIDE.md`. At boundaries and around minute-long work, use
-  `Stage <n>/5 · <name>` plus `Done / Now / Next`; attach an observed readiness score, rows checked,
-  calls/trials, cost, or elapsed time. Label estimates and never invent progress or an ETA.
+- Open with `GUIDE.md`'s five-stage journey. At boundaries/long work, use `Stage <n>/5 · <name>` and
+  `Done / Now / Next`. Show observed readiness score, rows checked, calls/trials, cost, or time;
+  keep finished stages as compact checkmarks. Label estimates; never invent progress/ETA.
 - Explain a blocked step in plain language and give one recommended recovery.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
@@ -508,9 +508,7 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
-- Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
-  exact baseline upload without rerunning it when the installed public API supports that, then run
-  the connected enhanced optimization.
+- Preview the connected next step with the CTA and approval rules in `references/run-safety.md`.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
@@ -653,16 +651,11 @@ returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer l
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
 
-Close by saying what a further run would be worth, grounded in the two facts already on the table:
-the gaps the opening readiness score named, and which of them this run actually closed. Name the
-ones still open and what each is now costing - an unlabelled half of the dataset, a single-band
-difficulty spread, a substitute component still standing in for a real one - so the motivation is
-the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
-cannot close, say that plainly instead of implying a further run would fix it.
-
-Then give the one next action the **latest validated state** earns, not generic advice. Re-rank the
-remaining closing caps and observed run limitations; do not repeat an opening gap that this run
-cleared. Name the specific move and what it would buy:
+After the readiness transition, close by saying what a further run would be worth. Name the ones
+still open and what each is now costing; use the user's own measured evidence rather than
+encouragement. Say what this walkthrough cannot close. Then give the one next action the **latest
+validated state** earns: re-rank the remaining closing caps and run limits, ignore cleared gaps,
+and name its value:
 
 - Generated or mostly generated data - collect or export a real sample of the same task and re-run.
   This is the gap that ceilings the score no matter how good everything else is, so it is first
@@ -679,9 +672,9 @@ cleared. Name the specific move and what it would buy:
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
 
-One action, named for their state, with the reason attached. A menu offered *instead of* a
-recommendation is the same as no recommendation - so this is the recommendation, and anything else
-comes after it and says so.
+A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
+
+End with the CTA in `references/run-safety.md`; `continue` never bypasses approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,
 these are available whenever the user wants them rather than because their state calls for them:

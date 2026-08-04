@@ -79,6 +79,7 @@ Opening:
 >
 > I will mark each stage with measured numbers when available. Readiness checks the score and
 > setup—not agent accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:

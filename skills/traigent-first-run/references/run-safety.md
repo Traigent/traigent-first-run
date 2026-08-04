@@ -472,12 +472,21 @@ Before the provider-paid baseline, show only its immediate scope:
 
 After showing the baseline result, give the connected stage a preview and approval:
 
-- Search and decision: added enhanced controls, combinations, maximum trials/calls, how Traigent's
-  managed search chooses trials while retaining baseline values, objective directions and weights,
-  and the rule for recommending among tradeoffs.
+- Search: added enhanced controls/combinations, maximum trials/calls, how Traigent's managed search
+  chooses trials while retaining baseline values, objective directions and weights, and the rule
+  for recommending among tradeoffs.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
+
+Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
+opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
+End the preview with `Continue with this bounded Traigent run?` Otherwise recommend the evidenced
+repair; never promise improvement.
+
+Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
+will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless
+that preview disclosed recipients, effects, bounds, and cost.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.

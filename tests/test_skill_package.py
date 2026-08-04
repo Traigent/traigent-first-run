@@ -821,6 +821,25 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("stage <n>/5", skill)
         self.assertIn("with measured numbers when available", guide)
         self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
+        self.assertIn("finished stages as compact checkmarks", skill)
+
+    def test_continue_cta_is_direct_and_evidence_based(self) -> None:
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guidance = f"{skill} {safety}"
+
+        for phrase in (
+            "recommended next: continue with traigent optimization because <observed reason>",
+            "continue with this bounded traigent run?",
+            "do not manufacture urgency",
+            "reply-ready line",
+            "it approves nothing unless",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guidance)
+        self.assertIn("when the measured results show useful headroom", readme)
+        self.assertIn("or address the strongest observed limitation first", readme)
 
     def test_readiness_is_explained_as_progress_without_invented_animation(
         self,

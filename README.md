@@ -81,12 +81,14 @@ changing out of your project.
 7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and
    verified portal links; an unsynced baseline is clearly labelled local-only.
 
-Everything before the baseline approval - inspecting the project, setting up any missing
-components, and validating them locally - makes no provider calls and spends nothing, so the full
-setup is visible before you decide to pay. Once approved, a provider-paid local fixed baseline runs
-and shows its result before any Traigent account/key request. Only then does the guide explain the
-managed optimization, obtain its separate approval, and verify portal tracking with a zero-LLM
-probe before the connected run spends anything.
+Before baseline approval, inspection, setup, and local validation make no provider calls and spend
+nothing. The provider-paid local fixed baseline result appears before any Traigent account/key
+request. Only then does the guide explain and separately approve the managed optimization and
+verify portal tracking with a zero-LLM probe before its paid calls.
+
+At boundaries, the assistant shows `Stage n/5` and measured numbers. After baseline: continue with
+Traigent when the measured results show useful headroom, or address the strongest observed
+limitation first. It gives reason and scope—never a generic menu or guaranteed gain.
 
 The default generated comparison has two planned measurements: six local fixed-grid configurations
 first, followed by a connected managed search targeting 10-13 trials (12 by default) in a
