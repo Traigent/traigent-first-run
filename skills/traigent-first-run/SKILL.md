@@ -508,10 +508,19 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
-- Preview the connected next step with the CTA and approval rules in `references/run-safety.md`.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
+
+Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
+and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
+informative failures, report little or no accuracy headroom and recommend harder realistic cases;
+a ceiling effect remains a hypothesis. An accuracy-only search requires a workflow-demonstration
+label. A cost objective may proceed at equal accuracy only when materially lower cost remains
+possible; report any gain as cost and still flag weak evidence.
+
+Only when this gate supports a measured opportunity, preview the connected step with the CTA and
+approval rules in `references/run-safety.md`.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
@@ -564,15 +573,6 @@ failure is resolved.
 Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
 one-row before and stays unchanged. An assistant-prepared walkthrough must not proceed with a one-
 row baseline; generate enough real controls for the six-configuration default.
-
-After the baseline, check whether the dataset and evaluator can distinguish configurations. If
-the baseline is perfect or nearly perfect and has no informative failures, stop before the search
-and report that this evidence shows little or no accuracy headroom. A ceiling effect remains a
-hypothesis; follow `references/run-safety.md` to name live alternatives and recommend harder,
-realistic cases. Continue an accuracy-only search solely as a labeled workflow demonstration.
-When cost is also an objective, equal accuracy at materially lower cost is a legitimate Pareto win:
-run while cost has headroom, report the gain as cost rather than accuracy, and still question a
-small, easy, synthetic, narrow, or lenient measurement in parallel.
 
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
