@@ -786,7 +786,7 @@ instead and say why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
 truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
-appears in the returned trials. If the combined approval explicitly reduced that default, verify
+appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's
 `BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A
@@ -913,10 +913,15 @@ did not do what the report will claim it did.
 
 Do not enable mock mode in this process. The optimization space must include the current
 configuration and every baseline value, plus meaningful added knobs that the function consumes.
-`max_trials` is a cap rather than an SDK-enforced minimum. The default target is 10-13 visible
-enhanced rows with a cap of 12; report the actual count and stop reason. Fewer than 10 rows requires
-a concrete backend stop, timeout, cost-limit, or failure explanation rather than being presented as
-the intended first-run comparison.
+`max_trials` is a cap rather than an SDK-enforced minimum, passed straight through as
+`max_trials=ENHANCED_MAX_TRIALS`, so returned trials never exceed it - unlike the baseline's
+six-point space, where "all six" already names the whole result. `12` is therefore the ceiling and
+not a floor beneath a higher count, which is why everything the user reads states it as a ceiling -
+"up to 12 configurations" - rather than as a range. Report the actual count and stop reason. Fewer
+than 10 rows requires a concrete backend stop, timeout, cost-limit, or failure explanation rather
+than being presented as the intended first-run comparison; that floor is this assistant's own
+honesty check on a short run, not a count promised to the user, so it stays out of the user-facing
+copy while continuing to govern what may be called the intended comparison.
 
 If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
 retain and report the best partial result (the enhanced run is uncapped by default, so this is

@@ -1,7 +1,6 @@
 # Traigent First-Run Record
 
-The coding assistant maintains this concise internal record at
-`traigent-runs/run-plan.md`. The user does not fill it in.
+The coding assistant maintains this record at `traigent-runs/run-plan.md`; the user does not fill it in.
 
 ## Objective and provenance
 
@@ -22,33 +21,35 @@ The coding assistant maintains this concise internal record at
 - Opening readiness score before any creation or repair - overall, band, binding caps:
 - Latest revalidated readiness score - overall, band, binding caps, and what changed:
 
-## Planned comparison
+## Shared comparison
 
-- Current configuration:
-- Search dimensions and maximum trials:
 - Tuning rows, coverage, and known limitations:
 - Agent and evaluator/judge calls per example:
-- Services/routes receiving data:
-- Approximate runtime:
-- Estimated spend:
 - Total walkthrough ceiling (default `$5.00`):
-- User approval:
+
+## Baseline plan and approval
+
+- Current configuration/space and provider recipients:
+- Calls, runtime, and spend:
+- Baseline approval - status/scope/ceiling:
 
 ## Running state
 
-- Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Tracked spend, or conservative deduction where untracked:
 - Remaining total ceiling:
-- Local baseline checkpoint - artifact, best configuration/tuning score, executed/failed trials,
-  provider-reported cost or `not measured`, and limits:
+- Local baseline checkpoint - artifact, best config/score, trials/failures, cost, and limits:
+
+## Connected-stage plan and approval
+
+- Added dimensions, total combinations, configuration ceiling, and recipients:
+- Calls, runtime, and spend:
+- Connected-stage approval - status/scope, spend, remaining ceiling:
+- Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
-- Connected optimization run ID, partial/final result, stop reason, and verified portal link:
+- Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Free cost check over the completed enhanced trials, when cost was measured - result and whether it
-  named the winner itself:
-- Cost-reduction round if offered - gate met, separate approval, remaining ceiling before/after,
-  seed config, second space and cap, warm-start id with the backend's transfer or refusal, run ID,
-  verified portal link, measured cost change, and the score claim with its paired outcome counts:
+- Free cost check over the completed enhanced trials, when cost was measured - the cheaper-at-no-lower-score trials it returned, or empty:
+- Cost-reduction round if offered - gate met, separate approval, ceiling before/after, seed config, second space and cap, warm-start id with the backend's transfer or refusal, run ID, portal link, measured cost change, and the score claim with its paired outcome counts:
 
 ## Interpretation
 
@@ -56,5 +57,4 @@ The coding assistant maintains this concise internal record at
 - What the result demonstrates:
 - What the result does not establish:
 - Recommended next real-world improvement:
-- Readiness transition - opening score beside the latest, caps cleared and remaining, and whether
-  the gain came from real repair or a `🛠️` substitute:
+- Readiness transition - opening/latest scores, caps, and real repair or `🛠️` substitute:

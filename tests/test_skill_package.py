@@ -296,7 +296,7 @@ class SkillPackageTests(unittest.TestCase):
             "judgment-dependent change",
             "local-only",
             "separate explicit approval",
-            "one concise approval",
+            "two short, contextual approvals",
             "single running total",
         ):
             self.assertIn(phrase, contract_text)
@@ -317,8 +317,8 @@ class SkillPackageTests(unittest.TestCase):
             "do not repeat a provider choice already resolved in stage 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
-            "one concise combined approval",
-            "`$5.00` total walkthrough ceiling by default",
+            "one concise baseline preview and approval",
+            "one total walkthrough ceiling, defaulting to `$5.00`",
             "do not layer another retry loop",
             "never call the walkthrough ceiling a hard provider-billing cap",
         ):
@@ -330,27 +330,29 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete_prompt, combined)
         for paid_phase in (
-            "smallest live provider-credential check",
-            "llm-judge calibration",
-            "preserved baseline or a generated six-row sweep",
-            "one broader bounded optimization",
-            "baseline-versus-enhanced tuning comparison",
+            "smallest live provider/key check",
+            "pre-baseline llm-judge calibration",
+            "preserved baseline or generated six-row sweep",
+            "added enhanced controls",
+            "rule for recommending among tradeoffs",
         ):
-            self.assertIn(paid_phase, skill_text)
+            self.assertIn(paid_phase, combined)
 
-    def test_paid_approval_discloses_the_actual_comparison_and_decision_rule(
+    def test_staged_approvals_disclose_each_immediate_decision(
         self,
     ) -> None:
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         approval = safety.split("## approval and budgets", 1)[1].split(
-            "## live provider probe", 1
+            "## connected-run readiness", 1
         )[0]
         for phrase in (
-            "baseline winner versus enhanced winner tuning comparison",
-            "tuning rows, their known limitations",
+            "before the provider-paid baseline",
+            "show only its immediate scope",
+            "after showing the baseline result",
+            "connected stage a preview and approval",
+            "tuning rows and limitations",
             "objective directions and weights",
-            "fixed baseline space and added enhanced controls",
-            "how traigent chooses trials",
+            "managed search chooses trials",
             "rule for recommending among tradeoffs",
         ):
             with self.subTest(phrase=phrase):
@@ -446,11 +448,35 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("credential", text)
             self.assertIn("do not", text)
             self.assertIn("route", text)
-        self.assertIn("credential names only as an availability inventory", skill_text)
-        self.assertIn("stop with one clear mismatch", skill_text)
-        self.assertIn(
-            "never rewrite the model identifier or provider prefix", skill_text
-        )
+        self.assertIn("resolve the route from the selected agent", skill_text)
+        self.assertIn("inventory presence—not values", skill_text)
+        self.assertIn("never rewrite a route merely to match a key", skill_text)
+
+    def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        env_example = " ".join((ROOT / ".env.example").read_text().casefold().split())
+
+        for phrase in (
+            "inventory presence—not values—in the process, handoff, and exact credentials",
+            "project-declared env loader, launcher, or secret manager exposes without external calls",
+            "never enumerate stores",
+            "mark declared-only sources unverified",
+            "reuse a matching credential in place when inheritable",
+            "do not call the file unsaved",
+            "agent route: <vendor/model>",
+            "provider credentials: <vendors and sources>",
+            "traigent key: <present/absent> (not a provider credential)",
+            "preserve this route by adding <key>",
+            "or change to <available vendor>?",
+            "a route change requires recipient disclosure and approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+        self.assertNotIn("safe key-shape prefixes", safety_text)
+        self.assertNotIn("convenient default", env_example)
+        self.assertIn("another vendor's key does not change its route", env_example)
+        self.assertIn("add its key or change provider", env_example)
 
     def test_selected_agent_identity_prevents_cross_project_result_confusion(
         self,
@@ -476,9 +502,12 @@ class SkillPackageTests(unittest.TestCase):
             "loaded guide source is not automatically the target project",
             "guide-source artifacts never count as its results",
             "a mismatched resumed artifact is historical, never current",
+            "agent: none discovered",
+            "until intent selects or creates one",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
+        self.assertIn("agent: none discovered", guide_text)
         self.assertIn(
             "target project and selected agent (absolute path plus function or command)",
             plan_text,
@@ -515,7 +544,7 @@ class SkillPackageTests(unittest.TestCase):
         text = SKILL.read_text()
         local_heading = "### 4. Validate components locally"
         environment_heading = "### 5. Prepare the environment and finish free checks"
-        paid_heading = "### 6. Ask once before paid work"
+        paid_heading = "### 6. Approve and run the baseline"
         for heading in (local_heading, environment_heading, paid_heading):
             self.assertIn(heading, text)
 
@@ -587,7 +616,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "do not execute an llm judge",
             "uncertain or external evaluator",
-            "explicit combined approval",
+            "two short, contextual approvals",
             "make model/provider calls",
         ):
             self.assertIn(phrase, normalized_safety)
@@ -642,8 +671,9 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "total execution stop target",
             "not a guaranteed provider-billing cap",
-            "connected managed search targeting 10-13 trials",
-            "actual trial count and any concrete shortfall reason",
+            "testing up to 12 configurations",
+            "total combination count beside the ceiling",
+            "number of configurations actually tested and any concrete shortfall reason",
             "cannot yet support a trustworthy paid comparison",
             "too little comparable evidence exists",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
@@ -678,17 +708,45 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, skill)
         self.assertIn("ignored when the project uses git", readme)
         self.assertIn("verify it is untracked and effectively ignored", env_example)
-        for text in (skill, safety):
-            self.assertIn("ls-files --error-unmatch -- .env", text)
-            self.assertIn("exit 0 means tracked and must stop", text)
-            self.assertIn("continue only on exit 1 with no match", text)
-            self.assertIn("stop on any other status", text)
-            self.assertIn("effective `/.env` rule", text)
-            self.assertIn("`/.env`", text)
-            self.assertIn("check-ignore -q -- .env", text)
-            self.assertIn("effective-ignore check fails", text)
-            self.assertIn("stop before secret entry", text)
-            self.assertIn("outside git, do not create `.gitignore`", text)
+
+        # #124: run-safety.md is the one home for the .env tracked-file check's
+        # exact commands and exit-code reasoning.
+        for phrase in (
+            "ls-files --error-unmatch -- .env",
+            "exit 0 means tracked and must stop",
+            "continue only on exit 1 with no match",
+            "stop on any other status",
+            "effective `/.env` rule",
+            "`/.env`",
+            "check-ignore -q -- .env",
+            "effective-ignore check fails",
+            "stop before secret entry",
+            "outside git, do not create `.gitignore`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+
+        # SKILL.md's action-authorization row names the check and points at
+        # run-safety.md instead of restating its commands or exit-code
+        # reasoning - a second full statement of that logic is the defect
+        # #124 found, not emphasis.
+        env_row = skill.split("create or update a minimal `.env`", 1)[1].split(
+            "| repair a working copy", 1
+        )[0]
+        self.assertIn("run-safety.md", env_row)
+        self.assertIn("git-tracked-file safety check", env_row)
+        self.assertIn("stop before secret entry", env_row)
+        for restated in (
+            "ls-files --error-unmatch -- .env",
+            "exit 0 means tracked",
+            "continue only on exit 1 with no match",
+            "stop on any other status",
+            "check-ignore -q -- .env",
+            "effective `/.env` rule",
+        ):
+            with self.subTest(not_restated=restated):
+                self.assertNotIn(restated, env_row)
+
         self.assertIn("verifies it is untracked and effectively ignored", readme)
         self.assertNotIn(
             "add that directory to the project `.gitignore`",
@@ -831,6 +889,119 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
         self.assertIn("uncapped by default", sdk)
         self.assertNotIn("reaching that ceiling is a decision point", normalized)
+
+    def test_user_journey_is_numbered_and_reports_measured_progress(self) -> None:
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("welcome to traigent onboarding!", guide)
+        for stage in ("inspect", "readiness", "baseline", "optimize", "results"):
+            self.assertIn(f"**{stage}**", guide)
+        self.assertIn("stage <n>/5", skill)
+        self.assertIn("with measured numbers when available", guide)
+        self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
+        self.assertIn("finished stages as compact checkmarks", skill)
+
+    def test_continue_cta_is_direct_and_evidence_based(self) -> None:
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guidance = f"{skill} {safety}"
+
+        for phrase in (
+            "recommended next: continue with traigent optimization because <observed reason>",
+            "continue with this bounded traigent run?",
+            "do not manufacture urgency",
+            "reply-ready line",
+            "it approves nothing unless",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guidance)
+        self.assertIn("when the measured results show useful headroom", readme)
+        self.assertIn("or address the strongest observed limitation first", readme)
+
+    def test_readiness_is_explained_as_progress_without_invented_animation(
+        self,
+    ) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        presentation = f"{skill} {glossary}"
+        for phrase in (
+            "stage 2/5 · readiness - <score>/100 (<band>)",
+            "what the score measures",
+            "the strongest evidence",
+            "the one limitation that most affects the next action",
+            "<opening> → <current>",
+            "do not animate with invented progress",
+        ):
+            self.assertIn(phrase, presentation)
+
+    def test_enhanced_detail_waits_for_the_baseline_checkpoint(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        stage_six = skill.split("### 6. approve and run the baseline", 1)[1].split(
+            "### 7. run the honest comparison", 1
+        )[0]
+        stage_seven = skill.split("### 7. run the honest comparison", 1)[1].split(
+            "### 8. verify and report", 1
+        )[0]
+        self.assertIn("do not front-load its algorithm", stage_six)
+        for premature_detail in (
+            # #123's follow-up retired the "10-13-trial enhanced target"
+            # phrasing for a ceiling. The detail this gate keeps out of the
+            # baseline stage is the same one, so it is named the new way -
+            # an assertNotIn on a string no longer written anywhere reads as
+            # coverage while providing none.
+            "up to 12 configurations",
+            "12-configuration ceiling",
+            "connected traigent runs synchronize",
+            "portal history/direct links",
+        ):
+            self.assertNotIn(premature_detail, stage_six)
+        self.assertLess(
+            stage_seven.index("show a **local baseline checkpoint**"),
+            stage_seven.index("stage 4/5 · optimize"),
+        )
+        self.assertIn("stage 4/5 · optimize", stage_seven)
+        self.assertIn("portal history", stage_seven)
+        self.assertIn("conditional capabilities", stage_seven)
+        self.assertIn("obtain explicit approval for this connected stage", stage_seven)
+        baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
+        evidence_gate = stage_seven.index(
+            "now check whether the dataset and evaluator distinguish configurations"
+        )
+        connected_preview = stage_seven.index(
+            "only when this gate supports a measured opportunity"
+        )
+        connected_approval = stage_seven.index("stage 4/5 · optimize")
+        self.assertLess(baseline_checkpoint, evidence_gate)
+        self.assertLess(evidence_gate, connected_preview)
+        self.assertLess(connected_preview, connected_approval)
+        self.assertIn("stop before the search", stage_seven)
+        for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
+            self.assertNotIn("combined approval", document.read_text().casefold())
+
+    def test_run_plan_records_stage_specific_approvals(self) -> None:
+        plan = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn("baseline plan and approval", plan)
+        self.assertIn("baseline approval - status/scope/ceiling", plan)
+        self.assertIn("connected-stage plan and approval", plan)
+        self.assertIn(
+            "connected-stage approval - status/scope, spend, remaining ceiling",
+            plan,
+        )
+        self.assertLess(
+            plan.index("baseline approval - status/scope/ceiling"),
+            plan.index("local baseline checkpoint"),
+        )
+        self.assertLess(
+            plan.index("local baseline checkpoint"),
+            plan.index(
+                "connected-stage approval - status/scope, spend, remaining ceiling"
+            ),
+        )
 
     def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
         """This repository is public; the tools that test it are not.
@@ -1237,11 +1408,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "repeated execution of model-written code",
-            "where it runs",
-            "which tests and fixtures enter the sandbox",
-            "enforced limits and residual risk",
-            "external sandbox service or data recipient",
+            "repeated model-written code or sql execution",
+            "sandbox location",
+            "tests and fixtures",
+            "limits, residual risk",
+            "external sandbox recipient",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
@@ -1319,6 +1490,14 @@ class SkillPackageTests(unittest.TestCase):
             "show the exact judgment-dependent change and obtain explicit approval",
             quality_text,
         )
+        combined_text = f"{skill_text} {quality_text}"
+        for phrase in (
+            "first resolve it against the semantic-coverage evidence already inspected",
+            "explicitly establish whether order matters",
+            "continue without asking",
+            "only when the competing order semantics remain unresolved",
+        ):
+            self.assertIn(phrase, combined_text)
 
     def test_calibration_policy_cannot_be_chosen_to_make_the_scorer_pass(
         self,
@@ -1368,6 +1547,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("every allowed upstream inference provider/route", skill_text)
         self.assertIn("exact recipient set", env_text)
         self.assertIn("disable fallbacks", env_text)
+        self.assertIn("fallbacks can change recipients", env_text)
+        self.assertIn("allowed routes/policy in stage approval", env_text)
 
     def test_secret_file_is_preserved_and_owner_only_before_entry(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -1603,8 +1784,14 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "six baseline rows and a 12-trial enhanced cap",
             "adds two real one-call controls",
-            "target is 10-13 visible enhanced rows",
+            "`12` is therefore the ceiling and not a floor beneath a higher count",
             "max_trials` is a cap rather than an sdk-enforced minimum",
+            # The 10 floor stays here and only here on the reference side: it
+            # is the assistant's honesty check on a short run, so it must
+            # survive the move of the user-facing copy to a bare ceiling.
+            "fewer than 10 rows requires a concrete backend stop, timeout, "
+            "cost-limit, or failure explanation",
+            "not a count promised to the user",
         ):
             self.assertIn(phrase, normalized)
 
@@ -1970,6 +2157,23 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("preflight", document)
             self.assertIn("expected outputs", document)
 
+    def test_readiness_receives_only_a_grounded_task_kind(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        quality = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "treat the output task kind as run-scoped validation state",
+            "pass it as `--task-kind` to every readiness invocation from the opening gate onward",
+            "never infer it only from a filename, language, or benchmark family",
+            "omit `--task-kind` and report task fit as not yet measured",
+        ):
+            self.assertIn(phrase, quality)
+        self.assertIn("apply the run-scoped task-kind rule to readiness only", skill)
+
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
         self,
     ) -> None:
@@ -2134,6 +2338,25 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill_text)
 
+    def test_mock_process_disables_litellm_remote_cost_map_fetch(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "`traigent_offline_mode=true` and `litellm_local_model_cost_map=true`",
+            "traigent offline mode does not by itself suppress litellm's import-time remote pricing-map fetch",
+            "every generated mock wrapper and every documented free mock invocation",
+        ):
+            self.assertIn(phrase, safety)
+
+    def test_mock_rejects_phantom_configuration_before_secret_handoff(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "trial settings are not consumed",
+            "return to the stage-2 repair/continue/pause choice",
+            "enter stage-3 adapter repair and revalidate only after the user chooses its scope",
+            "do not open a credential file while optimization remains phantom",
+        ):
+            self.assertIn(phrase, safety)
+
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
         for phrase in (
@@ -2204,6 +2427,122 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_the_close_states_the_run_scope_it_measured_at(self) -> None:
+        """Small numbers read as the product's ceiling unless the close says otherwise.
+
+        The walkthrough bounds itself deliberately - a row subset, a trial cap,
+        and only the controls whose wiring it verified - and never told the user
+        those were its own choices. So the close carries the three measured
+        ratios, and each clause is dropped rather than estimated when this run
+        does not hold its number.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "rows scored beside the dataset's usable rows",
+            "trials executed beside the enhanced space's combination count",
+            "knobs varied beside the controls this run identified on the agent",
+            "a getting-familiar run rather than the largest one available",
+            "drop any clause this run did not measure instead of estimating it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+
+        # Every clause has a stated degradation, so no path reaches the user
+        # with an empty or invented number.
+        for phrase in (
+            "say the run scored every usable row",
+            "drop this clause and say it stopped there instead",
+            "there is no denominator to quote",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety_text)
+
+        # A scope statement, not a pitch. The repository's own rule is that
+        # motivation comes from measured evidence, so the close may not predict
+        # a win it did not measure or manufacture a reason to act now.
+        self.assertIn(
+            "it does not predict that a larger run would have won, attach a deadline, "
+            "or supply a reason to act now",
+            safety_text,
+        )
+
+        # The scope statement is stated once and reused, so the no-lift path
+        # cannot drift away from it.
+        self.assertIn(
+            "carry the run-scope statement above into this no-lift report", skill_text
+        )
+        self.assertLess(
+            skill_text.index("the run's scope, in this run's own recorded numbers"),
+            skill_text.index("carry the run-scope statement above"),
+        )
+
+    def test_the_handoff_names_real_skills_and_only_hypotheses(self) -> None:
+        """The user leaves with tools, and with claims this run can support.
+
+        At this run's row and trial counts a control that showed no effect was
+        mostly not sampled enough to show one, so the handoff may recommend a
+        test and may not report a finding. Every skill it may name has to exist
+        in Traigent/traigent-skills, and every flag has to be one that repo
+        documents.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "so the user can continue alone, at their full dataset",
+            "npx skills add traigent/traigent-skills --list",
+            "npx skills add traigent/traigent-skills --skill <name>",
+            "only which skills get named comes from this run's evidence",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+
+        # Claim strength is gated in the mandate itself, not left to the map.
+        self.assertIn(
+            "is a hypothesis to test at full scale, never a finding", skill_text
+        )
+        self.assertIn(
+            "never that a control was shown not to matter",
+            skill_text,
+        )
+        self.assertIn(
+            "never as an established finding",
+            safety_text,
+        )
+
+        # Only skills that exist in Traigent/traigent-skills, only flags that
+        # repository documents. A handoff to a skill that was renamed away is a
+        # dead end the user hits after the run is over, and it is discovered
+        # after the walkthrough has already ended. Scoped to the map itself:
+        # matching the whole file would also collect `traigent-runs` and any
+        # future backticked path, and fail with a message about the wrong thing.
+        handoff = safety_text.split("### continuation handoff", 1)[1].split("## ", 1)[0]
+        named = set(re.findall(r"`(traigent-[a-z-]+)`", handoff))
+        self.assertEqual(
+            named,
+            {
+                "traigent-analyze-results",
+                "traigent-analyze-variable-importance",
+                "traigent-dataset-curate",
+                "traigent-eval-audit",
+                "traigent-optimize-config-space",
+                "traigent-optimize-run",
+            },
+            "the handoff map names a skill this list has not confirmed exists in "
+            "Traigent/traigent-skills - confirm it with `npx skills add "
+            "Traigent/traigent-skills --list` and add it here, or drop the row",
+        )
+        joined = skill_text + " " + handoff
+        skills_flags = set(re.findall(r"npx skills add [^`]*?(--[a-z-]+)", joined))
+        self.assertEqual(
+            skills_flags,
+            {"--list", "--skill"},
+            "the handoff names an `npx skills add` flag beyond the two that "
+            "repository documents",
+        )
 
     def test_cloud_insight_is_described_as_signals_not_numbers(self) -> None:
         """The backend withholds numeric dataset-quality scores from clients.
@@ -2457,15 +2796,159 @@ class SkillPackageTests(unittest.TestCase):
     def test_each_paid_run_has_an_exact_run_card(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "immediately before each paid baseline and enhanced run",
+            "immediately before the paid baseline",
             "model ids",
             "each varying knob and its explicit values",
             "one plain-language note per knob",
             "total combination count",
-            "repeat the baseline knobs and label every addition new",
+            # #131 splits the one card in two, so the enhanced card's mandate
+            # sits in stage 7 rather than beside the baseline's; #123's
+            # follow-up adds the ceiling pairing to it. Both survive.
+            "in the enhanced run card, repeat the baseline knobs, "
+            "label every addition new",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_the_run_card_states_the_ceiling_against_the_space_it_searches(
+        self,
+    ) -> None:
+        """The card already counts the space; the ceiling is read against it.
+
+        A bare "up to 12" leaves the user with no sense of what 12 is 12 of,
+        and the card had already computed the number that answers it. Pairing
+        them is also what keeps the ceiling honest in the other direction:
+        SKILL.md separately requires the enhanced space to be materially
+        larger than the cap, and a card showing both makes a space that is not
+        visible rather than merely asserted.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn(
+            "pair that count with this run's trial cap as a ceiling, never a range",
+            skill,
+        )
+        # run-safety.md owns the wording, so SKILL.md points rather than
+        # restating it - the #124 rule applied to the copy this change adds.
+        # It also must not name the cap, which is a value: `max_trials` is
+        # env-overridable and an approved reduction lowers it, so a literal
+        # 12 in the mandate is a ceiling the run may not actually be under.
+        self.assertIn("`references/run-safety.md` owns that wording", skill)
+        # #131 moved the enhanced card behind the baseline checkpoint, so the
+        # mandate is bracketed where it now lives rather than at the combined
+        # card this test was first written against.
+        enhanced_card = skill.split("in the enhanced run card", 1)[1].split(
+            "never promise a pause at minute 30", 1
+        )[0]
+        self.assertIsNone(
+            re.search(r"\b12\b", enhanced_card),
+            "the run-card mandate names the cap as a literal; it is a value "
+            "that an env override or an approved reduction can lower, so the "
+            "card would promise a ceiling this run is not under",
+        )
+        for phrase in (
+            "`<total combination count>` possible configurations",
+            "traigent will test up to `<enhanced trial cap>` of them",
+            "name this count in `configurations` rather than `trials`",
+            "give it as a ceiling, never as a range",
+            "tested <executed trials> of <total combination count> configurations",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+
+    def test_the_card_numbers_come_from_the_approved_space_not_an_example(
+        self,
+    ) -> None:
+        """The reference prints a worked space; the card must not quote it.
+
+        sdk-execution.md's generated default works out to "54 possible
+        configurations" - correctly so for the literal spaces it lists, but
+        not for its own documented reasoning-tier branch, where pinning
+        temperature makes the same default 18. That number now sits one lift
+        away from a sentence the user reads and approves spending against, so
+        the copy names where both numbers come from rather than leaving the
+        nearest concrete figure to be borrowed.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("both numbers come from the approved space itself", safety)
+        self.assertIn("never from a worked example in a reference", safety)
+
+    def test_the_configurations_noun_rule_does_not_capture_failed_trials(
+        self,
+    ) -> None:
+        """A failed-trial count is a different quantity, not the same jargon.
+
+        The rule exists because "trials" is optimizer vocabulary for the
+        number a first-run user is asked to approve. Read as a blanket ban it
+        would also condemn the baseline checkpoint's executed/failed trial
+        counts, which name SDK records rather than the size of the run - so
+        it is scoped to the count it was written for, and says so, rather
+        than teaching the next reader to rename something already correct.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn(
+            "`trials` remains the right word for a failed-trial count", safety
+        )
+        # The pre-existing checkpoint wording stays; a broad rule that
+        # silently invalidated it would be the false-red half of this gate.
+        self.assertIn(
+            "executed and failed trial counts",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
+
+    def test_an_uncomputable_combination_count_degrades_to_the_ceiling_alone(
+        self,
+    ) -> None:
+        """The paired number is computed, so it can be missing.
+
+        Every other number on the card comes from the space the assistant just
+        built, but a preserved user space need not be enumerable, and a
+        template with a hole in it invites filling the hole with an estimate.
+        The copy therefore names the degraded form explicitly, before and
+        after the run, rather than leaving the assistant to improvise one.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("cannot be computed", safety)
+        self.assertIn(
+            "state the ceiling on its own rather than estimating or rounding a total",
+            safety,
+        )
+        self.assertIn(
+            "or the executed count alone when that total was unavailable", safety
+        )
+
+    def test_the_ten_floor_is_an_internal_check_and_not_a_public_promise(self) -> None:
+        """10 governs what the assistant may call the intended comparison.
+
+        It was never a number the user was promised, and the documents they
+        read now say only the ceiling - so the obligation has exactly two
+        homes, both assistant-facing: sdk-execution.md states it with the
+        reasoning, and SKILL.md's stage-8 verification applies it. If a future
+        edit drops either, a run that produced three rows can be reported as
+        the intended first-run comparison with nothing failing.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        self.assertIn("produced at least 10 of its 12 permitted trials", skill)
+        self.assertIn("fewer than 10 rows requires a concrete backend stop", sdk)
+
+        # The public surfaces state a ceiling. A count spoken as a range, or
+        # as a raw trial count, is the framing this change removed.
+        for name in ("README.md", "GUIDE.md"):
+            document = " ".join((ROOT / name).read_text().casefold().split())
+            with self.subTest(document=name):
+                self.assertIn("up to 12 configurations", document)
+                self.assertIsNone(
+                    re.search(r"\d+\s*-\s*\d+ (?:trials|configurations)", document),
+                    f"{name} gives the enhanced count as a range; at approval "
+                    "time the user is asking for the worst case, which only a "
+                    "ceiling answers",
+                )
+                self.assertIsNone(
+                    re.search(r"\bup to \d+ trials\b", document),
+                    f"{name} states the ceiling in trials; the user-facing "
+                    "noun is `configurations`",
+                )
 
     def test_final_report_layers_facts_limits_and_the_latest_next_action(
         self,
@@ -4170,6 +4653,35 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "run the cost-reduction round after the comparison",
             ),
         ),
+        (
+            "the enhanced-run trial-count upper bound",
+            ("up to 12 configurations",),
+            (
+                # #123: four documents stated "10-13" trials with "a cap of
+                # 12" - twelve is less than thirteen, so as written either
+                # the cap was not 12 or 13 never occurred. `max_trials` is
+                # passed straight through to the SDK as the search's upper
+                # bound (sdk-execution.md), so the cap really does bound
+                # visible rows at 12.
+                "10-13 trials",
+                "10-13-trial",
+                "10-13 visible trials",
+                "10-13 visible enhanced rows",
+                # The follow-up decision on #123: 10-12 was arithmetically
+                # right and still the wrong shape to say out loud. At approval
+                # time the user is asking what the worst case is, which a
+                # ceiling answers and a range makes vague, and 10 was never a
+                # promise to them - it is the assistant's own honesty check on
+                # a short run, which sdk-execution.md keeps. So the range
+                # itself is banned wherever it could be spoken, in either the
+                # trial or the configuration noun.
+                "10-12 trials",
+                "10-12-trial",
+                "10-12 visible trials",
+                "10-12 visible enhanced rows",
+                "10-12 configurations",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -4209,7 +4721,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "the total walkthrough ceiling",
             r"(?:ceiling|walkthrough)[^.]{0,40}?\$(\d+\.\d{2})",
         ),
-        ("the enhanced-run trial count", r"(\d+-\d+) trials"),
+        # The enhanced run's ceiling, matched as the ceiling phrase the user
+        # reads rather than as a range: the range shape it used to have is now
+        # banned outright in CONTRADICTIONS above, so a pattern anchored on
+        # `\d+-\d+` would match nothing and quietly stop checking anything.
+        ("the enhanced-run configuration ceiling", r"up to (\d+) configurations"),
         ("the generated baseline size", r"(\w+)-row baseline"),
     )
 
@@ -4253,9 +4769,72 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     "whichever it read last.",
                 )
 
+    # A command the guidance states in more than one document, matched as the
+    # literal invocation rather than a captured number. #124's class: the
+    # .env tracked-file safety check was written out in full identically in
+    # SKILL.md and run-safety.md, so nothing was drifted YET - but nothing
+    # stopped an edit to one copy leaving the other stale, and the failure
+    # mode of a stale copy here is a committed secret. SHARED_VALUES above
+    # only ever anchors on a captured number; a command has no number to
+    # anchor on, so it needs its own table, checked the same way: more than
+    # one document must state it, and every document that does must state it
+    # identically.
+    SHARED_COMMANDS = (
+        (
+            "the forbidden unversioned Traigent install command",
+            r"`(pip install[^`]*traigent[^`]*)`",
+        ),
+    )
+
+    def test_a_shared_command_is_not_stated_two_ways(self) -> None:
+        """Two documents may repeat a command; they may not diverge on it.
+
+        #124 found the .env git-tracked-file check written out in full in
+        both SKILL.md and run-safety.md - byte-identical at the time, so a
+        phrase lock would have passed right up until someone fixed the
+        exit-code handling in one copy and not the other, and the failure
+        mode of that stale copy is a leaked secret. This is that class of
+        defect, generalized: it fails whenever two documents give the
+        assistant two different commands for what is supposed to be one
+        check, including a divergence introduced after this test was
+        written, the same way the numeric SHARED_VALUES check above needs no
+        foreknowledge of which number will drift next.
+        """
+        documents = self.guidance()
+        for label, pattern in self.SHARED_COMMANDS:
+            with self.subTest(value=label):
+                stated = {
+                    name: {match.casefold() for match in re.findall(pattern, text)}
+                    for name, text in documents.items()
+                    if re.search(pattern, text)
+                }
+                # A single-sourced command cannot drift between documents, so
+                # an entry that finds only one is not checking anything - it
+                # reads as coverage while providing none.
+                self.assertGreater(
+                    len(stated),
+                    1,
+                    f"'{label}' is now stated in {sorted(stated) or 'no document'} - "
+                    "if it moved to a single home, delete this entry rather than "
+                    "leaving a check that cannot fail",
+                )
+                values = set().union(*stated.values())
+                self.assertEqual(
+                    len(values),
+                    1,
+                    f"'{label}' is written as {sorted(values)} across "
+                    f"{sorted(stated)}. Two documents give the assistant "
+                    "different commands for one check, and a stale copy "
+                    "here is a silent security failure, not a cosmetic one.",
+                )
+
     # Flags the guidance names that belong to something other than a bundled
     # script. `--all` is the SDK's own push flag, mentioned only to forbid it.
-    EXTERNAL_FLAGS = frozenset({"--all"})
+    # `--list` and `--skill` belong to `npx skills add`, which the close hands
+    # the user so they can continue on their own; both are documented in
+    # Traigent/traigent-skills, and the check that they exist there is
+    # test_the_handoff_names_real_skills_and_only_hypotheses.
+    EXTERNAL_FLAGS = frozenset({"--all", "--list", "--skill"})
 
     def test_the_guidance_names_no_flag_that_does_not_exist(self) -> None:
         """#62's class: an instruction that cannot be followed as written.
@@ -4336,18 +4915,53 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             for path, size in document_bytes.items()
             if path in {ROOT / "GUIDE.md", SKILL}
         )
-        # Raised from 60 KB, which had 23 bytes of headroom left. The optional
-        # cost-reduction round needs three things in SKILL.md and nothing else:
-        # that it is optional and gated in run-safety.md, that its objective is
-        # one-sided, and one line in stage 6 saying the earlier approval does
-        # not cover it. All three are ordering-and-mandate decisions, which is
-        # what this document owns. The gate, the approval, both outcomes, the
-        # selection rule, and every SDK mechanism went into run-safety.md and
-        # sdk-execution.md: 2,493 resident bytes against 16,774 of reference
-        # depth - the policy below working, not a bypass of it.
+        # Raised from 60_000 to 60_500 by #123's follow-up, which reframes the
+        # enhanced run's trial count for the reader who sees it at approval
+        # time: the card now states a ceiling against the space's own
+        # combination count instead of a range. The exact copy went to
+        # run-safety.md, which owns the approval disclosure, so what landed
+        # here is the mandate and the pointer - SKILL.md's own job. That is
+        # new contract surface with no prior statement, not stage detail that
+        # belongs in a reference. Half a kilobyte, because that is what the
+        # mandate costs; a rounder number would bank headroom for the next
+        # edit nobody weighed.
+        #
+        # The graduation handoff adds three mandates that only SKILL.md can
+        # carry - the closing run-scope statement, its repetition on the
+        # no-lift path, and the evidence-selected skills handoff - because each
+        # is an ordering decision about the close, and the depth behind all
+        # three moved into run-safety.md rather than into SKILL.md. That branch
+        # raised this to 62_000 against a 60 KB base. #131 has since landed and
+        # moved stage detail OUT of SKILL.md, which lowered the base - but not
+        # by enough to absorb the three new mandates: the merged package
+        # measures 61_129, over trunk's 60_500. So this genuinely rises, and
+        # the figure below is the MEASURED merged resident rather than either
+        # branch's - 62_000 would have banked 871 bytes nobody weighed.
+        #
+        # 61_500 and not the narrower 61_250: the 60_000 ceiling this file
+        # carried before left 23 bytes of headroom, which is a ceiling that
+        # trips on a one-word edit rather than on a decision. 371 bytes is the
+        # smallest headroom that still makes the next raise a choice.
+        #
+        # The optional cost-reduction round then needs two things in SKILL.md
+        # and nothing else: that it is optional and gated in run-safety.md, and
+        # that its objective is one-sided. Both are ordering-and-mandate
+        # decisions, which is what this document owns. The gate, the approval,
+        # both outcomes, the selection rule, and every SDK mechanism went into
+        # run-safety.md and sdk-execution.md - the policy below working, not a
+        # bypass of it. That branch also carried a third SKILL.md line, in
+        # stage 6, saying the earlier approval did not cover the round; this
+        # merge dropped it. It was written against the single combined approval
+        # #131 has since replaced, and run-safety.md already states the rule
+        # ("takes its own explicit approval... never a continuation of an
+        # earlier stage's approval"), so keeping it would restate a mandate -
+        # the defect this package's own rule names, not emphasis.
+        #
+        # Measured merged resident is 63_363, so this rises. 63_750 and not the
+        # narrower 63_500, for the 23-byte reason recorded above.
         self.assertLess(
             resident,
-            63_000,
+            63_750,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4380,6 +4994,61 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
+        # #133 adds the present-but-unresolved-evaluator distinction (a new
+        # evidence classification and its create/select vs. inspect/repair/
+        # replace routing) to SKILL.md and evaluation-and-dataset.md - also new
+        # contract surface, not duplicated stage detail - so raise TOTAL by
+        # roughly 1 KB, keeping the ceiling as narrow as the addition allows.
+        #
+        # #123's follow-up raises it again, by 1.5 KB. The enhanced run's count
+        # is now spoken to the user as a ceiling against the space it is drawn
+        # from, and run-safety.md carries the copy for that plus the form it
+        # degrades to when the combination count cannot be computed. Two of
+        # those three sentences replace nothing, because the previous framing
+        # said only a number. Against that, the duplicate statement of the
+        # 10-row shortfall obligation left run-safety.md, since #123 had
+        # already made sdk-execution.md its one home.
+        #
+        # #133 and #123's follow-up landed independently and each raised this
+        # number from 220_000 for its own increment, both arriving at 221_500 -
+        # so the merge produced no textual conflict on the line, only on the
+        # reasons above it. Merged, the package carries BOTH additions and
+        # measures 222_750, which neither branch's figure admits. The ceiling
+        # is therefore set here against the measured combined total: this is
+        # the arithmetic neither branch could do alone, and taking either
+        # side's number would have failed the suite rather than the review.
+        #
+        # #131 merges that trunk in and adds the journey structure on top, and
+        # the same arithmetic trap recurs one merge later: trunk said 223_000
+        # and #131 said 222_250, and the merged package measures 223_442 - so
+        # BOTH figures are too low again, for the same reason. The two changes
+        # are additive because they change different things. #137 owns how the
+        # enhanced count is *stated* - the ceiling copy and its degraded form,
+        # which land in run-safety.md. #131 owns the journey *structure* - the
+        # five-stage opening in GUIDE.md, the readiness presentation in
+        # glossary.md, and splitting one combined approval into a baseline
+        # approval and a separate connected-stage approval, which is the bulk
+        # of run-safety.md's share. Against that, #131 moved stage detail out
+        # of SKILL.md, so resident guidance falls to roughly 58 KB even while
+        # TOTAL rises, and the RESIDENT ceiling above is left where it is
+        # rather than raised; the ceiling copy sits in the reference for the
+        # stage that owns it, which is the policy above working rather than
+        # being spent. So the number below is the MEASURED merged total,
+        # 223_442, rounded up to the next 250 - not either branch's figure,
+        # and not an estimate. Measure it; do not take a side.
+        #
+        # The graduation handoff then adds the run-scope derivation and the
+        # evidence-to-skill map to run-safety.md's post-run section - the
+        # reference that already owns the close - so this is the policy above
+        # working, not a bypass of it. That branch raised TOTAL by 6 KB to
+        # 226_000 against a 220 KB base it branched from; trunk has since
+        # reached 223_750 by the two merges recorded above. The number below is
+        # the MEASURED merged total once more - 228_407 rounded up - and it is
+        # the fourth consecutive merge in which neither side's figure was
+        # correct, which is the whole reason this comment keeps growing instead
+        # of the number being guessed. Every branch weighs its own increment
+        # against the base it branched from; only the merge knows the sum.
+        #
         #
         # The optional cost-reduction round adds 19,267 bytes across the corpus
         # (16,774 of it reference and asset depth, 2,493 resident). Most of that
@@ -4405,7 +5074,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # noise bound and a vacuous-copy bound, is 3 KB - so raise TOTAL to
         # 243 KB. Resident is untouched by all of it, which is the shape this
         # policy asks for.
-        budget = 243_000
+        #
+        # Merged onto the trunk that now carries #137, #131 and #139, the
+        # package measures 249_609 - so the ceiling is 250_000, measured once
+        # more rather than taken from either side (the fifth consecutive merge
+        # where neither figure was right).
+        #
+        # Worth a reader's attention, because no single branch could see it:
+        # this round is the largest single increment this budget has taken -
+        # roughly 21 KB, about a tenth of the whole corpus, and resident does
+        # NOT stay untouched once merged (63_363 against the 60 KB the branch
+        # measured against). Most of it documents four SDK mechanisms that are
+        # not the answer rather than the round itself. That is defensible while
+        # those mechanisms are live traps - Traigent/Traigent#2100 and #2101
+        # now track them - but it is guidance whose reason to exist expires
+        # when they are fixed. Revisit this block when they close; if the SDK
+        # gains a floor that binds on the run's own metric, most of these bytes
+        # should leave rather than be inherited.
+        budget = 250_000
         self.assertLess(
             total,
             budget,

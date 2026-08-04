@@ -39,6 +39,7 @@ Before showing readiness, a baseline, or an optimization result, identify the ta
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
 run, compare that identity with the recorded artifact. If it differs, label the artifact
 **historical — different agent** and do not quote its scores as the current result.
+If none is credible, use `Agent: none discovered`; replace it before later results.
 
 An already-supplied local credential file is an availability inventory, not an agent selection. If
 the user explicitly identifies a different owner-only local file as the credential handoff for
@@ -67,13 +68,19 @@ registration link and the two 10-day windows.
 
 ## User-facing promise
 
-Use this short opening, adapting only what inspection already established:
+Opening:
 
-> I will inspect what you have, preserve it, and run free readiness research. It checks the score
-> and setup—not agent accuracy or an optimization result. I explain details only if action is
-> needed. For a material dataset/evaluation limitation, I will show evidence and
-> offer a working-copy repair before paid calls. Then I will show one baseline/optimization estimate
-> and keep temporary components separate from real-world readiness.
+> **Welcome to Traigent Onboarding!**
+>
+> 1. **Inspect** - preserve your agent, dataset, and evaluator.
+> 2. **Readiness** - run free readiness research and explain its score.
+> 3. **Baseline** - measure today's setup with calls, cost, and time.
+> 4. **Optimize** - preview a bounded Traigent search after the baseline.
+> 5. **Results** - compare the runs and recommend one next step.
+>
+> I will mark each stage with measured numbers when available. Readiness checks the score and
+> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
@@ -114,8 +121,8 @@ agent call path:
    for the project. The user sees its best configuration, primary tuning metric, cost, latency,
    trial/failure count, and a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
-   contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
-   trials (12 by default) from a materially larger search space.
+   contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
+   configurations from a materially larger search space.
 
 The assistant uploads the completed baseline without rerunning it only when the installed SDK
 exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline
@@ -124,8 +131,9 @@ persisted run and an explicit `local-only` label for an unsynced baseline, and c
 configs and their measured tuning behavior directly. If you later add an independent validation
 track, treat it as a later follow-up rather than part of this first run: small datasets can
 overfit quickly.
-Include all calls in the combined approval. Trial counts and knob selection are assistant-owned
-implementation choices, not new user questions.
+Approve the provider-paid baseline first. After its result, preview and approve the connected
+optimization separately. The assistant chooses how many configurations it tests and which knobs it
+varies.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

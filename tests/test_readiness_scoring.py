@@ -463,6 +463,175 @@ class EvaluationScoringTests(unittest.TestCase):
         _, caps = MODULE.score_evaluation(MODULE.EvaluationFacts(present=False))
         self.assertIn("evaluator-absent", [cap.condition for cap in caps])
 
+    # traigent-first-run#133: four states a first run can find an evaluator
+    # in - absent, import-invalid (unparseable), constant-pass (parses and
+    # calibrates as broken), and healthy - must each read back as their own
+    # state, not two of them collapsing into the same cap.
+
+    def test_absent_evaluator_routes_to_create_or_select(self) -> None:
+        """`evaluator-absent` remedies as creating/selecting one, not repair."""
+        _, caps = MODULE.score_evaluation(MODULE.EvaluationFacts(present=False))
+        cap = next(c for c in caps if c.condition == "evaluator-absent")
+        self.assertEqual(cap.action_kind, "connect-evaluator")
+
+    def test_import_invalid_evaluator_is_present_but_unresolved(self) -> None:
+        """A file that does not even parse is present, not absent.
+
+        `evaluator_shape_from_preflight` reports `parses=False` only from
+        preflight's static `ast.parse`-only check - this never imports or
+        runs the broken file to learn that it is broken.
+        """
+        facts = MODULE.EvaluationFacts(present=True, method=None, parses=False)
+        pillar, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-absent", conditions)
+        cap = next(c for c in caps if c.condition == "evaluator-unresolved")
+        self.assertEqual(cap.action_kind, "repair-evaluator")
+        self.assertIn("does not parse", cap.reason)
+        calibration = next(s for s in pillar.subscores if s.name == "calibration")
+        self.assertIn("does not parse", calibration.evidence)
+
+    def test_unresolved_evaluator_with_unknown_shape_is_also_present_not_absent(
+        self,
+    ) -> None:
+        """A file that parses but earns no declared method is still unresolved.
+
+        This is the case that opened #133: a constant-pass scorer imports
+        cleanly and has a plausible shape, so the opening gate correctly
+        refuses to declare a method for it (that determination needs
+        execution) without also being unable to tell it apart from no
+        evaluator at all.
+        """
+        facts = MODULE.EvaluationFacts(present=True, method=None, parses=True)
+        _, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-absent", conditions)
+        cap = next(c for c in caps if c.condition == "evaluator-unresolved")
+        self.assertEqual(cap.action_kind, "repair-evaluator")
+        self.assertNotIn("does not parse", cap.reason)
+
+    def test_constant_pass_caught_by_calibration_is_evaluator_invalid_not_unresolved(
+        self,
+    ) -> None:
+        """Behavior-level invalidity keeps its own, already-existing condition.
+
+        A constant-pass evaluator that calibration actually ran against and
+        caught (`non_constant: False`) is `evaluator-invalid`, distinct from
+        `evaluator-unresolved` (never calibrated at all) - both route to the
+        same inspect/repair/replace remedy, but the readiness record keeps
+        the two claims separate: "connected, never resolved" is not "ran and
+        found broken".
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            parses=True,
+            calibration_present=True,
+            calibration_supplied=True,
+            checks=({"good_passes": True, "bad_fails": True, "non_constant": False},),
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-invalid", conditions)
+        self.assertNotIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-absent", conditions)
+        invalid_cap = next(c for c in caps if c.condition == "evaluator-invalid")
+        self.assertEqual(invalid_cap.action_kind, "repair-evaluator")
+
+    def test_healthy_evaluator_raises_no_evaluator_cap(self) -> None:
+        """A real, calibrated, non-constant evaluator is not capped at all."""
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="structured",
+            parses=True,
+            calibration_present=True,
+            calibration_supplied=True,
+            checks=(
+                {"good_passes": True, "bad_fails": True, "non_constant": True},
+                {"good_passes": True, "bad_fails": True, "non_constant": True},
+            ),
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        evaluator_conditions = {
+            "evaluator-absent",
+            "evaluator-unresolved",
+            "evaluator-invalid",
+        }
+        self.assertFalse(evaluator_conditions & {cap.condition for cap in caps})
+
+    def test_a_timed_out_calibration_keeps_its_own_cap_even_without_a_method(
+        self,
+    ) -> None:
+        """Calibration having been engaged excludes the unresolved branch.
+
+        A run that supplied a payload and timed out already has something to
+        say - `evaluator-timeout` - and must not be relabelled
+        `evaluator-unresolved` merely because no method happened to be
+        declared alongside it.
+        """
+        facts = MODULE.evaluation_facts_from_calibration(
+            {"timed_out": True, "cases": [], "passed": False}
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-timeout", conditions)
+        self.assertNotIn("evaluator-unresolved", conditions)
+
+    def test_the_timeout_witness_alone_excludes_the_unresolved_branch(self) -> None:
+        """Isolate `timed_out`, which the payload-driven test above cannot.
+
+        Any non-None payload also sets `calibration_supplied`, so that test
+        would still pass if `or facts.timed_out` were dropped from the guard
+        - it never exercises that term on its own. Building the facts
+        directly is the only way to drive the timeout witness with every
+        other witness false.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method=None,
+            timed_out=True,
+            calibration_present=False,
+            calibration_supplied=False,
+            checks=(),
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-timeout", conditions)
+        self.assertNotIn("evaluator-unresolved", conditions)
+
+    def test_evaluator_present_flows_from_preflight_shape_without_a_method(
+        self,
+    ) -> None:
+        """The adapter, not just the dataclass, derives presence from preflight.
+
+        `evaluation_facts_from_calibration` must read `evaluator_present`/
+        `evaluator_parses` the same way `--evaluator-method` already flows
+        through it, so a file preflight found - but this run could not
+        honestly name a method for - is not silently scored as absent.
+        """
+        facts = MODULE.evaluation_facts_from_calibration(
+            None, evaluator_present=True, evaluator_parses=False
+        )
+        self.assertTrue(facts.present)
+        self.assertIsNone(facts.method)
+        self.assertFalse(facts.parses)
+        _, caps = MODULE.score_evaluation(facts)
+        self.assertIn("evaluator-unresolved", [cap.condition for cap in caps])
+
+    def test_evaluator_shape_from_preflight_reads_the_static_check(self) -> None:
+        records = [
+            {
+                "check": "evaluator-shape",
+                "status": "PASS",
+                "metrics": {"exists": True, "parses": True},
+            }
+        ]
+        self.assertEqual(MODULE.evaluator_shape_from_preflight(records), (True, True))
+        self.assertEqual(MODULE.evaluator_shape_from_preflight([]), (False, None))
+
     def test_both_calibration_payload_shapes_parse(self) -> None:
         matrix = MODULE.evaluation_facts_from_calibration(
             {"cases": [{"checks": {"a": True}, "scores": {"good": 1.0, "bad": 0.0}}]}
@@ -1528,8 +1697,8 @@ class DocumentedSchemaTests(unittest.TestCase):
                 self.assertEqual(
                     [cap.reason for cap in caps],
                     [
-                        "No tunable knob is attested as wired, so there is "
-                        "nothing to search."
+                        "Nothing is marked as a setting the agent actually "
+                        "uses, so there is nothing to search."
                     ],
                 )
                 self.assertEqual(knobs, [])
@@ -1554,7 +1723,8 @@ class DocumentedSchemaTests(unittest.TestCase):
         knob_count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertTrue(knob_count.measured)
         self.assertEqual(
-            knob_count.evidence, "0 of 1 declared knobs are attested as wired"
+            knob_count.evidence,
+            "0 of 1 listed settings are marked as ones the agent uses",
         )
 
     def test_explicit_wiring_still_scores_the_knob(self) -> None:
@@ -1857,7 +2027,7 @@ class CliTests(unittest.TestCase):
                 json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
             )
             _, output = self._run(["--config-space", str(space), "--color", "never"])
-        self.assertIn("does not state which of them the agent consumes", output)
+        self.assertIn("none is marked as one the agent uses", output)
         self.assertNotIn("1 of 1 wired knobs", output)
         self.assertNotIn("lists no settings", output)
 
