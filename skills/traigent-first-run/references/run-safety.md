@@ -318,8 +318,9 @@ A Traigent mock run is a separate plumbing check:
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
-- If mock validation says trial settings are not consumed, return to the stage-3 adapter/repair
-  path and revalidate; do not open a credential file while optimization remains phantom.
+- If mock validation says trial settings are not consumed, return to the stage-2
+  repair/continue/pause choice. Enter stage-3 adapter repair and revalidate only after the user
+  chooses its scope; do not open a credential file while optimization remains phantom.
 - Exit the process after mock validation. Mock state has no reliable public undo.
 
 Uniform mock scores can be expected for output-based evaluators. Plumbing success means trials

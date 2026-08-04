@@ -2153,7 +2153,8 @@ class SkillPackageTests(unittest.TestCase):
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
             "trial settings are not consumed",
-            "return to the stage-3 adapter/repair path and revalidate",
+            "return to the stage-2 repair/continue/pause choice",
+            "enter stage-3 adapter repair and revalidate only after the user chooses its scope",
             "do not open a credential file while optimization remains phantom",
         ):
             self.assertIn(phrase, safety)

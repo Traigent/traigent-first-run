@@ -35,7 +35,7 @@ Validate it; do not silently redesign it.
 Treat the output task kind as run-scoped validation state. Pass it as `--task-kind` to every
 readiness invocation from the opening gate onward only when project evidence grounds a recognized
 kind; never infer it only from a filename, language, or benchmark family. If unresolved, omit
-`--task-kind` and report task fit as not yet measured. Re-resolve after contract changes.
+`--task-kind` and report task fit as not yet measured.
 
 When building an evaluator:
 
@@ -134,7 +134,7 @@ and obtain explicit approval before editing it.
 For a calibration `permutation_question`, first resolve it against the semantic-coverage evidence
 already inspected. If product contracts or tests explicitly establish whether order matters,
 record it and continue without asking. Ask before paid work only when the competing order semantics
-remain unresolved; it is not a failed check.
+remain unresolved.
 
 The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
 to the real task and save the JSON as `traigent-runs/calibration-cases.json`. Keep the command's

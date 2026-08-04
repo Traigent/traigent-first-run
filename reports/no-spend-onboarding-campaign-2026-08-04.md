@@ -8,7 +8,7 @@ This is Phase A breadth plus a blinded fixture pilot. Phase B—the human-guided
 
 Guide baseline: `801df5cedaf25d674de8a7121fc205036416c9c5`.
 
-Fixture-bank baseline: `d742fbc1b8adbcd53c281a87fce5ceca1da5d792`.
+Test-harness baseline: `d742fbc1b8adbcd53c281a87fce5ceca1da5d792`.
 
 ## Customer-environment matrix
 
@@ -24,14 +24,12 @@ Seven valid isolated scenarios completed. One initial no-venv attempt was discar
 | Empty project | Produced 0/100 NOT READY, used `Agent: none discovered`, asked exactly “What should the walkthrough agent do?”, and made zero writes. | Pass |
 | Raw provider SDK | Detected the direct OpenAI call statically, did not execute it, and stopped at the limited-dataset repair choice. | Pass |
 
-Evidence roots:
+The bounded [sanitized evidence manifest](no-spend-onboarding-campaign-2026-08-04-evidence.json)
+records the durable matrix results. Raw transcripts were locally observed in ephemeral isolated
+roots and are not published in this repository. The original no-venv attempt is excluded from
+valid counts; its fresh retry explicitly confirmed it did not read outside its assigned folder.
 
-- `/tmp/traigent-phase-a-matrix-Og1IJx`
-- `/tmp/traigent-phase-a-retry-Ydlk4G`
-
-The original no-venv folder under the first root is excluded from valid counts. The retry report explicitly confirms it did not read outside its assigned folder.
-
-## Blinded fixture pilot
+## Blinded scenario pilot
 
 The canonical six-check bank gate passed before workers ran. Cases ran sequentially in new neutral roots with fresh context-isolated workers.
 
@@ -43,35 +41,35 @@ The canonical six-check bank gate passed before workers ran. Cases ran sequentia
 
 Valid pilot result: **3/3 matched receipts and safe stop behavior**.
 
-Evidence roots:
-
-- Case 02: `/tmp/traigent-onboarding-attempt-k0tEShNj/run/captain-artifacts`
-- Case 06: `/tmp/traigent-onboarding-attempt-3OMbWaou/run/captain-artifacts`
-- Case 08: `/tmp/traigent-onboarding-attempt-cYK2Al9J/run/captain-artifacts`
+The sanitized evidence manifest records each case's opening score, receipt verdict, stop, and
+unchanged audit. Raw command transcripts were local, ephemeral observations and are not claimed as
+durable or independently reproducible evidence.
 
 Excluded attempts were retained instead of rewritten:
 
-- `/tmp/traigent-onboarding-attempt-CaYAuv1R/run`: captain omitted the explicit no-extra-opening-arguments instruction; worker added component-state flags.
-- `/tmp/traigent-onboarding-attempt-ixMB5JhV/run`: worker obeyed the corrected argument boundary but the public CLI did not yet distinguish Python `code` from SQL `code-sql`.
+- One attempt was excluded because the captain omitted the explicit no-extra-opening-arguments instruction and the worker added component-state flags.
+- One attempt was excluded because the worker obeyed the corrected argument boundary but the public CLI did not yet distinguish Python `code` from SQL `code-sql`.
 - The first case-02 captain capture normalized JSON floats to integers and correctly failed exact grading; the raw stdout was recaptured without transformation and then matched.
 
 ## Confirmed defects and fixes prepared
 
 ### `traigent-first-run`
 
-1. Set `LITELLM_LOCAL_MODEL_COST_MAP=true` with `TRAIGENT_OFFLINE_MODE=true` before every mock import/invocation. Independent blocked-socket measurement observed eight connection attempts without it and zero with it.
+1. Set `LITELLM_LOCAL_MODEL_COST_MAP=true` with `TRAIGENT_OFFLINE_MODE=true` before every mock import/invocation. A local blocked-socket probe observed eight connection attempts without it and zero with it. Its raw log was ephemeral, so this is a local observation rather than a CI-backed regression result.
 2. Treat task kind as grounded run-scoped evidence from the opening gate onward; close the CLI vocabulary and distinguish executable `code` from SQL-query `code-sql`.
 3. Resolve permutation semantics from product/tests/evaluator evidence and ask only when materially unresolved.
 4. Represent a zero-agent project canonically as `Agent: none discovered` until intent creates or selects an agent.
 5. Route a mock report that says trial settings are not consumed back to adapter repair; do not open credentials while optimization remains phantom.
 6. Preserve the existing one-compatible-project-environment rule while keeping the resident and total guidance budgets below their locked ceilings.
 
-### `quality-onboarding-fixtures`
+### Test harness
 
 1. Correct cases 02, 03, and 20 from stale `execution`/`code-sql` declarations to their implemented `set-f1`/`structured` contract.
 2. Correct case 08 so a constant-pass evaluator does not privately inherit `execution`; its opening method is absent and task kind is `code`.
 3. Bind scorer and opening snapshots to the selected evaluator bytes with SHA-256 digests.
-4. Add two mutation probes proving evaluator rewrites invalidate both snapshot profiles.
+4. Bind both snapshot profiles to evaluator bytes and a customer-visible output
+   contract; add corruption probes proving evaluator and task-kind evidence drift
+   cannot remain green.
 5. Allow grounded opening task kinds while keeping zero-anchor cases task-kind-free.
 6. Bump both materially changed snapshot contracts to profile version 2.
 
@@ -87,10 +85,11 @@ Excluded attempts were retained instead of rewritten:
 
 - Guide: `python3 -m unittest discover -s tests -q` — 418 tests, OK.
 - Guide behavior lock: `python3 tools/relock.py --check` — up to date.
-- Fixture bank: canonical `check_bank.py --guide-src ...` — all six checks PASS.
-- Fixture mutation suite: 45 deliberate corruptions detected, including both evaluator-digest mutations.
-- Fixture skill: repository and system `quick_validate.py` — valid.
+- Harness: canonical `check_bank.py --guide-src ...` — all six checks PASS.
+- Harness mutation suite: 47 deliberate corruptions detected, including evaluator-
+  digest, output-contract-digest, and independent task-kind mutations.
+- Harness package: repository and system `quick_validate.py` — valid.
 - Python formatting/imports: Black, isort, and `py_compile` — clean.
 - Blinded pilot: three valid `MATCHED SNAPSHOT` verdicts and three `UNCHANGED` audits.
 
-No claim in this report treats a fixture snapshot match as independent correctness or calls Phase A an end-to-end validation.
+No claim in this report treats a snapshot match as independent correctness or calls Phase A an end-to-end validation.
