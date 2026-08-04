@@ -32,6 +32,11 @@ metric merely because it is easy to implement.
 When the user's existing evaluator is present, preserve it and explain "correct" in one sentence.
 Validate it; do not silently redesign it.
 
+Treat the output task kind as run-scoped validation state. Pass it as `--task-kind` to every
+readiness invocation from the opening gate onward only when project evidence grounds a recognized
+kind; never infer it only from a filename, language, or benchmark family. If unresolved, omit
+`--task-kind` and report task fit as not yet measured.
+
 When building an evaluator:
 
 - Preserve an existing evaluator unchanged. Expose its grading logic through a thin generated
@@ -125,6 +130,11 @@ change real grading policy. After the answer, update the evidence, affected prob
 rationale, gaps, and verdict before continuing. If implementing the answer would change real
 labels, expected answers, examples, or rubric policy, show the exact judgment-dependent change
 and obtain explicit approval before editing it.
+
+For a calibration `permutation_question`, first resolve it against the semantic-coverage evidence
+already inspected. If product contracts or tests explicitly establish whether order matters,
+record it and continue without asking. Ask before paid work only when the competing order semantics
+remain unresolved.
 
 The bundled matrix interface accepts this exact per-case shape. Adapt the values and scoring paths
 to the real task and save the JSON as `traigent-runs/calibration-cases.json`. Keep the command's
@@ -248,6 +258,7 @@ Use concrete evidence:
 | Missing or overlapping validation split | Split sizes and overlap evidence | No independent generalization claim is supported |
 | Task-inappropriate evaluator | Show the exact rule and one valid answer it rejects or bad answer it accepts | Optimization rewards the wrong behavior |
 | Degenerate evaluator | Four-probe scores, exceptions, or constant/inverted ordering | Candidate configurations cannot be ranked reliably |
+| Present-but-unresolved evaluator | A file exists but no method could be honestly declared without executing it (a syntax error, or a return that plainly ignores the input) | Nothing can be scored yet; this is a repair/inspect gap on an existing file, not a create/select gap |
 | Baseline ceiling | Baseline score, number and type of failures, and per-example outcomes | This sample/evaluator may show little headroom; the cause is not established |
 
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which

@@ -316,6 +316,17 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "fits": ("free-text", "structured", "code-sql", "routing"),
     },
 }
+TASK_KINDS = (
+    "closed-label",
+    "code",
+    "code-sql",
+    "extraction",
+    "free-text",
+    "numeric",
+    "routing",
+    "short-answer",
+    "structured",
+)
 DETERMINISTIC_METHODS = {
     "exact",
     "normalized-exact",
@@ -367,6 +378,7 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-mostly-synthetic": "connect-real-data",
     "dataset-generated-answer-key": "review-answer-key",
     "evaluator-absent": "connect-evaluator",
+    "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
@@ -565,6 +577,14 @@ class DatasetFacts:
 
 @dataclass(frozen=True)
 class EvaluationFacts:
+    # An evaluator is connected, on EITHER witness: a method was declared for
+    # it, or preflight's static shape check found a file on disk. It used to
+    # mean only the first, which is why a project whose evaluator existed but
+    # could not be honestly named scored identically to one with no evaluator
+    # at all - "absent", and routed to create/select rather than to
+    # inspect/repair (traigent-first-run#133). `method` still says whether
+    # this run can name what it does; `present` says only that something is
+    # there to name.
     present: bool = False
     method: str | None = None
     task_kind: str | None = None
@@ -578,6 +598,14 @@ class EvaluationFacts:
     checks: tuple[dict[str, bool], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
+    # Whether the evaluator source parses as Python, from preflight's static
+    # `ast.parse`-only check (never import, never execution). None means that
+    # check never ran - not that it passed. `present=True` with `method=None`
+    # and this still None or True is "a file is connected but no method could
+    # be honestly declared for it" (an ambiguous or ordinary-looking shape);
+    # False narrows that same present-but-unresolved state to "the file is
+    # not even valid Python" (traigent-first-run#133).
+    parses: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -864,16 +892,31 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
         return Cap(
             "dataset-below-measurable-size",
             WIRING_CHECK_CEILING,
-            f"{effective_n} comparable example(s) is a wiring check, not a "
-            "stable comparison; treat any difference as exploratory.",
+            # The arithmetic IS the context. "Wiring check" told a reader
+            # nothing; "one example is worth 17 points" tells them why a winner
+            # here may just have caught a lucky row. Guarded because a dataset
+            # can have rows and nothing scoreable, and 100/0 would take the
+            # scorer down on the one card that most needs to render.
+            (
+                f"only {effective_n} comparable example(s) - one example moves "
+                f"the score by about {100 / effective_n:.0f} points, so a "
+                "configuration can look better by winning a single row. Treat "
+                "any difference as a hint, not a result."
+                if effective_n
+                else "no example can be scored, so nothing can be compared."
+            ),
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
             "dataset-coarse-resolution",
             COARSE_RESOLUTION_CEILING,
-            f"{effective_n} comparable examples is a small comparison set; "
-            "paired uncertainty must be calculated from completed paired "
-            "outcomes before claiming a lift.",
+            # Says what it costs the reader, not how a statistician would
+            # measure it. "Paired uncertainty from completed paired outcomes"
+            # is the method, and the method belongs in the reference the
+            # assistant reads - a card is glanced at, not studied.
+            f"{effective_n} comparable examples is a small comparison set, so "
+            "a small difference between configurations may be chance rather "
+            "than a real improvement.",
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
         )
@@ -1393,6 +1436,46 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         subs.append(SubScore("probe-spread", 0.0, 15.0, False, "no evaluator"))
         return combine("evaluation", subs), caps
 
+    # `present` is true and no calibration result has spoken yet, but no
+    # method was declared for it either - a file is connected and this run
+    # cannot honestly say what it does. That is a different customer problem
+    # from "evaluator-absent": nothing needs to be created or selected, an
+    # existing file needs to be inspected, repaired, or replaced
+    # (traigent-first-run#133).
+    #
+    # Every witness that calibration was ever engaged - real checks, a
+    # supplied payload, or a payload that timed out before producing checks -
+    # excludes this branch, so a run that tried and has something to say
+    # (including "it timed out") keeps saying it through the paths below
+    # rather than being relabelled "never resolved".
+    calibration_engaged = (
+        facts.calibration_present
+        or facts.calibration_supplied
+        or facts.timed_out
+        or bool(facts.checks)
+    )
+    if facts.method is None and not calibration_engaged:
+        if facts.parses is False:
+            reason = (
+                "An evaluator file is connected, but it does not parse as "
+                "valid Python, so no method can be declared for it - inspect "
+                "and repair or replace it."
+            )
+            evidence = "evaluator present but does not parse as Python"
+        else:
+            reason = (
+                "An evaluator file is connected, but no method could be "
+                "honestly declared for it without executing it, so no result "
+                "can be trusted - inspect it and repair or replace it."
+            )
+            evidence = "evaluator present, method not resolved"
+        caps.append(Cap("evaluator-unresolved", 40, reason))
+        subs.append(SubScore("calibration", 0.0, 40.0, True, evidence))
+        subs.append(SubScore("task-fit", 0.0, 25.0, False, evidence))
+        subs.append(SubScore("reproducibility", 0.0, 20.0, False, evidence))
+        subs.append(SubScore("probe-spread", 0.0, 15.0, False, evidence))
+        return combine("evaluation", subs), caps
+
     if facts.calibration_present and facts.checks:
         gating_failed = [
             index
@@ -1561,14 +1644,15 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
 NOTHING_WIRED_CAP = Cap(
     "agent-no-varying-knobs",
     45,
-    "No tunable knob is attested as wired, so there is nothing to search.",
+    "Nothing is marked as a setting the agent actually uses, so there is "
+    "nothing to search.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
     45,
-    "Search controls are declared, but the document does not state which of "
-    "them the agent consumes, so nothing is attested as wired to search.",
+    "Settings are listed, but none is marked as one the agent uses - marking "
+    "them is what makes them searchable.",
 )
 
 
@@ -1640,8 +1724,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # is an unenforced claim.
         return (
             nothing_to_search_pillar(
-                f"{len(facts.knobs)} declared knob(s), none attested as wired - "
-                "name the knobs the agent consumes in the document's 'wired' list"
+                f"{len(facts.knobs)} setting(s) listed, none marked as one the "
+                "agent uses - list those in the document's 'wired' field"
             ),
             [UNATTESTED_WIRING_CAP],
             [],
@@ -1682,7 +1766,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # knobs ARE declared, zero of them are attested as wired.
         return (
             nothing_to_search_pillar(
-                f"0 of {len(facts.knobs)} declared knobs are attested as wired"
+                f"0 of {len(facts.knobs)} listed settings are marked as ones "
+                "the agent uses"
             ),
             [NOTHING_WIRED_CAP],
             knobs,
@@ -2221,6 +2306,24 @@ def _status_by_check(records: Sequence[dict[str, Any]]) -> dict[str, str]:
     }
 
 
+def evaluator_shape_from_preflight(
+    records: Sequence[dict[str, Any]],
+) -> tuple[bool, bool | None]:
+    """Read preflight's static `evaluator-shape` check, if one ran.
+
+    Returns `(present, parses)`. `present` is a measured fact - preflight
+    found a file at the path it was given - not a declaration; `parses` is
+    `None` when no such check ran (not "it failed"), `True` when the file
+    parsed as valid Python, `False` when it did not. preflight never imports
+    or executes the file to produce this (`check_evaluator`, `ast.parse`
+    only), so this stays inside the credential-free opening gate.
+    """
+    shape = _metrics_by_check(records).get("evaluator-shape")
+    if not shape:
+        return False, None
+    return bool(shape.get("exists")), shape.get("parses")
+
+
 class PreflightInputError(ValueError):
     """Supplied preflight JSON cannot be scored honestly.
 
@@ -2434,11 +2537,24 @@ def evaluation_facts_from_calibration(
     *,
     method: str | None = None,
     task_kind: str | None = None,
+    evaluator_present: bool = False,
+    evaluator_parses: bool | None = None,
 ) -> EvaluationFacts:
-    """Normalize both shapes `calibrate_evaluator` emits into one fact set."""
+    """Normalize both shapes `calibrate_evaluator` emits into one fact set.
+
+    `evaluator_present`/`evaluator_parses` come from preflight's static
+    `evaluator-shape` check (`evaluator_shape_from_preflight`, below), not
+    from a declaration - a file preflight found on disk, whether or not this
+    run could honestly declare a method for it. Without either signal,
+    presence still falls back to "a method was declared", the only fact this
+    function used to have (traigent-first-run#133).
+    """
     if payload is None:
         return EvaluationFacts(
-            present=method is not None, method=method, task_kind=task_kind
+            present=method is not None or evaluator_present,
+            method=method,
+            task_kind=task_kind,
+            parses=evaluator_parses,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -2471,6 +2587,7 @@ def evaluation_facts_from_calibration(
         checks=tuple(checks),
         probe_scores=tuple(probes),
         timed_out=bool(payload.get("timed_out")),
+        parses=evaluator_parses,
     )
 
 
@@ -3065,7 +3182,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--task-kind",
-        help="output kind the agent produces (closed-label, free-text, code-sql, ...)",
+        choices=TASK_KINDS,
+        help=(
+            "output kind the agent produces; use code for executable source and "
+            "code-sql for SQL query output"
+        ),
     )
     parser.add_argument(
         "--weights",
@@ -3114,15 +3235,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     try:
+        # Loaded once and reused for both the dataset and evaluator-shape
+        # reads: `--preflight` accepts `-` for stdin, which a second
+        # `load_json` call cannot re-read.
+        preflight_records = load_json(args.preflight) if args.preflight else []
         dataset_facts = (
-            dataset_facts_from_preflight(load_json(args.preflight))
+            dataset_facts_from_preflight(preflight_records)
             if args.preflight
             else DatasetFacts(exists=False)
+        )
+        evaluator_present, evaluator_parses = evaluator_shape_from_preflight(
+            preflight_records
         )
         evaluation_facts = evaluation_facts_from_calibration(
             load_json(args.calibration) if args.calibration else None,
             method=args.evaluator_method,
             task_kind=args.task_kind,
+            evaluator_present=evaluator_present,
+            evaluator_parses=evaluator_parses,
         )
         agent_facts = (
             agent_facts_from_config_space(load_json(args.config_space))

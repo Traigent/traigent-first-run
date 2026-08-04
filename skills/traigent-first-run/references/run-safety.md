@@ -81,7 +81,7 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   Stop before secret entry if the effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
   `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
   after the local baseline checkpoint.
-- Never paste or print secrets. Check only presence and safe key-shape prefixes.
+- Check presence only; never inspect, paste, or print secret values.
 - Hand the file off unambiguously. In a graphical session, launch the opener detached and
   non-blocking: pass the absolute `.env` path as one safely quoted argument, redirect stdin,
   stdout, and stderr away from the assistant's pipes, and start it in the background. On POSIX,
@@ -302,13 +302,15 @@ candidate execution must satisfy the containment contract above. A non-executing
 needs a declared local dependency also waits until that dependency is installed. Run either before
 creating `.env` or requesting a provider key. A generic outside-review wait is not a gate; pause
 only when one unresolved product-grading ambiguity would materially change correctness or ranking.
-Do not execute an LLM judge or an uncertain or external evaluator without the explicit combined
-approval for its recipients, data, calls, runtime, and spend.
+Do not execute an LLM judge or an uncertain or external evaluator without explicit approval in the
+stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
 - Use a fresh process.
-- Set offline/mock variables before importing Traigent.
+- Set `TRAIGENT_OFFLINE_MODE=true` and `LITELLM_LOCAL_MODEL_COST_MAP=true` before imports. Traigent
+  offline mode does not by itself suppress LiteLLM's import-time remote pricing-map fetch; use both
+  in every generated mock wrapper and every documented free mock invocation.
 - Confirm every agent and evaluator model path is interceptable. LiteLLM/LangChain paths may be
   intercepted; raw provider SDKs, subprocesses, HTTP services, tools, and custom judges may still
   make real calls.
@@ -316,6 +318,9 @@ A Traigent mock run is a separate plumbing check:
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
+- If mock validation says trial settings are not consumed, return to the stage-2
+  repair/continue/pause choice. Enter stage-3 adapter repair and revalidate only after the user
+  chooses its scope; do not open a credential file while optimization remains phantom.
 - Exit the process after mock validation. Mock state has no reliable public undo.
 
 Uniform mock scores can be expected for output-based evaluators. Plumbing success means trials
@@ -458,28 +463,55 @@ neighbor:
 
 ## Approval and budgets
 
-Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
-paid/provider work, show one concise approval for the full planned first run:
+Use two short, contextual approvals; do not ask the user to design budgets, retries, or timeouts.
 
-- The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
-  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced winner
-  tuning comparison.
-- Tuning rows, their known limitations, maximum trials, and approximate calls.
-- The primary metric; objective directions and weights; fixed baseline space and added enhanced
-  controls; how Traigent chooses trials; and the rule for recommending among tradeoffs.
-- Approximate runtime and estimated spend.
-- One total walkthrough ceiling, defaulting to `$5.00`.
-- Any untracked-cost path; for such a path, call the ceiling a conservative execution stop target,
-  not a provider-billing guarantee.
-- Services receiving data. For OpenRouter this means the OpenRouter gateway plus every allowed
-  upstream inference provider/route, with fallback routing disclosed.
-- For an execution evaluator, the repeated execution of model-written code or SQL; where it runs;
-  which tests and fixtures enter the sandbox; the enforced limits and residual risk; and any
-  external sandbox service or data recipient.
+Before the provider-paid baseline, show only its immediate scope:
 
-Keep the default `$5.00` ceiling without asking the user to choose a number. If the plan exceeds
-it or is materially long, recommend a smaller representative tuning slice or fewer trials first.
-Ask about a larger/longer run only if the user prefers the expanded scope.
+- Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
+  preserved baseline or generated six-row sweep, tuning rows and limitations, configurations,
+  calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
+  `$5.00`. For untracked cost, call it an execution stop target, not a billing guarantee.
+- Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
+- Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
+  fixtures, limits, residual risk, and any external sandbox recipient.
+
+After showing the baseline result, give the connected stage a preview and approval:
+
+- Search: added enhanced controls/combinations, the configuration ceiling below, approximate calls,
+  how Traigent's managed search chooses trials while retaining baseline values, objective
+  directions and weights, and the rule for recommending among tradeoffs.
+- Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
+  zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
+  conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
+
+The enhanced run card's trial line is a ceiling paired with the size of the space it is drawn from, because
+at approval time the user is asking what the worst case is, and a range answers a question they did
+not ask. State it in their words, reusing the card's own total combination count:
+
+> Your agent has `<total combination count>` possible configurations.
+> Traigent will test up to `<enhanced trial cap>` of them, choosing which ones as it goes rather
+> than working through a fixed list.
+
+Both numbers come from the approved space itself - the count this card already computed and the cap
+this run passes as `max_trials` - never from a worked example in a reference, whose spaces are not
+this agent's. Name this count in `configurations` rather than `trials`, and give it as a ceiling,
+never as a range; `trials` remains the right word for a failed-trial count or an SDK field. When
+the approved space's combination count cannot be computed - a preserved space whose values are not
+enumerable, for instance - state the ceiling on its own rather than estimating or rounding a total.
+Report the same pair afterwards as what actually ran, `Tested <executed trials> of <total
+combination count> configurations`, or the executed count alone when that total was unavailable.
+
+Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
+opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
+End the preview with `Continue with this bounded Traigent run?` Otherwise recommend the evidenced
+repair; never promise improvement.
+
+Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
+will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless
+that preview disclosed recipients, effects, bounds, and cost.
+
+Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
+is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
 
 Use the installed SDK's default per-optimization cost limit unless it is greater than the
 walkthrough's remaining total ceiling; then lower it for that process. Do not persist
@@ -563,8 +595,9 @@ walkthrough - two prompt styles form the baseline's second axis instead, so ever
 for every model. The enhanced space keeps the identical model list, extends swept ranges around
 the baseline's top rows while retaining every baseline value, and adds multiple prompt
 policies plus a native boolean self-check branch, keeping the space materially larger than the
-12 trials Traigent tests by default - so an enhanced win is attributable to knobs and the managed
-search, never to a model the baseline did not measure. Explain this generated-only ladder in one line before the
+12 configurations Traigent may test by default - so an enhanced win is attributable to knobs and
+the managed search, never to a model the baseline did not measure. Explain this generated-only
+ladder in one line before the
 approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
 available for a separately disclosed later comparison if the evidence supports one. A preserved
 baseline keeps its exact model set, including a flagship when present. Do not add cheaper tiers or
@@ -602,10 +635,9 @@ not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `aut
 `random` unless a named selector is confirmed to run consistently on the installed SDK. For an
 assistant-prepared baseline, use local `grid` so all six distinct rows are predictable. For a
 user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
-connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
-count and stop reason. Fewer than 10
-enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
-present a two-row generated run as the intended comparison.
+connected `auto` with a default cap of 12 for the enhanced space, then report the actual count and
+stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
+silently present a two-row generated run as the intended comparison.
 
 Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
 (at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
