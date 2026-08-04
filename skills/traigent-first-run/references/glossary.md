@@ -263,6 +263,11 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   making. Either way the card names the specific thing rather than only lowering
   a number.
 
+  Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
+  measures, the strongest evidence, the one limitation that most affects the next action, and that
+  action. On re-score show `<opening> → <current>` and its cause. Do not animate with invented progress
+  or narrate every card line.
+
 .env file
   Plain: a small text file in your project that holds settings and secrets -
   most importantly your keys - so the tools can run. It stays on your machine

@@ -73,20 +73,20 @@ changing out of your project.
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
 4. Validates compatibility and every safely local evaluator-discrimination check; any LLM-judge or
    external calibration remains inside the paid/data-egress approval.
-5. Shows one concise approval immediately before paid work with runtime, estimated spend, a total
-   execution stop target (`$5` by default), and data egress. When any cost is untracked, that target
-   is a conservative control, not a guaranteed provider-billing cap.
-6. Preserves an existing baseline or creates a credible small parameter sweep, then runs a
-   broader optimization with additional meaningful knobs when the evaluator can distinguish
-   configurations.
+5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
+   spend, a total execution stop target (`$5` by default), and data egress. When any cost is
+   untracked, that target is a conservative control, not a guaranteed provider-billing cap.
+6. Shows the baseline result, then explains and separately approves the broader managed
+   optimization with additional meaningful knobs when the evaluator can distinguish configurations.
 7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and
    verified portal links; an unsynced baseline is clearly labelled local-only.
 
-Everything before that approval - inspecting the project, setting up any missing components, and
-validating them locally - makes no provider calls and spends nothing, so the full setup is visible
-before you decide to pay. Once approved, a provider-paid local fixed baseline runs first and shows
-its result before any Traigent account/key request. After that checkpoint, the guide verifies
-portal tracking with a zero-LLM probe before the connected enhanced optimization spends anything.
+Everything before the baseline approval - inspecting the project, setting up any missing
+components, and validating them locally - makes no provider calls and spends nothing, so the full
+setup is visible before you decide to pay. Once approved, a provider-paid local fixed baseline runs
+and shows its result before any Traigent account/key request. Only then does the guide explain the
+managed optimization, obtain its separate approval, and verify portal tracking with a zero-LLM
+probe before the connected run spends anything.
 
 The default generated comparison has two planned measurements: six local fixed-grid configurations
 first, followed by a connected managed search targeting 10-13 trials (12 by default) in a

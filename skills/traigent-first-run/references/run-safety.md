@@ -302,8 +302,8 @@ candidate execution must satisfy the containment contract above. A non-executing
 needs a declared local dependency also waits until that dependency is installed. Run either before
 creating `.env` or requesting a provider key. A generic outside-review wait is not a gate; pause
 only when one unresolved product-grading ambiguity would materially change correctness or ranking.
-Do not execute an LLM judge or an uncertain or external evaluator without the explicit combined
-approval for its recipients, data, calls, runtime, and spend.
+Do not execute an LLM judge or an uncertain or external evaluator without explicit approval in the
+stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
@@ -458,28 +458,29 @@ neighbor:
 
 ## Approval and budgets
 
-Do not ask the user to design a budget, retry policy, or timeout policy during setup. Before any
-paid/provider work, show one concise approval for the full planned first run:
+Use two short, contextual approvals; do not ask the user to design budgets, retries, or timeouts.
 
-- The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
-  or generated six-row sweep, one broader optimization, and baseline winner versus enhanced winner
-  tuning comparison.
-- Tuning rows, their known limitations, maximum trials, and approximate calls.
-- The primary metric; objective directions and weights; fixed baseline space and added enhanced
-  controls; how Traigent chooses trials; and the rule for recommending among tradeoffs.
-- Approximate runtime and estimated spend.
-- One total walkthrough ceiling, defaulting to `$5.00`.
-- Any untracked-cost path; for such a path, call the ceiling a conservative execution stop target,
-  not a provider-billing guarantee.
-- Services receiving data. For OpenRouter this means the OpenRouter gateway plus every allowed
-  upstream inference provider/route, with fallback routing disclosed.
-- For an execution evaluator, the repeated execution of model-written code or SQL; where it runs;
-  which tests and fixtures enter the sandbox; the enforced limits and residual risk; and any
-  external sandbox service or data recipient.
+Before the provider-paid baseline, show only its immediate scope:
 
-Keep the default `$5.00` ceiling without asking the user to choose a number. If the plan exceeds
-it or is materially long, recommend a smaller representative tuning slice or fewer trials first.
-Ask about a larger/longer run only if the user prefers the expanded scope.
+- Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
+  preserved baseline or generated six-row sweep, tuning rows and limitations, configurations,
+  calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
+  `$5.00`. For untracked cost, call it an execution stop target, not a billing guarantee.
+- Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
+- Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
+  fixtures, limits, residual risk, and any external sandbox recipient.
+
+After showing the baseline result, give the connected stage a preview and approval:
+
+- Search and decision: added enhanced controls, combinations, maximum trials/calls, how Traigent's
+  managed search chooses trials while retaining baseline values, objective directions and weights,
+  and the rule for recommending among tradeoffs.
+- Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
+  zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
+  conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
+
+Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
+is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
 
 Use the installed SDK's default per-optimization cost limit unless it is greater than the
 walkthrough's remaining total ceiling; then lower it for that process. Do not persist

@@ -274,7 +274,7 @@ class SkillPackageTests(unittest.TestCase):
             "judgment-dependent change",
             "local-only",
             "separate explicit approval",
-            "one concise approval",
+            "two short, contextual approvals",
             "single running total",
         ):
             self.assertIn(phrase, contract_text)
@@ -295,8 +295,8 @@ class SkillPackageTests(unittest.TestCase):
             "do not repeat a provider choice already resolved in stage 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
-            "one concise combined approval",
-            "`$5.00` total walkthrough ceiling by default",
+            "one concise baseline preview and approval",
+            "one total walkthrough ceiling, defaulting to `$5.00`",
             "do not layer another retry loop",
             "never call the walkthrough ceiling a hard provider-billing cap",
         ):
@@ -308,27 +308,29 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete_prompt, combined)
         for paid_phase in (
-            "smallest live provider-credential check",
-            "llm-judge calibration",
-            "preserved baseline or a generated six-row sweep",
-            "one broader bounded optimization",
-            "baseline-versus-enhanced tuning comparison",
+            "smallest live provider/key check",
+            "pre-baseline llm-judge calibration",
+            "preserved baseline or generated six-row sweep",
+            "added enhanced controls",
+            "rule for recommending among tradeoffs",
         ):
-            self.assertIn(paid_phase, skill_text)
+            self.assertIn(paid_phase, combined)
 
-    def test_paid_approval_discloses_the_actual_comparison_and_decision_rule(
+    def test_staged_approvals_disclose_each_immediate_decision(
         self,
     ) -> None:
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         approval = safety.split("## approval and budgets", 1)[1].split(
-            "## live provider probe", 1
+            "## connected-run readiness", 1
         )[0]
         for phrase in (
-            "baseline winner versus enhanced winner tuning comparison",
-            "tuning rows, their known limitations",
+            "before the provider-paid baseline",
+            "show only its immediate scope",
+            "after showing the baseline result",
+            "connected stage a preview and approval",
+            "tuning rows and limitations",
             "objective directions and weights",
-            "fixed baseline space and added enhanced controls",
-            "how traigent chooses trials",
+            "managed search chooses trials",
             "rule for recommending among tradeoffs",
         ):
             with self.subTest(phrase=phrase):
@@ -493,7 +495,7 @@ class SkillPackageTests(unittest.TestCase):
         text = SKILL.read_text()
         local_heading = "### 4. Validate components locally"
         environment_heading = "### 5. Prepare the environment and finish free checks"
-        paid_heading = "### 6. Ask once before paid work"
+        paid_heading = "### 6. Approve and run the baseline"
         for heading in (local_heading, environment_heading, paid_heading):
             self.assertIn(heading, text)
 
@@ -565,7 +567,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "do not execute an llm judge",
             "uncertain or external evaluator",
-            "explicit combined approval",
+            "two short, contextual approvals",
             "make model/provider calls",
         ):
             self.assertIn(phrase, normalized_safety)
@@ -809,6 +811,82 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
         self.assertIn("uncapped by default", sdk)
         self.assertNotIn("reaching that ceiling is a decision point", normalized)
+
+    def test_user_journey_is_numbered_and_reports_measured_progress(self) -> None:
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("welcome to traigent onboarding!", guide)
+        for stage in ("inspect", "readiness", "baseline", "optimize", "results"):
+            self.assertIn(f"**{stage}**", guide)
+        self.assertIn("stage <n>/5", skill)
+        self.assertIn("with measured numbers when available", guide)
+        self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
+
+    def test_readiness_is_explained_as_progress_without_invented_animation(
+        self,
+    ) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        presentation = f"{skill} {glossary}"
+        for phrase in (
+            "stage 2/5 · readiness - <score>/100 (<band>)",
+            "what the score measures",
+            "the strongest evidence",
+            "the one limitation that most affects the next action",
+            "<opening> → <current>",
+            "do not animate with invented progress",
+        ):
+            self.assertIn(phrase, presentation)
+
+    def test_enhanced_detail_waits_for_the_baseline_checkpoint(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        stage_six = skill.split("### 6. approve and run the baseline", 1)[1].split(
+            "### 7. run the honest comparison", 1
+        )[0]
+        stage_seven = skill.split("### 7. run the honest comparison", 1)[1].split(
+            "### 8. verify and report", 1
+        )[0]
+        self.assertIn("do not front-load its algorithm", stage_six)
+        for premature_detail in (
+            "10-13-trial enhanced target",
+            "connected traigent runs synchronize",
+            "portal history/direct links",
+        ):
+            self.assertNotIn(premature_detail, stage_six)
+        self.assertLess(
+            stage_seven.index("show a **local baseline checkpoint**"),
+            stage_seven.index("stage 4/5 · optimize"),
+        )
+        self.assertIn("stage 4/5 · optimize", stage_seven)
+        self.assertIn("portal history", stage_seven)
+        self.assertIn("conditional capabilities", stage_seven)
+        self.assertIn("obtain explicit approval for this connected stage", stage_seven)
+        for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
+            self.assertNotIn("combined approval", document.read_text().casefold())
+
+    def test_run_plan_records_stage_specific_approvals(self) -> None:
+        plan = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn("baseline plan and approval", plan)
+        self.assertIn("baseline approval - status/scope/ceiling", plan)
+        self.assertIn("connected-stage plan and approval", plan)
+        self.assertIn(
+            "connected-stage approval - status/scope, spend, remaining ceiling",
+            plan,
+        )
+        self.assertLess(
+            plan.index("baseline approval - status/scope/ceiling"),
+            plan.index("local baseline checkpoint"),
+        )
+        self.assertLess(
+            plan.index("local baseline checkpoint"),
+            plan.index(
+                "connected-stage approval - status/scope, spend, remaining ceiling"
+            ),
+        )
 
     def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
         """This repository is public; the tools that test it are not.
@@ -1215,11 +1293,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "repeated execution of model-written code",
-            "where it runs",
-            "which tests and fixtures enter the sandbox",
-            "enforced limits and residual risk",
-            "external sandbox service or data recipient",
+            "repeated model-written code or sql execution",
+            "sandbox location",
+            "tests and fixtures",
+            "limits, residual risk",
+            "external sandbox recipient",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
@@ -2435,12 +2513,12 @@ class SkillPackageTests(unittest.TestCase):
     def test_each_paid_run_has_an_exact_run_card(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "immediately before each paid baseline and enhanced run",
+            "immediately before the paid baseline",
             "model ids",
             "each varying knob and its explicit values",
             "one plain-language note per knob",
             "total combination count",
-            "repeat the baseline knobs and label every addition new",
+            "repeat the baseline knobs in the enhanced run card and label every addition new",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
