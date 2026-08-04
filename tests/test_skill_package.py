@@ -3762,7 +3762,18 @@ class SkillPackageTests(unittest.TestCase):
         objective orientation is a weighted scalarization, and - the one that
         actually cost a redesign - ``quality_floor_min_cost`` floors on the
         SDK's built-in exact-match rate rather than on this run's evaluator, so
-        it silently admits every trial for any graded or judged scorer.
+        a floor taken from the incumbent's ``accuracy`` is ``0.0`` and admits
+        every trial for any graded or judged scorer.
+
+        An adversarial re-verification against 0.25.0 corrected two things the
+        first draft of this section got wrong, and both are pinned below. The
+        exact-match rate is case-insensitive, and a custom metric named
+        ``accuracy`` (or a bare ``scoring_function=``) is bound to that key
+        instead - so the trap is specific to the other metric names, which is
+        what this guide wires. And the preset is not the silent part: the
+        silent part is that ``strategy=`` overwrites a DECORATOR-level
+        ``objectives=`` with no error at all, which is exactly this guide's
+        call shape.
         """
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
@@ -3779,14 +3790,23 @@ class SkillPackageTests(unittest.TestCase):
             "it will trade the score away for cost whenever the weights say so",
             # the preset floors on a metric that is not this run's score, and
             # the failure is silent - this is why the round selects by hand
-            "`accuracy` is the sdk's own built-in exact-match rate against "
-            "`expected_output`, computed independently of the `metric_functions` "
-            "scorer this guide wires",
-            "every trial reports `accuracy` as `0.0` while the real metric varies",
-            "it fails **silently**",
-            # passing strategy= is not free either
+            "`accuracy` is the sdk's own built-in rate of case-insensitive exact "
+            "matches against `expected_output`, computed independently of the "
+            "`metric_functions` scorer this guide wires",
+            # the guard is real but narrow, and naming its edge is what stops the
+            # next author from either trusting it or forgetting it exists
+            "a custom metric named literally `accuracy`, or a bare "
+            "`scoring_function=`, is bound to that key instead",
+            "reports `accuracy` as `0.0` on every trial while the real metric varies",
+            # an independently chosen floor fails LOUDLY - the first draft claimed
+            # the preset itself was the silent failure, and it is not
+            'the preset returns `status="failed"` with a rationale',
+            "`accuracy` is not always present either",
+            # passing strategy= is not free either, and the guard this guide would
+            # have relied on does not cover the way this guide passes objectives
             "passing `strategy` to `optimize_sync` replaces the run's objectives",
-            "mutually exclusive with an explicit `objectives=`",
+            "guards only the *call-time* argument",
+            "the decorated objectives are silently overwritten",
             # warm start is decorator-only, connected-only, and refusable
             "it is decorator-only: passing it to `optimize_sync` raises `typeerror`",
             "which exists only for a connected run and is `none` otherwise",
@@ -3839,7 +3859,7 @@ class SkillPackageTests(unittest.TestCase):
             "cost was measured, not deducted",
             "no phase of this run took the untracked-cost path",
             "on that path the round is not offered at all",
-            "the free check above returned the winner itself",
+            "the free check above returned nothing",
             "the remaining total ceiling covers the round's estimate",
             "a readiness band is not the gate",
         ):
@@ -3856,8 +3876,8 @@ class SkillPackageTests(unittest.TestCase):
         """Additional paid work needs additional approval and a live remainder.
 
         The walkthrough keeps one running total against one ceiling. A second
-        round is the easiest place to lose both - to treat the combined approval
-        as still open, and to open a second ledger beside the first.
+        round is the easiest place to lose both - to treat an earlier stage's
+        approval as still open, and to open a second ledger beside the first.
         """
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         # the section anchor is asserted before it is split on, so a missing
@@ -3870,8 +3890,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "### approval",
             "takes its own explicit approval",
-            "it is never a continuation of the combined approval, and silence is "
-            "not approval",
+            "it is never a continuation of an earlier stage's approval, and "
+            "silence is not approval",
             "the round's tracked cost joins the single running total the "
             "approval section above already governs",
             "stop before the round if its estimate does not fit the remainder",
@@ -4319,7 +4339,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Raised from 60 KB, which had 23 bytes of headroom left. The optional
         # cost-reduction round needs three things in SKILL.md and nothing else:
         # that it is optional and gated in run-safety.md, that its objective is
-        # one-sided, and one line in stage 6 saying the combined approval does
+        # one-sided, and one line in stage 6 saying the earlier approval does
         # not cover it. All three are ordering-and-mandate decisions, which is
         # what this document owns. The gate, the approval, both outcomes, the
         # selection rule, and every SDK mechanism went into run-safety.md and
@@ -4366,12 +4386,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # is not the round's own procedure - it is the record of four SDK
         # mechanisms that LOOK like its answer and are not, one of which
         # (`quality_floor_min_cost` floors on the SDK's built-in exact-match
-        # rate, not on this run's evaluator) silently selects a materially worse
+        # rate, not on this run's evaluator) selects a materially worse
         # configuration and reports it as unchanged. The first draft of this
-        # guidance used it. Documenting an absence costs more bytes than
+        # guidance used it, and a re-verification against 0.25.0 then corrected
+        # the record twice more - the narrow guard that does exist, and the
+        # silent decorator-objectives substitution that has none. Documenting an absence costs more bytes than
         # documenting a feature, and here it is the difference between a correct
         # round and a confidently wrong one, so raise TOTAL to 240 KB.
-        budget = 240_000
+        #
+        # Then an adversarial review pass re-verified those SDK mechanisms
+        # against 0.25.0 and found the record wrong in two places that change
+        # what a reader would do: `strategy=` overwrites a DECORATOR-level
+        # `objectives=` with no error, which is this guide's own call shape and
+        # the exact guard the section had told the reader to rely on; and a
+        # narrow guard does re-point `metrics["accuracy"]` for one metric name.
+        # Correcting a wrong absence costs more than recording it did. That,
+        # plus a free-check contract fix, a runtime disclosure, a selection-over-
+        # noise bound and a vacuous-copy bound, is 3 KB - so raise TOTAL to
+        # 243 KB. Resident is untouched by all of it, which is the shape this
+        # policy asks for.
+        budget = 243_000
         self.assertLess(
             total,
             budget,

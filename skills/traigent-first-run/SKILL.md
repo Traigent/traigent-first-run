@@ -439,7 +439,7 @@ Do not ask the user to choose cost, retries, or timeout settings during discover
 Do not repeat a provider choice already resolved in stage 5; keep the paid-work approval request
 combined. One thing is deliberately outside it: the optional cost-reduction round in stage 7 exists
 only if the completed comparison earns it, so it cannot be priced here and takes its own later
-approval. Everything the default run does is covered by this one request.
+approval. Everything else the default run does stays inside the walkthrough's own approvals.
 Prepare one concise combined approval immediately before paid work. It covers the smallest live
 provider-credential check, any required LLM-judge calibration, the preserved baseline or a
 generated six-row sweep, one broader bounded optimization, and a baseline-versus-enhanced tuning

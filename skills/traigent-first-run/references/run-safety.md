@@ -637,13 +637,16 @@ the run's own metric? This is a re-read of returned trials with no provider call
 `references/sdk-execution.md` gives the function and explains why the SDK's own selection presets
 answer a different question.
 
-If it names a configuration other than the winner, the cost reduction is already measured. Report it
-and stop - there is nothing left to buy, and offering a paid round on top of it would be selling the
-user a result they already have. Report it at the same claim strength the paid round would get: a
-measured cost number, and a score stated no more strongly than the paired counts support. If it
-names the winner itself, every cheaper configuration the first search actually tested scored below
-it, and the open question is whether a configuration it never tested is both cheaper and no worse.
-That question is the hypothesis a paid round would test, and it is the only reason to run one.
+The function returns the qualifying trials cheapest first, and never the winner, whose own cost is
+not below itself. If it returns anything, its first entry is that cheaper configuration and the cost
+reduction is already measured. Report it and stop - there is nothing left to buy, and offering a
+paid round on top of it would be selling the user a result they already have. Report it at the claim
+strength and the provenance the paid round would get: a measured cost number, a score stated no more
+strongly than the paired counts support, and over a `🛠️` substitute a fact about the substitute
+rather than about the user's real setup. If it returns nothing, every cheaper configuration the
+first search actually tested scored below the winner, and the open question is whether a
+configuration it never tested is both cheaper and no worse. That question is the hypothesis a paid
+round would test, and it is the only reason to run one.
 
 ### Gate
 
@@ -664,7 +667,8 @@ offer it: a round whose result could not honestly be claimed is not worth its mo
 - The completed trials show cost headroom: the cheapest completed trial cost materially less than the
   selected winner - a quarter less is the default reading of materially - so cheaper territory
   demonstrably exists for this task rather than being assumed.
-- The free check above returned the winner itself.
+- The free check above returned nothing, so the winner is still the cheapest configuration the first
+  search tested at or above its own score.
 - The remaining total ceiling covers the round's estimate.
 
 A readiness band is not the gate. The band describes the components; this round's claim rests on
@@ -673,13 +677,13 @@ what the first comparison measured, which is what the conditions above actually 
 ### Approval
 
 The round is additional paid work and takes its own explicit approval. It is never a continuation of
-the combined approval, and silence is not approval. Show the remaining ceiling, this round's estimate
-against it, the seed configuration, the second space with its trial cap, and the objective in plain
-words: cost down, score not worse. The round's tracked cost joins the single running total the
-approval section above already governs. Stop before the round if its estimate does not fit the
-remainder. Do not propose raising the ceiling to make it fit: the rule above stands here too - offer
-a smaller round first, and treat a larger ceiling as the user's suggestion to make, never the
-assistant's.
+an earlier stage's approval, and silence is not approval. Show the remaining ceiling, this round's
+estimate and approximate runtime against it, the seed configuration, the second space with its trial
+cap, and the objective in plain words: cost down, score not worse. The round's tracked cost joins
+the single running total the approval section above already governs. Stop before the round if its
+estimate does not fit the remainder. Do not propose raising the ceiling to make it fit: the rule
+above stands here too - offer a smaller round first, and treat a larger ceiling as the user's
+suggestion to make, never the assistant's.
 
 Declining is a normal answer, and the first comparison is already a complete result. Offer the round
 once.
@@ -694,6 +698,11 @@ so handing back its choice would refuse the trade in the prose and perform it in
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
 produce a weaker version of the first.
+
+Clearing the bar is a selection made over noise, and saying so is what keeps the round honest.
+Several configurations are statistically indistinguishable on a first-run slice, so taking the
+cheapest of the ones that reached the incumbent's number favors whichever measured lucky. The filter
+admitting a configuration is therefore not evidence its score held; only the paired counts are.
 
 ### The two outcomes
 
@@ -724,6 +733,10 @@ optimizer picked it" stand in for evidence that the score held.
 > evidence your configuration is already near the efficient frontier for this space: every
 > configuration tested that cost less also scored lower. That is a measured answer to the question
 > this round asked.
+
+Use the frontier sentence only when the round actually completed trials that cost less. When none
+did, the sentence is vacuous and reads as a finding it did not make: say instead that the space this
+round searched produced no cheaper configuration at all, which is a fact about that space.
 
 Bound it as honestly as the other outcome. It establishes nothing about configurations the round did
 not test, and a bounded round tests few. Do not answer it with a third round by default.

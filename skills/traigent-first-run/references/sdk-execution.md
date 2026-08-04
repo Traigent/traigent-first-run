@@ -955,21 +955,29 @@ all.** The installed release registers three advisory strategy presets - `qualit
 completed trial at or above a quality floor. Do not use it, or any of them, for this round. Three
 verified reasons, the first alone disqualifying:
 
-- **They read `metrics["accuracy"]`, which is not this run's score.** `accuracy` is the SDK's own
-  built-in exact-match rate against `expected_output`, computed independently of the
-  `metric_functions` scorer this guide wires. Whenever the evaluator is not exact string match -
-  partial credit, an LLM judge, numeric tolerance, a case-insensitive or substring comparison -
-  every trial reports `accuracy` as `0.0` while the real metric varies. A floor taken from the
-  winner's `accuracy` is then `0.0`, admits every trial, and returns the globally cheapest one. On a
-  measured run whose real scores were `0.9` for the winner and `0.3` for the cheapest, that selects
-  the `0.3` configuration and presents it as an unchanged score - the exact trade this round
-  exists to refuse, arrived at automatically. It fails **silently**: `accuracy` is always present and
-  always within `[0, 1]`, so neither the missing-key nor the floor-range guard ever fires, and the
-  selection returns `status="selected"` with a straight face.
-- **Passing `strategy` to `optimize_sync` replaces the run's objectives.** The preset substitutes its
-  own `["accuracy", "cost"]`, and `best_config` follows: the same space and algorithm returned a
-  different winner with nothing changed but `strategy`. It is also mutually exclusive with an
-  explicit `objectives=`, which this guide always passes, so that call raises `ValueError`.
+- **They read `metrics["accuracy"]`, which is usually not this run's score.** `accuracy` is the SDK's
+  own built-in rate of case-insensitive exact matches against `expected_output`, computed
+  independently of the `metric_functions` scorer this guide wires. One narrow guard exists: a custom
+  metric named literally `accuracy`, or a bare `scoring_function=`, is bound to that key instead and
+  the preset then reads the real score. Under any other metric name - which is what this guide
+  wires - it does not fire, and any evaluator that is not that exact match (partial credit, an LLM
+  judge, numeric tolerance, substring or set overlap) reports `accuracy` as `0.0` on every trial
+  while the real metric varies. Take the floor from the winner's `accuracy` and it is `0.0`: every trial is
+  admitted and the globally cheapest comes back as `status="selected"`. On a measured run whose real
+  scores were `0.9` for the winner and `0.3` for the cheapest, that selects the `0.3` configuration
+  and presents it as an unchanged score - the exact trade this round exists to refuse, arrived at
+  automatically. Picking the floor independently only changes the volume: above `0.0` nothing clears
+  a floor everything reports as `0.0`, so the preset returns `status="failed"` with a rationale -
+  loud, and still no answer. `accuracy` is not always present either; with no `expected_output` on
+  any row it is absent and the trial is excluded the same way.
+- **Passing `strategy` to `optimize_sync` replaces the run's objectives, and this guide's call shape
+  is the one that gets no error.** The preset substitutes its own `["accuracy", "cost"]` and
+  `best_config` follows: the same space and algorithm returned a different winner with nothing
+  changed but `strategy`. Its mutual exclusivity with an explicit `objectives=` guards only the
+  *call-time* argument. This guide passes `objectives=` on the decorator and does not repeat it on
+  `optimize_sync`, so no `ValueError` is raised - the decorated objectives are silently overwritten,
+  `best_config` flips to the cheapest configuration, and nothing in the result says so. That silent
+  substitution, not the preset's own verdict, is where the damage is.
 - `max_accuracy_then_cheapest_within_epsilon` permits the score to fall by its epsilon, which is the
   trade this round refuses even when the metric is right.
 
@@ -1040,6 +1048,11 @@ decoration:
 def agent(message: str) -> str:
     ...
 ```
+
+That decoration adds `warm_start_from` and nothing else. The round's own call is still the
+`optimize_sync` above, carrying its `algorithm`, `configuration_space`, `max_trials`, `timeout`, and
+`save_to`: a decorated space with no call-time trial cap is a search with no bound, which is the one
+thing an approved remaining ceiling cannot survive.
 
 `ROUND_ONE_EXPERIMENT_ID` is the enhanced result's public `experiment_id`, which exists only for a
 connected run and is `None` otherwise; without it, omit the argument rather than inventing an id.
