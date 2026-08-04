@@ -454,9 +454,12 @@ class SkillPackageTests(unittest.TestCase):
             "loaded guide source is not automatically the target project",
             "guide-source artifacts never count as its results",
             "a mismatched resumed artifact is historical, never current",
+            "agent: none discovered",
+            "until intent selects or creates one",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
+        self.assertIn("agent: none discovered", guide_text)
         self.assertIn(
             "target project and selected agent (absolute path plus function or command)",
             plan_text,
@@ -1297,6 +1300,14 @@ class SkillPackageTests(unittest.TestCase):
             "show the exact judgment-dependent change and obtain explicit approval",
             quality_text,
         )
+        combined_text = f"{skill_text} {quality_text}"
+        for phrase in (
+            "first resolve it against the semantic-coverage evidence already inspected",
+            "explicitly establish whether order matters",
+            "continue without asking",
+            "only when the competing order semantics remain unresolved",
+        ):
+            self.assertIn(phrase, combined_text)
 
     def test_calibration_policy_cannot_be_chosen_to_make_the_scorer_pass(
         self,
@@ -1948,6 +1959,23 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("preflight", document)
             self.assertIn("expected outputs", document)
 
+    def test_readiness_receives_only_a_grounded_task_kind(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        quality = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "treat the output task kind as run-scoped validation state",
+            "pass it as `--task-kind` to every readiness invocation from the opening gate onward",
+            "never infer it only from a filename, language, or benchmark family",
+            "omit `--task-kind` and report task fit as not yet measured",
+        ):
+            self.assertIn(phrase, quality)
+        self.assertIn("apply the run-scoped task-kind rule to readiness only", skill)
+
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
         self,
     ) -> None:
@@ -2111,6 +2139,25 @@ class SkillPackageTests(unittest.TestCase):
             "resume the connected path after the failure is resolved",
         ):
             self.assertIn(phrase, skill_text)
+
+    def test_mock_process_disables_litellm_remote_cost_map_fetch(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "`traigent_offline_mode=true` and `litellm_local_model_cost_map=true`",
+            "traigent offline mode does not by itself suppress litellm's import-time remote pricing-map fetch",
+            "every generated mock wrapper and every documented free mock invocation",
+        ):
+            self.assertIn(phrase, safety)
+
+    def test_mock_rejects_phantom_configuration_before_secret_handoff(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "trial settings are not consumed",
+            "return to the stage-2 repair/continue/pause choice",
+            "enter stage-3 adapter repair and revalidate only after the user chooses its scope",
+            "do not open a credential file while optimization remains phantom",
+        ):
+            self.assertIn(phrase, safety)
 
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
