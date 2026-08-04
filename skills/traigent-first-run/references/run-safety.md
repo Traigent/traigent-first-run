@@ -479,7 +479,7 @@ After showing the baseline result, give the connected stage a preview and approv
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
 
-The run card's trial line is a ceiling paired with the size of the space it is drawn from, because
+The enhanced run card's trial line is a ceiling paired with the size of the space it is drawn from, because
 at approval time the user is asking what the worst case is, and a range answers a question they did
 not ask. State it in their words, reusing the card's own total combination count:
 
