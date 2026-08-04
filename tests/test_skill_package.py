@@ -4170,13 +4170,12 @@ class SkillPackageTests(unittest.TestCase):
 
         The whole value of the round is the direction it refuses, and a
         direction stated only in prose is not refused anywhere. So this checks
-        both halves: that the guidance says it, and that the round's winner is
-        selected by a rule that enforces it rather than by the weighted
-        objective, which is free to buy cost with score.
+        both halves: that the guidance says it, and that the round's winner
+        comes from a filter that enforces it rather than from whatever the run
+        reported as its best configuration.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
         for phrase in (
             "measurably lower cost at a score that did not get worse",
@@ -4193,9 +4192,9 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "### selecting the round's own winner",
             "do not report the run's `best_config` as the round's answer",
-            "a weighted objective is free to buy cost with score",
-            "handing back its choice would refuse the trade in the prose and "
-            "perform it in the result",
+            "that filter is the only place the round's one-sidedness is enforced",
+            "would refuse the score-for-cost trade in the prose and perform it "
+            "in the result",
         ):
             with self.subTest(selection_phrase=phrase):
                 self.assertIn(phrase, safety)
@@ -4219,77 +4218,34 @@ class SkillPackageTests(unittest.TestCase):
             quoted,
         )
 
-        # the installed SDK registers a preset that permits the score to fall.
-        # naming it is how the guidance stays honest about why it is refused.
-        self.assertIn("max_accuracy_then_cheapest_within_epsilon", sdk)
-        self.assertIn(
-            "permits the score to fall by its epsilon, which is the trade this "
-            "round refuses",
-            sdk,
-        )
-
-    def test_the_reference_records_the_sdk_mechanisms_this_round_refuses(
-        self,
-    ) -> None:
-        """Four mechanisms look like the round's answer and are not.
+    def test_the_reference_states_how_the_round_is_actually_run(self) -> None:
+        """The round's own mechanics: the filter, the seed, the warm start.
 
         This pins PROSE. It cannot execute the SDK - the validation job installs
         only ruff and black, and the guide's whole point is that the assistant
-        installs the SDK into the user's project, not into this repo. So the
-        claims below were verified by running the pinned 0.25.0 while writing
-        them, and this check exists to stop the wording drifting away from what
-        that run showed. Re-verify against the installed release when the pin
-        moves; do not read a green here as evidence about the SDK.
+        installs the SDK into the user's project, not into this repo. The
+        warm-start claims below were verified against the pinned 0.25.0 while
+        writing them; re-verify when the pin moves, and do not read a green here
+        as evidence about the SDK.
 
-        The four: ``safety_constraints`` raises, ``constraints`` is post-eval,
-        objective orientation is a weighted scalarization, and - the one that
-        actually cost a redesign - ``quality_floor_min_cost`` floors on the
-        SDK's built-in exact-match rate rather than on this run's evaluator, so
-        a floor taken from the incumbent's ``accuracy`` is ``0.0`` and admits
-        every trial for any graded or judged scorer.
-
-        An adversarial re-verification against 0.25.0 corrected two things the
-        first draft of this section got wrong, and both are pinned below. The
-        exact-match rate is case-insensitive, and a custom metric named
-        ``accuracy`` (or a bare ``scoring_function=``) is bound to that key
-        instead - so the trap is specific to the other metric names, which is
-        what this guide wires. And the preset is not the silent part: the
-        silent part is that ``strategy=`` overwrites a DECORATOR-level
-        ``objectives=`` with no error at all, which is exactly this guide's
-        call shape.
+        An earlier revision of this section also catalogued four SDK mechanisms
+        that resemble this round's answer and are not, with the reasoning for
+        rejecting each. That catalogue is gone, and deliberately: this guide's
+        own template reaches for none of them, so the guidance was documenting
+        another repository's defects in a downstream consumer's docs, where they
+        would ossify and outlive the fix. The single pointer that replaced it is
+        pinned below so it stays a pointer.
         """
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
         for phrase in (
             "## optional cost-reduction round",
-            # not-implemented, not merely unused
-            "`safety_constraints` is the parameter shaped like one, and on the "
-            "pinned 0.25.0 release the decorator raises `notimplementederror`",
-            # structural over values, and post-eval failure is not steering
-            "structural conditions over configuration *values*",
-            "returning `false` marks that trial failed rather than steering the "
-            "search away from it",
-            # weighted objectives are the trade this round refuses
-            "it will trade the score away for cost whenever the weights say so",
-            # the preset floors on a metric that is not this run's score, and
-            # the failure is silent - this is why the round selects by hand
-            "`accuracy` is the sdk's own built-in rate of case-insensitive exact "
-            "matches against `expected_output`, computed independently of the "
-            "`metric_functions` scorer this guide wires",
-            # the guard is real but narrow, and naming its edge is what stops the
-            # next author from either trusting it or forgetting it exists
-            "a custom metric named literally `accuracy`, or a bare "
-            "`scoring_function=`, is bound to that key instead",
-            "reports `accuracy` as `0.0` on every trial while the real metric varies",
-            # an independently chosen floor fails LOUDLY - the first draft claimed
-            # the preset itself was the silent failure, and it is not
-            'the preset returns `status="failed"` with a rationale',
-            "`accuracy` is not always present either",
-            # passing strategy= is not free either, and the guard this guide would
-            # have relied on does not cover the way this guide passes objectives
-            "passing `strategy` to `optimize_sync` replaces the run's objectives",
-            "guards only the *call-time* argument",
-            "the decorated objectives are silently overwritten",
+            # selection is by hand over the returned trials, and the same filter
+            # serves the free check and the paid round
+            "select by hand, on the metric the run actually declared",
+            "come from the same filter over `optimized_results.trials`",
+            "its one-sidedness comes from how its winner is selected, not from "
+            "the objectives",
             # warm start is decorator-only, connected-only, and refusable
             "it is decorator-only: passing it to `optimize_sync` raises `typeerror`",
             "which exists only for a connected run and is `none` otherwise",
@@ -4300,11 +4256,7 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(sdk_phrase=phrase):
                 self.assertIn(phrase, sdk)
 
-        # the by-hand filter must never key off the SDK's `accuracy`
-        self.assertIn(
-            'and never `"accuracy"`, which is the sdk\'s built-in exact-match rate',
-            sdk,
-        )
+        self.assertIn("def cheaper_and_not_worse(", SDK_EXECUTION.read_text())
         # an unpriced trial is dropped, never treated as cheap
         self.assertIn("an absent cost is not a zero", sdk)
         self.assertIn("`incumbent_cost` must itself be a reported, positive cost", sdk)
@@ -4313,6 +4265,26 @@ class SkillPackageTests(unittest.TestCase):
         # trial-slot warning this reference already carries
         self.assertIn("do not reach for `default_config`", sdk)
         self.assertIn("it can consume a trial slot", sdk)
+
+        # One pointer, one place. A reader who wonders why the SDK's own
+        # selection presets go unused gets an issue link, not a re-derivation -
+        # and the count below is what keeps it from growing back into the
+        # catalogue it replaced.
+        self.assertIn(
+            "the sdk's own `strategy=` selection presets are deliberately "
+            "unused here; see traigent/traigent#2100, #2101 and #2102",
+            sdk,
+        )
+        self.assertEqual(
+            sdk.count("strategy"),
+            1,
+            f"`strategy` is named more than once in {SDK_EXECUTION.name}: the "
+            "round points at the SDK issues, it does not explain the mechanism "
+            "again",
+        )
+        for name in ("quality_floor_min_cost", "safety_constraints"):
+            with self.subTest(mechanism=name):
+                self.assertNotIn(name, sdk)
 
     def test_the_cost_reduction_gate_reads_measurement_not_a_readiness_band(
         self,
@@ -4947,21 +4919,31 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # and nothing else: that it is optional and gated in run-safety.md, and
         # that its objective is one-sided. Both are ordering-and-mandate
         # decisions, which is what this document owns. The gate, the approval,
-        # both outcomes, the selection rule, and every SDK mechanism went into
-        # run-safety.md and sdk-execution.md - the policy below working, not a
-        # bypass of it. That branch also carried a third SKILL.md line, in
-        # stage 6, saying the earlier approval did not cover the round; this
-        # merge dropped it. It was written against the single combined approval
-        # #131 has since replaced, and run-safety.md already states the rule
-        # ("takes its own explicit approval... never a continuation of an
-        # earlier stage's approval"), so keeping it would restate a mandate -
-        # the defect this package's own rule names, not emphasis.
+        # both outcomes, and the selection rule went into run-safety.md and
+        # sdk-execution.md - the policy below working, not a bypass of it. That
+        # branch also carried a third SKILL.md line, in stage 6, saying the
+        # earlier approval did not cover the round; this merge dropped it. It
+        # was written against the single combined approval #131 has since
+        # replaced, and run-safety.md already states the rule ("takes its own
+        # explicit approval... never a continuation of an earlier stage's
+        # approval"), so keeping it would restate a mandate - the defect this
+        # package's own rule names, not emphasis. That merge measured 63_363
+        # and set this to 63_750.
         #
-        # Measured merged resident is 63_363, so this rises. 63_750 and not the
-        # narrower 63_500, for the 23-byte reason recorded above.
+        # This number then comes DOWN, which is as much a decision as a raise
+        # and so is recorded the same way. The round's SKILL.md paragraph used
+        # to point at the SDK mechanisms it was avoiding; it now points only at
+        # the reference that owns how the second space is built and run. That
+        # is 184 resident bytes - a small number, because the removed material
+        # was almost entirely reference depth, and the measured resident is
+        # 63_179. 63_500 and not 63_250: 71 bytes of headroom is a ceiling that
+        # trips on a one-word edit rather than on a decision, which is the
+        # 23-byte failure recorded above. 321 bytes is marginally under the 371
+        # named there and is accepted deliberately - a ceiling that falls should
+        # bind, and the next raise past it is still a choice someone has to make.
         self.assertLess(
             resident,
-            63_750,
+            63_500,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5049,49 +5031,40 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
         #
+        # The optional cost-reduction round then arrived, and it is the largest
+        # single increment this budget has taken - roughly 21 KB, about a tenth
+        # of the whole corpus. Merged onto the trunk carrying #137, #131 and
+        # #139 the package measured 249_609, so the ceiling went to 250_000:
+        # measured once more rather than taken from either side, the fifth
+        # consecutive merge where neither figure was right.
         #
-        # The optional cost-reduction round adds 19,267 bytes across the corpus
-        # (16,774 of it reference and asset depth, 2,493 resident). Most of that
-        # is not the round's own procedure - it is the record of four SDK
-        # mechanisms that LOOK like its answer and are not, one of which
-        # (`quality_floor_min_cost` floors on the SDK's built-in exact-match
-        # rate, not on this run's evaluator) selects a materially worse
-        # configuration and reports it as unchanged. The first draft of this
-        # guidance used it, and a re-verification against 0.25.0 then corrected
-        # the record twice more - the narrow guard that does exist, and the
-        # silent decorator-objectives substitution that has none. Documenting an absence costs more bytes than
-        # documenting a feature, and here it is the difference between a correct
-        # round and a confidently wrong one, so raise TOTAL to 240 KB.
+        # Most of that increment was not the round. It was a catalogue of four
+        # SDK mechanisms that resemble the round's answer and are not
+        # (`quality_floor_min_cost` and the other `strategy=` presets,
+        # `safety_constraints`, and objective weights), recorded with the
+        # reasoning for rejecting each so a reader would know why the round
+        # selects its winner by hand. This commit removes that catalogue, and
+        # the reason is a rule about what this repository is for rather than
+        # about bytes: documenting around another repository's defects ossifies
+        # them in a downstream consumer's docs, becomes dead weight the moment
+        # they are fixed, and nobody returns to delete it. It was not earned
+        # here either - this guide's own template passes no `strategy=` and
+        # declares no `"accuracy"` objective, so none of the four was ever on
+        # its path. Traigent/Traigent#2100, #2101 and #2102 track them, and one
+        # pointer in sdk-execution.md is what remains.
         #
-        # Then an adversarial review pass re-verified those SDK mechanisms
-        # against 0.25.0 and found the record wrong in two places that change
-        # what a reader would do: `strategy=` overwrites a DECORATOR-level
-        # `objectives=` with no error, which is this guide's own call shape and
-        # the exact guard the section had told the reader to rely on; and a
-        # narrow guard does re-point `metrics["accuracy"]` for one metric name.
-        # Correcting a wrong absence costs more than recording it did. That,
-        # plus a free-check contract fix, a runtime disclosure, a selection-over-
-        # noise bound and a vacuous-copy bound, is 3 KB - so raise TOTAL to
-        # 243 KB. Resident is untouched by all of it, which is the shape this
-        # policy asks for.
-        #
-        # Merged onto the trunk that now carries #137, #131 and #139, the
-        # package measures 249_609 - so the ceiling is 250_000, measured once
-        # more rather than taken from either side (the fifth consecutive merge
-        # where neither figure was right).
-        #
-        # Worth a reader's attention, because no single branch could see it:
-        # this round is the largest single increment this budget has taken -
-        # roughly 21 KB, about a tenth of the whole corpus, and resident does
-        # NOT stay untouched once merged (63_363 against the 60 KB the branch
-        # measured against). Most of it documents four SDK mechanisms that are
-        # not the answer rather than the round itself. That is defensible while
-        # those mechanisms are live traps - Traigent/Traigent#2100 and #2101
-        # now track them - but it is guidance whose reason to exist expires
-        # when they are fixed. Revisit this block when they close; if the SDK
-        # gains a floor that binds on the run's own metric, most of these bytes
-        # should leave rather than be inherited.
-        budget = 250_000
+        # Worth recording, because the figure above was wrong in a way only the
+        # deletion could show: that catalogue was 4,451 bytes of the 16,774 the
+        # round put into references, not "most of" it. The rest - the free `$0`
+        # check, the gate, the separate approval, the by-hand selection rule,
+        # both outcomes, the seed, and the warm-start contract - is the round's
+        # own procedure and stays. So TOTAL falls from 249_609 to a measured
+        # 244_765 and this ceiling falls with it, to 245_000. A lowering is as
+        # much a decision as a raise: 235 bytes of headroom is narrower than the
+        # 308-391 the last three merges left, and deliberately so, because a
+        # ceiling that comes down should bind rather than bank the room it just
+        # recovered.
+        budget = 245_000
         self.assertLess(
             total,
             budget,

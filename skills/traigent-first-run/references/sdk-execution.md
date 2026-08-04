@@ -934,69 +934,20 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 ## Optional cost-reduction round
 
 `references/run-safety.md` owns whether this round is offered and what it may claim. This section
-owns what the installed SDK does and does not provide for it, because the three mechanisms such a
-round appears to want are not all there. Confirm each on the installed version before relying on it,
-and treat an absent name as unavailable rather than assumed.
+owns how it is run. The round keeps the same objectives the first comparison used; its one-sidedness
+comes from how its winner is selected, not from the objectives.
 
-**There is no accuracy floor to optimize under.** `safety_constraints` is the parameter shaped like
-one, and on the pinned 0.25.0 release the decorator raises `NotImplementedError` for any non-empty
-value. `constraints` is a different mechanism: structural conditions over configuration *values*,
-such as "this model implies at least this token budget". A one-argument constraint callable is
-checked before the trial and prunes it without consuming a slot, but it sees only the configuration,
-never a score. A two-argument callable does see metrics, and it is evaluated only after the trial has
-run and been paid for: returning `False` marks that trial failed rather than steering the search away
-from it, so a floor written this way spends trials discovering violations and can end a run with no
-eligible winner at all. Do not express this round's objective through either one.
-
-**The objective schema cannot express "not worse" either.** `ObjectiveDefinition` gives an
-orientation and a weight, which is a weighted scalarization: it will trade the score away for cost
-whenever the weights say so, and that is the one outcome this round must not produce. Keep the same
-objectives the first comparison used and take the one-sidedness from selection instead.
-
-**The registered selection presets cannot do this, and using one is worse than not selecting at
-all.** The installed release registers three advisory strategy presets - `quality_floor_min_cost`,
-`max_accuracy_then_cheapest_within_epsilon`, `pareto_frontier` - and `optimize_sync` accepts
-`strategy` and `strategy_params`. `quality_floor_min_cost` reads as an exact fit: lowest-cost
-completed trial at or above a quality floor. Do not use it, or any of them, for this round. Three
-verified reasons, the first alone disqualifying:
-
-- **They read `metrics["accuracy"]`, which is usually not this run's score.** `accuracy` is the SDK's
-  own built-in rate of case-insensitive exact matches against `expected_output`, computed
-  independently of the `metric_functions` scorer this guide wires. One narrow guard exists: a custom
-  metric named literally `accuracy`, or a bare `scoring_function=`, is bound to that key instead and
-  the preset then reads the real score. Under any other metric name - which is what this guide
-  wires - it does not fire, and any evaluator that is not that exact match (partial credit, an LLM
-  judge, numeric tolerance, substring or set overlap) reports `accuracy` as `0.0` on every trial
-  while the real metric varies. Take the floor from the winner's `accuracy` and it is `0.0`: every trial is
-  admitted and the globally cheapest comes back as `status="selected"`. On a measured run whose real
-  scores were `0.9` for the winner and `0.3` for the cheapest, that selects the `0.3` configuration
-  and presents it as an unchanged score - the exact trade this round exists to refuse, arrived at
-  automatically. Picking the floor independently only changes the volume: above `0.0` nothing clears
-  a floor everything reports as `0.0`, so the preset returns `status="failed"` with a rationale -
-  loud, and still no answer. `accuracy` is not always present either; with no `expected_output` on
-  any row it is absent and the trial is excluded the same way.
-- **Passing `strategy` to `optimize_sync` replaces the run's objectives, and this guide's call shape
-  is the one that gets no error.** The preset substitutes its own `["accuracy", "cost"]` and
-  `best_config` follows: the same space and algorithm returned a different winner with nothing
-  changed but `strategy`. Its mutual exclusivity with an explicit `objectives=` guards only the
-  *call-time* argument. This guide passes `objectives=` on the decorator and does not repeat it on
-  `optimize_sync`, so no `ValueError` is raised - the decorated objectives are silently overwritten,
-  `best_config` flips to the cheapest configuration, and nothing in the result says so. That silent
-  substitution, not the preset's own verdict, is where the damage is.
-- `max_accuracy_then_cheapest_within_epsilon` permits the score to fall by its epsilon, which is the
-  trade this round refuses even when the metric is right.
-
-**Do the selection by hand, on the metric the run actually declared.** It is the same rule, it needs
-no SDK selector, and it is arithmetic over artifacts already in hand:
+**Select by hand, on the metric the run actually declared.** Both the free `$0` check over the
+enhanced run's finished trials and the round's own result come from the same filter over
+`optimized_results.trials` - arithmetic over artifacts already in hand, so one function serves both:
 
 ```python
 def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost):
     """Completed trials that scored at or above `floor` and cost measurably less.
 
     `metric_name` is this run's own objective name - the key wired through
-    `metric_functions` - and never `"accuracy"`, which is the SDK's built-in
-    exact-match rate and is unrelated to a graded, judged, or tolerant
-    evaluator. `floor` is the incumbent trial's value of that same key, so the
+    `metric_functions`, which is `"task_success"` in this reference's worked
+    example. `floor` is the incumbent trial's value of that same key, so the
     two sides of the comparison are the same measurement.
     """
     selected = []
@@ -1017,12 +968,11 @@ def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost):
 
 `incumbent_cost` must itself be a reported, positive cost. A `0.0` produced by unknown model pricing
 is indistinguishable in the metrics map from a genuine free route, and a comparison against it admits
-everything - the same silent-wrong-answer shape as the preset above. `references/run-safety.md` makes
-measured cost a precondition for both the free check and the round.
+everything. `references/run-safety.md` makes measured cost a precondition for both the free check and
+the round.
 
-Use this one function for both jobs: the free `$0` check over the trials the enhanced run already
-completed, and the round's own result. Selecting the round's winner by the weighted objective instead
-would hand back exactly the score-for-cost trade the objective schema permits and this round forbids.
+The SDK's own `strategy=` selection presets are deliberately unused here; see Traigent/Traigent#2100,
+#2101 and #2102.
 
 **The seed.** Put the winning configuration into the second space as one of its value combinations,
 so it is a point the search can actually return. Do not reach for `default_config`: the warning

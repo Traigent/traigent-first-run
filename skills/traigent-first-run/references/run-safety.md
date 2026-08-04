@@ -652,8 +652,7 @@ failure mode justify them.
 
 SKILL stage 7 states that this round is optional and one-sided. Everything else about it is owned
 here: when it is offered, what it may claim, the free check that precedes it, the gate, its
-approval, and its two outcomes. `references/sdk-execution.md` owns the mechanics, including the
-selection this round must not delegate to the SDK.
+approval, and its two outcomes. `references/sdk-execution.md` owns the mechanics.
 
 ### Run the free check first
 
@@ -665,9 +664,8 @@ and the round, and say so.
 
 Then ask the finished run a question that costs `$0`: among the trials it already completed and
 already paid for, is there one that cost less than the selected winner and did not score below it on
-the run's own metric? This is a re-read of returned trials with no provider call, filtered by hand -
-`references/sdk-execution.md` gives the function and explains why the SDK's own selection presets
-answer a different question.
+the run's own metric? This is a re-read of returned trials with no provider call, filtered by hand;
+`references/sdk-execution.md` gives the function.
 
 The function returns the qualifying trials cheapest first, and never the winner, whose own cost is
 not below itself. If it returns anything, its first entry is that cheaper configuration and the cost
@@ -724,9 +722,9 @@ once.
 
 Select it the same way the free check selects: the cheapest completed trial that scored at or above
 the incumbent on the run's own metric, using the function in `references/sdk-execution.md`. Do not
-report the run's `best_config` as the round's answer. That is the weighted-objective winner, and a
-weighted objective is free to buy cost with score - it is the mechanism this round exists to refuse,
-so handing back its choice would refuse the trade in the prose and perform it in the result.
+report the run's `best_config` as the round's answer. That filter is the only place the round's
+one-sidedness is enforced, so a winner taken from anywhere else would refuse the score-for-cost
+trade in the prose and perform it in the result.
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
 produce a weaker version of the first.

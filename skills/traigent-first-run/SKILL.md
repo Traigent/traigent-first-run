@@ -598,12 +598,10 @@ half is never an improvement claim and never stronger than the paired-uncertaint
 `references/evaluation-and-dataset.md` allows on the outcomes actually produced.
 
 The round starts from the best configuration already found and searches a second space built around
-it. `references/sdk-execution.md` owns what the installed SDK actually does here, including the
-mechanisms it does not have and one it offers that answers a different question; do not describe the
-round as doing something that reference has not confirmed. Do not tell the user the round dropped
-the knobs that did not matter: at a first run's trial count a control that moved nothing was mostly
-undersampled, so any importance reading is a hypothesis the second space tests, never a finding it
-reports.
+it; `references/sdk-execution.md` owns how that space is built and run. Do not tell the user the
+round dropped the knobs that did not matter: at a first run's trial count a control that moved
+nothing was mostly undersampled, so any importance reading is a hypothesis the second space tests,
+never a finding it reports.
 
 The round needs its own explicit approval against the remaining walkthrough ceiling, and both of its
 outcomes are reported with the first comparison in stage 8 - including no cheaper configuration at
