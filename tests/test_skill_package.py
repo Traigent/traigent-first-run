@@ -2183,6 +2183,122 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_the_close_states_the_run_scope_it_measured_at(self) -> None:
+        """Small numbers read as the product's ceiling unless the close says otherwise.
+
+        The walkthrough bounds itself deliberately - a row subset, a trial cap,
+        and only the controls whose wiring it verified - and never told the user
+        those were its own choices. So the close carries the three measured
+        ratios, and each clause is dropped rather than estimated when this run
+        does not hold its number.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "rows scored beside the dataset's usable rows",
+            "trials executed beside the enhanced space's combination count",
+            "knobs varied beside the controls this run identified on the agent",
+            "a getting-familiar run rather than the largest one available",
+            "drop any clause this run did not measure instead of estimating it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+
+        # Every clause has a stated degradation, so no path reaches the user
+        # with an empty or invented number.
+        for phrase in (
+            "say the run scored every usable row",
+            "drop this clause and say it stopped there instead",
+            "there is no denominator to quote",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety_text)
+
+        # A scope statement, not a pitch. The repository's own rule is that
+        # motivation comes from measured evidence, so the close may not predict
+        # a win it did not measure or manufacture a reason to act now.
+        self.assertIn(
+            "it does not predict that a larger run would have won, attach a deadline, "
+            "or supply a reason to act now",
+            safety_text,
+        )
+
+        # The scope statement is stated once and reused, so the no-lift path
+        # cannot drift away from it.
+        self.assertIn(
+            "carry the run-scope statement above into this no-lift report", skill_text
+        )
+        self.assertLess(
+            skill_text.index("the run's scope, in this run's own recorded numbers"),
+            skill_text.index("carry the run-scope statement above"),
+        )
+
+    def test_the_handoff_names_real_skills_and_only_hypotheses(self) -> None:
+        """The user leaves with tools, and with claims this run can support.
+
+        At this run's row and trial counts a control that showed no effect was
+        mostly not sampled enough to show one, so the handoff may recommend a
+        test and may not report a finding. Every skill it may name has to exist
+        in Traigent/traigent-skills, and every flag has to be one that repo
+        documents.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "so the user can continue alone, at their full dataset",
+            "npx skills add traigent/traigent-skills --list",
+            "npx skills add traigent/traigent-skills --skill <name>",
+            "only which skills get named comes from this run's evidence",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+
+        # Claim strength is gated in the mandate itself, not left to the map.
+        self.assertIn(
+            "is a hypothesis to test at full scale, never a finding", skill_text
+        )
+        self.assertIn(
+            "never that a control was shown not to matter",
+            skill_text,
+        )
+        self.assertIn(
+            "never as an established finding",
+            safety_text,
+        )
+
+        # Only skills that exist in Traigent/traigent-skills, only flags that
+        # repository documents. A handoff to a skill that was renamed away is a
+        # dead end the user hits after the run is over, and it is discovered
+        # after the walkthrough has already ended. Scoped to the map itself:
+        # matching the whole file would also collect `traigent-runs` and any
+        # future backticked path, and fail with a message about the wrong thing.
+        handoff = safety_text.split("### continuation handoff", 1)[1].split("## ", 1)[0]
+        named = set(re.findall(r"`(traigent-[a-z-]+)`", handoff))
+        self.assertEqual(
+            named,
+            {
+                "traigent-analyze-results",
+                "traigent-analyze-variable-importance",
+                "traigent-dataset-curate",
+                "traigent-eval-audit",
+                "traigent-optimize-config-space",
+                "traigent-optimize-run",
+            },
+            "the handoff map names a skill this list has not confirmed exists in "
+            "Traigent/traigent-skills - confirm it with `npx skills add "
+            "Traigent/traigent-skills --list` and add it here, or drop the row",
+        )
+        joined = skill_text + " " + handoff
+        skills_flags = set(re.findall(r"npx skills add [^`]*?(--[a-z-]+)", joined))
+        self.assertEqual(
+            skills_flags,
+            {"--list", "--skill"},
+            "the handoff names an `npx skills add` flag beyond the two that "
+            "repository documents",
+        )
+
     def test_cloud_insight_is_described_as_signals_not_numbers(self) -> None:
         """The backend withholds numeric dataset-quality scores from clients.
 
@@ -3846,7 +3962,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # Flags the guidance names that belong to something other than a bundled
     # script. `--all` is the SDK's own push flag, mentioned only to forbid it.
-    EXTERNAL_FLAGS = frozenset({"--all"})
+    # `--list` and `--skill` belong to `npx skills add`, which the close hands
+    # the user so they can continue on their own; both are documented in
+    # Traigent/traigent-skills, and the check that they exist there is
+    # test_the_handoff_names_real_skills_and_only_hypotheses.
+    EXTERNAL_FLAGS = frozenset({"--all", "--list", "--skill"})
 
     def test_the_guidance_names_no_flag_that_does_not_exist(self) -> None:
         """#62's class: an instruction that cannot be followed as written.
@@ -3927,9 +4047,15 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             for path, size in document_bytes.items()
             if path in {ROOT / "GUIDE.md", SKILL}
         )
+        # Raised from 60 KB, which had 23 bytes of headroom left. The graduation
+        # handoff adds three mandates that only SKILL.md can carry - the closing
+        # run-scope statement, its repetition on the no-lift path, and the
+        # evidence-selected skills handoff - because each is an ordering
+        # decision about the close, and the depth behind all three moved into
+        # run-safety.md rather than into SKILL.md.
         self.assertLess(
             resident,
-            60_000,
+            62_000,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -3962,7 +4088,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
-        budget = 220_000
+        # The graduation handoff adds the run-scope derivation and the
+        # evidence-to-skill map to run-safety.md's post-run section - the
+        # reference that already owns the close - so this is the policy above
+        # working, not a bypass of it. Raise TOTAL by 6 KB.
+        budget = 226_000
         self.assertLess(
             total,
             budget,
