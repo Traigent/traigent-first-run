@@ -447,7 +447,10 @@ recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling
 
 Immediately before each paid baseline and enhanced run, show a short run card with the model ids,
 each varying knob and its explicit values, one plain-language note per knob, and the total
-combination count. For the enhanced card, repeat the baseline knobs and label every addition new.
+combination count. For the enhanced card, repeat the baseline knobs, label every addition new, and
+pair that count with this run's trial cap as a ceiling, never a range: how many configurations
+exist and how many of them Traigent will test. `references/run-safety.md` owns that wording, both
+numbers' source, and what to say when the count cannot be computed.
 
 Put the runtime estimate and the default **30-minute completion target** in the same approval as the
 money ceiling. This is an estimate and an up-front sizing target, not a hard wall-clock guarantee.
@@ -460,8 +463,8 @@ completed trials yields an honest partial result and a stop-or-bounded-continuat
 trials requires diagnosis.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
-trial target while preserving meaningful difficulty coverage; disclose any
-reduction from the six-row baseline or 10-12-trial enhanced target. Proceed after one explicit
+trial target while preserving meaningful difficulty coverage; disclose any reduction from the
+six-row baseline or the enhanced run's 12-configuration ceiling. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
@@ -487,9 +490,10 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    never pad it. Only when it is missing, prepare the credible six-configuration fixed sweep in
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
-   controls the agent consumes, and target 10-12 visible trials (`references/sdk-execution.md`
-   defines the cap). Add non-model, task-relevant controls by default; any new model is a
-   separately disclosed experiment. The reference owns the generated-space mechanics that make the
+   controls the agent consumes, and test up to 12 configurations (`references/sdk-execution.md`
+   explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
+   default; any new model is a separately disclosed experiment. The reference owns the
+   generated-space mechanics that make the
    comparison attributable to the managed search rather than a quiet model upgrade.
 
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
@@ -584,8 +588,9 @@ reveals a specific, worthwhile hypothesis.
 Before saying the run succeeded, apply every post-run verification in
 `references/run-safety.md`. Also verify that the baseline was preserved exactly or the generated
 six-row default (including its initial configuration) ran, subject only to an approved disclosed
-reduction; the enhanced run used real controls and either produced 10-12 trials, matched an
-explicitly approved and disclosed reduced target, or reports a concrete stop/failure reason; and a
+reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
+trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
+stop/failure reason; and a
 best configuration and non-degenerate measures exist. Report truncation and persistence failures,
 require the portal probe to have stayed green, and verify each portal link before claiming
 visibility.
@@ -605,7 +610,8 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
-- Cost, trial count, failures, stop reason, and direct portal links.
+- Cost, the configurations tested out of the space's total, failures, stop reason, and direct
+  portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 - The readiness transition: the recorded opening score and band, the closing score and band, and
   which caps cleared and which remain.
