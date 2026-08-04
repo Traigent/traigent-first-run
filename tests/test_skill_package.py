@@ -480,9 +480,12 @@ class SkillPackageTests(unittest.TestCase):
             "loaded guide source is not automatically the target project",
             "guide-source artifacts never count as its results",
             "a mismatched resumed artifact is historical, never current",
+            "agent: none discovered",
+            "until intent selects or creates one",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
+        self.assertIn("agent: none discovered", guide_text)
         self.assertIn(
             "target project and selected agent (absolute path plus function or command)",
             plan_text,
@@ -1465,6 +1468,14 @@ class SkillPackageTests(unittest.TestCase):
             "show the exact judgment-dependent change and obtain explicit approval",
             quality_text,
         )
+        combined_text = f"{skill_text} {quality_text}"
+        for phrase in (
+            "first resolve it against the semantic-coverage evidence already inspected",
+            "explicitly establish whether order matters",
+            "continue without asking",
+            "only when the competing order semantics remain unresolved",
+        ):
+            self.assertIn(phrase, combined_text)
 
     def test_calibration_policy_cannot_be_chosen_to_make_the_scorer_pass(
         self,
@@ -2124,6 +2135,23 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("preflight", document)
             self.assertIn("expected outputs", document)
 
+    def test_readiness_receives_only_a_grounded_task_kind(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        quality = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "treat the output task kind as run-scoped validation state",
+            "pass it as `--task-kind` to every readiness invocation from the opening gate onward",
+            "never infer it only from a filename, language, or benchmark family",
+            "omit `--task-kind` and report task fit as not yet measured",
+        ):
+            self.assertIn(phrase, quality)
+        self.assertIn("apply the run-scoped task-kind rule to readiness only", skill)
+
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
         self,
     ) -> None:
@@ -2287,6 +2315,25 @@ class SkillPackageTests(unittest.TestCase):
             "resume the connected path after the failure is resolved",
         ):
             self.assertIn(phrase, skill_text)
+
+    def test_mock_process_disables_litellm_remote_cost_map_fetch(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "`traigent_offline_mode=true` and `litellm_local_model_cost_map=true`",
+            "traigent offline mode does not by itself suppress litellm's import-time remote pricing-map fetch",
+            "every generated mock wrapper and every documented free mock invocation",
+        ):
+            self.assertIn(phrase, safety)
+
+    def test_mock_rejects_phantom_configuration_before_secret_handoff(self) -> None:
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "trial settings are not consumed",
+            "return to the stage-2 repair/continue/pause choice",
+            "enter stage-3 adapter repair and revalidate only after the user chooses its scope",
+            "do not open a credential file while optimization remains phantom",
+        ):
+            self.assertIn(phrase, safety)
 
     def test_ci_runs_package_and_format_validation(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
@@ -4384,6 +4431,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
+        # #133 adds the present-but-unresolved-evaluator distinction (a new
+        # evidence classification and its create/select vs. inspect/repair/
+        # replace routing) to SKILL.md and evaluation-and-dataset.md - also new
+        # contract surface, not duplicated stage detail - so raise TOTAL by
+        # roughly 1 KB, keeping the ceiling as narrow as the addition allows.
         #
         # #123's follow-up raises it again, by 1.5 KB. The enhanced run's count
         # is now spoken to the user as a ceiling against the space it is drawn
@@ -4394,20 +4446,34 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # 10-row shortfall obligation left run-safety.md, since #123 had
         # already made sdk-execution.md its one home.
         #
-        # #131 merges #137 in ahead of it and raises it by a further 750 bytes,
-        # which is what the two changes cost together: 645 bytes, plus the
-        # rounding to the next 250. They are additive because they change
-        # different things. #137 owns how the enhanced count is *stated* - the
-        # ceiling copy and its degraded form, which land in run-safety.md.
-        # #131 owns the journey *structure* - the five-stage opening in
-        # GUIDE.md, the readiness presentation in glossary.md, and splitting
-        # one combined approval into a baseline approval and a separate
-        # connected-stage approval, which is the bulk of run-safety.md's share.
-        # Against that, #131 moved stage detail out of SKILL.md, so resident
-        # guidance falls to roughly 58 KB even while TOTAL rises; the ceiling
-        # copy sits in the reference for the stage that owns it, which is the
-        # policy above working rather than being spent.
-        budget = 222_250
+        # #133 and #123's follow-up landed independently and each raised this
+        # number from 220_000 for its own increment, both arriving at 221_500 -
+        # so the merge produced no textual conflict on the line, only on the
+        # reasons above it. Merged, the package carries BOTH additions and
+        # measures 222_750, which neither branch's figure admits. The ceiling
+        # is therefore set here against the measured combined total: this is
+        # the arithmetic neither branch could do alone, and taking either
+        # side's number would have failed the suite rather than the review.
+        #
+        # #131 merges that trunk in and adds the journey structure on top, and
+        # the same arithmetic trap recurs one merge later: trunk said 223_000
+        # and #131 said 222_250, and the merged package measures 223_442 - so
+        # BOTH figures are too low again, for the same reason. The two changes
+        # are additive because they change different things. #137 owns how the
+        # enhanced count is *stated* - the ceiling copy and its degraded form,
+        # which land in run-safety.md. #131 owns the journey *structure* - the
+        # five-stage opening in GUIDE.md, the readiness presentation in
+        # glossary.md, and splitting one combined approval into a baseline
+        # approval and a separate connected-stage approval, which is the bulk
+        # of run-safety.md's share. Against that, #131 moved stage detail out
+        # of SKILL.md, so resident guidance falls to roughly 58 KB even while
+        # TOTAL rises, and the RESIDENT ceiling above is left where it is
+        # rather than raised; the ceiling copy sits in the reference for the
+        # stage that owns it, which is the policy above working rather than
+        # being spent. So the number below is the MEASURED merged total,
+        # 223_442, rounded up to the next 250 - not either branch's figure,
+        # and not an estimate. Measure it; do not take a side.
+        budget = 223_750
         self.assertLess(
             total,
             budget,

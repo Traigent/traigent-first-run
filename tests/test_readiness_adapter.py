@@ -230,6 +230,63 @@ HEALTHY_SPACE = {
 
 
 class ReadinessAdapterReplayTests(unittest.TestCase):
+    def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
+        help_result = subprocess.run(
+            [sys.executable, str(READINESS), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        help_text = " ".join(help_result.stdout.split())
+        self.assertIn("use code for executable source", help_text)
+        self.assertIn("code-sql for SQL query output", help_text)
+
+        invalid = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--task-kind",
+                "sql",
+                "--json",
+            ],
+            input="[]",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("invalid choice: 'sql'", invalid.stderr)
+
+        accepted = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--evaluator-method",
+                "execution",
+                "--task-kind",
+                "code",
+                "--json",
+            ],
+            input="[]",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        score = json.loads(accepted.stdout)
+        evaluation = next(
+            pillar for pillar in score["pillars"] if pillar["name"] == "evaluation"
+        )
+        task_fit = next(
+            subscore
+            for subscore in evaluation["subscores"]
+            if subscore["name"] == "task-fit"
+        )
+        self.assertEqual(task_fit["value"], 25.0)
+        self.assertEqual(task_fit["evidence"], "execution suits code output")
+
     def _healthy_context(
         self, directory: Path, method: str = "exact"
     ) -> tuple[str, ...]:
@@ -1454,6 +1511,207 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         )
         self.assertNotEqual(process.returncode, 0)
         self.assertIn("labelled_rows", process.stderr)
+
+
+def _preflight_evaluator_records(evaluator: Path | None, *extra: str) -> list[dict]:
+    """Run the real preflight over one evaluator file and return its records.
+
+    `evaluator=None` omits `--evaluator` entirely - the shape a project with
+    no evaluator file at all presents to preflight - rather than pointing at
+    a path that does not exist, which is a different, narrower claim.
+    """
+    evaluator_args = ["--evaluator", str(evaluator)] if evaluator is not None else []
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(PREFLIGHT),
+            *evaluator_args,
+            "--defer-missing-sdk",
+            "--json",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert process.returncode in (0, 1), process.stderr
+    return json.loads(process.stdout)
+
+
+def _score_evaluator(
+    evaluator: Path | None, readiness_extra: tuple[str, ...] = ()
+) -> dict:
+    """Replay real preflight's evaluator-shape JSON into readiness."""
+    preflight_json = json.dumps(_preflight_evaluator_records(evaluator))
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(READINESS),
+            "--preflight",
+            "-",
+            "--json",
+            *readiness_extra,
+        ],
+        input=preflight_json,
+        capture_output=True,
+        text=True,
+    )
+    assert process.returncode == 0, process.stderr
+    return json.loads(process.stdout)
+
+
+def _evaluation_caps(score: dict) -> list[str]:
+    return [cap["condition"] for cap in score["caps"]]
+
+
+class EvaluatorPresenceAdapterTests(unittest.TestCase):
+    """traigent-first-run#133, driven through the real preflight/readiness CLIs.
+
+    Four states an evaluator file can be in when a first run opens, replayed
+    through the real `preflight.py --evaluator ... --json | readiness.py
+    --preflight -` pipeline rather than hand-built facts, so the plumbing
+    between the two scripts is what is actually under test.
+    """
+
+    def test_absent_evaluator_is_reported_absent_not_unresolved(self) -> None:
+        score = _score_evaluator(None)
+        self.assertIn("evaluator-absent", _evaluation_caps(score))
+        self.assertNotIn("evaluator-unresolved", _evaluation_caps(score))
+
+    def test_import_invalid_evaluator_is_present_but_unresolved(self) -> None:
+        """A syntax error is caught by preflight's `ast.parse`, never by import."""
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text("def score(output, expected:\n    return 1.0\n")
+            score = _score_evaluator(evaluator)
+        caps = _evaluation_caps(score)
+        self.assertIn("evaluator-unresolved", caps)
+        self.assertNotIn("evaluator-absent", caps)
+        cap = next(c for c in score["caps"] if c["condition"] == "evaluator-unresolved")
+        self.assertEqual(cap["action_kind"], "repair-evaluator")
+
+    def test_constant_pass_evaluator_is_present_but_unresolved_before_calibration(
+        self,
+    ) -> None:
+        """Case 08: a constant-pass file parses fine but earns no method.
+
+        The opening gate correctly refuses to declare a method for a scorer
+        whose result plainly does not depend on its input - that refusal is
+        an assistant judgment call, not something this static check performs
+        - so this run passes no `--evaluator-method`. The file is still
+        `present`, from preflight's parse, and must not read as absent.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text("def score(output, expected):\n    return 1.0\n")
+            score = _score_evaluator(evaluator)
+        caps = _evaluation_caps(score)
+        self.assertIn("evaluator-unresolved", caps)
+        self.assertNotIn("evaluator-absent", caps)
+        self.assertNotIn("evaluator-invalid", caps)
+
+    def test_constant_pass_caught_by_calibration_is_evaluator_invalid(self) -> None:
+        """The same file, once a method is declared and calibration runs it.
+
+        This is the complementary path: calibration - not the static check -
+        is what is able to observe that the score never changes, and it
+        reports that as `evaluator-invalid`, still distinct from
+        `evaluator-unresolved`.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text("def score(output, expected):\n    return 1.0\n")
+            calibration = json.dumps(
+                {
+                    "cases": [
+                        {
+                            "checks": {
+                                "good_passes": True,
+                                "bad_fails": True,
+                                "non_constant": False,
+                            }
+                        }
+                    ]
+                }
+            )
+            preflight_json = json.dumps(_preflight_evaluator_records(evaluator))
+            calibration_path = Path(directory) / "calibration.json"
+            calibration_path.write_text(calibration)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--calibration",
+                    str(calibration_path),
+                    "--evaluator-method",
+                    "exact",
+                    "--json",
+                ],
+                input=preflight_json,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        score = json.loads(process.stdout)
+        caps = _evaluation_caps(score)
+        self.assertIn("evaluator-invalid", caps)
+        self.assertNotIn("evaluator-unresolved", caps)
+        self.assertNotIn("evaluator-absent", caps)
+
+    def test_healthy_evaluator_reaches_full_calibrated_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(
+                "def score(output, expected):\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            calibration = json.dumps(
+                {
+                    "cases": [
+                        {
+                            "checks": {
+                                "good_passes": True,
+                                "bad_fails": True,
+                                "non_constant": True,
+                            }
+                        },
+                        {
+                            "checks": {
+                                "good_passes": True,
+                                "bad_fails": True,
+                                "non_constant": True,
+                            }
+                        },
+                    ]
+                }
+            )
+            preflight_json = json.dumps(_preflight_evaluator_records(evaluator))
+            calibration_path = Path(directory) / "calibration.json"
+            calibration_path.write_text(calibration)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--calibration",
+                    str(calibration_path),
+                    "--evaluator-method",
+                    "exact",
+                    "--json",
+                ],
+                input=preflight_json,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        score = json.loads(process.stdout)
+        caps = _evaluation_caps(score)
+        self.assertFalse(
+            {"evaluator-absent", "evaluator-unresolved", "evaluator-invalid"}
+            & set(caps)
+        )
 
 
 if __name__ == "__main__":

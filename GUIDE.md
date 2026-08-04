@@ -39,6 +39,7 @@ Before showing readiness, a baseline, or an optimization result, identify the ta
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
 run, compare that identity with the recorded artifact. If it differs, label the artifact
 **historical — different agent** and do not quote its scores as the current result.
+If none is credible, use `Agent: none discovered`; replace it before later results.
 
 An already-supplied local credential file is an availability inventory, not an agent selection. If
 the user explicitly identifies a different owner-only local file as the credential handoff for

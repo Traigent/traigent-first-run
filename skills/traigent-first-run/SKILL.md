@@ -54,6 +54,7 @@ unversioned `traigent` package.
   root before every write or run; guide-source artifacts never count as its results.
 - Before readiness or results, state and record `Target project: <absolute path> · Agent: <absolute
   path>:<function or command>`. A mismatched resumed artifact is historical, never current.
+  If none is credible, use `Agent: none discovered` until intent selects or creates one.
 - A user-named external credential file is the selected handoff: after safety checks add only
   missing keys there; never copy or re-request values. Otherwise use the target `.env`.
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
@@ -154,25 +155,27 @@ Only ask which agent to use if multiple credible candidates remain.
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
 the same current `--evaluator-method` value to every paired preflight/readiness invocation. When no
-evaluator method exists, omit the flag from both; never let one half infer a different method.
+evaluator method exists, omit the flag from both; never let one half infer a different method. When
+a file exists but no method can be honestly declared for it without executing it - a syntax error,
+or behavior that plainly ignores its input - still omit `--evaluator-method`, but pass its path to
+preflight's `--evaluator` for a static syntax check; this reports present-but-unresolved, not absent.
+
+Ground readiness task kind per the evaluation reference.
 
 #### Opening readiness gate
 
-After the read-only inventory and before any component creation or repair, select the opening
-interpreter from evidence already recorded in stage 1. If there is exactly one compatible
-Python 3.11-3.13 isolated-environment candidate overall and its resolved path is inside the user's
-project root, use its resolved interpreter for every bundled script before stage 5 and report
-`python-version` as measured. Otherwise use the
-host `python3` as a narrow, no-install bootstrap and mark only that bootstrap's `python-version`
-provisional. Multiple compatible candidates and environments outside the project remain unresolved
-until the stage-5 choice; if the single recorded candidate no longer launches, record why and fall
-back to the host bootstrap. The environment selected or created in stage 5 remains authoritative
-for the connected run.
+Before any component creation or repair, choose from the recorded inventory. If there is exactly
+one compatible Python 3.11-3.13 isolated-environment candidate overall and its resolved path is
+inside the user's project root, use its resolved interpreter and report `python-version` as
+measured. Otherwise use the host
+`python3` as a provisional, no-install bootstrap. Multiple compatible candidates and environments
+outside the project wait for stage 5; if the sole candidate fails, record why and fall back to the
+host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
 any applicable calibration result. Apply the run-scoped evaluator-method rule above to both
-scripts.
+scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
@@ -180,17 +183,9 @@ its provenance and describe the agent pillar as not yet measured; a timestamp, h
 The opening score is not skippable, always reports all three pillars, and is the baseline the
 closing report measures against. Show it before anything is created or repaired.
 
-Announce it by what it does for the reader, not by the rule that binds you. "Mandatory" describes
-the assistant's obligation and tells the user nothing about their run; "static" is a word from the
-tooling. Say that it reads the project and changes nothing in it - which is the fact a reader
-actually wants before a tool inspects their code - and let the obligation stay internal.
-
-Show the script's rendered card verbatim in a code block, not a retyped table or the durable
-markdown report. Preserve its pillar bars, measured-check counts, and `LIMITED TO` versus
-`WOULD LIMIT TO` wording. Add the overall score, band, and each cap's plain-language reason around
-it while keeping internal condition ids out of the conversation. Caps select stage-4 branches; by
-themselves they do not stop the run. Describe an existing but unmeasured component as not yet
-measured rather than repeating an absence-oriented card reason.
+Say that the score reads the project and changes nothing in it. Show its rendered card verbatim,
+then explain its score, band, and cap reasons without internal ids. Describe an existing but
+unmeasured component as not yet measured. Presentation detail lives in the glossary.
 
 Use the readiness-score presentation in `references/glossary.md`: lead with
 `Stage 2/5 · Readiness - <score>/100 (<band>)` and show `<opening> → <current>` on re-score. Do not
@@ -303,8 +298,8 @@ Follow this order:
    mode/threshold rationale, gaps, and `sufficient` or `ambiguous` verdict. Use the outcome-class
    table in `references/run-safety.md` and name each case's classes in `outcome_classes`.
 
-   When `calibrate_evaluator.py` returns a `permutation_question`, put it to the user before any
-   paid run; it asks whether order genuinely matters and is not a failed calibration check.
+   Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
+   competing order semantics remain unresolved.
    On an execution evaluator, a permutation probe distinguished only because rearranged code is
    caught and scored as invalid carries no evidence about label/value binding; a propagated parse
    or runtime exception is not a pass. The semantic-coverage review must cover that axis for code
@@ -378,10 +373,13 @@ rather than the condition id:
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.
 
-Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
-paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
-or substitute creation, re-run the affected checks, the applicable calibration, and the score,
-then update the latest recorded result without overwriting the opening one.
+Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
+connected file with no honestly declarable method) and `evaluator-invalid` route through the
+invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
+the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
+create or select. After any repair or substitute creation, re-run the affected checks, the
+applicable calibration, and the score, then update the latest recorded result without overwriting
+the opening one.
 
 ### 5. Prepare the environment and finish free checks
 
