@@ -613,13 +613,21 @@ Include:
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 - The readiness transition: the recorded opening score and band, the closing score and band, and
   which caps cleared and which remain.
+- The run's scope, in this run's own recorded numbers: rows scored beside the dataset's usable
+  rows, trials executed beside the enhanced space's combination count, and knobs varied beside the
+  controls this run identified on the agent. Say plainly that those bounds were the walkthrough's
+  own choice - a getting-familiar run rather than the largest one available - and keep it a scope
+  statement, never a pitch. Drop any clause this run did not measure instead of estimating it.
+  `references/run-safety.md` owns each number's source and how the sentence degrades.
 - When the enhanced run does not beat the baseline, report the observed flat/negative delta first,
   then separate verified facts, evidence-backed inferences, and untested hypotheses. Use
   `cause not established by this run` unless the evidence rules a cause in. The hypotheses and
   rule-out order in `references/run-safety.md` guide the next test; they are not mandatory
   diagnoses. When the reference is demonstrably ambiguous, wrong, or degenerate, say so rather
   than blaming the model. A flat result on demonstration data shows only that this comparison ran
-  and found no lift on its evidence, not that production cannot improve.
+  and found no lift on its evidence, not that production cannot improve. Carry the run-scope
+  statement above into this no-lift report beside the delta itself, not only in the scope line: the
+  bounds are what let no lift be read at the scale it was actually measured at.
 
 Retain every experiment that was actually persisted in the Traigent portal. Never delete one as
 automatic teardown or cleanup. Give the user a direct verified link for each persisted run and
@@ -685,9 +693,17 @@ End with the CTA in `references/run-safety.md`; `continue` never bypasses approv
 Those state-specific moves are the ones this run measured. Separately, and only after the result,
 these are available whenever the user wants them rather than because their state calls for them:
 
-- Install the Traigent optimization skills with `npx skills add Traigent/traigent-skills` for a
-  stronger enhanced run, telling the user first and reminding them to restart the session so the
-  new skills load.
+- Hand over the Traigent optimization skills so the user can continue alone, at their full dataset,
+  more controls, and their own iterations. Tell the user first and remind them to restart the
+  session so the new skills load. List them with `npx skills add Traigent/traigent-skills --list`,
+  install one with `npx skills add Traigent/traigent-skills --skill <name>`, or take all of them
+  with `--skill '*'`. Then name the two or three this run's own evidence points at and what each
+  would let them do next; `references/run-safety.md` owns that map. Offering this is not a
+  state-specific recommendation and never displaces the one above; only which skills get named
+  comes from this run's evidence.
+- Every observation carried into that handoff is a hypothesis to test at full scale, never a
+  finding. At this run's row and trial counts a control that moved nothing was mostly not sampled
+  enough to say so; write what is worth testing next, never that a control was shown not to matter.
 - Continue into the advanced Traigent lifecycle.
 
 ## Completion criteria

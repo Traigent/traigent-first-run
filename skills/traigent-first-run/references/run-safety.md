@@ -684,13 +684,58 @@ separately disclosed stronger-model comparison. Distinguish a genuinely hard ite
 demonstrably ambiguous, wrong, or degenerate reference. Attribute the latter to the reference, not
 model capability, and never change a validated metric merely to manufacture a win.
 
-Frame no-lift for a first run too: a bounded getting-familiar pass deliberately searches a few
+Frame no-lift for a first run too, in the recorded numbers the run-scope statement below supplies
+rather than as a general remark: a bounded getting-familiar pass deliberately searches a few
 relevant knobs on a small budget, so a flat result can simply be a normal first look rather than a
 fault. The honest next step is one deliberate iteration adding a single structural knob where the
 evidence points, not piling on knobs or spend to force a win.
 
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
+
+### Run-scope statement
+
+The close states the run's own bounds so its numbers are read at the scale they were measured at.
+Every clause is a number this run already recorded; a clause whose number the run does not have is
+dropped, never estimated to complete the sentence.
+
+- **Rows** - the scored row count beside the dataset's usable row count, both already recorded when
+  the bounded subset was drawn. When no subset was drawn the two are the same number: say the run
+  scored every usable row and let the other clauses carry the bound.
+- **Configurations** - trials executed beside the total combination count the enhanced run card
+  already showed. When the run stopped at the baseline checkpoint and no enhanced search ran, drop
+  this clause and say it stopped there instead.
+- **Knobs** - the controls the enhanced space varied, beside the candidate controls this run
+  identified on the agent. When it never enumerated a wider candidate set there is no denominator
+  to quote: say instead that the space varied only the controls whose wiring this run verified, and
+  name that as the bound.
+
+Then one sentence saying those bounds were the walkthrough's own choice, so this was a
+getting-familiar run rather than the largest one available.
+
+Keep it a scope statement. It reports what was measured and what was not; it does not predict that
+a larger run would have won, attach a deadline, or supply a reason to act now. The motivation stays
+the user's own measured evidence.
+
+### Continuation handoff
+
+Offer the skills package to every finished run. Which skills the close names comes from what this
+run recorded, so the handoff continues this run rather than restarting it. Name two or three, each
+with the observation that selected it and what it would let the user do next:
+
+| What this run recorded | Skill to name | What it would let them do |
+|---|---|---|
+| One control accounted for most of the observed spread, or the search barely moved the others | `traigent-analyze-variable-importance` | rank which tuned variables mattered, at a sample size that can support the ranking |
+| Controls left out of the space, or a space barely larger than its trial cap | `traigent-optimize-config-space` | build the wider search space this run bounded away |
+| The row subset, a single difficulty band, or an unlabelled slice was the binding limit | `traigent-dataset-curate` | grow, label, and split the dataset the comparison was bounded by |
+| The evaluator was never calibrated, or a thin or judge-based method carried the ranking | `traigent-eval-audit` | audit whether the ruler this comparison trusted is reliable |
+| The user wants to re-read this run's own result rather than pay for another | `traigent-analyze-results` | read the winner, trials, and trade-offs from the terminal |
+| The earned next move is a larger search | `traigent-optimize-run` | choose algorithm, trial count, and cost limit for a full-scale run |
+
+Every row is a hypothesis this run is too small to settle. At this run's row and trial counts a
+control that showed no effect was mostly not sampled enough to show one, so each entry is phrased
+as what is worth testing at full scale and never as an established finding. Name no skill that is
+not in that repository, and no `npx skills add` flag beyond `--list` and `--skill`.
 
 ## Recovery
 
