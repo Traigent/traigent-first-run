@@ -68,13 +68,19 @@ registration link and the two 10-day windows.
 
 ## User-facing promise
 
-Use this short opening, adapting only what inspection already established:
+Opening:
 
-> I will inspect what you have, preserve it, and run free readiness research. It checks the score
-> and setup—not agent accuracy or an optimization result. I explain details only if action is
-> needed. For a material dataset/evaluation limitation, I will show evidence and
-> offer a working-copy repair before paid calls. Then I will show one baseline/optimization estimate
-> and keep temporary components separate from real-world readiness.
+> **Welcome to Traigent Onboarding!**
+>
+> 1. **Inspect** - preserve your agent, dataset, and evaluator.
+> 2. **Readiness** - run free readiness research and explain its score.
+> 3. **Baseline** - measure today's setup with calls, cost, and time.
+> 4. **Optimize** - preview a bounded Traigent search after the baseline.
+> 5. **Results** - compare the runs and recommend one next step.
+>
+> I will mark each stage with measured numbers when available. Readiness checks the score and
+> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
@@ -125,8 +131,9 @@ persisted run and an explicit `local-only` label for an unsynced baseline, and c
 configs and their measured tuning behavior directly. If you later add an independent validation
 track, treat it as a later follow-up rather than part of this first run: small datasets can
 overfit quickly.
-Include all calls in the combined approval. Trial counts and knob selection are assistant-owned
-implementation choices, not new user questions.
+Approve the provider-paid baseline first. After its result, preview and approve the connected
+optimization separately. The assistant chooses how many configurations it tests and which knobs it
+varies.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

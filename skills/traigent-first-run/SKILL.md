@@ -63,10 +63,9 @@ unversioned `traigent` package.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
-- At each stage boundary, and before and after any step that may take more than about a minute,
-  give a compact `Done / Now / Next` update. Use only observed milestones. Report trial counts,
-  the current best, spend, or remaining time only when the running SDK exposes those values;
-  never invent a percentage or ETA to fill silence.
+- Open with `GUIDE.md`'s five-stage journey. At boundaries/long work, use `Stage <n>/5 · <name>` and
+  `Done / Now / Next`. Show observed readiness score, rows checked, calls/trials, cost, or time;
+  keep finished stages as compact checkmarks. Label estimates; never invent progress/ETA.
 - Explain a blocked step in plain language and give one recommended recovery.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
@@ -88,7 +87,7 @@ approval.
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
-| Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch above | Obtain one concise approval for recipients/data, planned scope, approximate runtime, and the total walkthrough ceiling. |
+| Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
 ## Status language
@@ -187,6 +186,10 @@ closing report measures against. Show it before anything is created or repaired.
 Say that the score reads the project and changes nothing in it. Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary.
+
+Use the readiness-score presentation in `references/glossary.md`: lead with
+`Stage 2/5 · Readiness - <score>/100 (<band>)` and show `<opening> → <current>` on re-score. Do not
+animate with invented progress or narrate every card line.
 
 The score grades measured evidence, not declared existence. Report an uncalibrated real evaluator
 and an agent without current-run wiring evidence as not yet measured, never as absent. Do not infer
@@ -333,7 +336,7 @@ card is the summary. Do not separately explain passed calibration/mock wiring un
 needed or the user asks; neither is agent accuracy or an optimization result.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
-pending behind the combined egress and paid approval; removing keys or setting offline flags does
+pending behind the applicable stage's egress and paid approval; removing keys or setting offline flags does
 not prove an external evaluator is safe.
 
 Classify a structurally usable but evidence-limited real component as `limited`; keep it `❗`.
@@ -382,15 +385,16 @@ the opening one.
 
 Only after the standard-library-only component checks:
 
-1. Determine the route from the selected agent, never the guide source. Treat credential names only
-   as an availability inventory: prefer the agent's configured vendor; if it has none, use the vendor in
-   the user-named credential source without asking them to re-enter it. If neither identifies one,
-   ask the user which vendor they want and try to configure it automatically. Only when the walkthrough must prepare a missing
-   baseline, require the chosen vendor to supply the three-model ladder. If it cannot and the user
-   already has a second supported direct-provider credential, offer that for the missing rung;
-   otherwise stop with one clear mismatch and ask for help. A user-owned baseline requires only its
-   existing route and credential. Never rewrite the model identifier or provider prefix merely to
-   match an available key.
+1. Resolve the route from the selected agent, never from key names. Inventory presence—not values—in
+   the process, handoff, and exact credentials a project-declared env loader, launcher, or secret
+   manager exposes without external calls. Never enumerate stores or copy values; mark declared-only
+   sources unverified. Reuse a matching credential in place when inheritable; on mismatch, do not call the
+   file unsaved. Say: `Agent route: <vendor/model>. Provider credentials: <vendors and sources>.
+   Traigent key: <present/absent> (not a provider credential). Preserve this route by adding <key>,
+   or change to <available vendor>?` Recommend preserving unless the user chose the other vendor.
+   A route change requires recipient disclosure and approval; never rewrite a route merely to match
+   a key. With no route, use the sole available vendor or ask once. Generated baselines need their
+   model ladder; a user-owned baseline requires only its existing route and credential.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
@@ -416,14 +420,11 @@ Only after the standard-library-only component checks:
    selected-provider key, require mode `0600` on POSIX, and stop once for only that secret locally.
    Do not request or route the Traigent key before the stage-7 baseline checkpoint.
 
-Before approval, explain the recipients and content using `references/run-safety.md`: the selected
-provider receives its normal model-call content; OpenRouter and every allowed upstream inference
-provider/route may receive it; and connected Traigent runs synchronize configuration keys and
-values, numeric measures, run state, and content-free metadata. State the documented exclusions
-and exceptions there, call this a service contract rather than a packet audit, and stop if observed
-runtime behavior contradicts it.
+Before baseline approval, explain only its provider recipients using `references/run-safety.md`:
+the selected provider receives normal model-call content; OpenRouter and every allowed upstream
+inference provider/route may receive it. Connected synchronization waits until after the baseline checkpoint.
 
-### 6. Ask once before paid work
+### 6. Approve and run the baseline
 
 Scope the run before pricing it. When the dataset carries more than about 100 usable rows, select the
 bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
@@ -433,27 +434,21 @@ runtime and spend from that subset, not from the full row count.
 Select only after scoring the full dataset and before pricing the run. Record the chosen row ids,
 report subset and full sizes, and state that the small first-run sample limits the claim.
 
-Do not ask the user to choose cost, retries, or timeout settings during discovery or setup.
-Do not repeat a provider choice already resolved in stage 5; keep the paid-work approval request
-combined.
-Prepare one concise combined approval immediately before paid work. It covers the smallest live
-provider-credential check, any required LLM-judge calibration, the preserved baseline or a
-generated six-row sweep, one broader bounded optimization, and a baseline-versus-enhanced tuning
-comparison. Follow the complete disclosure checklist in
-`references/run-safety.md`; it owns the sizing, objectives, decision rule, model-space, cost,
-recipient, and execution-sandbox detail. Use a `$5.00` total walkthrough ceiling by default.
+Do not ask the user to choose cost, retries, or timeout settings during discovery or setup, and do
+not repeat a provider choice already resolved in stage 5.
 
-Immediately before each paid baseline and enhanced run, show a short run card with the model ids,
-each varying knob and its explicit values, one plain-language note per knob, and the total
-combination count. For the enhanced card, repeat the baseline knobs, label every addition new, and
-pair that count with this run's trial cap as a ceiling, never a range: how many configurations
-exist and how many of them Traigent will test. `references/run-safety.md` owns that wording, both
-numbers' source, and what to say when the count cannot be computed.
+Use the baseline checklist in `references/run-safety.md` for one concise baseline preview and
+approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
+preserved baseline or generated six-row sweep. Say only that a separately previewed managed run may
+follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
 
-Put the runtime estimate and the default **30-minute completion target** in the same approval as the
-money ceiling. This is an estimate and an up-front sizing target, not a hard wall-clock guarantee.
-The default synchronous enhanced run may expose neither an interruptible checkpoint nor live
-partial results, so never promise a pause at minute 30. Size the run to fit before it starts.
+Immediately before the paid baseline, show a short run card with model ids, each varying knob and
+its explicit values, one plain-language note per knob, and the total combination count. The
+enhanced card waits until after the baseline checkpoint.
+
+Put the baseline runtime estimate and the default **30-minute completion target** in the same
+approval as the money ceiling. This is an estimate and an up-front sizing target, not a hard
+wall-clock guarantee. Size the baseline to fit before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
 observable phase milestones. Never invent progress or quietly drop validation. A timeout with
@@ -461,8 +456,8 @@ completed trials yields an honest partial result and a stop-or-bounded-continuat
 trials requires diagnosis.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
-trial target while preserving meaningful difficulty coverage; disclose any reduction from the
-six-row baseline or the enhanced run's 12-configuration ceiling. Proceed after one explicit
+trial target while preserving meaningful difficulty coverage; disclose any
+reduction from the six-row baseline target. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
@@ -470,14 +465,8 @@ do not layer another retry loop.
 
 never call the walkthrough ceiling a hard provider-billing cap.
 
-The approval covers the later zero-LLM portal-tracking probe, but the Traigent key and probe wait
-until after the local baseline checkpoint. At stage 7, follow `references/run-safety.md` to verify
-authentication, `experiment.write`, session/trial acceptance, and `cloud_url` before the first
-connected paid trial. Sanitize any failure and stop; later local-only degradation also halts paid
-work immediately.
-
 After the approved live provider probe, derive internal time bounds from observed latency and the
-planned work. If they no longer fit the approval, offer a smaller run or quote the additional
+baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
 time/cost; do not ask the user to select implementation timeouts.
 
 ### 7. Run the honest comparison
@@ -519,12 +508,32 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
-- Name the next step: add the Traigent key, verify portal tracking with a zero-LLM probe, attempt an
-  exact baseline upload without rerunning it when the installed public API supports that, then run
-  the connected enhanced optimization.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
+
+Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
+and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
+informative failures, report little or no accuracy headroom and recommend harder realistic cases;
+a ceiling effect remains a hypothesis. An accuracy-only search requires a workflow-demonstration
+label. A cost objective may proceed at equal accuracy only when materially lower cost remains
+possible; report any gain as cost and still flag weak evidence.
+
+Only when this gate supports a measured opportunity, preview the connected step with the CTA and
+approval rules in `references/run-safety.md`.
+
+Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
+managed selection, portal history, bounded calls/cost, and deeper insights as conditional
+capabilities. Obtain explicit approval for this connected stage before its key, probe, sync, or
+calls. In the enhanced run card, repeat the baseline knobs, label every addition new, and give its
+total combination count; pair that count with this run's trial cap as a ceiling, never a range: how
+many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
+that wording, both numbers' source, and what to say when the count cannot be computed. Disclose any
+reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
+minute 30; size the synchronous run first.
+
+Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
+call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
 
 Only after that checkpoint, ask for the Traigent key. The order is the point: the user has already
 seen a provider-backed result before being asked to create an account. Tell them the key needs full
@@ -548,7 +557,7 @@ every persisted run without implying it covers a local-only baseline.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
-calls in the combined approval.
+calls in the connected-stage approval.
 Every knob must change real behavior, native booleans must stay booleans, and the enhanced space
 must be materially larger than its trial cap so Traigent is choosing what to test rather than
 replaying the same tiny grid.
@@ -568,15 +577,6 @@ failure is resolved.
 Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
 one-row before and stays unchanged. An assistant-prepared walkthrough must not proceed with a one-
 row baseline; generate enough real controls for the six-configuration default.
-
-After the baseline, check whether the dataset and evaluator can distinguish configurations. If
-the baseline is perfect or nearly perfect and has no informative failures, stop before the search
-and report that this evidence shows little or no accuracy headroom. A ceiling effect remains a
-hypothesis; follow `references/run-safety.md` to name live alternatives and recommend harder,
-realistic cases. Continue an accuracy-only search solely as a labeled workflow demonstration.
-When cost is also an objective, equal accuracy at materially lower cost is a legitimate Pareto win:
-run while cost has headroom, report the gain as cost rather than accuracy, and still question a
-small, easy, synthetic, narrow, or lenient measurement in parallel.
 
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
@@ -657,16 +657,11 @@ returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer l
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
 
-Close by saying what a further run would be worth, grounded in the two facts already on the table:
-the gaps the opening readiness score named, and which of them this run actually closed. Name the
-ones still open and what each is now costing - an unlabelled half of the dataset, a single-band
-difficulty spread, a substitute component still standing in for a real one - so the motivation is
-the user's own measured evidence rather than encouragement. Where a gap is one this walkthrough
-cannot close, say that plainly instead of implying a further run would fix it.
-
-Then give the one next action the **latest validated state** earns, not generic advice. Re-rank the
-remaining closing caps and observed run limitations; do not repeat an opening gap that this run
-cleared. Name the specific move and what it would buy:
+After the readiness transition, close by saying what a further run would be worth. Name the ones
+still open and what each is now costing; use the user's own measured evidence rather than
+encouragement. Say what this walkthrough cannot close. Then give the one next action the **latest
+validated state** earns: re-rank the remaining closing caps and run limits, ignore cleared gaps,
+and name its value:
 
 - Generated or mostly generated data - collect or export a real sample of the same task and re-run.
   This is the gap that ceilings the score no matter how good everything else is, so it is first
@@ -683,9 +678,9 @@ cleared. Name the specific move and what it would buy:
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
 
-One action, named for their state, with the reason attached. A menu offered *instead of* a
-recommendation is the same as no recommendation - so this is the recommendation, and anything else
-comes after it and says so.
+A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
+
+End with the CTA in `references/run-safety.md`; `continue` never bypasses approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,
 these are available whenever the user wants them rather than because their state calls for them:
@@ -718,7 +713,7 @@ The first run is complete only when:
   product-grading question before calibration; absent such ambiguity, no review-only pause
   occurred.
 - Free checks made no provider calls.
-- Paid work had explicit combined approval.
+- Each paid stage had explicit approval before its calls.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were

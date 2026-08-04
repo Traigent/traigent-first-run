@@ -785,7 +785,7 @@ instead and say why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
 truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
-appears in the returned trials. If the combined approval explicitly reduced that default, verify
+appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's
 `BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A

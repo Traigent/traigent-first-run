@@ -274,7 +274,7 @@ class SkillPackageTests(unittest.TestCase):
             "judgment-dependent change",
             "local-only",
             "separate explicit approval",
-            "one concise approval",
+            "two short, contextual approvals",
             "single running total",
         ):
             self.assertIn(phrase, contract_text)
@@ -295,8 +295,8 @@ class SkillPackageTests(unittest.TestCase):
             "do not repeat a provider choice already resolved in stage 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
-            "one concise combined approval",
-            "`$5.00` total walkthrough ceiling by default",
+            "one concise baseline preview and approval",
+            "one total walkthrough ceiling, defaulting to `$5.00`",
             "do not layer another retry loop",
             "never call the walkthrough ceiling a hard provider-billing cap",
         ):
@@ -308,27 +308,29 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete_prompt, combined)
         for paid_phase in (
-            "smallest live provider-credential check",
-            "llm-judge calibration",
-            "preserved baseline or a generated six-row sweep",
-            "one broader bounded optimization",
-            "baseline-versus-enhanced tuning comparison",
+            "smallest live provider/key check",
+            "pre-baseline llm-judge calibration",
+            "preserved baseline or generated six-row sweep",
+            "added enhanced controls",
+            "rule for recommending among tradeoffs",
         ):
-            self.assertIn(paid_phase, skill_text)
+            self.assertIn(paid_phase, combined)
 
-    def test_paid_approval_discloses_the_actual_comparison_and_decision_rule(
+    def test_staged_approvals_disclose_each_immediate_decision(
         self,
     ) -> None:
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         approval = safety.split("## approval and budgets", 1)[1].split(
-            "## live provider probe", 1
+            "## connected-run readiness", 1
         )[0]
         for phrase in (
-            "baseline winner versus enhanced winner tuning comparison",
-            "tuning rows, their known limitations",
+            "before the provider-paid baseline",
+            "show only its immediate scope",
+            "after showing the baseline result",
+            "connected stage a preview and approval",
+            "tuning rows and limitations",
             "objective directions and weights",
-            "fixed baseline space and added enhanced controls",
-            "how traigent chooses trials",
+            "managed search chooses trials",
             "rule for recommending among tradeoffs",
         ):
             with self.subTest(phrase=phrase):
@@ -424,11 +426,35 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("credential", text)
             self.assertIn("do not", text)
             self.assertIn("route", text)
-        self.assertIn("credential names only as an availability inventory", skill_text)
-        self.assertIn("stop with one clear mismatch", skill_text)
-        self.assertIn(
-            "never rewrite the model identifier or provider prefix", skill_text
-        )
+        self.assertIn("resolve the route from the selected agent", skill_text)
+        self.assertIn("inventory presence—not values", skill_text)
+        self.assertIn("never rewrite a route merely to match a key", skill_text)
+
+    def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        env_example = " ".join((ROOT / ".env.example").read_text().casefold().split())
+
+        for phrase in (
+            "inventory presence—not values—in the process, handoff, and exact credentials",
+            "project-declared env loader, launcher, or secret manager exposes without external calls",
+            "never enumerate stores",
+            "mark declared-only sources unverified",
+            "reuse a matching credential in place when inheritable",
+            "do not call the file unsaved",
+            "agent route: <vendor/model>",
+            "provider credentials: <vendors and sources>",
+            "traigent key: <present/absent> (not a provider credential)",
+            "preserve this route by adding <key>",
+            "or change to <available vendor>?",
+            "a route change requires recipient disclosure and approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+        self.assertNotIn("safe key-shape prefixes", safety_text)
+        self.assertNotIn("convenient default", env_example)
+        self.assertIn("another vendor's key does not change its route", env_example)
+        self.assertIn("add its key or change provider", env_example)
 
     def test_selected_agent_identity_prevents_cross_project_result_confusion(
         self,
@@ -496,7 +522,7 @@ class SkillPackageTests(unittest.TestCase):
         text = SKILL.read_text()
         local_heading = "### 4. Validate components locally"
         environment_heading = "### 5. Prepare the environment and finish free checks"
-        paid_heading = "### 6. Ask once before paid work"
+        paid_heading = "### 6. Approve and run the baseline"
         for heading in (local_heading, environment_heading, paid_heading):
             self.assertIn(heading, text)
 
@@ -568,7 +594,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "do not execute an llm judge",
             "uncertain or external evaluator",
-            "explicit combined approval",
+            "two short, contextual approvals",
             "make model/provider calls",
         ):
             self.assertIn(phrase, normalized_safety)
@@ -841,6 +867,119 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
         self.assertIn("uncapped by default", sdk)
         self.assertNotIn("reaching that ceiling is a decision point", normalized)
+
+    def test_user_journey_is_numbered_and_reports_measured_progress(self) -> None:
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("welcome to traigent onboarding!", guide)
+        for stage in ("inspect", "readiness", "baseline", "optimize", "results"):
+            self.assertIn(f"**{stage}**", guide)
+        self.assertIn("stage <n>/5", skill)
+        self.assertIn("with measured numbers when available", guide)
+        self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
+        self.assertIn("finished stages as compact checkmarks", skill)
+
+    def test_continue_cta_is_direct_and_evidence_based(self) -> None:
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guidance = f"{skill} {safety}"
+
+        for phrase in (
+            "recommended next: continue with traigent optimization because <observed reason>",
+            "continue with this bounded traigent run?",
+            "do not manufacture urgency",
+            "reply-ready line",
+            "it approves nothing unless",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guidance)
+        self.assertIn("when the measured results show useful headroom", readme)
+        self.assertIn("or address the strongest observed limitation first", readme)
+
+    def test_readiness_is_explained_as_progress_without_invented_animation(
+        self,
+    ) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        presentation = f"{skill} {glossary}"
+        for phrase in (
+            "stage 2/5 · readiness - <score>/100 (<band>)",
+            "what the score measures",
+            "the strongest evidence",
+            "the one limitation that most affects the next action",
+            "<opening> → <current>",
+            "do not animate with invented progress",
+        ):
+            self.assertIn(phrase, presentation)
+
+    def test_enhanced_detail_waits_for_the_baseline_checkpoint(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        stage_six = skill.split("### 6. approve and run the baseline", 1)[1].split(
+            "### 7. run the honest comparison", 1
+        )[0]
+        stage_seven = skill.split("### 7. run the honest comparison", 1)[1].split(
+            "### 8. verify and report", 1
+        )[0]
+        self.assertIn("do not front-load its algorithm", stage_six)
+        for premature_detail in (
+            # #123's follow-up retired the "10-13-trial enhanced target"
+            # phrasing for a ceiling. The detail this gate keeps out of the
+            # baseline stage is the same one, so it is named the new way -
+            # an assertNotIn on a string no longer written anywhere reads as
+            # coverage while providing none.
+            "up to 12 configurations",
+            "12-configuration ceiling",
+            "connected traigent runs synchronize",
+            "portal history/direct links",
+        ):
+            self.assertNotIn(premature_detail, stage_six)
+        self.assertLess(
+            stage_seven.index("show a **local baseline checkpoint**"),
+            stage_seven.index("stage 4/5 · optimize"),
+        )
+        self.assertIn("stage 4/5 · optimize", stage_seven)
+        self.assertIn("portal history", stage_seven)
+        self.assertIn("conditional capabilities", stage_seven)
+        self.assertIn("obtain explicit approval for this connected stage", stage_seven)
+        baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
+        evidence_gate = stage_seven.index(
+            "now check whether the dataset and evaluator distinguish configurations"
+        )
+        connected_preview = stage_seven.index(
+            "only when this gate supports a measured opportunity"
+        )
+        connected_approval = stage_seven.index("stage 4/5 · optimize")
+        self.assertLess(baseline_checkpoint, evidence_gate)
+        self.assertLess(evidence_gate, connected_preview)
+        self.assertLess(connected_preview, connected_approval)
+        self.assertIn("stop before the search", stage_seven)
+        for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
+            self.assertNotIn("combined approval", document.read_text().casefold())
+
+    def test_run_plan_records_stage_specific_approvals(self) -> None:
+        plan = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn("baseline plan and approval", plan)
+        self.assertIn("baseline approval - status/scope/ceiling", plan)
+        self.assertIn("connected-stage plan and approval", plan)
+        self.assertIn(
+            "connected-stage approval - status/scope, spend, remaining ceiling",
+            plan,
+        )
+        self.assertLess(
+            plan.index("baseline approval - status/scope/ceiling"),
+            plan.index("local baseline checkpoint"),
+        )
+        self.assertLess(
+            plan.index("local baseline checkpoint"),
+            plan.index(
+                "connected-stage approval - status/scope, spend, remaining ceiling"
+            ),
+        )
 
     def test_no_internal_tooling_is_named_in_this_public_package(self) -> None:
         """This repository is public; the tools that test it are not.
@@ -1247,11 +1386,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "repeated execution of model-written code",
-            "where it runs",
-            "which tests and fixtures enter the sandbox",
-            "enforced limits and residual risk",
-            "external sandbox service or data recipient",
+            "repeated model-written code or sql execution",
+            "sandbox location",
+            "tests and fixtures",
+            "limits, residual risk",
+            "external sandbox recipient",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
@@ -1386,6 +1525,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("every allowed upstream inference provider/route", skill_text)
         self.assertIn("exact recipient set", env_text)
         self.assertIn("disable fallbacks", env_text)
+        self.assertIn("fallbacks can change recipients", env_text)
+        self.assertIn("allowed routes/policy in stage approval", env_text)
 
     def test_secret_file_is_preserved_and_owner_only_before_entry(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -2517,12 +2658,16 @@ class SkillPackageTests(unittest.TestCase):
     def test_each_paid_run_has_an_exact_run_card(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "immediately before each paid baseline and enhanced run",
+            "immediately before the paid baseline",
             "model ids",
             "each varying knob and its explicit values",
             "one plain-language note per knob",
             "total combination count",
-            "repeat the baseline knobs, label every addition new",
+            # #131 splits the one card in two, so the enhanced card's mandate
+            # sits in stage 7 rather than beside the baseline's; #123's
+            # follow-up adds the ceiling pairing to it. Both survive.
+            "in the enhanced run card, repeat the baseline knobs, "
+            "label every addition new",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -2551,11 +2696,14 @@ class SkillPackageTests(unittest.TestCase):
         # env-overridable and an approved reduction lowers it, so a literal
         # 12 in the mandate is a ceiling the run may not actually be under.
         self.assertIn("`references/run-safety.md` owns that wording", skill)
-        run_card = skill.split("immediately before each paid", 1)[1].split(
-            "put the runtime estimate", 1
+        # #131 moved the enhanced card behind the baseline checkpoint, so the
+        # mandate is bracketed where it now lives rather than at the combined
+        # card this test was first written against.
+        enhanced_card = skill.split("in the enhanced run card", 1)[1].split(
+            "never promise a pause at minute 30", 1
         )[0]
         self.assertIsNone(
-            re.search(r"\b12\b", run_card),
+            re.search(r"\b12\b", enhanced_card),
             "the run-card mandate names the cap as a literal; it is a value "
             "that an env override or an approved reduction can lower, so the "
             "card would promise a ceiling this run is not under",
@@ -4306,7 +4454,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # is therefore set here against the measured combined total: this is
         # the arithmetic neither branch could do alone, and taking either
         # side's number would have failed the suite rather than the review.
-        budget = 223_000
+        #
+        # #131 merges that trunk in and adds the journey structure on top, and
+        # the same arithmetic trap recurs one merge later: trunk said 223_000
+        # and #131 said 222_250, and the merged package measures 223_442 - so
+        # BOTH figures are too low again, for the same reason. The two changes
+        # are additive because they change different things. #137 owns how the
+        # enhanced count is *stated* - the ceiling copy and its degraded form,
+        # which land in run-safety.md. #131 owns the journey *structure* - the
+        # five-stage opening in GUIDE.md, the readiness presentation in
+        # glossary.md, and splitting one combined approval into a baseline
+        # approval and a separate connected-stage approval, which is the bulk
+        # of run-safety.md's share. Against that, #131 moved stage detail out
+        # of SKILL.md, so resident guidance falls to roughly 58 KB even while
+        # TOTAL rises, and the RESIDENT ceiling above is left where it is
+        # rather than raised; the ceiling copy sits in the reference for the
+        # stage that owns it, which is the policy above working rather than
+        # being spent. So the number below is the MEASURED merged total,
+        # 223_442, rounded up to the next 250 - not either branch's figure,
+        # and not an estimate. Measure it; do not take a side.
+        budget = 223_750
         self.assertLess(
             total,
             budget,
