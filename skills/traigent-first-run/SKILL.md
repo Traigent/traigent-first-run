@@ -156,7 +156,10 @@ Only ask which agent to use if multiple credible candidates remain.
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
 the same current `--evaluator-method` value to every paired preflight/readiness invocation. When no
-evaluator method exists, omit the flag from both; never let one half infer a different method.
+evaluator method exists, omit the flag from both; never let one half infer a different method. When
+a file exists but no method can be honestly declared for it without executing it - a syntax error,
+or behavior that plainly ignores its input - still omit `--evaluator-method`, but pass its path to
+preflight's `--evaluator` for a static syntax check; this reports present-but-unresolved, not absent.
 
 Ground readiness task kind per the evaluation reference.
 
@@ -367,10 +370,13 @@ rather than the condition id:
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.
 
-Evaluator and agent caps route through the rules that already own them: the invalid-evaluator
-paragraph above, and the absent-evidence reading in the opening readiness gate. After any repair
-or substitute creation, re-run the affected checks, the applicable calibration, and the score,
-then update the latest recorded result without overwriting the opening one.
+Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
+connected file with no honestly declarable method) and `evaluator-invalid` route through the
+invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
+the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
+create or select. After any repair or substitute creation, re-run the affected checks, the
+applicable calibration, and the score, then update the latest recorded result without overwriting
+the opening one.
 
 ### 5. Prepare the environment and finish free checks
 

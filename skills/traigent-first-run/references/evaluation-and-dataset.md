@@ -258,6 +258,7 @@ Use concrete evidence:
 | Missing or overlapping validation split | Split sizes and overlap evidence | No independent generalization claim is supported |
 | Task-inappropriate evaluator | Show the exact rule and one valid answer it rejects or bad answer it accepts | Optimization rewards the wrong behavior |
 | Degenerate evaluator | Four-probe scores, exceptions, or constant/inverted ordering | Candidate configurations cannot be ranked reliably |
+| Present-but-unresolved evaluator | A file exists but no method could be honestly declared without executing it (a syntax error, or a return that plainly ignores the input) | Nothing can be scored yet; this is a repair/inspect gap on an existing file, not a create/select gap |
 | Baseline ceiling | Baseline score, number and type of failures, and per-example outcomes | This sample/evaluator may show little headroom; the cause is not established |
 
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which

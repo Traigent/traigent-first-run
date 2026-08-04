@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -807,6 +808,139 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             MODULE.check_models(["openai/gpt-4o-mini"])
         self.assertFalse(any(result.status == MODULE.FAIL for result in MODULE.RESULTS))
+
+
+class EvaluatorShapeCheckTests(unittest.TestCase):
+    """traigent-first-run#133: a static, non-executing check on evaluator.py.
+
+    `check_evaluator` only ever calls `ast.parse` on the file's text - it
+    never imports, calls, or otherwise runs a line of it - so it can tell
+    "present and parses" apart from "present but broken" and "absent"
+    without touching whatever the file's own logic does. Whether a parseable
+    file behaves like a real evaluator (for example, whether a constant-pass
+    scorer's return ever depends on its input) is a behavioral question this
+    check does not and cannot answer; that is `calibrate_evaluator.py`'s job,
+    run separately and only after explicit approval.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _shape(self) -> dict:
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        return {"status": result.status, **(result.metrics or {})}
+
+    def test_absent_evaluator_file_is_reported_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            MODULE.check_evaluator(Path(directory) / "evaluator.py")
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.FAIL)
+        self.assertFalse(shape["exists"])
+        self.assertNotIn("parses", shape)
+
+    def test_import_invalid_evaluator_fails_to_parse(self) -> None:
+        """A syntax error is caught by `ast.parse` alone - nothing is run."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("def score(output, expected:\n    return 1.0\n")
+            MODULE.check_evaluator(path)
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.FAIL)
+        self.assertTrue(shape["exists"])
+        self.assertFalse(shape["parses"])
+
+    def test_constant_pass_evaluator_parses_like_any_other_valid_python(self) -> None:
+        """The static check cannot and does not claim to catch this.
+
+        A constant-pass scorer is syntactically ordinary Python - it imports
+        fine and has a plausible shape - so this check reports exactly what a
+        real evaluator would report too: `parses: True`. Distinguishing the
+        two requires observing behavior, which only calibration does.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("def score(output, expected):\n    return 1.0\n")
+            MODULE.check_evaluator(path)
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.PASS)
+        self.assertTrue(shape["exists"])
+        self.assertTrue(shape["parses"])
+
+    def test_healthy_evaluator_parses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(
+                "def score(output, expected):\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            MODULE.check_evaluator(path)
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.PASS)
+        self.assertTrue(shape["exists"])
+        self.assertTrue(shape["parses"])
+
+    def test_check_never_imports_the_file(self) -> None:
+        """The check must not be trickable into executing the module.
+
+        A module-level statement that raises on *import* (not on call) would
+        surface as an exception here if this check ever imported the file
+        instead of only parsing its syntax tree.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(
+                "raise RuntimeError('this must never execute during preflight')\n"
+            )
+            MODULE.check_evaluator(path)
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.PASS)
+        self.assertTrue(shape["parses"])
+
+    def test_a_file_the_parser_refuses_does_not_crash_the_run(self) -> None:
+        """`ast.parse` refuses some input without raising `SyntaxError`.
+
+        A ~50 KB file of chained unary operators makes CPython raise
+        `MemoryError: Parser stack overflowed`. Uncaught, that ends the whole
+        preflight process before it prints anything, so `--json` emits no
+        JSON at all and the readiness scorer reading that stream gets
+        nothing - a corrupted or oddly-formed file, not an exotic attack.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("-" * 50_000 + "1\n")
+            MODULE.check_evaluator(path)
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.FAIL)
+        self.assertTrue(shape["exists"])
+        self.assertFalse(shape["parses"])
+
+    def test_the_whole_json_run_survives_a_file_the_parser_refuses(self) -> None:
+        """The contract the crash actually broke: `--json` still emits JSON.
+
+        Driven through the real CLI, because the defect was that the process
+        died before reaching the `--json` print - which a direct call to
+        `check_evaluator` alone would not have caught.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("-" * 50_000 + "1\n")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--evaluator",
+                    str(path),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertIn(process.returncode, (0, 1), f"crashed: {process.stderr[-2000:]}")
+        records = json.loads(process.stdout)
+        shape = next(r for r in records if r["check"] == "evaluator-shape")
+        self.assertEqual(shape["status"], MODULE.FAIL)
+        self.assertFalse(shape["metrics"]["parses"])
 
 
 if __name__ == "__main__":
