@@ -2996,7 +2996,7 @@ class SkillPackageTests(unittest.TestCase):
             "selecting on the tuning rows inflates the tuning score",
             "ten rows cannot resolve a small gap",
             "do not say traigent prevents or corrects this",
-            "do not call a gap in this range \"overfitting,\"",
+            'do not call a gap in this range "overfitting,"',
             "traigent-first-run#141",
             "optimization set (18 ex)",
             "held-out set (10 ex)",
@@ -3005,9 +3005,7 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
-        self.assertIn(
-            "28 rows split 18 tuning / 10 held-out", documents["glossary"]
-        )
+        self.assertIn("28 rows split 18 tuning / 10 held-out", documents["glossary"])
         self.assertIn("disclosed once, beside the", documents["glossary"])
 
         skill = documents["skill"]
