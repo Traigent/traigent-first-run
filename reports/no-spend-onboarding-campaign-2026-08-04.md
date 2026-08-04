@@ -68,10 +68,10 @@ Excluded attempts were retained instead of rewritten:
 2. Correct case 08 so a constant-pass evaluator does not privately inherit `execution`; its opening method is absent and task kind is `code`.
 3. Bind scorer and opening snapshots to the selected evaluator bytes with SHA-256 digests.
 4. Bind both snapshot profiles to evaluator bytes and a customer-visible output
-   contract; add corruption probes proving evaluator and task-kind evidence drift
-   cannot remain green.
+   contract; add corruption probes proving evaluator-method and task-kind evidence
+   drift cannot remain green.
 5. Allow grounded opening task kinds while keeping zero-anchor cases task-kind-free.
-6. Bump both materially changed snapshot contracts to profile version 2.
+6. Bump both materially changed snapshot contracts to profile version 3.
 
 ## Remaining findings to track
 
@@ -79,17 +79,14 @@ Excluded attempts were retained instead of rewritten:
 2. Detect superficial numbered/template variants or semantic-family concentration. Cases 02 and 08 each received full diversity credit despite only six and four underlying behaviors respectively.
 3. Let opening readiness represent “evaluator exists but is statically invalid/unmeasured” rather than rendering it as absent when no honest evaluator method can be declared.
 4. Consolidated polish: decide a transitive dependency lock/hash policy; align held-back-set wording with the optional first-run validation policy; clarify undeclared-provenance PASS wording; label mock dollar columns as pricing metadata; and ask the owner to confirm a detached credential opener became visible.
-5. Move the remaining evaluator-method declarations out of the standalone
-   hard-coded table, or bind them to independently reviewed evidence. Task kind
-   is now customer-visible and digest-bound; evaluator method is not yet.
 
 ## Verification evidence
 
 - Guide: `python3 -m unittest discover -s tests -q` — 418 tests, OK.
 - Guide behavior lock: `python3 tools/relock.py --check` — up to date.
 - Harness: canonical `check_bank.py --guide-src ...` — all six checks PASS.
-- Harness mutation suite: 48 deliberate corruptions detected, including evaluator-
-  digest, output-contract-digest, and independent task-kind mutations.
+- Harness mutation suite: 50 deliberate corruptions detected, including evaluator-
+  digest, output-contract-digest, and independent task-kind/evaluator-method mutations.
 - Harness package: repository and system `quick_validate.py` — valid.
 - Python formatting/imports: Black, isort, and `py_compile` — clean.
 - Blinded pilot: three valid `MATCHED SNAPSHOT` verdicts and three `UNCHANGED` audits.
