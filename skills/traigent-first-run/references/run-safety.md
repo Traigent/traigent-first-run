@@ -469,7 +469,7 @@ paid/provider work, show one concise approval for the full planned first run:
 - The smallest live provider/key check, any required LLM-judge calibration, the preserved baseline
   or generated six-row sweep, one broader optimization, and baseline winner versus enhanced winner
   tuning comparison.
-- Tuning rows, their known limitations, maximum trials, and approximate calls.
+- Tuning rows, their known limitations, the configuration ceiling below, and approximate calls.
 - The primary metric; objective directions and weights; fixed baseline space and added enhanced
   controls; how Traigent chooses trials; and the rule for recommending among tradeoffs.
 - Approximate runtime and estimated spend.
@@ -481,6 +481,23 @@ paid/provider work, show one concise approval for the full planned first run:
 - For an execution evaluator, the repeated execution of model-written code or SQL; where it runs;
   which tests and fixtures enter the sandbox; the enforced limits and residual risk; and any
   external sandbox service or data recipient.
+
+The run card's trial line is a ceiling paired with the size of the space it is drawn from, because
+at approval time the user is asking what the worst case is, and a range answers a question they did
+not ask. State it in their words, reusing the card's own total combination count:
+
+> Your agent has `<total combination count>` possible configurations.
+> Traigent will test up to `<enhanced trial cap>` of them, choosing which ones as it goes rather
+> than working through a fixed list.
+
+Both numbers come from the approved space itself - the count this card already computed and the cap
+this run passes as `max_trials` - never from a worked example in a reference, whose spaces are not
+this agent's. Name this count in `configurations` rather than `trials`, and give it as a ceiling,
+never as a range; `trials` remains the right word for a failed-trial count or an SDK field. When
+the approved space's combination count cannot be computed - a preserved space whose values are not
+enumerable, for instance - state the ceiling on its own rather than estimating or rounding a total.
+Report the same pair afterwards as what actually ran, `Tested <executed trials> of <total
+combination count> configurations`, or the executed count alone when that total was unavailable.
 
 Keep the default `$5.00` ceiling without asking the user to choose a number. If the plan exceeds
 it or is materially long, recommend a smaller representative tuning slice or fewer trials first.
@@ -568,8 +585,9 @@ walkthrough - two prompt styles form the baseline's second axis instead, so ever
 for every model. The enhanced space keeps the identical model list, extends swept ranges around
 the baseline's top rows while retaining every baseline value, and adds multiple prompt
 policies plus a native boolean self-check branch, keeping the space materially larger than the
-12 trials Traigent tests by default - so an enhanced win is attributable to knobs and the managed
-search, never to a model the baseline did not measure. Explain this generated-only ladder in one line before the
+12 configurations Traigent may test by default - so an enhanced win is attributable to knobs and
+the managed search, never to a model the baseline did not measure. Explain this generated-only
+ladder in one line before the
 approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
 available for a separately disclosed later comparison if the evidence supports one. A preserved
 baseline keeps its exact model set, including a flagship when present. Do not add cheaper tiers or
@@ -607,10 +625,9 @@ not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `aut
 `random` unless a named selector is confirmed to run consistently on the installed SDK. For an
 assistant-prepared baseline, use local `grid` so all six distinct rows are predictable. For a
 user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
-connected `auto` with a default cap of 12 for the enhanced space, then report the actual trial
-count and stop reason. Fewer than 10
-enhanced rows requires a concrete stop, cost, timeout, or failure explanation; never silently
-present a two-row generated run as the intended comparison.
+connected `auto` with a default cap of 12 for the enhanced space, then report the actual count and
+stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
+silently present a two-row generated run as the intended comparison.
 
 Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
 (at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
