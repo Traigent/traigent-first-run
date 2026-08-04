@@ -4243,7 +4243,22 @@ class SkillPackageTests(unittest.TestCase):
             # selection is by hand over the returned trials, and the same filter
             # serves the free check and the paid round
             "select by hand, on the metric the run actually declared",
-            "come from the same filter over `optimized_results.trials`",
+            # "by hand" needs something to be by-hand INSTEAD of, or a reader
+            # with no SDK knowledge cannot tell what is being avoided. This
+            # names the alternative and defers the decision rather than
+            # restating it - run-safety.md owns why `best_config` is refused.
+            "the run reports a best configuration of its own, and this round "
+            "does not use it",
+            # each selection reads ITS OWN run's trials. Naming one result
+            # object for both would point the round's selection back at the
+            # enhanced run, whose trials the free check already cleared - so
+            # the paid round could only ever report the null outcome.
+            "applied each time to that run's own returned `trials`",
+            # descriptive is not enough here: `optimize_sync` exposes a
+            # selection preset whose NAME matches this round's stated objective
+            # ("cost down, score not worse"), so the guidance has to refuse it
+            # in the imperative rather than merely decline to mention it
+            "do not pass `strategy=` or `strategy_params` on the round's own run",
             "its one-sidedness comes from how its winner is selected, not from "
             "the objectives",
             # warm start is decorator-only, connected-only, and refusable
@@ -4266,21 +4281,21 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("do not reach for `default_config`", sdk)
         self.assertIn("it can consume a trial slot", sdk)
 
-        # One pointer, one place. A reader who wonders why the SDK's own
-        # selection presets go unused gets an issue link, not a re-derivation -
-        # and the count below is what keeps it from growing back into the
-        # catalogue it replaced.
+        # One refusal, one place. A reader who wonders why gets an issue link,
+        # not a re-derivation - and the count below is what keeps the link from
+        # growing back into the catalogue it replaced. Two mentions, both inside
+        # that one sentence: the parameter and its companion.
         self.assertIn(
-            "the sdk's own `strategy=` selection presets are deliberately "
-            "unused here; see traigent/traigent#2100, #2101 and #2102",
+            "see traigent/traigent#2100, #2101 and #2102 for why those presets "
+            "are unused here",
             sdk,
         )
         self.assertEqual(
             sdk.count("strategy"),
-            1,
-            f"`strategy` is named more than once in {SDK_EXECUTION.name}: the "
-            "round points at the SDK issues, it does not explain the mechanism "
-            "again",
+            2,
+            f"`strategy` is named outside the one refusal sentence in "
+            f"{SDK_EXECUTION.name}: the round refuses the presets and points at "
+            "the SDK issues, it does not explain the mechanism again",
         )
         for name in ("quality_floor_min_cost", "safety_constraints"):
             with self.subTest(mechanism=name):
@@ -5059,12 +5074,23 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # check, the gate, the separate approval, the by-hand selection rule,
         # both outcomes, the seed, and the warm-start contract - is the round's
         # own procedure and stays. So TOTAL falls from 249_609 to a measured
-        # 244_765 and this ceiling falls with it, to 245_000. A lowering is as
-        # much a decision as a raise: 235 bytes of headroom is narrower than the
-        # 308-391 the last three merges left, and deliberately so, because a
-        # ceiling that comes down should bind rather than bank the room it just
-        # recovered.
-        budget = 245_000
+        # 244_765 and this ceiling falls with it. A lowering is as much a
+        # decision as a raise, and the room recovered is not banked: the first
+        # figure set here was 245_000, 235 bytes of headroom, narrower than the
+        # 308-391 the last three merges left.
+        #
+        # It then bound, on its own commit, which is worth recording as the
+        # argument for setting it that tight. A review pass over the cut found
+        # three places where removing the catalogue had taken a rule's premise
+        # with it - `best_config` refused with no statement of what makes it
+        # refusable, `strategy=` demoted from a prohibition to an observation
+        # while the preset's NAME still matches this round's stated objective,
+        # and one result object named for two different runs' trials. Filling
+        # those cost 438 bytes, the headroom was 235, and the ceiling caught it
+        # rather than absorbing it. Re-measured at 245_203, so 245_500 - still
+        # 4_500 below where the catalogue had this number, and 297 bytes of
+        # headroom on the same reasoning as before.
+        budget = 245_500
         self.assertLess(
             total,
             budget,

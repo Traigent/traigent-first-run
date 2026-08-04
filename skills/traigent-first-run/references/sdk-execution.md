@@ -937,9 +937,12 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 owns how it is run. The round keeps the same objectives the first comparison used; its one-sidedness
 comes from how its winner is selected, not from the objectives.
 
-**Select by hand, on the metric the run actually declared.** Both the free `$0` check over the
-enhanced run's finished trials and the round's own result come from the same filter over
-`optimized_results.trials` - arithmetic over artifacts already in hand, so one function serves both:
+**Select by hand, on the metric the run actually declared.** The run reports a best configuration of
+its own, and this round does not use it; `references/run-safety.md` owns that decision. Both the free
+`$0` check over the enhanced run's finished trials and the round's own result come from the same
+filter, applied each time to that run's own returned `trials` - the enhanced `optimized_results` for
+the free check, the round's own result for the round. It is arithmetic over artifacts already in
+hand, so one function serves both:
 
 ```python
 def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost):
@@ -971,8 +974,8 @@ is indistinguishable in the metrics map from a genuine free route, and a compari
 everything. `references/run-safety.md` makes measured cost a precondition for both the free check and
 the round.
 
-The SDK's own `strategy=` selection presets are deliberately unused here; see Traigent/Traigent#2100,
-#2101 and #2102.
+Do not pass `strategy=` or `strategy_params` on the round's own run: its winner is the filter above
+and nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
 
 **The seed.** Put the winning configuration into the second space as one of its value combinations,
 so it is a point the search can actually return. Do not reach for `default_config`: the warning

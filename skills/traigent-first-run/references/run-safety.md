@@ -722,9 +722,10 @@ once.
 
 Select it the same way the free check selects: the cheapest completed trial that scored at or above
 the incumbent on the run's own metric, using the function in `references/sdk-execution.md`. Do not
-report the run's `best_config` as the round's answer. That filter is the only place the round's
-one-sidedness is enforced, so a winner taken from anywhere else would refuse the score-for-cost
-trade in the prose and perform it in the result.
+report the run's `best_config` as the round's answer: it is chosen against the run's two declared
+objectives at once, so it is free to trade score away for cost. That filter is the only place the
+round's one-sidedness is enforced, so a winner taken from anywhere else would refuse the
+score-for-cost trade in the prose and perform it in the result.
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
 produce a weaker version of the first.
