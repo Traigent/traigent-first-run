@@ -426,11 +426,35 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("credential", text)
             self.assertIn("do not", text)
             self.assertIn("route", text)
-        self.assertIn("credential names only as an availability inventory", skill_text)
-        self.assertIn("stop with one clear mismatch", skill_text)
-        self.assertIn(
-            "never rewrite the model identifier or provider prefix", skill_text
-        )
+        self.assertIn("resolve the route from the selected agent", skill_text)
+        self.assertIn("inventory presence—not values", skill_text)
+        self.assertIn("never rewrite a route merely to match a key", skill_text)
+
+    def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        env_example = " ".join((ROOT / ".env.example").read_text().casefold().split())
+
+        for phrase in (
+            "inventory presence—not values—in the process, handoff, and exact credentials",
+            "project-declared env loader, launcher, or secret manager exposes without external calls",
+            "never enumerate stores",
+            "mark declared-only sources unverified",
+            "reuse a matching credential in place when inheritable",
+            "do not call the file unsaved",
+            "agent route: <vendor/model>",
+            "provider credentials: <vendors and sources>",
+            "traigent key: <present/absent> (not a provider credential)",
+            "preserve this route by adding <key>",
+            "or change to <available vendor>?",
+            "a route change requires recipient disclosure and approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_text)
+        self.assertNotIn("safe key-shape prefixes", safety_text)
+        self.assertNotIn("convenient default", env_example)
+        self.assertIn("another vendor's key does not change its route", env_example)
+        self.assertIn("add its key or change provider", env_example)
 
     def test_selected_agent_identity_prevents_cross_project_result_confusion(
         self,
@@ -1455,6 +1479,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("every allowed upstream inference provider/route", skill_text)
         self.assertIn("exact recipient set", env_text)
         self.assertIn("disable fallbacks", env_text)
+        self.assertIn("fallbacks can change recipients", env_text)
+        self.assertIn("allowed routes/policy in stage approval", env_text)
 
     def test_secret_file_is_preserved_and_owner_only_before_entry(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())

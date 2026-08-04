@@ -81,7 +81,7 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   Stop before secret entry if the effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
   `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
   after the local baseline checkpoint.
-- Never paste or print secrets. Check only presence and safe key-shape prefixes.
+- Check presence only; never inspect, paste, or print secret values.
 - Hand the file off unambiguously. In a graphical session, launch the opener detached and
   non-blocking: pass the absolute `.env` path as one safely quoted argument, redirect stdin,
   stdout, and stderr away from the assistant's pipes, and start it in the background. On POSIX,

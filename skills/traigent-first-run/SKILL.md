@@ -387,15 +387,16 @@ then update the latest recorded result without overwriting the opening one.
 
 Only after the standard-library-only component checks:
 
-1. Determine the route from the selected agent, never the guide source. Treat credential names only
-   as an availability inventory: prefer the agent's configured vendor; if it has none, use the vendor in
-   the user-named credential source without asking them to re-enter it. If neither identifies one,
-   ask the user which vendor they want and try to configure it automatically. Only when the walkthrough must prepare a missing
-   baseline, require the chosen vendor to supply the three-model ladder. If it cannot and the user
-   already has a second supported direct-provider credential, offer that for the missing rung;
-   otherwise stop with one clear mismatch and ask for help. A user-owned baseline requires only its
-   existing route and credential. Never rewrite the model identifier or provider prefix merely to
-   match an available key.
+1. Resolve the route from the selected agent, never from key names. Inventory presence—not values—in
+   the process, handoff, and exact credentials a project-declared env loader, launcher, or secret
+   manager exposes without external calls. Never enumerate stores or copy values; mark declared-only
+   sources unverified. Reuse a matching credential in place when inheritable; on mismatch, do not call the
+   file unsaved. Say: `Agent route: <vendor/model>. Provider credentials: <vendors and sources>.
+   Traigent key: <present/absent> (not a provider credential). Preserve this route by adding <key>,
+   or change to <available vendor>?` Recommend preserving unless the user chose the other vendor.
+   A route change requires recipient disclosure and approval; never rewrite a route merely to match
+   a key. With no route, use the sole available vendor or ask once. Generated baselines need their
+   model ladder; a user-owned baseline requires only its existing route and credential.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
    path before touching it. Reuse the single compatible project-root environment or, when none
    exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
