@@ -85,7 +85,7 @@ Excluded attempts were retained instead of rewritten:
 - Guide: `python3 -m unittest discover -s tests -q` — 418 tests, OK.
 - Guide behavior lock: `python3 tools/relock.py --check` — up to date.
 - Harness: canonical `check_bank.py --guide-src ...` — all six checks PASS.
-- Harness mutation suite: 50 deliberate corruptions detected, including evaluator-
+- Harness mutation suite: 51 deliberate corruptions detected, including evaluator-
   digest, output-contract-digest, and independent task-kind/evaluator-method mutations.
 - Harness package: repository and system `quick_validate.py` — valid.
 - Python formatting/imports: Black, isort, and `py_compile` — clean.
