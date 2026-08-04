@@ -44,6 +44,11 @@ The coding assistant maintains this concise internal record at
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
+- Free cost check over the completed enhanced trials - selector, result, and whether it named the
+  winner itself:
+- Cost-reduction round if offered - gate met, separate approval, remaining ceiling before/after,
+  seed config, second space and cap, warm-start id with the backend's transfer or refusal, run ID,
+  verified portal link, measured cost change, and the score claim with its paired outcome counts:
 
 ## Interpretation
 

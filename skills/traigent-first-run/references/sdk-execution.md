@@ -10,7 +10,8 @@ Use this reference after component creation and before writing the run wrapper.
 4. Decorator contract
 5. Small baseline sweep
 6. Broader optimization
-7. Result checks
+7. Optional cost-reduction round
+8. Result checks
 
 ## Capability discovery
 
@@ -924,6 +925,117 @@ Offer another bounded pass only when the search was still improving or left a sp
 hypothesis, and state its additional approximate time and cost. If zero trials completed,
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
+
+## Optional cost-reduction round
+
+`references/run-safety.md` owns whether this round is offered and what it may claim. This section
+owns what the installed SDK does and does not provide for it, because the three mechanisms such a
+round appears to want are not all there. Confirm each on the installed version before relying on it,
+and treat an absent name as unavailable rather than assumed.
+
+**There is no accuracy floor to optimize under.** `safety_constraints` is the parameter shaped like
+one, and on the pinned 0.25.0 release the decorator raises `NotImplementedError` for any non-empty
+value. `constraints` is a different mechanism: structural conditions over configuration *values*,
+such as "this model implies at least this token budget". A one-argument constraint callable is
+checked before the trial and prunes it without consuming a slot, but it sees only the configuration,
+never a score. A two-argument callable does see metrics, and it is evaluated only after the trial has
+run and been paid for: returning `False` marks that trial failed rather than steering the search away
+from it, so a floor written this way spends trials discovering violations and can end a run with no
+eligible winner at all. Do not express this round's objective through either one.
+
+**The objective schema cannot express "not worse" either.** `ObjectiveDefinition` gives an
+orientation and a weight, which is a weighted scalarization: it will trade the score away for cost
+whenever the weights say so, and that is the one outcome this round must not produce. Keep the same
+objectives the first comparison used and take the one-sidedness from selection instead.
+
+**Selection is where the one-sidedness lives, and it is advisory.** `optimize_sync` accepts
+`strategy` and `strategy_params`, and the installed release registers `quality_floor_min_cost`,
+which selects the lowest-cost completed trial whose accuracy is at or above a floor. It is a
+post-hoc read over completed trials: it does not steer the search and does not replace
+`best_config`, which stays the objective winner. Its result arrives on the result object as
+`preset_selection`, carrying `selection_grade` `advisory` and no statistical certificate - report it
+that way. Do not use the registered `max_accuracy_then_cheapest_within_epsilon` preset for this
+round: its epsilon permits the score to fall, which is exactly the trade this round exists to
+refuse.
+
+The free `$0` check in `references/run-safety.md` is that same selection applied to the trials the
+enhanced run already completed, with no new run:
+
+```python
+from traigent.api.strategy_presets import (
+    normalize_strategy_preset,
+    select_strategy_preset,
+)
+
+# The floor is the winning TRIAL's own `accuracy` metric, read from the same
+# map the preset reads. Not `best_score`: that is the run's selection basis,
+# which under weighted multi-objective selection is not documented to be the
+# `accuracy` value, so a floor taken from it can compare two different numbers.
+winner = next(
+    trial
+    for trial in optimized_results.trials
+    if trial.config == optimized_results.best_config
+)
+free_check = select_strategy_preset(
+    normalize_strategy_preset(
+        "quality_floor_min_cost", {"floor": winner.metrics["accuracy"]}
+    ),
+    optimized_results.trials,
+)
+```
+
+Feature-detect before trusting it, because it fails in two different ways. The preset reads the
+hard-coded metric keys `accuracy` and `cost` off each trial's `metrics`, not this run's objective
+name: when a completed trial is missing either key the selection returns `status="failed"` and
+selects nothing. That is not a null result - it is an unavailable selector, and reporting it as
+"nothing was cheaper" would be a false negative. Separately, the `floor` must lie in `[0, 1]`, so a
+winner metric on any other scale makes `normalize_strategy_preset` raise before a selection is
+attempted at all. In either case do the filter by hand over `optimized_results.trials`, on this run's
+own metric name and each trial's measured cost, and say which of the two produced the answer.
+
+**The seed.** Put the winning configuration into the second space as one of its value combinations,
+so it is a point the search can actually return. Do not reach for `default_config`: the warning
+above still applies, and it can consume a trial slot. Build the rest of the space around that point
+- cheaper values of controls the winner already uses, and cheaper tiers only when a model change was
+separately disclosed and approved. Keep the space larger than the round's trial cap, keep every knob
+one the agent consumes, and re-run the wiring probe above against the new space.
+
+`traigent.utils.importance` and the optimization-insights read may inform which knobs to vary. They
+are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
+undersampled, and SKILL stage 7 forbids reporting that as a finding.
+
+**Warm start is a request to the backend, not a local guarantee.** `warm_start_from` takes a prior
+experiment id and seeds the new run from it. It is decorator-only: passing it to `optimize_sync`
+raises `TypeError` naming the decorator. So the round runs in its own fresh process with its own
+decoration:
+
+```python
+@traigent.optimize(
+    objectives=OBJECTIVES,
+    configuration_space=SECOND_SPACE,
+    evaluation=EvaluationOptions(
+        eval_dataset=TUNING_DATASET,
+        metric_functions={"task_success": task_score},
+    ),
+    warm_start_from=ROUND_ONE_EXPERIMENT_ID,
+)
+def agent(message: str) -> str:
+    ...
+```
+
+`ROUND_ONE_EXPERIMENT_ID` is the enhanced result's public `experiment_id`, which exists only for a
+connected run and is `None` otherwise; without it, omit the argument rather than inventing an id.
+The backend applies the seeds and may refuse. The SDK warns when it applied none, and the result's
+metadata carries `warm_start_from` alongside the backend's `warm_start_transfer` when one was
+returned. Read that before describing the round: a refused warm start started cold, and reporting a
+seeded search that did not happen is a false claim about how the result was reached. The round is
+still valid cold - its second space was built around the winner either way - so report it as cold
+rather than dropping the round.
+
+Run the round connected on `algorithm="auto"`, on the same tuning rows, evaluator, and agent call
+path as the first comparison, under the same trial-cap and cost-ceiling discipline. Persist and link
+it like any other experiment, and write its own config-space document through the same
+freeze/unlink/write lifecycle above.
 
 ## Result checks
 

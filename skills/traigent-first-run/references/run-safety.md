@@ -9,8 +9,9 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 3. Approval and budgets
 4. Connected-run readiness
 5. Baseline and optimization
-6. Post-run verification
-7. Recovery
+6. Optional cost-reduction round
+7. Post-run verification
+8. Recovery
 
 ## Environment and privacy
 
@@ -615,6 +616,90 @@ not sweep low `max_tokens` values in any space that contains a reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
+## Optional cost-reduction round
+
+SKILL stage 7 owns when this round is offered and what it may claim. This section owns the free
+check that comes before it, the gate, its approval, and its two outcomes.
+`references/sdk-execution.md` owns the mechanics.
+
+### Run the free check first
+
+Before offering to spend anything, ask the finished enhanced run a question that costs `$0`: among
+the trials it already completed and already paid for, is there one that cost less than the selected
+winner and did not score below it? This is a re-read of returned trials with no provider call;
+`references/sdk-execution.md` gives the installed public call and its fallback.
+
+If it names a configuration other than the winner, the cost reduction is already measured. Report it
+and stop - there is nothing left to buy, and offering a paid round on top of it would be selling the
+user a result they already have. If it names the winner itself, every cheaper configuration the
+first search actually tested scored below it, and the open question is whether a configuration it
+never tested is both cheaper and no worse. That question is the hypothesis a paid round would test,
+and it is the only reason to run one.
+
+### Gate
+
+Offer the round only when all of these hold. When one does not, say which in one line and do not
+offer it: a round whose result could not honestly be claimed is not worth its money.
+
+- Agent, dataset, and evaluator are all `✅` real. A cost reduction measured over a `🛠️` substitute
+  is a fact about the substitute.
+- The enhanced run completed with a best configuration, portal tracking stayed green, and its trial
+  count met the disclosed plan or carries a concrete stop reason.
+- Cost was measured, not deducted. Every completed enhanced trial carries a finite cost and no phase
+  of this run took the untracked-cost path above. Without measured per-trial cost there is no cost
+  reduction to state, so on that path the round is not offered at all - say that plainly instead of
+  running it and reporting a number the run cannot support.
+- The completed trials show cost headroom: the cheapest completed trial cost materially less than the
+  selected winner - a quarter less is the default reading of materially - so cheaper territory
+  demonstrably exists for this task rather than being assumed.
+- The free check above returned the winner itself.
+- The remaining total ceiling covers the round's estimate.
+
+A readiness band is not the gate. The band describes the components; this round's claim rests on
+what the first comparison measured, which is what the conditions above actually read.
+
+### Approval
+
+The round is additional paid work and takes its own explicit approval. It is never a continuation of
+the combined approval, and silence is not approval. Show the remaining ceiling, this round's estimate
+against it, the seed configuration, the second space with its trial cap, and the objective in plain
+words: cost down, score not worse. Add the round's tracked cost to the same single running total
+already described above; do not open a second ledger. Stop before the round if its estimate does not
+fit the remainder, and do not raise the ceiling to make it fit without a new explicit approval.
+
+Declining is a normal answer, and the first comparison is already a complete result. Offer the round
+once.
+
+### The two outcomes
+
+Both are results. Neither is apologized for.
+
+**A cheaper configuration held the score.** State the cost reduction as the measured number it is,
+and the score as a bound rather than a gain:
+
+> `<config>` cost `<measured>` against the previous winner's `<measured>` on the same rows,
+> evaluator, and agent call path - a `<n>%` reduction. Its `<metric>` was `<value>` against
+> `<value>` on `<n>` rows. Cost here is arithmetic over reported token counts and is measured
+> directly. The score difference on `<n>` rows is not: `<paired outcome counts>`. On this evidence
+> the score did not get worse, which is not the same as showing it improved - this run does not
+> show that.
+
+Hold that wording to `references/evaluation-and-dataset.md`: report the score as directional unless
+a justified paired uncertainty analysis over the completed outputs supports more, and never quote a
+percentage-point threshold invented before those outcomes existed. Where the selection came from an
+advisory selection rule, report it as advisory and carrying no statistical certificate. "The
+optimizer picked it" is not evidence that the score held.
+
+**Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy:
+
+> Nothing in this round's space was cheaper than your current best without scoring below it. On this
+> evidence your configuration is already near the efficient frontier for this space: every
+> configuration tested that cost less also scored lower. That is a measured answer to the question
+> this round asked.
+
+Bound it as honestly as the other outcome. It establishes nothing about configurations the round did
+not test, and a bounded round tests few. Do not answer it with a third round by default.
+
 ## Post-run verification
 
 Before claiming success, verify:
@@ -637,6 +722,9 @@ Before claiming success, verify:
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.
+13. If a cost-reduction round ran, it had its own approval, its cost joined the same running total,
+    it reused the first comparison's tuning rows, evaluator, and agent call path, and its report
+    carries the measured cost change beside a score claim no stronger than "did not get worse".
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.

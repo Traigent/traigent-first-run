@@ -36,6 +36,23 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+def quoted_prose(path: Path) -> str:
+    """Whitespace-normalized text with Markdown blockquote markers dropped.
+
+    The report copy this package mandates is written as `>` blocks, because
+    that is how a reader recognizes wording meant to reach the user verbatim.
+    To `str.split()` those blocks are lines with a `>` in the middle of every
+    sentence, so a check written against the sentence fails on the line
+    wrapping rather than on the rule - which would train the next author to
+    pin half-sentences instead of the claim.
+    """
+    lines = [
+        line.lstrip().removeprefix(">").strip()
+        for line in path.read_text().splitlines()
+    ]
+    return " ".join(" ".join(lines).casefold().split())
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -3613,6 +3630,285 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
 
+    def test_the_cost_reduction_round_stays_optional_and_earned(self) -> None:
+        """A second paid round has to be earned by the first one's evidence.
+
+        SKILL.md already forbids a mandatory third pass and allows another
+        iteration only after a specific hypothesis. This round is that rule
+        instantiated, so the two have to keep agreeing: the round names its
+        hypothesis, defers the gate to run-safety.md, and stays out of the
+        default run.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        # anchors first, and not inside a subTest: the ordering checks below
+        # index into these, and a subTest failure keeps running, so an absent
+        # anchor would surface as a ValueError instead of naming what is missing
+        self.assertIn("#### optional cost-reduction round", skill)
+        self.assertIn("do not require a third optimization pass", skill)
+
+        for phrase in (
+            "do not require a third optimization pass",
+            "recommend another iteration only after the first result reveals a "
+            "specific, worthwhile hypothesis",
+            "#### optional cost-reduction round",
+            "the enhanced winner's score is reachable more cheaply",
+            "it stays optional and is offered only when the first comparison earned it",
+            "it is not part of the default run",
+            "it never proceeds on the earlier approval",
+        ):
+            with self.subTest(skill_phrase=phrase):
+                self.assertIn(phrase, skill)
+
+        # the entry point still promises no mandatory extra pass, and states no
+        # rule about this round that SKILL.md does not own
+        self.assertIn(
+            "do not add an offline baseline rerun or a mandatory third", guide
+        )
+        self.assertNotIn("cost-reduction round", guide)
+
+        # the ordering is the point: the round is named after the no-third-pass
+        # rule it instantiates, never before it
+        self.assertLess(
+            skill.index("do not require a third optimization pass"),
+            skill.index("#### optional cost-reduction round"),
+        )
+        self.assertIn("## optional cost-reduction round", safety)
+
+    def test_the_cost_reduction_objective_is_one_sided(self) -> None:
+        """Cheaper-and-worse is not a result, so it may not be offered as one.
+
+        The whole value of the round is the direction it refuses. Cost is
+        arithmetic over token counts and is measured; a score on a first-run
+        slice is not, so the two halves of the claim get different strengths and
+        the score half is capped at "did not get worse".
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        for phrase in (
+            "measurably lower cost at a score that did not get worse",
+            "never offer or report a round that trades score away for cost",
+            "cost is arithmetic over reported token counts and is measured directly",
+            "never an improvement claim, and never stronger than that evidence supports",
+        ):
+            with self.subTest(skill_phrase=phrase):
+                self.assertIn(phrase, skill)
+
+        # the score half is bounded by the paired-uncertainty rule that already
+        # exists, not by a threshold invented here
+        self.assertIn("`references/evaluation-and-dataset.md`", skill)
+        self.assertIn(
+            "report the score as directional unless a justified paired uncertainty "
+            "analysis over the completed outputs supports more",
+            safety,
+        )
+        self.assertIn(
+            "on this evidence the score did not get worse, which is not the same "
+            "as showing it improved",
+            quoted_prose(RUN_SAFETY),
+        )
+
+        # the installed SDK registers a preset that permits the score to fall.
+        # naming it is how the guidance stays honest about why it is refused.
+        self.assertIn("max_accuracy_then_cheapest_within_epsilon", sdk)
+        self.assertIn(
+            "its epsilon permits the score to fall, which is exactly the trade "
+            "this round exists to refuse",
+            sdk,
+        )
+
+    def test_the_cost_reduction_round_documents_only_verified_sdk_behavior(
+        self,
+    ) -> None:
+        """Three plausible mechanisms are absent, and silence would invent them.
+
+        A reader who knows the decorator signature will reach for
+        ``safety_constraints``, for ``constraints``, and for objective
+        orientation, and each fails differently on the pinned release. Saying so
+        is cheaper than a run that spends trials discovering it.
+        """
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        for phrase in (
+            "## optional cost-reduction round",
+            # not-implemented, not merely unused
+            "`safety_constraints` is the parameter shaped like one, and on the "
+            "pinned 0.25.0 release the decorator raises `notimplementederror`",
+            # structural over values, and post-eval failure is not steering
+            "structural conditions over configuration *values*",
+            "returning `false` marks that trial failed rather than steering the "
+            "search away from it",
+            # weighted objectives are the trade this round refuses
+            "it will trade the score away for cost whenever the weights say so",
+            # selection is advisory and post-hoc, not a search steer
+            "it does not steer the search and does not replace `best_config`",
+            "carrying `selection_grade` `advisory` and no statistical certificate",
+            # warm start is decorator-only, connected-only, and refusable
+            "it is decorator-only: passing it to `optimize_sync` raises `typeerror`",
+            "which exists only for a connected run and is `none` otherwise",
+            "the backend applies the seeds and may refuse",
+            "a refused warm start started cold",
+            # the preset reads fixed metric keys, so it is feature-detected
+            "the preset reads the hard-coded metric keys `accuracy` and `cost`",
+            "that is not a null result - it is an unavailable selector",
+        ):
+            with self.subTest(sdk_phrase=phrase):
+                self.assertIn(phrase, sdk)
+
+        # the seed is a point in the second space, not `default_config`, whose
+        # trial-slot warning this reference already carries
+        self.assertIn("do not reach for `default_config`", sdk)
+        self.assertIn("it can consume a trial slot", sdk)
+
+    def test_the_cost_reduction_gate_reads_measurement_not_a_readiness_band(
+        self,
+    ) -> None:
+        """The gate is what the first comparison measured, and money gates it.
+
+        Two of these conditions are the ones a hurried run would skip: an
+        untracked-cost path cannot produce a cost claim at all, and a free
+        re-read of finished trials can settle the question for `$0` before
+        anything is offered.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        # the section anchor is asserted before it is split on, so a missing
+        # section names itself rather than raising IndexError from the split
+        self.assertIn("## optional cost-reduction round", safety)
+        section = safety.split("## optional cost-reduction round", 1)[1].split(
+            "## post-run verification", 1
+        )[0]
+
+        for phrase in (
+            "### run the free check first",
+            "costs `$0`",
+            "no provider call",
+            "report it and stop - there is nothing left to buy",
+            "### gate",
+            "agent, dataset, and evaluator are all `✅` real",
+            "cost was measured, not deducted",
+            "no phase of this run took the untracked-cost path",
+            "on that path the round is not offered at all",
+            "the free check above returned the winner itself",
+            "the remaining total ceiling covers the round's estimate",
+            "a readiness band is not the gate",
+        ):
+            with self.subTest(gate_phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # the free check has to precede the gate, because it can make the paid
+        # round unnecessary
+        self.assertLess(
+            section.index("### run the free check first"), section.index("### gate")
+        )
+
+    def test_the_cost_reduction_round_cannot_ride_the_earlier_approval(self) -> None:
+        """Additional paid work needs additional approval and a live remainder.
+
+        The walkthrough keeps one running total against one ceiling. A second
+        round is the easiest place to lose both - to treat the combined approval
+        as still open, and to open a second ledger beside the first.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        # the section anchor is asserted before it is split on, so a missing
+        # section names itself rather than raising IndexError from the split
+        self.assertIn("## optional cost-reduction round", safety)
+        section = safety.split("## optional cost-reduction round", 1)[1].split(
+            "## post-run verification", 1
+        )[0]
+
+        for phrase in (
+            "### approval",
+            "takes its own explicit approval",
+            "it is never a continuation of the combined approval, and silence is "
+            "not approval",
+            "add the round's tracked cost to the same single running total",
+            "do not open a second ledger",
+            "stop before the round if its estimate does not fit the remainder",
+            "do not raise the ceiling to make it fit without a new explicit approval",
+            "declining is a normal answer",
+            "offer the round once",
+        ):
+            with self.subTest(approval_phrase=phrase):
+                self.assertIn(phrase, section)
+
+        post_run = " ".join(
+            RUN_SAFETY.read_text()
+            .split("## Post-run verification", 1)[1]
+            .split("## Recovery", 1)[0]
+            .casefold()
+            .split()
+        )
+        self.assertIn("it had its own approval", post_run)
+        self.assertIn("its cost joined the same running total", post_run)
+        self.assertIn(
+            'a score claim no stronger than "did not get worse"',
+            post_run,
+        )
+
+    def test_no_cheaper_configuration_is_a_reported_finding(self) -> None:
+        """The null outcome needs copy, or it gets reported as a failure.
+
+        "Nothing was cheaper at the same score" is the measurement working. It
+        is also the outcome most likely to be apologised for, so it gets its own
+        wording and its own bound.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = quoted_prose(RUN_SAFETY)
+
+        self.assertIn(
+            "including no cheaper configuration at an unchanged score, which is a "
+            "measured answer rather than a failed run",
+            skill,
+        )
+        for phrase in (
+            "### the two outcomes",
+            "both are results. neither is apologized for",
+            "**nothing was both cheaper and no worse.** this is a finding",
+            "your configuration is already near the efficient frontier for this space",
+            # vacuously true when nothing tested was cheaper, which is the other
+            # shape this outcome takes - the copy must not assert a pattern the
+            # round may not have produced
+            "every configuration tested that cost less also scored lower",
+            "that is a measured answer to the question this round asked",
+            "it establishes nothing about configurations the round did not test",
+            "do not answer it with a third round by default",
+        ):
+            with self.subTest(null_phrase=phrase):
+                self.assertIn(phrase, safety)
+
+    def test_the_round_never_reports_that_a_knob_did_not_matter(self) -> None:
+        """Low measured importance at this trial count is undersampling.
+
+        The SDK does expose importance analysis, and the tempting sentence -
+        "we dropped the knobs that were not doing anything" - is a finding the
+        evidence cannot carry. It stays a hypothesis the second space tests.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        self.assertIn(
+            "do not tell the user the round dropped the knobs that did not matter",
+            skill,
+        )
+        self.assertIn(
+            "a control that moved nothing was mostly undersampled, so any "
+            "importance reading is a hypothesis the second space tests, never a "
+            "finding it reports",
+            skill,
+        )
+        self.assertIn("they are inputs to a hypothesis only", sdk)
+
+        # The reintroduction guard lives in the CONTRADICTIONS registry below
+        # rather than as a forbidden-substring list here, and the difference
+        # matters: a bare `assertNotIn` on wording like "shown not to matter"
+        # also fires on a passage that FORBIDS the claim, so the check would
+        # reject the very sentence it exists to require. The registry's phrases
+        # are affirmative report copy, which a prohibition does not contain.
+
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     """Catch the failure this repo actually produces: two rules that disagree.
@@ -3759,6 +4055,38 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             (
                 "add that directory to the project `.gitignore`",
                 "create `traigent-runs/` artifacts and add that path to `.gitignore`",
+            ),
+        ),
+        (
+            "whether a second round may buy cost with score",
+            ("measurably lower cost at a score that did not get worse",),
+            (
+                "lower cost even if the score drops",
+                "a small accuracy cost is acceptable",
+                "trade accuracy for cost",
+                "accept a slightly lower score for a materially lower cost",
+            ),
+        ),
+        (
+            # Affirmative report copy only. A phrase that could also appear
+            # inside a prohibition ("never that a control was shown not to
+            # matter") does not belong here - it would fail the document for
+            # stating the rule correctly.
+            "whether a knob that moved nothing may be reported as not mattering",
+            ("never a finding it reports",),
+            (
+                "we removed the knobs that did not matter",
+                "the search showed these knobs do not matter",
+                "this round dropped the controls that had no effect",
+            ),
+        ),
+        (
+            "whether the second round is part of the default run",
+            ("it is not part of the default run",),
+            (
+                "the walkthrough always runs a second cost-reduction round",
+                "every first run finishes with a cost-reduction round",
+                "run the cost-reduction round after the comparison",
             ),
         ),
     )
@@ -3927,9 +4255,17 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             for path, size in document_bytes.items()
             if path in {ROOT / "GUIDE.md", SKILL}
         )
+        # Raised from 60 KB, which had 23 bytes of headroom left. The optional
+        # cost-reduction round needs two things in SKILL.md and nothing else:
+        # that it is optional and gated in run-safety.md, and that its objective
+        # is one-sided. Both are ordering-and-mandate decisions, which is what
+        # this document owns. The gate, the approval, both outcomes, and every
+        # SDK mechanism went into run-safety.md and sdk-execution.md, so the
+        # resident share of that change is under 2 KB against 12 KB of reference
+        # depth - the policy below working, not a bypass of it.
         self.assertLess(
             resident,
-            60_000,
+            63_000,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -3962,7 +4298,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
-        budget = 220_000
+        # The optional cost-reduction round adds 12 KB of reference depth: what
+        # the installed SDK genuinely supports for it - and, at length, the three
+        # mechanisms it does NOT, because a reader who knows the decorator
+        # signature will otherwise reach for each of them and pay trials to find
+        # out. Documenting an absence costs bytes and is the point of this
+        # change, so raise TOTAL by 15 KB.
+        budget = 235_000
         self.assertLess(
             total,
             budget,
