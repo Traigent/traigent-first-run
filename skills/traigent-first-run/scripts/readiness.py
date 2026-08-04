@@ -316,6 +316,17 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "fits": ("free-text", "structured", "code-sql", "routing"),
     },
 }
+TASK_KINDS = (
+    "closed-label",
+    "code",
+    "code-sql",
+    "extraction",
+    "free-text",
+    "numeric",
+    "routing",
+    "short-answer",
+    "structured",
+)
 DETERMINISTIC_METHODS = {
     "exact",
     "normalized-exact",
@@ -3065,7 +3076,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--task-kind",
-        help="output kind the agent produces (closed-label, free-text, code-sql, ...)",
+        choices=TASK_KINDS,
+        help=(
+            "output kind the agent produces; use code for executable source and "
+            "code-sql for SQL query output"
+        ),
     )
     parser.add_argument(
         "--weights",

@@ -230,6 +230,34 @@ HEALTHY_SPACE = {
 
 
 class ReadinessAdapterReplayTests(unittest.TestCase):
+    def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
+        help_result = subprocess.run(
+            [sys.executable, str(READINESS), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        help_text = " ".join(help_result.stdout.split())
+        self.assertIn("use code for executable source", help_text)
+        self.assertIn("code-sql for SQL query output", help_text)
+
+        invalid = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--task-kind",
+                "sql",
+                "--json",
+            ],
+            input="[]",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("invalid choice: 'sql'", invalid.stderr)
+
     def _healthy_context(
         self, directory: Path, method: str = "exact"
     ) -> tuple[str, ...]:
