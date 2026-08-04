@@ -1528,8 +1528,8 @@ class DocumentedSchemaTests(unittest.TestCase):
                 self.assertEqual(
                     [cap.reason for cap in caps],
                     [
-                        "No tunable knob is attested as wired, so there is "
-                        "nothing to search."
+                        "Nothing is marked as a setting the agent actually "
+                        "uses, so there is nothing to search."
                     ],
                 )
                 self.assertEqual(knobs, [])
@@ -1554,7 +1554,8 @@ class DocumentedSchemaTests(unittest.TestCase):
         knob_count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertTrue(knob_count.measured)
         self.assertEqual(
-            knob_count.evidence, "0 of 1 declared knobs are attested as wired"
+            knob_count.evidence,
+            "0 of 1 listed settings are marked as ones the agent uses",
         )
 
     def test_explicit_wiring_still_scores_the_knob(self) -> None:
@@ -1857,7 +1858,7 @@ class CliTests(unittest.TestCase):
                 json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
             )
             _, output = self._run(["--config-space", str(space), "--color", "never"])
-        self.assertIn("does not state which of them the agent consumes", output)
+        self.assertIn("none is marked as one the agent uses", output)
         self.assertNotIn("1 of 1 wired knobs", output)
         self.assertNotIn("lists no settings", output)
 
