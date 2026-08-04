@@ -37,14 +37,19 @@ def assistant_facing_documents() -> list[Path]:
 
 
 def quoted_prose(path: Path) -> str:
-    """Whitespace-normalized text with Markdown blockquote markers dropped.
+    """The whole document, whitespace-normalized, with leading `>` dropped.
 
-    The report copy this package mandates is written as `>` blocks, because
-    that is how a reader recognizes wording meant to reach the user verbatim.
-    To `str.split()` those blocks are lines with a `>` in the middle of every
-    sentence, so a check written against the sentence fails on the line
-    wrapping rather than on the rule - which would train the next author to
-    pin half-sentences instead of the claim.
+    Not "the blockquotes" - every line, blockquote or not. The narrower helper
+    is not worth building: what these checks need is the ability to match a
+    sentence that a `>` block wrapped across lines, because to `str.split()`
+    such a sentence has a `>` in the middle of it and a check written against
+    the claim fails on the line wrapping instead. That would train the next
+    author to pin half-sentences.
+
+    What it therefore does NOT prove: that a matched phrase came from mandated
+    user-facing copy rather than from ordinary body prose. Use it to find
+    wording, and pin the placeholders (`<paired outcome counts>`) separately
+    when the requirement is that the copy carries evidence.
     """
     lines = [
         line.lstrip().removeprefix(">").strip()
@@ -3655,7 +3660,7 @@ class SkillPackageTests(unittest.TestCase):
             "specific, worthwhile hypothesis",
             "#### optional cost-reduction round",
             "the enhanced winner's score is reachable more cheaply",
-            "it stays optional and is offered only when the first comparison earned it",
+            "it stays optional and is offered only when the finished comparison earned it",
             "it is not part of the default run",
             "it never proceeds on the earlier approval",
         ):
@@ -3680,10 +3685,11 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_cost_reduction_objective_is_one_sided(self) -> None:
         """Cheaper-and-worse is not a result, so it may not be offered as one.
 
-        The whole value of the round is the direction it refuses. Cost is
-        arithmetic over token counts and is measured; a score on a first-run
-        slice is not, so the two halves of the claim get different strengths and
-        the score half is capped at "did not get worse".
+        The whole value of the round is the direction it refuses, and a
+        direction stated only in prose is not refused anywhere. So this checks
+        both halves: that the guidance says it, and that the round's winner is
+        selected by a rule that enforces it rather than by the weighted
+        objective, which is free to buy cost with score.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -3693,43 +3699,70 @@ class SkillPackageTests(unittest.TestCase):
             "measurably lower cost at a score that did not get worse",
             "never offer or report a round that trades score away for cost",
             "cost is arithmetic over reported token counts and is measured directly",
-            "never an improvement claim, and never stronger than that evidence supports",
+            "never stronger than the paired-uncertainty rule",
         ):
             with self.subTest(skill_phrase=phrase):
                 self.assertIn(phrase, skill)
-
-        # the score half is bounded by the paired-uncertainty rule that already
-        # exists, not by a threshold invented here
         self.assertIn("`references/evaluation-and-dataset.md`", skill)
+
+        # the round's own winner comes from the one-sided filter, never from
+        # `best_config` - the prohibition needs a mechanism or it is decoration
+        for phrase in (
+            "### selecting the round's own winner",
+            "do not report the run's `best_config` as the round's answer",
+            "a weighted objective is free to buy cost with score",
+            "handing back its choice would refuse the trade in the prose and "
+            "perform it in the result",
+        ):
+            with self.subTest(selection_phrase=phrase):
+                self.assertIn(phrase, safety)
+        self.assertIn("def cheaper_and_not_worse(", SDK_EXECUTION.read_text())
+
+        # the score claim is conditioned on the paired counts, not asserted
+        # alongside them - the template must not hardcode the conclusion
+        quoted = quoted_prose(RUN_SAFETY)
+        self.assertIn("`<paired outcome counts>`", quoted)
+        self.assertIn("`<the score statement the counts support>`", quoted)
+        self.assertIn("default to directional", safety)
         self.assertIn(
-            "report the score as directional unless a justified paired uncertainty "
-            "analysis over the completed outputs supports more",
+            'say "the score did not get worse" only where a justified paired '
+            "uncertainty analysis over the completed outputs supports it",
             safety,
         )
-        self.assertIn(
+        # the stronger sentence may not appear as an unconditional template line
+        self.assertNotIn(
             "on this evidence the score did not get worse, which is not the same "
             "as showing it improved",
-            quoted_prose(RUN_SAFETY),
+            quoted,
         )
 
         # the installed SDK registers a preset that permits the score to fall.
         # naming it is how the guidance stays honest about why it is refused.
         self.assertIn("max_accuracy_then_cheapest_within_epsilon", sdk)
         self.assertIn(
-            "its epsilon permits the score to fall, which is exactly the trade "
-            "this round exists to refuse",
+            "permits the score to fall by its epsilon, which is the trade this "
+            "round refuses",
             sdk,
         )
 
-    def test_the_cost_reduction_round_documents_only_verified_sdk_behavior(
+    def test_the_reference_records_the_sdk_mechanisms_this_round_refuses(
         self,
     ) -> None:
-        """Three plausible mechanisms are absent, and silence would invent them.
+        """Four mechanisms look like the round's answer and are not.
 
-        A reader who knows the decorator signature will reach for
-        ``safety_constraints``, for ``constraints``, and for objective
-        orientation, and each fails differently on the pinned release. Saying so
-        is cheaper than a run that spends trials discovering it.
+        This pins PROSE. It cannot execute the SDK - the validation job installs
+        only ruff and black, and the guide's whole point is that the assistant
+        installs the SDK into the user's project, not into this repo. So the
+        claims below were verified by running the pinned 0.25.0 while writing
+        them, and this check exists to stop the wording drifting away from what
+        that run showed. Re-verify against the installed release when the pin
+        moves; do not read a green here as evidence about the SDK.
+
+        The four: ``safety_constraints`` raises, ``constraints`` is post-eval,
+        objective orientation is a weighted scalarization, and - the one that
+        actually cost a redesign - ``quality_floor_min_cost`` floors on the
+        SDK's built-in exact-match rate rather than on this run's evaluator, so
+        it silently admits every trial for any graded or judged scorer.
         """
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
@@ -3744,20 +3777,34 @@ class SkillPackageTests(unittest.TestCase):
             "search away from it",
             # weighted objectives are the trade this round refuses
             "it will trade the score away for cost whenever the weights say so",
-            # selection is advisory and post-hoc, not a search steer
-            "it does not steer the search and does not replace `best_config`",
-            "carrying `selection_grade` `advisory` and no statistical certificate",
+            # the preset floors on a metric that is not this run's score, and
+            # the failure is silent - this is why the round selects by hand
+            "`accuracy` is the sdk's own built-in exact-match rate against "
+            "`expected_output`, computed independently of the `metric_functions` "
+            "scorer this guide wires",
+            "every trial reports `accuracy` as `0.0` while the real metric varies",
+            "it fails **silently**",
+            # passing strategy= is not free either
+            "passing `strategy` to `optimize_sync` replaces the run's objectives",
+            "mutually exclusive with an explicit `objectives=`",
             # warm start is decorator-only, connected-only, and refusable
             "it is decorator-only: passing it to `optimize_sync` raises `typeerror`",
             "which exists only for a connected run and is `none` otherwise",
             "the backend applies the seeds and may refuse",
-            "a refused warm start started cold",
-            # the preset reads fixed metric keys, so it is feature-detected
-            "the preset reads the hard-coded metric keys `accuracy` and `cost`",
-            "that is not a null result - it is an unavailable selector",
+            "a refused or unconfirmed warm start started cold",
+            "treat a missing one as unconfirmed rather than successful",
         ):
             with self.subTest(sdk_phrase=phrase):
                 self.assertIn(phrase, sdk)
+
+        # the by-hand filter must never key off the SDK's `accuracy`
+        self.assertIn(
+            'and never `"accuracy"`, which is the sdk\'s built-in exact-match rate',
+            sdk,
+        )
+        # an unpriced trial is dropped, never treated as cheap
+        self.assertIn("an absent cost is not a zero", sdk)
+        self.assertIn("`incumbent_cost` must itself be a reported, positive cost", sdk)
 
         # the seed is a point in the second space, not `default_config`, whose
         # trial-slot warning this reference already carries
@@ -3825,10 +3872,14 @@ class SkillPackageTests(unittest.TestCase):
             "takes its own explicit approval",
             "it is never a continuation of the combined approval, and silence is "
             "not approval",
-            "add the round's tracked cost to the same single running total",
-            "do not open a second ledger",
+            "the round's tracked cost joins the single running total the "
+            "approval section above already governs",
             "stop before the round if its estimate does not fit the remainder",
-            "do not raise the ceiling to make it fit without a new explicit approval",
+            # the ceiling rule above says the assistant never proposes a bigger
+            # number; the round must not quietly become the exception
+            "do not propose raising the ceiling to make it fit",
+            "treat a larger ceiling as the user's suggestion to make, never the "
+            "assistant's",
             "declining is a normal answer",
             "offer the round once",
         ):
@@ -3845,7 +3896,14 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("it had its own approval", post_run)
         self.assertIn("its cost joined the same running total", post_run)
         self.assertIn(
-            'a score claim no stronger than "did not get worse"',
+            "its winner was selected by the cheaper-and-not-worse filter on the "
+            "run's own metric rather than taken from `best_config`",
+            post_run,
+        )
+        self.assertIn("a score claim the paired counts support", post_run)
+        self.assertIn(
+            "a round whose own trials came back without reported cost has no "
+            "cost claim",
             post_run,
         )
 
@@ -4058,13 +4116,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
+            # Affirmative report copy only, for the reason spelled out on the
+            # knob entry below. "trade accuracy for cost" was here and had to
+            # go: it also matches "never trade accuracy for cost", so the
+            # registry would have failed the guide for stating the rule.
             "whether a second round may buy cost with score",
             ("measurably lower cost at a score that did not get worse",),
             (
-                "lower cost even if the score drops",
-                "a small accuracy cost is acceptable",
-                "trade accuracy for cost",
-                "accept a slightly lower score for a materially lower cost",
+                "we accepted a lower score for a lower cost",
+                "the round bought a cheaper configuration at a small accuracy cost",
+                "a slightly lower score is an acceptable price for the saving",
             ),
         ),
         (
@@ -4256,12 +4317,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             if path in {ROOT / "GUIDE.md", SKILL}
         )
         # Raised from 60 KB, which had 23 bytes of headroom left. The optional
-        # cost-reduction round needs two things in SKILL.md and nothing else:
-        # that it is optional and gated in run-safety.md, and that its objective
-        # is one-sided. Both are ordering-and-mandate decisions, which is what
-        # this document owns. The gate, the approval, both outcomes, and every
-        # SDK mechanism went into run-safety.md and sdk-execution.md, so the
-        # resident share of that change is under 2 KB against 12 KB of reference
+        # cost-reduction round needs three things in SKILL.md and nothing else:
+        # that it is optional and gated in run-safety.md, that its objective is
+        # one-sided, and one line in stage 6 saying the combined approval does
+        # not cover it. All three are ordering-and-mandate decisions, which is
+        # what this document owns. The gate, the approval, both outcomes, the
+        # selection rule, and every SDK mechanism went into run-safety.md and
+        # sdk-execution.md: 2,493 resident bytes against 16,774 of reference
         # depth - the policy below working, not a bypass of it.
         self.assertLess(
             resident,
@@ -4298,13 +4360,18 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
-        # The optional cost-reduction round adds 12 KB of reference depth: what
-        # the installed SDK genuinely supports for it - and, at length, the three
-        # mechanisms it does NOT, because a reader who knows the decorator
-        # signature will otherwise reach for each of them and pay trials to find
-        # out. Documenting an absence costs bytes and is the point of this
-        # change, so raise TOTAL by 15 KB.
-        budget = 235_000
+        #
+        # The optional cost-reduction round adds 19,267 bytes across the corpus
+        # (16,774 of it reference and asset depth, 2,493 resident). Most of that
+        # is not the round's own procedure - it is the record of four SDK
+        # mechanisms that LOOK like its answer and are not, one of which
+        # (`quality_floor_min_cost` floors on the SDK's built-in exact-match
+        # rate, not on this run's evaluator) silently selects a materially worse
+        # configuration and reports it as unchanged. The first draft of this
+        # guidance used it. Documenting an absence costs more bytes than
+        # documenting a feature, and here it is the difference between a correct
+        # round and a confidently wrong one, so raise TOTAL to 240 KB.
+        budget = 240_000
         self.assertLess(
             total,
             budget,

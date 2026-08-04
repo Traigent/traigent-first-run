@@ -948,50 +948,68 @@ orientation and a weight, which is a weighted scalarization: it will trade the s
 whenever the weights say so, and that is the one outcome this round must not produce. Keep the same
 objectives the first comparison used and take the one-sidedness from selection instead.
 
-**Selection is where the one-sidedness lives, and it is advisory.** `optimize_sync` accepts
-`strategy` and `strategy_params`, and the installed release registers `quality_floor_min_cost`,
-which selects the lowest-cost completed trial whose accuracy is at or above a floor. It is a
-post-hoc read over completed trials: it does not steer the search and does not replace
-`best_config`, which stays the objective winner. Its result arrives on the result object as
-`preset_selection`, carrying `selection_grade` `advisory` and no statistical certificate - report it
-that way. Do not use the registered `max_accuracy_then_cheapest_within_epsilon` preset for this
-round: its epsilon permits the score to fall, which is exactly the trade this round exists to
-refuse.
+**The registered selection presets cannot do this, and using one is worse than not selecting at
+all.** The installed release registers three advisory strategy presets - `quality_floor_min_cost`,
+`max_accuracy_then_cheapest_within_epsilon`, `pareto_frontier` - and `optimize_sync` accepts
+`strategy` and `strategy_params`. `quality_floor_min_cost` reads as an exact fit: lowest-cost
+completed trial at or above a quality floor. Do not use it, or any of them, for this round. Three
+verified reasons, the first alone disqualifying:
 
-The free `$0` check in `references/run-safety.md` is that same selection applied to the trials the
-enhanced run already completed, with no new run:
+- **They read `metrics["accuracy"]`, which is not this run's score.** `accuracy` is the SDK's own
+  built-in exact-match rate against `expected_output`, computed independently of the
+  `metric_functions` scorer this guide wires. Whenever the evaluator is not exact string match -
+  partial credit, an LLM judge, numeric tolerance, a case-insensitive or substring comparison -
+  every trial reports `accuracy` as `0.0` while the real metric varies. A floor taken from the
+  winner's `accuracy` is then `0.0`, admits every trial, and returns the globally cheapest one. On a
+  measured run whose real scores were `0.9` for the winner and `0.3` for the cheapest, that selects
+  the `0.3` configuration and presents it as an unchanged score - the exact trade this round
+  exists to refuse, arrived at automatically. It fails **silently**: `accuracy` is always present and
+  always within `[0, 1]`, so neither the missing-key nor the floor-range guard ever fires, and the
+  selection returns `status="selected"` with a straight face.
+- **Passing `strategy` to `optimize_sync` replaces the run's objectives.** The preset substitutes its
+  own `["accuracy", "cost"]`, and `best_config` follows: the same space and algorithm returned a
+  different winner with nothing changed but `strategy`. It is also mutually exclusive with an
+  explicit `objectives=`, which this guide always passes, so that call raises `ValueError`.
+- `max_accuracy_then_cheapest_within_epsilon` permits the score to fall by its epsilon, which is the
+  trade this round refuses even when the metric is right.
+
+**Do the selection by hand, on the metric the run actually declared.** It is the same rule, it needs
+no SDK selector, and it is arithmetic over artifacts already in hand:
 
 ```python
-from traigent.api.strategy_presets import (
-    normalize_strategy_preset,
-    select_strategy_preset,
-)
+def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost):
+    """Completed trials that scored at or above `floor` and cost measurably less.
 
-# The floor is the winning TRIAL's own `accuracy` metric, read from the same
-# map the preset reads. Not `best_score`: that is the run's selection basis,
-# which under weighted multi-objective selection is not documented to be the
-# `accuracy` value, so a floor taken from it can compare two different numbers.
-winner = next(
-    trial
-    for trial in optimized_results.trials
-    if trial.config == optimized_results.best_config
-)
-free_check = select_strategy_preset(
-    normalize_strategy_preset(
-        "quality_floor_min_cost", {"floor": winner.metrics["accuracy"]}
-    ),
-    optimized_results.trials,
-)
+    `metric_name` is this run's own objective name - the key wired through
+    `metric_functions` - and never `"accuracy"`, which is the SDK's built-in
+    exact-match rate and is unrelated to a graded, judged, or tolerant
+    evaluator. `floor` is the incumbent trial's value of that same key, so the
+    two sides of the comparison are the same measurement.
+    """
+    selected = []
+    for trial in trials:
+        if getattr(trial.status, "value", trial.status) != "completed":
+            continue
+        score = trial.metrics.get(metric_name)
+        cost = trial.metrics.get("cost")
+        # An absent cost is not a zero. A trial the run could not price cannot
+        # take part in a cost comparison, and dropping it is the only honest
+        # move - `min()` over unpriced rows returns an arbitrary one.
+        if score is None or cost is None:
+            continue
+        if score >= floor and cost < incumbent_cost:
+            selected.append((cost, trial))
+    return [trial for _cost, trial in sorted(selected, key=lambda row: row[0])]
 ```
 
-Feature-detect before trusting it, because it fails in two different ways. The preset reads the
-hard-coded metric keys `accuracy` and `cost` off each trial's `metrics`, not this run's objective
-name: when a completed trial is missing either key the selection returns `status="failed"` and
-selects nothing. That is not a null result - it is an unavailable selector, and reporting it as
-"nothing was cheaper" would be a false negative. Separately, the `floor` must lie in `[0, 1]`, so a
-winner metric on any other scale makes `normalize_strategy_preset` raise before a selection is
-attempted at all. In either case do the filter by hand over `optimized_results.trials`, on this run's
-own metric name and each trial's measured cost, and say which of the two produced the answer.
+`incumbent_cost` must itself be a reported, positive cost. A `0.0` produced by unknown model pricing
+is indistinguishable in the metrics map from a genuine free route, and a comparison against it admits
+everything - the same silent-wrong-answer shape as the preset above. `references/run-safety.md` makes
+measured cost a precondition for both the free check and the round.
+
+Use this one function for both jobs: the free `$0` check over the trials the enhanced run already
+completed, and the round's own result. Selecting the round's winner by the weighted objective instead
+would hand back exactly the score-for-cost trade the objective schema permits and this round forbids.
 
 **The seed.** Put the winning configuration into the second space as one of its value combinations,
 so it is a point the search can actually return. Do not reach for `default_config`: the warning
@@ -1025,12 +1043,14 @@ def agent(message: str) -> str:
 
 `ROUND_ONE_EXPERIMENT_ID` is the enhanced result's public `experiment_id`, which exists only for a
 connected run and is `None` otherwise; without it, omit the argument rather than inventing an id.
-The backend applies the seeds and may refuse. The SDK warns when it applied none, and the result's
-metadata carries `warm_start_from` alongside the backend's `warm_start_transfer` when one was
-returned. Read that before describing the round: a refused warm start started cold, and reporting a
-seeded search that did not happen is a false claim about how the result was reached. The round is
-still valid cold - its second space was built around the winner either way - so report it as cold
-rather than dropping the round.
+The backend applies the seeds and may refuse. The result's metadata carries `warm_start_from`
+alongside the backend's `warm_start_transfer` when one was returned, and the SDK logs a warning when
+that transfer reports zero seeds applied. The warning depends on the backend returning a transfer at
+all, so its absence is not proof the seeding happened: read `warm_start_transfer` yourself and treat
+a missing one as unconfirmed rather than successful. A refused or unconfirmed warm start started
+cold, and reporting a seeded search that did not happen is a false claim about how the result was
+reached. The round is still valid cold - its second space was built around the winner either way -
+so report it as cold rather than dropping the round.
 
 Run the round connected on `algorithm="auto"`, on the same tuning rows, evaluator, and agent call
 path as the first comparison, under the same trial-cap and cost-ceiling discipline. Persist and link
