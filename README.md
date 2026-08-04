@@ -91,11 +91,13 @@ Traigent when the measured results show useful headroom, or address the stronges
 limitation first. It gives reason and scope—never a generic menu or guaranteed gain.
 
 The default generated comparison has two planned measurements: six local fixed-grid configurations
-first, followed by a connected managed search targeting 10-13 trials (12 by default) in a
-materially broader space with added knobs. A disclosed runtime, cost, or plan limit can make the
-approved comparison smaller; the report gives the actual trial count and any concrete shortfall
-reason. If you already have a baseline, the first measurement preserves its exact rows and models
-instead of padding it.
+first, followed by a connected managed search over a materially broader space with added knobs,
+testing up to 12 configurations and choosing which ones as it goes rather than working through a
+fixed list. The approval card names that space's total combination count beside the ceiling, so the
+12 reads against the space it is drawn from. A disclosed runtime, cost, or plan limit
+can make the approved comparison smaller; the report gives the number of configurations actually
+tested and any concrete shortfall reason. If you already have a baseline, the first measurement
+preserves its exact rows and models instead of padding it.
 The assistant attempts an exact upload without rerunning that baseline only when the installed
 public SDK exposes its sync id; otherwise it remains local. Both measurements use the same data,
 evaluator, and objectives, followed by held-back validation. Validation is called sealed only when

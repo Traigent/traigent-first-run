@@ -120,8 +120,8 @@ agent call path:
    for the project. The user sees its best configuration, primary tuning metric, cost, latency,
    trial/failure count, and a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
-   contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
-   trials (12 by default) from a materially larger search space.
+   contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
+   configurations from a materially larger search space.
 
 The assistant uploads the completed baseline without rerunning it only when the installed SDK
 exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline
@@ -131,7 +131,8 @@ configs and their measured tuning behavior directly. If you later add an indepen
 track, treat it as a later follow-up rather than part of this first run: small datasets can
 overfit quickly.
 Approve the provider-paid baseline first. After its result, preview and approve the connected
-optimization separately. The assistant chooses its bounded trial count and knobs.
+optimization separately. The assistant chooses how many configurations it tests and which knobs it
+varies.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what

@@ -82,7 +82,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named handoff or target `.env`; preserve existing values and comments, append only its missing provider key, and require `0600` before opening. Resolve its path relative to its Git worktree: root `.env` uses `ls-files --error-unmatch -- .env`, exit 0 means tracked and must stop, continue only on exit 1 with no match, and stop on any other status; require effective `/.env` rule and `check-ignore -q -- .env`. Otherwise use the exact `<credential-file-relative-path>` and equivalent ignore check; stop before secret entry if the effective-ignore check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. `run-safety.md` owns the exact checks. Add or request the Traigent key only after the baseline checkpoint. |
+| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named handoff or target `.env`; preserve existing values and comments, append only its missing provider key, and require `0600` before opening. Before writing, run `references/run-safety.md`'s git-tracked-file safety check and its ignore verification; that reference owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
@@ -479,10 +479,11 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    never pad it. Only when it is missing, prepare the credible six-configuration fixed sweep in
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
-   controls the agent consumes, and target 10-13 visible trials with an internal cap of 12. Add
-   non-model, task-relevant controls by default; any new model is a separately disclosed
-   experiment. The reference owns the generated-space mechanics that make the comparison
-   attributable to the managed search rather than a quiet model upgrade.
+   controls the agent consumes, and test up to 12 configurations (`references/sdk-execution.md`
+   explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
+   default; any new model is a separately disclosed experiment. The reference owns the
+   generated-space mechanics that make the
+   comparison attributable to the managed search rather than a quiet model upgrade.
 
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
 one mid, and one strong tier one step below - never the vendor's newest flagship - with a reasoning
@@ -526,8 +527,12 @@ approval rules in `references/run-safety.md`.
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
 capabilities. Obtain explicit approval for this connected stage before its key, probe, sync, or
-calls. Repeat the baseline knobs in the enhanced run card and label every addition new. Never
-promise a pause at minute 30; size the synchronous run first.
+calls. In the enhanced run card, repeat the baseline knobs, label every addition new, and give its
+total combination count; pair that count with this run's trial cap as a ceiling, never a range: how
+many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
+that wording, both numbers' source, and what to say when the count cannot be computed. Disclose any
+reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
+minute 30; size the synchronous run first.
 
 Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
 call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
@@ -583,8 +588,9 @@ reveals a specific, worthwhile hypothesis.
 Before saying the run succeeded, apply every post-run verification in
 `references/run-safety.md`. Also verify that the baseline was preserved exactly or the generated
 six-row default (including its initial configuration) ran, subject only to an approved disclosed
-reduction; the enhanced run used real controls and either produced 10-13 trials, matched an
-explicitly approved and disclosed reduced target, or reports a concrete stop/failure reason; and a
+reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
+trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
+stop/failure reason; and a
 best configuration and non-degenerate measures exist. Report truncation and persistence failures,
 require the portal probe to have stayed green, and verify each portal link before claiming
 visibility.
@@ -604,7 +610,8 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
-- Cost, trial count, failures, stop reason, and direct portal links.
+- Cost, the configurations tested out of the space's total, failures, stop reason, and direct
+  portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
 - The readiness transition: the recorded opening score and band, the closing score and band, and
   which caps cleared and which remain.

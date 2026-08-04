@@ -41,7 +41,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Connected-stage plan and approval
 
-- Added dimensions, combinations, trials, and recipients:
+- Added dimensions, total combinations, configuration ceiling, and recipients:
 - Calls, runtime, and spend:
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
