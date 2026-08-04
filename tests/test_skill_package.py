@@ -620,7 +620,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "total execution stop target",
             "not a guaranteed provider-billing cap",
-            "connected managed search targeting 10-13 trials",
+            "connected managed search targeting 10-12 trials",
             "actual trial count and any concrete shortfall reason",
             "cannot yet support a trustworthy paid comparison",
             "too little comparable evidence exists",
@@ -656,17 +656,45 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, skill)
         self.assertIn("ignored when the project uses git", readme)
         self.assertIn("verify it is untracked and effectively ignored", env_example)
-        for text in (skill, safety):
-            self.assertIn("ls-files --error-unmatch -- .env", text)
-            self.assertIn("exit 0 means tracked and must stop", text)
-            self.assertIn("continue only on exit 1 with no match", text)
-            self.assertIn("stop on any other status", text)
-            self.assertIn("effective `/.env` rule", text)
-            self.assertIn("`/.env`", text)
-            self.assertIn("check-ignore -q -- .env", text)
-            self.assertIn("effective-ignore check fails", text)
-            self.assertIn("stop before secret entry", text)
-            self.assertIn("outside git, do not create `.gitignore`", text)
+
+        # #124: run-safety.md is the one home for the .env tracked-file check's
+        # exact commands and exit-code reasoning.
+        for phrase in (
+            "ls-files --error-unmatch -- .env",
+            "exit 0 means tracked and must stop",
+            "continue only on exit 1 with no match",
+            "stop on any other status",
+            "effective `/.env` rule",
+            "`/.env`",
+            "check-ignore -q -- .env",
+            "effective-ignore check fails",
+            "stop before secret entry",
+            "outside git, do not create `.gitignore`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+
+        # SKILL.md's action-authorization row names the check and points at
+        # run-safety.md instead of restating its commands or exit-code
+        # reasoning - a second full statement of that logic is the defect
+        # #124 found, not emphasis.
+        env_row = skill.split("create or update a minimal `.env`", 1)[1].split(
+            "| repair a working copy", 1
+        )[0]
+        self.assertIn("run-safety.md", env_row)
+        self.assertIn("git-tracked-file safety check", env_row)
+        self.assertIn("stop before secret entry", env_row)
+        for restated in (
+            "ls-files --error-unmatch -- .env",
+            "exit 0 means tracked",
+            "continue only on exit 1 with no match",
+            "stop on any other status",
+            "check-ignore -q -- .env",
+            "effective `/.env` rule",
+        ):
+            with self.subTest(not_restated=restated):
+                self.assertNotIn(restated, env_row)
+
         self.assertIn("verifies it is untracked and effectively ignored", readme)
         self.assertNotIn(
             "add that directory to the project `.gitignore`",
@@ -1581,7 +1609,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "six baseline rows and a 12-trial enhanced cap",
             "adds two real one-call controls",
-            "target is 10-13 visible enhanced rows",
+            "target is 10-12 visible enhanced rows",
             "max_trials` is a cap rather than an sdk-enforced minimum",
         ):
             self.assertIn(phrase, normalized)
@@ -3761,6 +3789,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "create `traigent-runs/` artifacts and add that path to `.gitignore`",
             ),
         ),
+        (
+            "the enhanced-run trial-count upper bound",
+            ("10-12 trials",),
+            (
+                # #123: four documents stated "10-13" trials with "a cap of
+                # 12" - twelve is less than thirteen, so as written either
+                # the cap was not 12 or 13 never occurred. `max_trials` is
+                # passed straight through to the SDK as the search's upper
+                # bound (sdk-execution.md), so the cap really does bound
+                # visible rows at 12 and the target is 10-12.
+                "10-13 trials",
+                "10-13-trial",
+                "10-13 visible trials",
+                "10-13 visible enhanced rows",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -3842,6 +3886,65 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     f"{sorted(stated)}. Two documents give the assistant "
                     "different numbers for one decision, and it will follow "
                     "whichever it read last.",
+                )
+
+    # A command the guidance states in more than one document, matched as the
+    # literal invocation rather than a captured number. #124's class: the
+    # .env tracked-file safety check was written out in full identically in
+    # SKILL.md and run-safety.md, so nothing was drifted YET - but nothing
+    # stopped an edit to one copy leaving the other stale, and the failure
+    # mode of a stale copy here is a committed secret. SHARED_VALUES above
+    # only ever anchors on a captured number; a command has no number to
+    # anchor on, so it needs its own table, checked the same way: more than
+    # one document must state it, and every document that does must state it
+    # identically.
+    SHARED_COMMANDS = (
+        (
+            "the forbidden unversioned Traigent install command",
+            r"`(pip install[^`]*traigent[^`]*)`",
+        ),
+    )
+
+    def test_a_shared_command_is_not_stated_two_ways(self) -> None:
+        """Two documents may repeat a command; they may not diverge on it.
+
+        #124 found the .env git-tracked-file check written out in full in
+        both SKILL.md and run-safety.md - byte-identical at the time, so a
+        phrase lock would have passed right up until someone fixed the
+        exit-code handling in one copy and not the other, and the failure
+        mode of that stale copy is a leaked secret. This is that class of
+        defect, generalized: it fails whenever two documents give the
+        assistant two different commands for what is supposed to be one
+        check, including a divergence introduced after this test was
+        written, the same way the numeric SHARED_VALUES check above needs no
+        foreknowledge of which number will drift next.
+        """
+        documents = self.guidance()
+        for label, pattern in self.SHARED_COMMANDS:
+            with self.subTest(value=label):
+                stated = {
+                    name: {match.casefold() for match in re.findall(pattern, text)}
+                    for name, text in documents.items()
+                    if re.search(pattern, text)
+                }
+                # A single-sourced command cannot drift between documents, so
+                # an entry that finds only one is not checking anything - it
+                # reads as coverage while providing none.
+                self.assertGreater(
+                    len(stated),
+                    1,
+                    f"'{label}' is now stated in {sorted(stated) or 'no document'} - "
+                    "if it moved to a single home, delete this entry rather than "
+                    "leaving a check that cannot fail",
+                )
+                values = set().union(*stated.values())
+                self.assertEqual(
+                    len(values),
+                    1,
+                    f"'{label}' is written as {sorted(values)} across "
+                    f"{sorted(stated)}. Two documents give the assistant "
+                    "different commands for one check, and a stale copy "
+                    "here is a silent security failure, not a cosmetic one.",
                 )
 
     # Flags the guidance names that belong to something other than a bundled

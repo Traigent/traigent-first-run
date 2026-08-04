@@ -114,8 +114,8 @@ agent call path:
    for the project. The user sees its best configuration, primary tuning metric, cost, latency,
    trial/failure count, and a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
-   contains every baseline value, adds meaningful non-model settings by default, and targets 10-13
-   trials (12 by default) from a materially larger search space.
+   contains every baseline value, adds meaningful non-model settings by default, and targets 10-12
+   trials from a materially larger search space.
 
 The assistant uploads the completed baseline without rerunning it only when the installed SDK
 exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline

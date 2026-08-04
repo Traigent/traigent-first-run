@@ -89,8 +89,8 @@ its result before any Traigent account/key request. After that checkpoint, the g
 portal tracking with a zero-LLM probe before the connected enhanced optimization spends anything.
 
 The default generated comparison has two planned measurements: six local fixed-grid configurations
-first, followed by a connected managed search targeting 10-13 trials (12 by default) in a
-materially broader space with added knobs. A disclosed runtime, cost, or plan limit can make the
+first, followed by a connected managed search targeting 10-12 trials in a materially broader space
+with added knobs. A disclosed runtime, cost, or plan limit can make the
 approved comparison smaller; the report gives the actual trial count and any concrete shortfall
 reason. If you already have a baseline, the first measurement preserves its exact rows and models
 instead of padding it.

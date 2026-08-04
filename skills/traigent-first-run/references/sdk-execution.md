@@ -912,10 +912,12 @@ did not do what the report will claim it did.
 
 Do not enable mock mode in this process. The optimization space must include the current
 configuration and every baseline value, plus meaningful added knobs that the function consumes.
-`max_trials` is a cap rather than an SDK-enforced minimum. The default target is 10-13 visible
-enhanced rows with a cap of 12; report the actual count and stop reason. Fewer than 10 rows requires
-a concrete backend stop, timeout, cost-limit, or failure explanation rather than being presented as
-the intended first-run comparison.
+`max_trials` is a cap rather than an SDK-enforced minimum, passed straight through as
+`max_trials=ENHANCED_MAX_TRIALS`, so returned trials never exceed it - unlike the baseline's
+six-point space, where "all six" already names the whole result. The default target is 10-12
+visible enhanced rows: `12` is the cap itself, not a floor beneath a higher count. Report the actual
+count and stop reason. Fewer than 10 rows requires a concrete backend stop, timeout, cost-limit, or
+failure explanation rather than being presented as the intended first-run comparison.
 
 If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
 retain and report the best partial result (the enhanced run is uncapped by default, so this is
