@@ -892,16 +892,31 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
         return Cap(
             "dataset-below-measurable-size",
             WIRING_CHECK_CEILING,
-            f"{effective_n} comparable example(s) is a wiring check, not a "
-            "stable comparison; treat any difference as exploratory.",
+            # The arithmetic IS the context. "Wiring check" told a reader
+            # nothing; "one example is worth 17 points" tells them why a winner
+            # here may just have caught a lucky row. Guarded because a dataset
+            # can have rows and nothing scoreable, and 100/0 would take the
+            # scorer down on the one card that most needs to render.
+            (
+                f"only {effective_n} comparable example(s) - one example moves "
+                f"the score by about {100 / effective_n:.0f} points, so a "
+                "configuration can look better by winning a single row. Treat "
+                "any difference as a hint, not a result."
+                if effective_n
+                else "no example can be scored, so nothing can be compared."
+            ),
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
             "dataset-coarse-resolution",
             COARSE_RESOLUTION_CEILING,
-            f"{effective_n} comparable examples is a small comparison set; "
-            "paired uncertainty must be calculated from completed paired "
-            "outcomes before claiming a lift.",
+            # Says what it costs the reader, not how a statistician would
+            # measure it. "Paired uncertainty from completed paired outcomes"
+            # is the method, and the method belongs in the reference the
+            # assistant reads - a card is glanced at, not studied.
+            f"{effective_n} comparable examples is a small comparison set, so "
+            "a small difference between configurations may be chance rather "
+            "than a real improvement.",
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
         )
@@ -1629,14 +1644,15 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
 NOTHING_WIRED_CAP = Cap(
     "agent-no-varying-knobs",
     45,
-    "No tunable knob is attested as wired, so there is nothing to search.",
+    "Nothing is marked as a setting the agent actually uses, so there is "
+    "nothing to search.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
     45,
-    "Search controls are declared, but the document does not state which of "
-    "them the agent consumes, so nothing is attested as wired to search.",
+    "Settings are listed, but none is marked as one the agent uses - marking "
+    "them is what makes them searchable.",
 )
 
 
@@ -1708,8 +1724,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # is an unenforced claim.
         return (
             nothing_to_search_pillar(
-                f"{len(facts.knobs)} declared knob(s), none attested as wired - "
-                "name the knobs the agent consumes in the document's 'wired' list"
+                f"{len(facts.knobs)} setting(s) listed, none marked as one the "
+                "agent uses - list those in the document's 'wired' field"
             ),
             [UNATTESTED_WIRING_CAP],
             [],
@@ -1750,7 +1766,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # knobs ARE declared, zero of them are attested as wired.
         return (
             nothing_to_search_pillar(
-                f"0 of {len(facts.knobs)} declared knobs are attested as wired"
+                f"0 of {len(facts.knobs)} listed settings are marked as ones "
+                "the agent uses"
             ),
             [NOTHING_WIRED_CAP],
             knobs,
