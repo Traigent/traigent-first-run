@@ -4009,7 +4009,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # PRs #125 and #126 add user-facing explanations for readiness evidence
         # and exact pre-run cards. Those are new contract surface, not duplicated
         # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
-        budget = 220_000
+        # #133 adds the present-but-unresolved-evaluator distinction (a new
+        # evidence classification and its create/select vs. inspect/repair/
+        # replace routing) to SKILL.md and evaluation-and-dataset.md - also new
+        # contract surface, not duplicated stage detail - so raise TOTAL by
+        # roughly 1 KB, keeping the ceiling as narrow as the addition allows.
+        budget = 221_500
         self.assertLess(
             total,
             budget,
