@@ -882,6 +882,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("portal history", stage_seven)
         self.assertIn("conditional capabilities", stage_seven)
         self.assertIn("obtain explicit approval for this connected stage", stage_seven)
+        baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
         evidence_gate = stage_seven.index(
             "now check whether the dataset and evaluator distinguish configurations"
         )
@@ -889,6 +890,7 @@ class SkillPackageTests(unittest.TestCase):
             "only when this gate supports a measured opportunity"
         )
         connected_approval = stage_seven.index("stage 4/5 · optimize")
+        self.assertLess(baseline_checkpoint, evidence_gate)
         self.assertLess(evidence_gate, connected_preview)
         self.assertLess(connected_preview, connected_approval)
         self.assertIn("stop before the search", stage_seven)
