@@ -508,6 +508,7 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
+- Do not disclose the held-out score yet.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
@@ -555,6 +556,9 @@ supported id, keep the baseline local; never inspect private storage or use `--a
 enhanced optimization connected, require its own verified portal link, and report a direct link for
 every persisted run without implying it covers a local-only baseline.
 
+Once the enhanced search selects its winner, score only that configuration against the ten
+held-out rows; `references/evaluation-and-dataset.md` owns the rest.
+
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the connected-stage approval.
@@ -589,9 +593,9 @@ six-row default (including its initial configuration) ran, subject only to an ap
 reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
 trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
 stop/failure reason; and a
-best configuration and non-degenerate measures exist. Report truncation and persistence failures,
-require the portal probe to have stayed green, and verify each portal link before claiming
-visibility.
+best configuration and non-degenerate measures exist. Verify the held-out score is the winner's
+alone, never every candidate's. Report truncation and persistence failures, require the portal
+probe to have stayed green, and verify each portal link before claiming visibility.
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
 auditable:
@@ -608,6 +612,7 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
+- The enhanced winner's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.

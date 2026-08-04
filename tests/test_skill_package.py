@@ -2951,11 +2951,23 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, safety)
 
-    def test_optional_validation_is_not_part_of_the_default_run(self) -> None:
+    def test_held_out_set_is_part_of_the_default_run_and_disclosed_seamlessly(
+        self,
+    ) -> None:
+        """#127/#141: the holdout comes back, sized ten, disclosed once.
+
+        Israel's call: keep the held-out set (removing it hides the winner's-
+        curse evidence, not the problem), but never claim Traigent prevents
+        overfitting (holdout support is not yet a real SDK feature) and never
+        call a ten-row gap "overfitting" (it is inconclusive at that sample
+        size). The split is reserved at dataset creation - same as the tuning
+        rows - but its score stays undisclosed until stage 8's closing report,
+        never at the stage-7 local baseline checkpoint, so a first run shows
+        one comparison once rather than an empty promise twice.
+        """
         documents = {
             "guide": " ".join((ROOT / "GUIDE.md").read_text().casefold().split()),
             "skill": " ".join(SKILL.read_text().casefold().split()),
-            "sdk": " ".join(SDK_EXECUTION.read_text().casefold().split()),
             "dataset": " ".join(
                 (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
                 .read_text()
@@ -2971,25 +2983,66 @@ class SkillPackageTests(unittest.TestCase):
         }
         for name, text in documents.items():
             with self.subTest(document=name):
-                self.assertNotIn("18 tuning / 10 validation", text)
-                self.assertNotIn("28 rows split", text)
-                self.assertNotIn("create 28 examples by default", text)
+                self.assertNotIn("create 18 tuning examples by default", text)
+                self.assertNotIn("do not create a held-back validation set", text)
+                self.assertNotIn("optional follow-up evidence", text)
+                self.assertNotIn("traigent does x to prevent this", text)
 
         dataset = documents["dataset"]
-        self.assertIn("create 18 tuning examples by default", dataset)
-        self.assertIn("do not create a held-back validation set", dataset)
-        self.assertIn("optional follow-up evidence", documents["glossary"])
+        for phrase in (
+            "create 28 examples by default: 18 tuning rows",
+            "10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard)",
+            "held-out set and claims",
+            "selecting on the tuning rows inflates the tuning score",
+            "ten rows cannot resolve a small gap",
+            "do not say traigent prevents or corrects this",
+            "do not call a gap in this range \"overfitting,\"",
+            "traigent-first-run#141",
+            "optimization set (18 ex)",
+            "held-out set (10 ex)",
+            "too few examples to conclude",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+        self.assertIn(
+            "28 rows split 18 tuning / 10 held-out", documents["glossary"]
+        )
+        self.assertIn("disclosed once, beside the", documents["glossary"])
+
+        skill = documents["skill"]
+        checkpoint_index = skill.find("do not disclose the held-out score yet")
+        report_index = skill.find(
+            "the enhanced winner's held-out score and small-sample note, shown here first"
+        )
+        self.assertGreaterEqual(checkpoint_index, 0)
+        self.assertGreaterEqual(report_index, 0)
+        self.assertLess(
+            checkpoint_index,
+            report_index,
+            "the stage-7 checkpoint's refusal to disclose must precede stage "
+            "8's actual disclosure, or the seamless ordering is not encoded",
+        )
+        self.assertIn("score only that configuration against the ten", skill)
+        self.assertIn("verify the held-out score is the winner's alone", skill)
+
+        self.assertIn(
+            "discloses the enhanced winner's held-out score here", documents["guide"]
+        )
 
         run_plan = " ".join(
             (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
         )
         for phrase in (
-            "tuning rows, coverage, and known limitations",
+            "tuning rows and held-out rows (default 10, reserved at creation)",
             "local baseline checkpoint",
             "successful cli url, or `local-only` with reason",
             "baseline-versus-enhanced comparison - measured tuning behavior",
+            "held-out score for the enhanced winner, beside its tuning score, "
+            "and the small-sample note",
         ):
-            self.assertIn(phrase, run_plan)
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, run_plan)
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
         readme_source = (ROOT / "README.md").read_text()
@@ -4622,7 +4675,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #127/#141 reinstate the held-out set the guide removed: a mandatory
+        # ten-row split, the winner's-curse-plus-small-sample framing for why
+        # a tuning/held-out gap is inconclusive rather than "overfitting," the
+        # rule that its score is disclosed once, in stage 8, never at the
+        # stage-7 checkpoint, and the exact two-line display format. That
+        # framing has no prior statement to replace - the removed text was one
+        # short "not part of the default first run" sentence - so this is new
+        # contract surface in evaluation-and-dataset.md, its one home; the
+        # pointers added in SKILL.md, sdk-execution.md, run-safety.md,
+        # glossary.md, run-plan.md, and GUIDE.md were kept to the timing/
+        # ownership statement each already restates conclusions from, not the
+        # mechanism itself. Raise TOTAL by 4.5 KB against the measured 232_629.
+        budget = 232_750
         self.assertLess(
             total,
             budget,

@@ -128,7 +128,8 @@ only varying dimensions are model and temperature. If the strong tier is a reaso
 temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
 reasoning calling convention pinned; either way, the baseline stays at six rows and the first
 result stays quick and cheap. The synthesized walkthrough dataset contains 18 tuning rows: 3 easy,
-5 medium, 5 hard, and 5 very hard. The enhanced space keeps the identical model list and expands beyond
+5 medium, 5 hard, and 5 very hard, plus 10 held-out rows reserved at creation time (2 easy, 3
+medium, 3 hard, 2 very hard). The enhanced space keeps the identical model list and expands beyond
 the baseline: once the baseline result is in, refine the swept values around its top rows - the
 one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
 rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced
@@ -937,9 +938,9 @@ evidence actually produced in this run. Show the best config, score, cost, laten
 and direct portal links for every persisted run. Put the two results side by side, explain the
 knob differences, and state what changed in the measured tuning behavior. The baseline and
 enhanced search must use the same selected public evaluation path and the same installed public
-`traigent.Dataset.from_jsonl` loader. This first-run comparison does not establish generalization
-or expected production improvement: a small tuning dataset can overfit. Consider independent
-validation later only when it would change a real decision.
+`traigent.Dataset.from_jsonl` loader. The tuning comparison alone does not establish generalization:
+score the enhanced winner against the reserved held-out rows and report it beside the tuning score;
+`references/evaluation-and-dataset.md` owns the mechanism, timing, and small-sample caveat.
 
 Before reporting:
 

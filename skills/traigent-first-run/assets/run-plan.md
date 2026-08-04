@@ -23,7 +23,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Shared comparison
 
-- Tuning rows, coverage, and known limitations:
+- Tuning rows and held-out rows (default 10, reserved at creation), coverage, and known limitations:
 - Agent and evaluator/judge calls per example:
 - Total walkthrough ceiling (default `$5.00`):
 
@@ -49,6 +49,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop
   reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
+- Held-out score for the enhanced winner, beside its tuning score, and the small-sample note:
 
 ## Interpretation
 

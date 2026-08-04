@@ -8,7 +8,7 @@ Use this reference whenever creating or validating a dataset or evaluation metho
 2. Mandatory calibration
 3. Quality diagnosis and repair choice
 4. Dataset construction
-5. Validation split and claims
+5. Held-out set and claims
 
 ## Evaluation selection
 
@@ -307,12 +307,14 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 18 tuning examples by default: 3 easy, 5 medium,
-5 hard, and 5 very hard. Use those rows for the baseline and enhanced comparison; do not create a
-held-back validation set for the default first run. Independent validation is optional later, when
-the project already has that data or a real decision justifies collecting it.
+For a fully generated walkthrough, create 28 examples by default: 18 tuning rows (3 easy, 5
+medium, 5 hard, 5 very hard) and 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard). Reserve
+the held-out rows at creation time, alongside the tuning rows - not later, and not only after a
+winner is chosen. See "Held-out set and claims" below for what those ten rows are for, when they
+are scored and disclosed, and why the count stays at ten by default.
 
-Adjust size when cost or task shape requires it, but keep all four bands represented.
+Adjust size when cost or task shape requires it, but keep all four bands represented in both
+splits.
 
 ### Declaring provenance
 
@@ -475,14 +477,55 @@ representative, and that limitation belongs in the report.
 The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
 it; this bound exists only so the first run finishes.
 
-## Optional validation split and claims
+## Held-out set and claims
 
-When the project already has independent validation data, or when a later real decision warrants
-adding it, reserve that data before optimization and keep the same split across comparisons. It is
-not part of the default first-run walkthrough. Call it a sealed holdout only when its split and
-labels were fixed and hidden from component design, tuning, and winner selection until the
-candidate was locked. If the assistant inspected or authored it, call it held-back, non-blind
-validation.
+Reserve the held-out rows described in "Dataset construction" at creation time, before any
+component design, calibration, or optimization touches the dataset, and keep the same rows aside
+for the rest of the run. When the project already has independent validation data of its own, use
+that instead of the generated split and follow the same rules below.
+
+A gap between the tuning score and the held-out score is expected, and it is explained by two
+separate things - neither is a bug:
+
+- **Selecting on the tuning rows inflates the tuning score.** Scoring several candidate
+  configurations on the same rows and keeping the best one selects partly on real signal and
+  partly on that sample's noise. The winner's tuning score is inflated by the act of choosing it
+  and will not fully repeat on a fresh sample even when nothing is actually overfitted. This is
+  exactly what the held-out rows exist to check.
+- **Ten rows cannot resolve a small gap.** The uncertainty on an accuracy measured from ten items
+  is roughly +/-15 points near 50% and still about +/-10 points near 90%. A gap that size is
+  neither confirmed overfitting nor confirmed fine - it is inconclusive, and no wording should
+  claim otherwise.
+
+Do not say Traigent prevents or corrects this: holdout support is not yet a first-class SDK
+feature, so that claim would not be true. Do not call a gap in this range "overfitting," either -
+name it for what it is, the ordinary result of picking the best of several configurations on a
+small sample, and say plainly that ten examples cannot tell how much of it is real. Growing the
+holdout past the default ten rows, and giving Traigent real holdout support instead of this
+guide-authored split, are tracked in `traigent-first-run#141`; name that issue from the disclosure
+note below rather than promising either capability in the guide text.
+
+Score the held-out rows once, after the enhanced search selects its winning configuration, by
+running that exact configuration - and only that configuration - against the ten held-out rows.
+Never run every candidate against the held-out rows; that would use them for selection and they
+would stop being held out. Include those calls in the combined paid-work approval alongside the
+enhanced search.
+
+Disclose the held-out score for the first time in the stage-8 closing report, after the enhanced
+run - never at the stage-7 local baseline checkpoint. The split itself does not change between the
+two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once, when
+the winner it is scoring actually exists. Report it as one line, not a statistics lesson:
+
+```text
+Optimization set (18 ex): <tuning score>%
+Held-out set (10 ex):     <held-out score>%
+Note: too few examples to conclude. A gap like this is expected when the
+best of many configs is picked on a small sample. Tracking: traigent-first-run#141
+```
+
+Call it a sealed holdout only when its split and labels were fixed and hidden from component
+design, tuning, and winner selection until the candidate was locked. Because the assistant creates
+and can inspect the generated split, name it held-back, non-blind validation instead.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and
@@ -493,5 +536,6 @@ reason to pause the first walkthrough. Until then:
 - Do not promote the result to production.
 - Do not describe the measured lift as expected customer lift.
 
-For small validation sets, report the paired outcome counts. State a difference as directional
-unless a justified paired uncertainty analysis supports a stronger claim.
+For a larger validation set than the ten-row default, report the paired outcome counts. State a
+difference as directional unless a justified paired uncertainty analysis supports a stronger
+claim.
