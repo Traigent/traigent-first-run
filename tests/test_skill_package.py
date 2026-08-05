@@ -4533,9 +4533,27 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
+        #
+        # Raised to 61_750 by the `agent-no-varying-knobs` routing fix, and the
+        # raise is the honest half of it. That change adds one sentence to
+        # SKILL.md's cap-routing paragraph - the decision that this cap is an
+        # advisory ceiling and never a repair to route, at BOTH the opening
+        # gates and the close, since the scorer cannot tell them apart. It is a
+        # routing decision, which is SKILL.md's own job; the depth behind it
+        # went to run-safety.md and glossary.md, and the glossary's share
+        # shrank by de-duplicating what its "settings document" entry already
+        # said. RESIDENT measures 61_353, +224 over the 61_129 base.
+        #
+        # An earlier revision of this branch left that at 147 bytes of headroom
+        # under the old 61_500 - below the 371 named directly above as the
+        # smallest that still makes the next raise a choice, and undisclosed.
+        # Squeezing the sentence to fit would have banked the appearance of
+        # discipline while spending the thing the number protects, so the
+        # ceiling moves instead and says so: 397 bytes of headroom, deliberately
+        # over the 371 floor rather than under it.
         self.assertLess(
             resident,
-            61_500,
+            61_750,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4624,16 +4642,29 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # against the base it branched from; only the merge knows the sum.
         # Raised by the fix for `agent-no-varying-knobs`, the one cap that fires
         # on every run by construction: the config-space document is withheld
-        # until the enhanced search writes it, so even a healthy project was
-        # told its paid run was BLOCKED. The scorer now reports that state as
-        # advisory, and the prose explaining it shrank accordingly.
+        # until the enhanced run writes it, so even a healthy project was told
+        # its paid run was BLOCKED. The scorer now reports that state as
+        # advisory, and the guidance says where that holds and what it does not
+        # mean - in run-safety.md, which owns the closing gate, because the
+        # scorer cannot distinguish a document withheld before the search from
+        # one a failed search never produced.
         #
-        # Honest accounting, because an earlier version of this comment got it
-        # wrong: RESIDENT does move, by 145 bytes (61_129 -> 61_274), leaving
-        # 226 of headroom against the 371 this file elsewhere calls the smallest
-        # that still makes the next raise a choice. That is a real reduction and
-        # it is disclosed rather than absorbed. TOTAL grows 449 to 228_856.
-        budget = 228_900
+        # Both numbers are stated, because an earlier revision of this comment
+        # disclosed only one of them. Measured on this branch: RESIDENT 61_353
+        # (+224 over the 61_129 base, see its own raise above), TOTAL 229_649
+        # (+1_242). run-safety.md carries most of that - the closing-gate
+        # reading of an advisory agent cap - and glossary.md gives some back by
+        # de-duplicating the restatement its "settings document" entry already
+        # carried.
+        #
+        # 230_250 and not the next 250 above the measurement: 229_750 would
+        # leave 101 bytes, and an earlier revision of this branch shipped 44 -
+        # below even the 23 this file criticises above, and undisclosed. Other
+        # PRs are open against this same budget and each measures its own
+        # increment against the base it branched from, so a ceiling this tight
+        # is one that the NEXT merge trips rather than a choice anyone made.
+        # 601 bytes, deliberately over the 371 floor named above.
+        budget = 230_250
         self.assertLess(
             total,
             budget,

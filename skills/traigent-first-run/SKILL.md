@@ -377,10 +377,11 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `agent-no-varying-knobs` before the enhanced search is an advisory ceiling, not a
-repair to route: the search writes the document that lifts it. After any repair or substitute creation, re-run the affected checks, the
-applicable calibration, and the score, then update the latest recorded result without overwriting
-the opening one.
+create or select. `agent-no-varying-knobs` is an advisory ceiling, never a repair to route: before
+the enhanced run there is no document to score, and afterwards a missing one is that run's own
+outcome to report, not a defect in the project. After any repair or substitute creation, re-run the
+affected checks, the applicable calibration, and the score, then update the latest recorded result
+without overwriting the opening one.
 
 ### 5. Prepare the environment and finish free checks
 

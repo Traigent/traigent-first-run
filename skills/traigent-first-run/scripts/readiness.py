@@ -1648,12 +1648,26 @@ NOTHING_WIRED_CAP = Cap(
     "nothing to search.",
 )
 
+# Deliberately tense-neutral, and it took two drafts to get there. The first
+# said "has reached this score YET" and "the enhanced search WRITES that
+# document" - a claim that the search has not happened. This scorer cannot know
+# that: it reads a preflight file, a calibration file and a config-space file,
+# and those look identical at the opening gate and at the close. The guide
+# passes `--config-space` at the close only when the search emitted one, so a
+# stopped, failed, or zero-trial search lands here too - and there the future
+# tense is simply false. What IS true in both places is the mechanism: no
+# document was provided, and the enhanced run is what produces one. The reader
+# who has just watched their search fail is told that by the run's own outcome
+# report, not by this line.
+#
+# "provided", to match the pillar evidence beside it - two spellings of one
+# fact, fourteen lines apart, read as two findings.
 NOT_YET_MEASURED_CAP = Cap(
     "agent-no-varying-knobs",
     45,
-    "No settings document has reached this score yet, so the settings the "
-    "search will vary cannot be credited. The enhanced search writes that "
-    "document; the score is bounded until it does.",
+    "No settings document was provided to this score, so the settings a search "
+    "would vary cannot be counted. The enhanced run writes that document when "
+    "it completes; nothing in your project needs repairing for this.",
     blocks=False,
 )
 
@@ -1738,6 +1752,19 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # minimum over all caps whatever their `blocks`, so the score stays
         # capped at 45 until wiring evidence exists. Only the claim that the run
         # is stopped goes away.
+        #
+        # The condition is "no document was supplied", which is WIDER than the
+        # argument above - that argument is about the opening gate, and this
+        # branch is also reached at the close by a stopped, failed, or zero-trial
+        # search, which emits no document either (`references/run-safety.md`,
+        # config-space document). Narrowing it would need a fact naming the
+        # phase, and this module has none: preflight, calibration and
+        # config-space are the whole input and all three look the same at both
+        # gates. Rather than infer one, the two artifacts that CAN tell the
+        # difference carry it - the cap's reason says nothing that is false
+        # after a failed search, and run-safety.md tells the assistant that at
+        # the close this cap's silence is not a verdict on the search, whose
+        # outcome is reported from the run itself.
         cap = NOTHING_WIRED_CAP if facts.config_space_supplied else NOT_YET_MEASURED_CAP
         return nothing_to_search_pillar(evidence), [cap], []
 
@@ -2294,9 +2321,20 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # already names each cap by its internal condition id, and the card
         # deliberately does not - the guide keeps that vocabulary out of
         # user-facing lines. Both are machine-readable artifacts here.
-        return (
-            f"- **{cap.condition}** ({effect}, fix: `{cap.action_kind}`): {cap.reason}"
-        )
+        #
+        # Only for a cap that blocks, though. `action_kind` is keyed by
+        # CONDITION, so all three `agent-no-varying-knobs` sites share
+        # `vary-knobs` - and printing "fix: `vary-knobs`" under "What limits how
+        # high this can score" hands a perfect project a repair for a defect it
+        # does not have, in the durable artifact, which is the exact line this
+        # change set out to stop showing. `dataset-coarse-resolution` had the
+        # same shape ("fix: `get-data`" for a healthy 15-row set), so both are
+        # fixed here rather than one: it is one rule, not two instances.
+        # `--json` still carries `action_kind` on every cap for consumers that
+        # want it; what goes away is the word "fix" over a state that is not
+        # broken.
+        remedy = f", fix: `{cap.action_kind}`" if cap.blocks else ""
+        return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
         lines.extend(["## What is blocking a trustworthy result", ""])

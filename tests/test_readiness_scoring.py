@@ -2135,6 +2135,173 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         # And the ceiling still binds even though it does not block.
         self.assertEqual(coarse.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
 
+    def test_an_absent_settings_document_bounds_the_score_without_blocking(
+        self,
+    ) -> None:
+        """The one cap that fires on every run must not stop every run.
+
+        The guide deliberately withholds any config-space document found before
+        this run's search, so `agent-no-varying-knobs` fires on the opening card
+        of every project including a perfect one. While it blocked, that card
+        read `45/100 PARTIAL (PAID RUN BLOCKED)` with `recommended_action:
+        vary-knobs` - a repair for a defect the user does not have - on the last
+        screen shown before they are asked to pay.
+
+        Shaped after `test_a_ceiling_that_only_bounds_a_claim_does_not_block_the
+        _run` above, and asserting the same three things end to end: the cap's
+        own `blocks`, the `status` it produces, and the `recommended_action`
+        that follows. Asserting the reason string alone would have passed
+        against the whole scorer change reverted, since the wording moved in the
+        same commit.
+        """
+
+        def scored(facts: MODULE.AgentFacts) -> tuple:
+            # The other two pillars are scored high on purpose: with the agent
+            # pillar alone the weighted average is 0 and the ceiling is not the
+            # operative limit, so "capped at 45" would prove nothing. This is
+            # the healthy project the defect was reported against.
+            agent, caps, knobs = MODULE.score_agent(facts)
+            pillars = [agent] + [
+                MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+                for name in ("dataset", "evaluation")
+            ]
+            return caps, MODULE.aggregate(
+                pillars, caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        # No document reached the scorer - the ordinary opening state.
+        caps, score = scored(MODULE.AgentFacts())
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertFalse(caps[0].blocks)
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, MODULE.PROCEED)
+        # Advisory is not free: the ceiling is unchanged and it IS the score,
+        # holding a 71-point average down to 45.
+        self.assertEqual(caps[0].ceiling, 45)
+        self.assertEqual(score.weighted_average, 71)
+        self.assertEqual(score.overall, 45)
+
+        # A document that was supplied and lists nothing IS a defect: the user
+        # handed over their wiring and there is nothing in it.
+        caps, score = scored(MODULE.AgentFacts(config_space_supplied=True))
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertTrue(caps[0].blocks)
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "vary-knobs")
+
+    def test_every_other_no_knob_state_still_blocks_the_run(self) -> None:
+        """Only the absent document was reclassified - the other three were not.
+
+        Each of these is a statement about a document the user actually
+        supplied, so each is a real defect with a real repair. Pinned together
+        because widening the advisory branch by one condition is the cheapest
+        way to break this, and nothing else would notice.
+        """
+        for label, facts in (
+            (
+                "supplied but empty",
+                MODULE.AgentFacts(config_space_supplied=True),
+            ),
+            (
+                "declared knobs, no 'wired' list",
+                MODULE.AgentFacts(
+                    knobs={"temperature": [0.0, 1.0]}, config_space_supplied=True
+                ),
+            ),
+            (
+                "declared knobs, explicitly nothing wired",
+                MODULE.AgentFacts(
+                    knobs={"temperature": [0.0, 1.0]},
+                    wired=(),
+                    config_space_supplied=True,
+                ),
+            ),
+            (
+                "wired knobs that cannot vary",
+                MODULE.AgentFacts(
+                    knobs={"temperature": [0.0]},
+                    wired=("temperature",),
+                    config_space_supplied=True,
+                ),
+            ),
+        ):
+            with self.subTest(state=label):
+                pillar, caps, knobs = MODULE.score_agent(facts)
+                blocking = [cap for cap in caps if cap.blocks]
+                self.assertEqual(
+                    [cap.condition for cap in blocking], ["agent-no-varying-knobs"]
+                )
+                score = MODULE.aggregate(
+                    [pillar], caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
+                )
+                self.assertEqual(score.status, "BLOCKED")
+                self.assertEqual(score.recommended_action, "vary-knobs")
+
+    def test_an_advisory_cap_is_not_filed_as_a_repair_in_the_report(self) -> None:
+        """The durable report may not hand a healthy project a fix to make.
+
+        `action_kind` is keyed by CONDITION, so every `agent-no-varying-knobs`
+        site shares `vary-knobs` whether or not it blocks - and the markdown
+        printed "fix: `vary-knobs`" under "What limits how high this can score"
+        for a project with nothing wrong, which is the line this change set out
+        to stop showing. `dataset-coarse-resolution` had the same shape, so the
+        rule is asserted over both rather than over the new cap alone.
+
+        `--json` is unaffected on purpose: `action_kind` is a stable identifier
+        for a machine, and the word "fix" is what a human reads.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        for cap in (MODULE.NOT_YET_MEASURED_CAP, MODULE.power_ceiling(15)):
+            with self.subTest(cap=cap.condition):
+                self.assertFalse(cap.blocks)
+                report = MODULE.render_markdown(
+                    MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
+                )
+                self.assertIn(cap.condition, report)
+                self.assertNotIn("fix: `", report)
+        # A cap that really does block still names its repair there.
+        blocking = MODULE.render_markdown(
+            MODULE.aggregate(
+                pillars, [MODULE.NOTHING_WIRED_CAP], (), dict(MODULE.DEFAULT_WEIGHTS)
+            )
+        )
+        self.assertIn("fix: `vary-knobs`", blocking)
+
+    def test_a_cap_reason_uses_the_term_the_glossary_defines(self) -> None:
+        """A cap reason is a card line, and its vocabulary went unchecked.
+
+        `test_the_glossary_explains_every_line_the_card_prints` enforces only
+        `CHECK_DISPLAY_NAMES`, so cap prose slipped past it: a reason said
+        "enhanced search" where the glossary's headword is "Baseline run vs
+        enhanced run", leaving the assistant nothing to answer with for a phrase
+        the user had just read off their card.
+
+        Narrow on purpose, and says so: it covers the module-level caps and the
+        one pair of spellings that actually drifted, not every noun a reason can
+        contain. A checker that claimed more than it checks would be the same
+        defect one layer up.
+        """
+        glossary = (
+            Path(MODULE.__file__).parents[1] / "references" / "glossary.md"
+        ).read_text(encoding="utf-8")
+        flat = " ".join(glossary.split())
+        self.assertIn("enhanced run", flat)
+        caps = [
+            value for value in vars(MODULE).values() if isinstance(value, MODULE.Cap)
+        ]
+        self.assertTrue(caps, "no module-level caps found, so nothing was checked")
+        for cap in caps:
+            with self.subTest(cap=cap.condition, reason=cap.reason):
+                self.assertNotIn(
+                    "enhanced search",
+                    cap.reason,
+                    "the glossary defines 'enhanced run'; a card line using "
+                    "another spelling has no entry to answer from",
+                )
+
     def test_status_is_blocked_only_by_a_blocking_cap(self) -> None:
         pillar = MODULE.Pillar(name="dataset", score=90, confidence=1.0, subscores=())
         soft = MODULE.Cap("dataset-coarse-resolution", 89, "bounded", blocks=False)
@@ -2199,9 +2366,13 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         what a real blocked card carries.
 
         `overall` is the lowest of every ceiling and the weighted average, so
-        the advisory 89 - the only `blocks=False` ceiling in the module, and
-        higher than all twelve others - can never be the limit on a card that
-        also carries a blocking cap. It was printed there as `LIMITED TO 89`,
+        the advisory 89 - the highest ceiling in the module - can never be the
+        limit on a card that also carries a blocking cap. (It is no longer the
+        only advisory one: `agent-no-varying-knobs` is advisory too when no
+        settings document was provided, at a ceiling of 45. That one CAN be the
+        binding ceiling, which is why the argument here rests on 89 being the
+        highest rather than on it being the only.) It was printed there as
+        `LIMITED TO 89`,
         which README.md glosses as "nothing is wrong with your setup", directly
         under a line saying something was.
         """
