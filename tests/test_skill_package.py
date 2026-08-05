@@ -1767,12 +1767,11 @@ class SkillPackageTests(unittest.TestCase):
             "tracked spend, or conservative deduction",
             "remaining total ceiling",
             "partial/final result",
-            # Both frontiers are recorded, and the free one is recorded even
-            # when no paid run follows: it is a result the user was given, and
-            # after the fact this record is the only place it survives.
-            "accuracy-cost frontiers - the free `$0` one over the completed "
-            "enhanced trials",
-            "if a second enhanced run was offered",
+            # Each run's frontier is recorded: it is a result the user was
+            # given, and after the fact this record is the only place it
+            # survives.
+            "accuracy-cost frontier for each run - its points, the recommended "
+            "one, and the score claim with paired outcome counts",
         ):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -4163,66 +4162,6 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
 
-    def test_the_second_enhanced_run_stays_optional_and_earned(self) -> None:
-        """A second paid run has to be earned by the first one's evidence.
-
-        SKILL.md already forbids a mandatory third pass and allows another
-        iteration only after a specific hypothesis. This run is that rule
-        instantiated, so the two have to keep agreeing: it names its
-        hypothesis, defers the gate, and stays out of the default run.
-        """
-        skill = " ".join(SKILL.read_text().casefold().split())
-        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
-
-        # anchors first, and not inside a subTest: the ordering check below
-        # indexes into these, so an absent anchor should name itself rather
-        # than surface as a ValueError from `.index`
-        self.assertIn("#### optional second enhanced run", skill)
-        self.assertIn("do not require a third optimization pass", skill)
-        self.assertIn("## optional second enhanced run", safety)
-        self.assertIn("## optional second enhanced run", sdk)
-
-        for phrase in (
-            "recommend another iteration only after the first result reveals a "
-            "specific, worthwhile hypothesis",
-            "it stays optional",
-            "is not part of the default run",
-            "never proceeds on the earlier approval",
-        ):
-            with self.subTest(skill_phrase=phrase):
-                self.assertIn(phrase, skill)
-
-        # the entry point still promises no mandatory extra pass, and states no
-        # rule about this run that SKILL.md does not own
-        self.assertIn(
-            "do not add an offline baseline rerun or a mandatory third", guide
-        )
-        self.assertNotIn("second enhanced run", guide)
-
-        # the ordering is the point: the run is named after the no-third-pass
-        # rule it instantiates, never before it
-        self.assertLess(
-            skill.index("do not require a third optimization pass"),
-            skill.index("#### optional second enhanced run"),
-        )
-
-        # ...and the three documents claim three different jobs. A reader
-        # following any one of these sentences has to arrive somewhere that
-        # actually holds the answer.
-        self.assertIn(
-            "`references/run-safety.md` owns when it is offered and what it may "
-            "claim; `references/sdk-execution.md` owns how its space is built",
-            skill,
-        )
-        self.assertIn("`references/sdk-execution.md` owns the mechanics", safety)
-        self.assertIn(
-            "`references/run-safety.md` owns whether this run is offered and "
-            "what its frontier may claim",
-            sdk,
-        )
-
     def test_the_result_is_a_frontier_and_not_a_one_sided_saving(self) -> None:
         """The shape of the claim, and the shape it may not slide back into.
 
@@ -4251,8 +4190,19 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("a frontier asserts no win", safety)
         # the floor is a number the run reads, defined once, where the run that
         # reads it can find it
-        self.assertIn("the floor stage 7 sets is a number this run reads", safety)
+        self.assertIn("the floor is a number this run reads", safety)
         self.assertIn("def frontier_at_or_above(", SDK_EXECUTION.read_text())
+
+        # It is not a stage and buys nothing: arithmetic over trials both runs
+        # already paid for, which is also why there is no third run to gate,
+        # approve, or offer.
+        self.assertIn(
+            "it costs nothing - it is arithmetic over trials already paid for", skill
+        )
+        self.assertIn(
+            "it costs nothing and adds no stage - both runs priced every trial they completed",
+            safety,
+        )
 
         # No percentage threshold anywhere in the sections that decide this
         # run's outcome. `run-safety.md:686` asserted run-to-run token variance
@@ -4260,68 +4210,107 @@ class SkillPackageTests(unittest.TestCase):
         # this round is most likely to find"; neither was measured, and both
         # existed only to defend a one-sided claim. A number reappearing here
         # is the framing sliding back, not a detail.
-        for name, document, heading in (
-            ("SKILL.md", skill, "#### optional second enhanced run"),
-            ("run-safety.md", safety, "## optional second enhanced run"),
+        for name, document, start, end in (
+            (
+                "SKILL.md",
+                skill,
+                "report each measurement as a **pareto frontier over accuracy and cost**",
+                "### 8. verify and report",
+            ),
+            (
+                "run-safety.md",
+                safety,
+                "### the accuracy-cost frontier",
+                "## post-run verification",
+            ),
         ):
-            section = document.split(heading, 1)[1].split("\n## ", 1)[0]
-            section = section.split("### 8. verify and report", 1)[0]
-            section = section.split("## post-run verification", 1)[0]
+            self.assertIn(start, document)
+            section = document.split(start, 1)[1].split(end, 1)[0]
             with self.subTest(document=name):
                 self.assertEqual(
                     re.findall(r"\d+(?:\.\d+)?\s?%", section),
                     [],
-                    f"{name}'s second-run section states a percentage "
+                    f"{name}'s frontier section states a percentage "
                     "threshold. A frontier asserts no win and needs no bar; a "
                     "number here means the one-sided framing came back, and "
                     "the two it replaced were both unmeasured",
                 )
 
-    def test_the_gate_reads_measurement_not_a_readiness_band(self) -> None:
-        """What earns the run is what the first comparison measured.
+    def test_the_frontier_is_read_from_both_runs_and_costs_nothing(self) -> None:
+        """Two paid runs, and each reports its own frontier for free.
 
-        Two of these are the conditions a hurried run would skip: an
-        untracked-cost path cannot produce a cost claim at all, and the free
-        `$0` frontier over finished trials is both the user's own evidence and
-        the gate's, so it is read before anything is offered.
+        The round this replaced was a third paid stage with a gate, an
+        approval, and an offer, to answer a question the trials already bought
+        can answer: the baseline grid prices six configurations and the
+        enhanced search prices up to twelve, so accuracy against cost is
+        arithmetic either way. The cost-bearing controls therefore have to be
+        varied inside run 2, which for a prepared baseline the shared model
+        list above already does.
+
+        The frontier informs the close; it does not become the close. A menu
+        offered instead of a recommendation is the failure this stage already
+        names, and a frontier is exactly the shape that would do it.
         """
+        skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        section = safety.split("## optional second enhanced run", 1)[1].split(
-            "## post-run verification", 1
-        )[0]
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
-        for phrase in (
-            "### the free frontier comes first",
-            "read it before offering anything and report what it returns either way",
-            "**cost was not tracked.**",
-            "**the route genuinely costs nothing.**",
-            "### gate",
-            "agent, dataset, and evaluator are all `✅` real",
-            "the free frontier holds something besides the incumbent",
-            "the remaining total ceiling covers the run's estimate",
-            "a readiness band is not the gate",
+        # There is no third run to name, in any of the four documents a reader
+        # could reach.
+        for name, document in (
+            ("SKILL.md", skill),
+            ("run-safety.md", safety),
+            ("sdk-execution.md", sdk),
+            ("GUIDE.md", " ".join((ROOT / "GUIDE.md").read_text().casefold().split())),
         ):
-            with self.subTest(gate_phrase=phrase):
-                self.assertIn(phrase, section)
+            with self.subTest(document=name):
+                self.assertNotIn("second enhanced run", document)
+        self.assertIn("do not require a third optimization pass", skill)
+        self.assertIn("this is the last run", skill)
 
-        # the free read comes before the gate that consumes it
-        self.assertLess(
-            section.index("### the free frontier comes first"),
-            section.index("### gate"),
-        )
-
-        # The old gate justified a 25% spread threshold "across a model ladder
-        # whose rungs differ in cost by multiples" while sdk-execution.md
-        # applies that ladder only when the assistant prepares a missing
-        # baseline - which the gate's own `✅`-real condition excludes. The
-        # replacement reads the free frontier instead, so neither the number
-        # nor the justification may come back.
-        self.assertNotIn("a quarter", section)
-        self.assertNotIn("model ladder", section)
+        # The baseline reports one too, over the six trials it just paid for.
         self.assertIn(
-            "this section applies only when the assistant prepares a missing baseline",
-            " ".join(SDK_EXECUTION.read_text().casefold().split()),
+            "show this grid's own accuracy-cost frontier beside the winner, read "
+            "from the trials it just paid for",
+            skill,
         )
+        # ...and the enhanced run is where the cost-bearing controls live,
+        # because there is nowhere later for them to go.
+        self.assertIn(
+            "the controls that carry cost are varied here or not at all", skill
+        )
+        # One function, both reads - not a second implementation.
+        self.assertIn(
+            "the same function reads the baseline grid's finished trials and the "
+            "enhanced search's, so one function serves both",
+            sdk,
+        )
+
+        # Placement: details layer, never in place of the recommendation.
+        self.assertIn("each run's accuracy-cost frontier, in the details layer", skill)
+        self.assertIn(
+            "a frontier put where the recommendation belongs is the menu this "
+            "stage already refuses",
+            skill,
+        )
+        self.assertIn(
+            "a menu offered *instead of* a recommendation is the same as no "
+            "recommendation",
+            SKILL.read_text().casefold(),
+        )
+
+        # A cheaper point is a hypothesis for the handoff, not a settled
+        # finding - pointed at the rule that already says so rather than
+        # restated beside it.
+        self.assertIn(
+            "what a frontier this size supports is a hypothesis worth testing at "
+            "full scale",
+            safety,
+        )
+        self.assertIn(
+            "under the rule the continuation handoff below already states", safety
+        )
+        self.assertIn("it does not earn another paid round here", safety)
 
     def test_the_null_outcome_is_a_reported_finding(self) -> None:
         """The copy for "nothing beat what you already run" is the customer's.
@@ -4355,7 +4344,7 @@ class SkillPackageTests(unittest.TestCase):
         # the forward half points at an action, never at a result a further run
         # would return - that promise is the universal claim in another aim
         self.assertIn("it points at an action and never at a result", safety)
-        self.assertIn("do not answer it with a third run by default", safety)
+        self.assertIn("do not answer it with another paid run by default", safety)
 
         # the winning outcome carries evidence rather than a hardcoded verdict:
         # the score sentence is filled from the paired counts, not asserted
@@ -4372,44 +4361,6 @@ class SkillPackageTests(unittest.TestCase):
             "score held",
             safety,
         )
-
-    def test_the_second_run_s_winner_takes_the_first_winner_s_closing_path(
-        self,
-    ) -> None:
-        """The reason this is a second enhanced run and not a third stage.
-
-        A separate stage recommends a configuration that never travels the
-        winner's own closing path, so whatever stage 8 requires of a winner -
-        verification, reporting, any later scoring an enhanced winner owes -
-        silently does not apply to the one the user is actually steered to.
-        Reusing the enhanced run makes that structural instead of remembered.
-        """
-        skill = " ".join(SKILL.read_text().casefold().split())
-
-        self.assertIn(
-            "that point replaces the first run's winner as the one this "
-            "walkthrough recommends and is an enhanced run's winner exactly as "
-            "it was, so every check stage 8 applies to the first winner applies "
-            "to this one instead",
-            skill,
-        )
-        # ...and the recommendation is one point of the reported frontier,
-        # chosen by a stated rule rather than left to taste
-        self.assertIn(
-            "the run's own reported winner when that floor admits it, otherwise "
-            "the cheapest point above the floor",
-            skill,
-        )
-        # the reuse is claimed on the machinery too, and the reference it
-        # points at says the same rather than restating any of it
-        self.assertIn(
-            "it reuses that stage's approval, run card, winner selection, and "
-            "closing report instead of adding machinery of its own",
-            skill,
-        )
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("nothing else is restated here", safety)
-        self.assertIn("the post-run verification list all reach it unchanged", safety)
 
 
 class FrontierAtOrAboveTests(unittest.TestCase):
@@ -4696,26 +4647,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
-            # The connected approval now pre-discloses that the run EXISTS, so
-            # the third ask is anticipated rather than cold. Disclosure is not
-            # approval, and the two are one sentence apart: said the other way
-            # round, the third gate collapses into the second and the run stops
-            # being optional while the guide still calls it optional.
-            "whether pre-disclosing the second run also approves it",
-            ("never proceeds on the earlier approval",),
+            # This branch first answered "where does cost exploration go?" with
+            # a third paid stage, then with an optional second enhanced run.
+            # Both are the same shape: a run after the run. Two paid
+            # measurements is the answer - the baseline grid and the enhanced
+            # search - and a cheaper configuration is one more point in the
+            # second one's space, not one more space. Everything the extra
+            # round existed to gate, approve, and offer disappears with it.
+            "how many paid runs the walkthrough performs",
+            ("do not require a third optimization pass",),
             (
-                "approving the optimization also approves the second run",
-                "the optimize approval covers the second enhanced run",
-                "no further approval is needed for the second enhanced run",
-            ),
-        ),
-        (
-            "whether the second run is part of the default run",
-            ("is not part of the default run",),
-            (
-                "the walkthrough always runs a second enhanced run",
-                "every first run finishes with a second enhanced run",
-                "run the second enhanced run after the comparison",
+                "optional second enhanced run",
+                "the second run's winner",
+                "second enhanced run",
+                "a third paid stage",
             ),
         ),
         (
@@ -5102,9 +5047,28 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Measured at 63_486 against the pre-restructure branch's 63_722, so
         # 63_750 - 264 bytes, inside the 228-339 the raises above settled on
         # and clear of the one-word-edit trip recorded three times.
+        #
+        # And it comes down a second time, further, because the run itself
+        # goes. There is no second enhanced run and no third stage: the
+        # walkthrough pays for the baseline grid and the enhanced search, and
+        # a cheaper configuration is one more point in the second one's space
+        # rather than one more space. Both runs already price every trial they
+        # complete, so the accuracy-cost frontier is arithmetic over evidence
+        # in hand - which is what the third stage was going to buy. What
+        # SKILL.md keeps is three things: that the cost-bearing controls are
+        # varied in run 2 because there is nowhere later for them to go, that
+        # each run reports a frontier and its floor, and that the frontier sits
+        # in the details layer so it cannot become the menu this stage already
+        # refuses. The ordering clause, the optionality, the deferred gate, the
+        # separate approval, and the winner-replacement sentence all go with
+        # the run they described.
+        #
+        # Measured at 62_443 - 1_043 below the ceiling this branch had, and
+        # 1_314 above trunk. So 62_750, and 307 bytes on the same reasoning as
+        # every entry above.
         self.assertLess(
             resident,
-            63_750,
+            62_750,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5490,7 +5454,31 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # times. It is still 13_368 below where the pre-restructure branch had
         # this number, and the next edit here should have to argue for its
         # bytes rather than find them waiting.
-        budget = 244_000
+        #
+        # It then falls again, and by more, because the second run goes too.
+        # Two paid measurements is the whole shape: the baseline grid and the
+        # enhanced search. Everything that existed only because a third run
+        # existed goes with it - the gate and its five conditions, the separate
+        # approval, the offer-once rule, the seed and the second space, the
+        # `warm_start_from` remnants, the post-run item that distinguished a
+        # second run's frontier from the free one, and the "replaces the first
+        # run's winner" sentence that would have handed the recommendation to a
+        # worse configuration.
+        #
+        # What is left is the part that was always free: both runs price every
+        # trial they complete, so the accuracy-cost frontier over each is
+        # arithmetic. One function reads both, which is why the baseline gets
+        # one at no cost - it was previously offered only a "Pareto note if
+        # cost and that metric trade off", which is a remark rather than the
+        # user's own measured evidence. run-safety.md keeps what a frontier may
+        # claim, the cost-noise caveat, the two measured-cost failure modes,
+        # and both outcome quotes; the cheaper point it can find travels to the
+        # close as a hypothesis under the handoff rule that document already
+        # states, rather than as a paid round pretending to have settled it.
+        #
+        # Measured at 238_663 - 4_934 below the ceiling above, and 10_256 above
+        # trunk's 228_407. So 239_000, and 337 bytes, inside the band.
+        budget = 239_000
         self.assertLess(
             total,
             budget,

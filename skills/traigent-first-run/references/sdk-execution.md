@@ -10,8 +10,7 @@ Use this reference after component creation and before writing the run wrapper.
 4. Decorator contract
 5. Small baseline sweep
 6. Broader optimization
-7. Optional second enhanced run
-8. Result checks
+7. Result checks
 
 ## Capability discovery
 
@@ -931,32 +930,11 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Optional second enhanced run
-
-`references/run-safety.md` owns whether this run is offered and what its frontier may claim. This
-section owns how it is built and read. It is the enhanced search above run a second time, so
-everything under "Broader optimization" applies unchanged - the same `optimize_sync` call on
-`algorithm="auto"`, the same trial cap and cost ceiling, the same freeze/unlink/write lifecycle for
-its own config-space document, and the same persistence and portal link.
-
-**The second space.** Put the first run's winning configuration into it as one of its value
-combinations, so the search can actually return that point: it is the run's seed and its
-re-measurement is the fluke check, obtained without spending a trial on a deliberate repeat. Build
-the rest around it - cheaper and dearer values of the controls the winner already uses, and the
-model tier, which is usually the knob carrying most of the cost. A model the first comparison never
-measured changes the experiment, so it is the separately disclosed and approved model comparison
-the sections above require, and this run's own approval is where it is disclosed. Keep the space
-larger than the trial cap, keep every knob one the agent consumes, and re-run the wiring probe
-above against the new space. Do not reach for `default_config`: the warning above still applies,
-and it can consume a trial slot.
-
-`traigent.utils.importance` and the optimization-insights read may inform which knobs to vary. They
-are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
-undersampled.
+## Result checks
 
 **Read the frontier by hand, on the metric the run actually declared.** The same function reads the
-first run's finished trials for the free `$0` frontier and the second run's own trials for its
-result. It is arithmetic over artifacts already in hand, so one function serves both:
+baseline grid's finished trials and the enhanced search's, so one function serves both. It is
+arithmetic over artifacts already in hand and makes no provider call:
 
 ```python
 def frontier_at_or_above(trials, metric_name, floor):
@@ -1014,12 +992,10 @@ The incumbent is a point like any other and is reported as one: keeping what you
 choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
 must itself carry a reported, positive cost: a `0.0` produced by unknown model pricing is
 indistinguishable in the metrics map from a genuine free route, and `references/run-safety.md`
-makes measured cost a precondition for both reads.
+makes measured cost a precondition for the read.
 
-Do not pass `strategy=` or `strategy_params` on this run: its frontier is the function above and
+Do not pass `strategy=` or `strategy_params` to obtain this: the frontier is the function above and
 nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
-
-## Result checks
 
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,

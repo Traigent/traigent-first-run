@@ -9,9 +9,8 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 3. Approval and budgets
 4. Connected-run readiness
 5. Baseline and optimization
-6. Optional second enhanced run
-7. Post-run verification
-8. Recovery
+6. Post-run verification
+7. Recovery
 
 ## Environment and privacy
 
@@ -648,64 +647,30 @@ not sweep low `max_tokens` values in any space that contains a reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
-## Optional second enhanced run
+### The accuracy-cost frontier
 
-SKILL stage 7 states that this run is optional, that it is reported as an accuracy-cost frontier,
-and that no frontier point may sit below the score the user is already getting. Owned here: when it
-is offered, what the frontier may claim, and the wording of its two outcomes.
-`references/sdk-execution.md` owns the mechanics. Nothing else is restated here - it is an
-enhanced run, so the connected-stage preview and approval above, the single running total, the run
-card's ceiling-against-combination-count wording, the zero-LLM tracking probe, and the post-run
-verification list all reach it unchanged, over its own space, estimate, and the ceiling that
-remains. Declining is a normal answer and the first comparison is already a complete result; offer
-it once.
+SKILL stage 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
+owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
+and adds no stage - both runs priced every trial they completed, so this is arithmetic over trials
+already in hand. Report it whichever way it comes out.
 
-The floor stage 7 sets is a number this run reads rather than a judgement it makes: the incumbent's
-score on this run's own metric, the incumbent being the configuration the user is already running -
-the enhanced run's reported winner, and the point this run is seeded from.
-
-### The free frontier comes first
-
-The finished enhanced run already priced every trial it completed, so the accuracy-cost frontier
-over those trials costs `$0` to read: no provider call, arithmetic over returned trials.
-`references/sdk-execution.md` gives the function. Read it before offering anything and report what
-it returns either way - it is the user's own paid evidence handed back at no further cost.
+The floor is a number this run reads rather than a judgement it makes: the incumbent's score on
+this run's own metric, the incumbent being the configuration the user is already running.
 
 It needs measured cost to exist at all, and two runs fail that for opposite reasons the user is
 told apart:
 
 - **Cost was not tracked.** An unpriced trial is not a cheap trial, and a `0.0` standing in for
   pricing the run could not resolve is an absent cost wearing a number - indistinguishable in the
-  metrics map from a real one. Skip the frontier and the second run, and say so.
+  metrics map from a real one. Report no frontier, and say why.
 - **The route genuinely costs nothing.** A provider-reported `0.0` with nonzero token usage is a
   real measurement rather than a missing one, and a route with no cost has no trade-off to plot.
-  Skip both here too, naming this reason rather than the one above.
-
-### Gate
-
-Offer the second run only when all of these hold. When one does not, say which in one line and do
-not offer it: a run whose result could not honestly be claimed is not worth its money.
-
-- Agent, dataset, and evaluator are all `✅` real. A frontier measured over a `🛠️` substitute is a
-  fact about the substitute.
-- The enhanced run completed with a best configuration, portal tracking stayed green, and its trial
-  count met the disclosed plan or carries a concrete stop reason.
-- Cost was measured, not deducted - neither failure above applied to any phase of this run.
-- The free frontier holds something besides the incumbent. That is this task's own measured evidence
-  that accuracy and cost trade off across its configurations, which is the hypothesis a wider space
-  would test. A frontier of the incumbent alone says the trials in hand found no trade-off to widen
-  into: say that, and stop there.
-- The remaining total ceiling covers the run's estimate.
-
-A readiness band is not the gate. The band describes the components; this run's claim rests on what
-the first comparison measured, which is what the conditions above actually read.
-
-### What the frontier may claim
+  Say that instead, rather than the reason above.
 
 Each point is one configuration's measured cost beside its score on this run's own metric, over the
-same rows, evaluator, and agent call path as the first comparison. Dominated points are dropped - a
-configuration that cost more and scored no higher than another on the same evidence is not a
-trade-off anyone would take.
+same rows, evaluator, and agent call path as everything else it reports. Dominated points are
+dropped - a configuration that cost more and scored no higher than another on the same evidence is
+not a trade-off anyone would take.
 
 Cost is measured directly but not exactly: one configuration evaluated twice returns two different
 token counts, inside a single run as much as across two. Report each point's measured cost and let
@@ -715,14 +680,19 @@ A frontier asserts no win, so it needs no threshold to clear and states none. Wh
 the score claim `references/evaluation-and-dataset.md` decides from the paired counts rather than
 from the direction of two averages: default to directional - "no score difference was detected on
 these rows" - and say "the score did not get worse" only where a justified paired uncertainty
-analysis over the completed outputs supports it. Rows where the recommended point lost and the
+analysis over the completed outputs supports it. Rows where the cheaper point lost and the
 incumbent won are reported even when they are outnumbered, because failing to detect a drop on a
 first-run slice is not evidence there was none. A point reaching the frontier is not evidence its
 score held: several configurations are statistically indistinguishable at this size, so the one
 that matched the incumbent's number may simply have measured lucky. Never let "the optimizer picked
 it" stand in for evidence that the score held.
 
-### The two outcomes
+That bound is why a cheaper point is never sold as settled. What a frontier this size supports is a
+hypothesis worth testing at full scale - "a cheaper tier scored level with the winner on these
+rows" - so it travels to the close as one, under the rule the continuation handoff below already
+states. It does not earn another paid round here.
+
+#### The two outcomes
 
 Both are results. Neither is apologized for.
 
@@ -748,12 +718,12 @@ any claim about the space quantifies over configurations the run never reached.
 > search across your full dataset and your own controls is what the skills named at the close are
 > for.
 
-That is a measured answer to the question this run asked, and it is a service rather than a shrug:
-the user wanted to know whether a better trade-off was sitting there, and now they do instead of
+That is a measured answer to the question this run asked, and a service rather than a shrug: the
+user wanted to know whether a better trade-off was sitting there, and now they do instead of
 chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
 configurations the run did not test, and a bounded run tests few. That bound is the forward half,
 and it points at an action and never at a result: the handoff below names what a wider search would
-let the user *do*, never what it would find. Do not answer it with a third run by default.
+let the user *do*, never what it would find. Do not answer it with another paid run by default.
 
 ## Post-run verification
 
@@ -777,11 +747,9 @@ Before claiming success, verify:
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.
-13. Every reported frontier - the free `$0` one and any a second enhanced run produced - carries
-    measured costs, a score claim the paired counts support, and no point below the floor. A second
-    run had its own approval, its cost joined the same running total, and it reused the first
-    comparison's tuning rows, evaluator, and agent call path. Trials that came back without
-    reported cost carry no cost claim: report that, not a number.
+13. Every reported frontier carries measured costs, a score claim the paired counts support, and no
+    point below the floor. Trials that came back without reported cost carry no cost claim: report
+    that, not a number.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.

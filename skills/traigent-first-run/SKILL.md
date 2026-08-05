@@ -481,7 +481,17 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
    default; any new model is a separately disclosed experiment. The reference owns the
    generated-space mechanics that make the
-   comparison attributable to the managed search rather than a quiet model upgrade.
+   comparison attributable to the managed search rather than a quiet model upgrade. This is the
+   last run, so the controls that carry cost are varied here or not at all - which the shared model
+   list above already does for a prepared baseline, and which a user-owned single-model baseline
+   reaches through that same separate disclosure, never through another round.
+
+Report each measurement as a **Pareto frontier over accuracy and cost**, never as a single cheaper
+answer: a frontier carries the same score for less money and a higher score for the same money, and
+asserts neither. It costs nothing - it is arithmetic over trials already paid for. Never show a
+frontier point that scored below the configuration the user is already running.
+`references/run-safety.md` owns what a frontier may claim and the wording of its two outcomes;
+`references/sdk-execution.md` owns the read itself.
 
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
 one mid, and one strong tier one step below - never the vendor's newest flagship - with a reasoning
@@ -502,9 +512,12 @@ account request:
 - Start with the recorded target project and selected agent identity.
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration, the primary tuning metric by its actual name, cost, latency,
-  executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
-  cost or latency as `not measured` when the provider or SDK does not supply it.
+- Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
+  executed and failed trial counts. Report cost or latency as `not measured` when the provider or
+  SDK does not supply it.
+- Show this grid's own accuracy-cost frontier beside the winner, read from the trials it just
+  paid for. Six trials is a small frontier, and it is still the user's own measured evidence
+  rather than a note about whether the two happen to trade off.
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
@@ -529,10 +542,7 @@ calls. In the enhanced run card, repeat the baseline knobs, label every addition
 total combination count; pair that count with this run's trial cap as a ceiling, never a range: how
 many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
 that wording, both numbers' source, and what to say when the count cannot be computed. Disclose any
-reduction from that ceiling here rather than at the baseline approval. Say only that if the results
-show cost varying across configurations the assistant may offer one more bounded run of the same
-shape, separately priced and approved; do not front-load its gate or mechanics, and do not imply it
-will happen or that it would find anything. Never promise a pause at
+reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
 minute 30; size the synchronous run first.
 
 Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
@@ -584,30 +594,6 @@ row baseline; generate enough real controls for the six-configuration default.
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
 
-#### Optional second enhanced run
-
-The completed comparison can reveal one hypothesis worth naming here, and it is the only second
-round this guide defines: **the winner's score is available at a different price**. Cost reduction
-is another search rather than another kind of work, so this is the enhanced run repeated - seeded
-with the first run's winner, widened with the controls that carry cost including the model tier -
-and it reuses that stage's approval, run card, winner selection, and closing report instead of
-adding machinery of its own. `references/run-safety.md` owns when it is offered and what it may
-claim; `references/sdk-execution.md` owns how its space is built. It stays optional, is not part of
-the default run, and never proceeds on the earlier approval - it is the optional iteration the rule
-above allows, never the mandatory extra pass it refuses.
-
-Report it as a **Pareto frontier over accuracy and cost**, never as a single cheaper answer: a
-frontier carries the same score for less money and a higher score for the same money, and asserts
-neither. Never show a frontier point that scored below the configuration the user is already
-running. One point on it is the recommendation - the run's own reported winner when that floor
-admits it, otherwise the cheapest point above the floor. That point replaces the first run's winner
-as the one this walkthrough recommends and is an enhanced run's winner exactly as it was, so every
-check stage 8 applies to the first winner applies to this one instead.
-
-A free `$0` frontier over the trials already paid for comes first and is reported whichever way
-this ends. Both outcomes reach stage 8, including a frontier whose only point is the configuration
-the user already runs, which is a measured answer rather than a failed run.
-
 ### 8. Verify and report
 
 Before saying the run succeeded, apply every post-run verification in
@@ -635,6 +621,8 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
+- Each run's accuracy-cost frontier, in the details layer. One recommendation still leads; a
+  frontier put where the recommendation belongs is the menu this stage already refuses.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
@@ -757,9 +745,8 @@ The first run is complete only when:
   occurred.
 - Free checks made no provider calls.
 - Each paid stage had explicit approval before its calls.
-- The free `$0` frontier ran before any second enhanced run was offered, and any such run was
-  separately approved against the remaining ceiling. Whichever produced it, the reported frontier
-  carried measured costs, score claims the paired counts support, and no point below the floor.
+- Each reported frontier carried measured costs, a score claim the paired counts support, and no
+  point below the floor.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were
