@@ -2639,7 +2639,8 @@ class SkillPackageTests(unittest.TestCase):
             "not registered, holding an access code still inside its 10 days",
             "not registered, with no usable access code",
             # The fifth was missing, and its absence was invisible because the
-            # taxonomy called itself exclusive on the wrong dimensions. The two
+            # account-state list called itself exclusive on the wrong
+            # dimensions. The two
             # windows are separate: a code lives 10 days so it can be spent on
             # registering, and registering opens 10 days of portal use. An
             # account and a valid key both look complete while the second window
@@ -4644,7 +4645,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Raised to the MEASURED merged figure by the access-code fix, per the
         # policy above: this is new contract surface with no prior statement,
         # not stage detail that could move to a reference. It buys three things
-        # run-safety.md alone can carry - the account state the taxonomy
+        # run-safety.md alone can carry - the account state the list of states
         # omitted (registered, key valid, portal period already spent), the only
         # destination a user holding no code may be given, and the instruction
         # to establish the period BEFORE the provider-paid baseline rather than
