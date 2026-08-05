@@ -1592,6 +1592,70 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+    def test_a_slow_calibration_is_disclosed_asked_about_once_and_run_detached(
+        self,
+    ) -> None:
+        """The three obligations a longer budget creates, none of them optional.
+
+        A budget that lets a minute-per-call evaluator finish is a wait the user
+        did not ask for, so it has to be disclosed before it starts; a timeout
+        after it is a question with five answers, asked once rather than five
+        times; and the wait now outlasts a foreground command, so calibration
+        gets the detached invocation this package already ships for a long paid
+        optimization. Guidance with no test is guidance one edit from gone.
+        """
+        reference = (
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        ).read_text()
+        normalized = " ".join(reference.casefold().split())
+
+        for phrase in (
+            # Disclosed before, not narrated after - and the estimate is derived
+            # from the probe calls rather than being a shrug.
+            "before the stage starts, say what it does and how long it may take",
+            "four probe calls per input/expected pair",
+            # One budget, so the quoted wait is the real one.
+            "`--timeout` is the whole wait rather than half of it",
+            # Asked once, with every option that applies.
+            "ask once - one question carrying every option that applies, never "
+            "one question per option",
+            "**wait**, if the evaluator is normally this slow",
+            "**take a named fix**, when the cause is certain",
+            "a deterministic comparison - an exact or normalized match against "
+            "the expected answer, no model call",
+            "**retry**, since a provider call that has stalled looks the same "
+            "from here",
+            "**build a new evaluation method** together",
+            # And named again at the close when it was avoidable and not fixed.
+            "name that fix in the readiness summary, and again at the close if "
+            "it was not taken",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+        # The detached invocation itself, not merely the word "detached": a
+        # calibration killed by a foreground timeout writes no `timed_out`
+        # record, so the one cap that tells slow from broken cannot fire.
+        self.assertIn("nohup ", reference)
+        self.assertIn("2> traigent-runs/calibration.log &", reference)
+        self.assertIn(
+            "a calibration killed from outside writes no result at all",
+            normalized,
+        )
+
+        # SKILL.md owns the closing repetition, because the closing stage loads
+        # run-safety.md and that reference does not own calibration.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "name any avoidable cause of the slowness in the readiness summary "
+            "and again at the close if it was not fixed",
+            skill,
+        )
+        self.assertIn(
+            "before calibration starts, say what it does and how long it may take",
+            skill,
+        )
+
     def test_exception_probe_advisory_routes_to_real_error_path_review(self) -> None:
         """The mechanical probe is evidence to inspect, never a diagnosis."""
         text = " ".join(
@@ -1613,7 +1677,7 @@ class SkillPackageTests(unittest.TestCase):
             "never changes the authored probes' pass by itself",
             "each deterministic supplemental attempt gets a fresh child",
             "isolating process-local scorer and dependency state",
-            "one additional `--timeout` budget",
+            "shares the single `--timeout` budget",
             "read `supplemental_probe_advisory` as unavailable evidence",
             "it never changes authored pass",
             "do not count an unavailable probe as distinguished",
@@ -4533,9 +4597,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
+        #
+        # The calibration-timeout fix moves SKILL.md by 360 bytes, measured, to
+        # 61_489 - which would leave 11 bytes under 61_500 and reintroduce
+        # exactly the tripwire the paragraph above rejected. Two mandates are
+        # bought, and only SKILL.md can carry either: what the assistant says
+        # before a stage that can take minutes, and that an avoidable cause of
+        # the slowness is named again at the close. The second is here rather
+        # than in a reference because the closing stage routes through
+        # run-safety.md, which does not own calibration and never repeated the
+        # obligation - so the rule existed in the evaluation reference and was
+        # unreachable from the stage that had to apply it. The depth stayed in
+        # evaluation-and-dataset.md. 61_900 is the measured 61_489 plus that
+        # 371-byte headroom, rounded up to the next 50.
         self.assertLess(
             resident,
-            61_500,
+            61_900,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4622,16 +4699,27 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        # Raised by the calibration-timeout fix. Two things bought, both new
+        # Raised by the calibration-timeout fix. Three things bought, all new
         # contract surface with no prior statement: what the assistant tells the
-        # user before a stage that can take minutes, and what it does when that
+        # user before a stage that can take minutes; what it does when that
         # stage times out - previously nothing, so a slow evaluator was reported
-        # as an unverifiable one and the run stopped there.
+        # as an unverifiable one and the run stopped there; and how to run a
+        # calibration whose honest budget now outlasts a foreground command,
+        # which is the detached invocation this package already ships for a long
+        # paid optimization and had never stated for calibration.
         #
         # The depth sits in the evaluation reference, which owns this stage, and
-        # SKILL.md took one sentence, so RESIDENT moves 213 bytes while TOTAL
-        # moves 953. Measured, not rounded.
-        budget = 229_704
+        # SKILL.md carries only the two mandates: RESIDENT moves 360 bytes and
+        # TOTAL moves 2_876, to 231_283. Both measured against 6316067 by
+        # summing the same files this test sums - the earlier figures here (213
+        # and 953) were neither: 953 was the budget raise this line was making,
+        # not the content it was making room for.
+        #
+        # 231_750 is that measured total plus the 371-byte headroom the RESIDENT
+        # paragraph above defines, rounded up to the next 250. The previous
+        # number left ONE byte, which makes the next open PR's first character
+        # the thing that fails the build.
+        budget = 231_750
         self.assertLess(
             total,
             budget,

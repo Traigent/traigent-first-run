@@ -205,7 +205,7 @@ The exact thresholds depend on the metric, but reject all of these:
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase may use one additional `--timeout` budget. Follow the
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. Follow the
 SKILL stage-4 gate for permitted paths; `run-safety.md` owns execution-evaluator containment.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
@@ -429,19 +429,47 @@ optimization look better.
 
 ## When calibration runs long
 
-Say what the stage does and roughly how long before it starts: it runs the user's evaluator over a
-few known-good and known-bad answers to prove it separates them. For a judge that is a model call
-per probe, so give a minute-scale estimate rather than silence. Finishing matters more than
-finishing fast - an evaluator nobody could measure makes every later number unverifiable.
+Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
+over a few known-good and known-bad answers to prove it separates them, four probe calls per
+input/expected pair. Multiply those calls by what one call costs the evaluator and state the
+number - for a judge, a model call per probe, that is minutes rather than seconds. Finishing
+matters more than finishing fast: an evaluator nobody could measure makes every later number
+unverifiable.
+
+The script budgets itself the same way, per probe call rather than as one flat number, so a 3-5
+pair matrix leaves room for an evaluator taking about a minute per call. That one budget covers the
+authored probes and the supplemental ones together, so `--timeout` is the whole wait rather than
+half of it, and a calibration slow enough to spend it loses supplemental probes rather than
+extending the wait - which the `ADVISORY` line on stderr then names.
+
+That wait can outlast the point at which a foreground command is killed from outside (see
+`references/run-safety.md`), and a calibration killed from outside writes no result at all - not
+even the timeout record that makes a slow evaluator legible instead of broken. So run it detached
+and poll the log, the same way that reference already requires for a long paid optimization:
+
+```bash
+nohup "$TRAIGENT_FIRST_RUN_PYTHON" \
+  "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
+  --scorer traigent-runs/evaluator.py:task_score \
+  --cases @traigent-runs/calibration-cases.json \
+  --allow-execution \
+  --json > traigent-runs/calibration-results.json 2> traigent-runs/calibration.log &
+```
 
 If a specific avoidable cause is visible - a per-call sleep, a retry loop, an uncached model load -
 name that fix in the readiness summary, and again at the close if it was not taken.
 
-On a timeout do not call the evaluator broken. Ask once, offering only what applies: wait, because
-it is normally this slow; take a named fix, when the cause is certain; score with a different judge
-model or a deterministic comparison where the task allows one; retry, since a stuck vendor looks
-identical from here; or build a new evaluation method together. Ask once, not per option - repeated
-questions cost more attention than the wait they save.
+On a timeout do not call the evaluator broken; slow and broken look identical from here. Ask once -
+one question carrying every option that applies, never one question per option:
+
+- **Wait**, if the evaluator is normally this slow.
+- **Take a named fix**, when the cause is certain.
+- **Score it differently**: a different judge model, or a deterministic comparison - an exact or
+  normalized match against the expected answer, no model call - where the task allows one.
+- **Retry**, since a provider call that has stalled looks the same from here.
+- **Build a new evaluation method** together.
+
+Repeated questions cost more attention than the wait they save.
 
 ## First-run subset for a large dataset
 

@@ -25,43 +25,57 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Five minutes, not thirty seconds. The point of calibration is to learn whether
-# the user's evaluator can tell a right answer from a wrong one, and thirty
-# seconds answers that only for evaluators that were never in doubt. An
-# evaluator that takes a minute per pass - a local model, a heavy normalisation,
-# a network lookup - was being killed before it could report, and "we stopped
-# it" was then scored as "we could not verify it". Letting it finish is the
-# whole job; a slow evaluator is a cost signal, not a broken one.
+# One budget rule, both kinds, and it is derived from the work rather than
+# fixed. The point of calibration is to learn whether the user's evaluator can
+# tell a right answer from a wrong one, and an evaluator that takes about a
+# minute per call - a local model, a heavy normalisation, a network lookup - was
+# being killed before it could report, so "we stopped it" was scored as "we
+# could not verify it". Letting it finish is the whole job; a slow evaluator is
+# a cost signal, not a broken one.
 #
-# The judge budget below is separate and already derived from the probe count,
-# so this governs the deterministic path. Five minutes is long enough for any
-# evaluator a first run should be waiting on, and short enough to be a stop
-# rather than a hang - and the guide now says what the stage is doing and
-# roughly how long before it starts, so the wait is disclosed rather than silent.
-DEFAULT_TIMEOUT_SECONDS = 300
-# An LLM judge does not leave the process once - it makes four probe calls per
-# case, and a reasoning model can think for a minute or more on each. A
-# deterministic scorer's 30 seconds reported a *working* judge as timed out,
-# which is a false failure on the check whose whole job is telling a broken
-# evaluator from a slow one.
+# A flat number cannot do that, which is why it is gone. The work scales with
+# the case set: every case costs `PROBES_PER_CASE` calls and `--cases` requires
+# at least two cases, so a one-minute-per-call evaluator needs 480 seconds at
+# two cases, 720 at three, and 1200 at five. A flat 30 killed all three, and so
+# did a flat 300 - the same defect one order of magnitude later. Only a budget
+# that scales the way the work scales can tell slow from broken at every size
+# the guide actually asks for.
 #
-# So the judge budget is derived from the work rather than fixed: a generous
-# per-probe allowance times the probes actually being run. The floor keeps a
-# tiny case set from getting an unreasonably short budget; the ceiling is where
-# "slow" stops being a credible explanation and a hang is the likelier one, and
-# it also stops calibration from quietly eating the run's own time budget.
-LLM_JUDGE_SECONDS_PER_PROBE = 90
-LLM_JUDGE_TIMEOUT_FLOOR_SECONDS = 180
-LLM_JUDGE_TIMEOUT_CEILING_SECONDS = 600
+# Per-probe allowances. 75 seconds deterministic: the evaluator this exists for
+# takes about a minute per call, and 75 gives that a quarter of headroom instead
+# of landing exactly on it. 90 for a judge, which additionally pays network
+# latency and may be a reasoning model thinking for a minute or more per probe.
 PROBES_PER_CASE = 4
+DETERMINISTIC_SECONDS_PER_PROBE = 75
+LLM_JUDGE_SECONDS_PER_PROBE = 90
+# The ceiling is where "slow" stops being a credible explanation and a hang is
+# the likelier one, and it also stops calibration from quietly eating the run's
+# own time budget. 1800 is set from the largest case set the guide asks for -
+# three to five input/expected pairs - so a five-case matrix receives its full
+# per-probe allowance on both paths (20 x 75 = 1500, 20 x 90 = 1800) and is
+# never clamped below what `--help` promises it. The old 600 was: at the
+# two-case minimum a judge already wanted 720, so every documented judge run was
+# a flat 600 that could not cover the 90 seconds per probe it advertised. 1800
+# also still covers a one-minute-per-call evaluator out to seven cases; past
+# that, a first-run calibration matrix that large is itself the thing to
+# question.
+#
+# There is no floor. One lived here at 180 and could never bind - the smallest
+# possible case set is a single case, which is four probes, which is already 300
+# seconds - and an unreachable clamp reads as a protection that is not there.
+CALIBRATION_TIMEOUT_CEILING_SECONDS = 1800
+SECONDS_PER_PROBE = {
+    "deterministic": DETERMINISTIC_SECONDS_PER_PROBE,
+    "llm-judge": LLM_JUDGE_SECONDS_PER_PROBE,
+}
 
 
-def llm_judge_timeout_seconds(case_count: int) -> int:
-    """Budget an LLM-judge calibration from the number of probe calls it makes."""
+def calibration_timeout_seconds(case_count: int, kind: str) -> int:
+    """Budget a calibration from the number of probe calls it is about to make."""
     probes = max(1, case_count) * PROBES_PER_CASE
-    return max(
-        LLM_JUDGE_TIMEOUT_FLOOR_SECONDS,
-        min(LLM_JUDGE_TIMEOUT_CEILING_SECONDS, probes * LLM_JUDGE_SECONDS_PER_PROBE),
+    return min(
+        CALIBRATION_TIMEOUT_CEILING_SECONDS,
+        probes * SECONDS_PER_PROBE[kind],
     )
 
 
@@ -586,13 +600,13 @@ def parse_args() -> argparse.Namespace:
         type=positive_int,
         default=None,
         help=(
-            "seconds the authored calibration phase may take; deterministic "
-            "supplemental probes receive one separate total budget of the same "
-            "size, so worst-case wall time is roughly twice this value (default: "
-            f"{DEFAULT_TIMEOUT_SECONDS}); for --kind llm-judge, "
-            f"{LLM_JUDGE_SECONDS_PER_PROBE}s per probe call, "
-            f"{LLM_JUDGE_TIMEOUT_FLOOR_SECONDS}-"
-            f"{LLM_JUDGE_TIMEOUT_CEILING_SECONDS}s)"
+            "seconds the whole calibration may take: the authored phase and the "
+            "deterministic supplemental probes share this one total budget, so "
+            "this is the worst-case wall time and not half of it. The default is "
+            f"derived from the work - {PROBES_PER_CASE} probe calls per case at "
+            f"{DETERMINISTIC_SECONDS_PER_PROBE}s each, or "
+            f"{LLM_JUDGE_SECONDS_PER_PROBE}s each for --kind llm-judge, capped at "
+            f"{CALIBRATION_TIMEOUT_CEILING_SECONDS}s"
         ),
     )
     parser.add_argument("--json", action="store_true")
@@ -841,7 +855,7 @@ def run_supplemental_attempt(
     request: dict[str, Any],
     *,
     deadline: float,
-    phase_budget_seconds: int,
+    total_budget_seconds: int,
     environment: dict[str, str],
     cwd: Path,
 ) -> dict[str, Any]:
@@ -855,7 +869,8 @@ def run_supplemental_attempt(
     if remaining_seconds <= 0:
         return unavailable_supplemental_attempt(
             "budget-exhausted",
-            f"supplemental phase exhausted its {phase_budget_seconds}-second total budget",
+            f"the calibration's single {total_budget_seconds}-second total budget "
+            "was spent before this supplemental probe could run",
         )
     try:
         process = subprocess.run(
@@ -871,7 +886,8 @@ def run_supplemental_attempt(
         return unavailable_supplemental_attempt(
             "timeout",
             "supplemental worker exceeded the remaining "
-            f"{remaining_seconds:.3f} seconds of its phase budget",
+            f"{remaining_seconds:.3f} seconds of the calibration's "
+            f"{total_budget_seconds}-second total budget",
         )
     except (OSError, subprocess.SubprocessError) as error:
         return unavailable_supplemental_attempt(
@@ -934,13 +950,10 @@ def main() -> int:
         print(f"Invalid calibration cases: {error}", file=sys.stderr)
         return 2
     if args.timeout is None:
-        # Set here, not at parse time: the judge budget depends on how many
-        # probe calls the case set actually asks for.
-        args.timeout = (
-            llm_judge_timeout_seconds(len(cases))
-            if args.kind == "llm-judge"
-            else DEFAULT_TIMEOUT_SECONDS
-        )
+        # Set here, not at parse time: the budget depends on how many probe
+        # calls the case set actually asks for, which is not known until the
+        # cases are parsed.
+        args.timeout = calibration_timeout_seconds(len(cases), args.kind)
     try:
         thresholds = calibration_thresholds(args)
     except ValueError as error:
@@ -974,23 +987,43 @@ def main() -> int:
         allow_provider_access=args.kind == "llm-judge"
     )
     worker_cwd = Path(scorer_file).resolve().parent
+    # One deadline for the whole calibration, opened before the authored phase
+    # and shared with the supplemental probes below, so `--timeout` is the
+    # worst-case wall time rather than half of it. The supplemental phase used to
+    # open a second budget of the same size after the authored phase returned:
+    # "one timeout at five minutes" was two at ten, and `--help` disclosed that
+    # instead of fixing it. Advisory work still cannot consume the budget that
+    # decides calibration, because the authored phase runs first and takes what
+    # it needs; what changes is that it can no longer be handed a second one.
+    calibration_deadline = time.monotonic() + args.timeout
     try:
         process = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(authored_request),
             text=True,
             capture_output=True,
-            timeout=args.timeout,
+            timeout=max(0.0, calibration_deadline - time.monotonic()),
             env=worker_environment,
             cwd=worker_cwd,
         )
     except subprocess.TimeoutExpired:
+        # This line always reaches the assistant; the reference that owns the
+        # question may not be loaded when it does. So it states the whole
+        # question rather than two of its five answers - the previous wording
+        # named only a larger --timeout and a faster model, which invited a
+        # silent re-run at double the wait instead of one question to the person
+        # paying for it.
         message = (
-            f"Authored evaluator calibration exceeded {args.timeout} seconds. This does "
-            "not by itself mean the evaluator is broken - a reasoning judge can "
-            "legitimately take longer. Re-run with a larger --timeout, or "
-            "calibrate against a faster model, before concluding anything about "
-            "the evaluator itself."
+            f"Evaluator calibration exceeded its {args.timeout}-second budget. This does "
+            "not by itself mean the evaluator is broken - slow and broken look "
+            "identical from here. Do not silently re-run with a larger --timeout. "
+            "Ask the user once, in one question, offering only what applies: "
+            "wait, if the evaluator is normally this slow; take a named fix, if "
+            "the cause is certain; score with a different judge model, or with a "
+            "deterministic comparison - an exact or normalized match against the "
+            "expected answer, no model call - where the task allows one; retry, "
+            "since a provider call that has stalled looks the same from here; or "
+            "build a new evaluation method together."
         )
         print(message, file=sys.stderr)
         # Emit a parseable result as well as the stderr line, so the readiness
@@ -1040,14 +1073,14 @@ def main() -> int:
     # Every deterministic supplemental attempt gets a new interpreter. A
     # module reload in one interpreter does not isolate imported dependency
     # modules, global registries, environment mutation, or control flow. A
-    # separate process does, for process-local state. Its budget is separate
-    # from the full authored budget and shared across the attempts, so generated
-    # advisory work can never consume the timeout that decides calibration.
+    # separate process does, for process-local state. Every attempt runs against
+    # what is left of the one calibration deadline opened above and shares it
+    # between them, so generated advisory work can neither consume the timeout
+    # that decides calibration nor extend the wait the user was quoted.
     supplemental_results = [
         {"permutation": None, "exception_probes": []} for _case in cases
     ]
     if args.kind == "deterministic":
-        supplemental_deadline = time.monotonic() + args.timeout
         for index, case in enumerate(cases):
             worker_case = {
                 "name": case["name"],
@@ -1071,8 +1104,8 @@ def main() -> int:
                             "output": permutation,
                         },
                     },
-                    deadline=supplemental_deadline,
-                    phase_budget_seconds=args.timeout,
+                    deadline=calibration_deadline,
+                    total_budget_seconds=args.timeout,
                     environment=worker_environment,
                     cwd=worker_cwd,
                 )
@@ -1082,8 +1115,8 @@ def main() -> int:
                         **request_base,
                         "probe": {"type": "exception", "kind": kind},
                     },
-                    deadline=supplemental_deadline,
-                    phase_budget_seconds=args.timeout,
+                    deadline=calibration_deadline,
+                    total_budget_seconds=args.timeout,
                     environment=worker_environment,
                     cwd=worker_cwd,
                 )
@@ -1267,6 +1300,17 @@ def main() -> int:
             "authored calibration PASS; inspect or rerun unavailable probes before "
             "relying on them."
         )
+    if "supplemental_probe_advisory" in result:
+        # The summary line goes to stderr in every mode, including --json. The
+        # documented invocation redirects stdout into a results file, so an
+        # advisory that lives only in the payload is an advisory nobody reads: a
+        # measured run lost three of twelve supplemental attempts to the budget
+        # and said nothing at all. Degraded advisory evidence has to announce
+        # itself, or the next reader takes a partial probe set for a complete
+        # one. Only the summary - it already names every case, probe, and reason.
+        # The per-probe details can be a child traceback, and those stay in the
+        # payload and the human-readable listing below.
+        print(f"ADVISORY: {result['supplemental_probe_advisory']}", file=sys.stderr)
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif is_matrix:
@@ -1294,7 +1338,6 @@ def main() -> int:
         print(f"ADVISORY: {result['exception_probe_advisory']}")
     if not args.json and "supplemental_probe_advisory" in result:
         print()
-        print(f"ADVISORY: {result['supplemental_probe_advisory']}")
         for item in result["supplemental_probe_unavailable"]:
             print(
                 f"UNAVAILABLE: [{item['case']}] {item['probe']} "

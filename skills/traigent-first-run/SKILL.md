@@ -377,12 +377,13 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `evaluator-timeout` is not a repair to route: say what calibration is doing and
-roughly how long before it starts, and if it still times out ask the one question in
-`references/evaluation-and-dataset.md` rather than declaring the evaluator broken.
-After any repair or substitute creation, re-run the affected checks, the
-applicable calibration, and the score, then update the latest recorded result without overwriting
-the opening one.
+create or select. `evaluator-timeout` is not a repair to route: before calibration starts, say what
+it does and how long it may take; if it still times out, ask the one question in
+`references/evaluation-and-dataset.md` rather than declaring the evaluator broken; and name any
+avoidable cause of the slowness in the readiness summary and again at the close if it was not
+fixed. After any repair or substitute creation, re-run the affected checks, the applicable
+calibration, and the score, then update the latest recorded result without overwriting the
+opening one.
 
 ### 5. Prepare the environment and finish free checks
 
