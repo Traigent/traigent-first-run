@@ -62,6 +62,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Refuse a behaviour lock that was never regenerated
+        # The lock is produced by the same function the contract test asserts
+        # against, so regenerating it always satisfies that test. What it can
+        # catch is a change that never ran relock at all - and only if someone
+        # runs this check. Without it the lock proves nothing in CI.
+        run: python tools/relock.py --check
+
       - name: Install validation tools
         run: python -m pip install ruff==0.15.12 black==26.5.1
 

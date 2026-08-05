@@ -142,6 +142,18 @@ def _run_probe(overrides: dict[str, str]) -> dict:
 class OfflineSocketContractTests(unittest.TestCase):
     def setUp(self) -> None:
         if importlib.util.find_spec("litellm") is None:
+            # Skipping is right for a contributor who has not installed the
+            # pinned stack, and wrong for CI, where this module IS the
+            # no-spend guarantee. Removing one install line from the workflow
+            # turned the whole guarantee into `4 skipped` and left the run
+            # green, so under CI a missing dependency is a failure: a guarantee
+            # nobody watched run is not a guarantee.
+            if os.environ.get("CI"):
+                self.fail(
+                    "litellm is missing under CI, so the offline-socket "
+                    "guarantee did not run. Install the pinned stack before "
+                    "the suite - this must never degrade to a skip in CI."
+                )
             self.skipTest(
                 "litellm is not installed in this environment; install the "
                 f"pinned version from {REQUIREMENTS} to run this hermetic "
@@ -228,6 +240,15 @@ class OfflineSocketContractTests(unittest.TestCase):
 
     def test_traigent_import_also_makes_zero_outbound_socket_attempts(self) -> None:
         if importlib.util.find_spec("traigent") is None:
+            # Same rule, and this is the only test in the repository that
+            # imports traigent at all - so when it skips, nothing anywhere
+            # exercises that import path.
+            if os.environ.get("CI"):
+                self.fail(
+                    "traigent is missing under CI, so the only test that "
+                    "imports it did not run. Install the pinned stack before "
+                    "the suite."
+                )
             self.skipTest(
                 "traigent is not installed in this environment; install the "
                 f"pinned version from {REQUIREMENTS} to extend this hermetic "
