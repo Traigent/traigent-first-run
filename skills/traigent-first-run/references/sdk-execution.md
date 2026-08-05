@@ -969,7 +969,9 @@ def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=(
     one's `best_config` object as it stands: the second space is built around
     the seed and re-probed, so its knobs need not be round one's, and a
     `config` that is not a dict or carries a different key set equals nothing
-    in `excluded`, which fails open silently rather than raising. The free
+    in `excluded`. That shape fails open - it matches no trial, excludes
+    nothing, and leaves the seed eligible - so the guard below refuses an
+    `excluded` entry that could never match. The free
     check passes its own incumbent's configuration, not nothing: the strict
     `<` below excludes the incumbent *trial*, but not a second trial of that
     same configuration, and a search that evaluated the winner twice returns
@@ -996,6 +998,15 @@ def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=(
                 raise RuntimeError(
                     "this trial exposes no configuration, so the seed cannot "
                     "be excluded here - exclude it before calling"
+                )
+            if not isinstance(config, dict) or not any(
+                isinstance(entry, dict) and entry.keys() == config.keys()
+                for entry in excluded
+            ):
+                raise RuntimeError(
+                    "no excluded configuration has this trial's key set, so "
+                    "the exclusion can never match - pass the seed as this "
+                    "run's own trials report it"
                 )
             if config in excluded:
                 continue

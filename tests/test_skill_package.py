@@ -4266,9 +4266,18 @@ class SkillPackageTests(unittest.TestCase):
             # the seed is a point in the round's own space, and its two costs
             # come from two different runs
             "exclude the seed configuration from the round's own selection",
-            "within one run cost is exact and any strict difference is real; "
-            "across two runs it is not",
+            # This sentence used to grant within-run costs an exactness the
+            # filter's own docstring denies: it said any strict difference
+            # inside one run was real, while the docstring says a search that
+            # evaluated the winner twice returns two different token counts -
+            # which happens inside one run. The docstring is the correct one,
+            # and the free check was resting its no-materiality-bar exemption
+            # on the sentence that was wrong.
+            "one configuration evaluated twice returns two different token "
+            "counts - inside a single run as much as across two - so a strict "
+            "difference is a measured difference and not yet a saving",
             "so read materially here the way the gate above reads it - a quarter less",
+            "exactly as the free check above reads it",
             "clearing the bar is a selection made over noise",
         ):
             with self.subTest(selection_phrase=phrase):
@@ -4391,6 +4400,38 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(argument_phrase=phrase):
                 self.assertIn(phrase, docstring)
 
+        # WHY the free check must pass its own incumbent's configuration. A
+        # review reverted this to "the free check passes nothing, because the
+        # strict `<` below already excludes the incumbent" - which restores a
+        # real defect, because the strict `<` excludes the incumbent TRIAL and
+        # not a second trial of the incumbent CONFIGURATION - and 469 tests
+        # still passed. The mechanism is what makes the instruction followable,
+        # so the mechanism is what is pinned.
+        for phrase in (
+            "the free check passes its own incumbent's configuration, not nothing",
+            "the strict `<` below excludes the incumbent *trial*, but not a "
+            "second trial of that same configuration",
+            "a search that evaluated the winner twice returns two different "
+            "token counts",
+        ):
+            with self.subTest(free_check_mechanism=phrase):
+                self.assertIn(phrase, docstring)
+        self.assertNotIn(
+            "the free check passes nothing",
+            docstring,
+            "the strict `<` excludes the incumbent trial, not a second trial "
+            "of the incumbent configuration - this wording licenses skipping "
+            "the guard the free check needs",
+        )
+
+        # ...and the re-keyed `excluded` entry is refused rather than passing
+        # silently over every trial, which is the fail-open half of the same
+        # mechanism.
+        self.assertIn(
+            "so the guard below refuses an `excluded` entry that could never match",
+            docstring,
+        )
+
         # the seed is a point in the second space, not `default_config`, whose
         # trial-slot warning this reference already carries
         self.assertIn("do not reach for `default_config`", sdk)
@@ -4476,6 +4517,17 @@ class SkillPackageTests(unittest.TestCase):
             "on an untracked-cost run skip both the check and the round",
             "**the route genuinely costs nothing.**",
             "a run with no cost has no cost to reduce",
+            # The free check applies the same materiality bar the round's own
+            # selection does. It used to apply none, on the strength of a
+            # sentence granting within-run costs an exactness the filter's
+            # docstring denies - so a `$0` re-read could end the round outright
+            # while reporting a difference inside measurement noise as a saving.
+            "read its first entry against the materiality bar the gate below sets",
+            "cheaper by less than that bar is a measured difference and not yet "
+            "a saving",
+            # ...and the sentence that used to justify the exemption also
+            # asserted a universal negative over the tested set
+            "this run holds no cheaper configuration to hand back for free",
         ):
             with self.subTest(gate_phrase=phrase):
                 self.assertIn(phrase, section)
@@ -4585,6 +4637,17 @@ class SkillPackageTests(unittest.TestCase):
         "Nothing was cheaper at the same score" is the measurement working. It
         is also the outcome most likely to be apologised for, so it gets its own
         wording and its own bound.
+
+        The wording itself was re-decided rather than patched a fourth time.
+        Three revisions produced the same defect: the copy asserted a universal
+        negative over a set - "every configuration tested that cost less also
+        scored lower", "the only configurations this round found that cost less
+        were cheaper by less than run-to-run variance" - while the branch that
+        routed to it constrained only the subset that cleared the score bar. A
+        universal claim over a set is false whenever the unexamined complement
+        is non-empty, and each patch added a qualifier and opened the next gap.
+        The copy now reports the round's own counts by category, which is true
+        under every combination of them and needs no routing rule to stay so.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = quoted_prose(RUN_SAFETY)
@@ -4598,26 +4661,22 @@ class SkillPackageTests(unittest.TestCase):
             "### the two outcomes",
             "both are results. neither is apologized for",
             "**nothing was both cheaper and no worse.** this is a finding",
-            "your configuration is already near the pareto frontier for this space",
-            # vacuously true when nothing tested was cheaper, which is the other
-            # shape this outcome takes - the copy must not assert a pattern the
-            # round may not have produced
-            "every other configuration tested that cost materially less also "
-            "scored lower",
-            # ...so the carve-out that stops it being said in that case is part
-            # of the outcome, not commentary on it
-            "use the frontier sentence only when the round actually completed "
-            "trials that cost less",
-            # ...and bare cheapness is not the bar the SELECTION applies, so a
-            # configuration that cleared the score bar while being cheaper only
-            # inside run-to-run variance lands here with the frontier sentence
-            # asserting the opposite of what its own trials measured. That is
-            # the reachable state where the copy states a falsehood rather than
-            # a vacuity, and the seed-only case is the same defect again.
-            "the sentence is not vacuous but false, and the round's own trials "
-            "are what contradict it",
-            "the sentence is vacuous and reads as a finding it did not make",
-            "the space this round searched produced no cheaper configuration at all",
+            # the root-cause rule, stated once: observations, never a property
+            # of a space the round mostly did not visit
+            "report what this round counted, never a property of the space",
+            "the space is larger than the round's trial cap, so any claim about "
+            "it quantifies over configurations the round never reached",
+            # the two inner counts are exhaustive over the cheaper ones, which
+            # is what lets the copy drop the branch it replaced
+            "those two inner counts split the cheaper ones with nothing left over:",
+            "materiality read exactly as the selection above reads it",
+            # a zero renders as a zero, not as a breakdown of an empty set -
+            # the "nothing cheaper ran at all" conclusion falls out of the count
+            'write a count of zero as a plain "none" and drop the breakdown '
+            "under it",
+            # the seed used to need its own branch; it is now just not one of
+            # the cheaper ones
+            "the re-measured seed is not one of the cheaper ones either",
             "that is a measured answer to the question this round asked",
             "it establishes nothing about configurations the round did not test",
             "do not answer it with a third round by default",
@@ -4625,12 +4684,87 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(null_phrase=phrase):
                 self.assertIn(phrase, safety)
 
+        # The frontier sentence is gone rather than qualified again. It is a
+        # universal claim by construction - "already near the Pareto frontier"
+        # is a property of the whole space, asserted from a bounded sample of
+        # it - so no branch condition over the round's own trials can earn it.
+        # The counts deliver the honest half of the same message.
+        for phrase in (
+            "already near the pareto frontier",
+            "every other configuration tested that cost materially less",
+        ):
+            with self.subTest(retired_universal_claim=phrase):
+                self.assertNotIn(phrase, safety)
+
         # glossary.md canonicalizes "Pareto frontier (optimal frontier)" and
         # its own rule is not to switch synonyms mid-run. This sentence carried
         # a fourth name, and the one term here a lay reader cannot look up.
         for path in assistant_facing_documents():
             with self.subTest(document=path.name):
                 self.assertNotIn("efficient frontier", path.read_text().casefold())
+
+    def test_the_null_outcome_copy_the_customer_reads_is_pinned(self) -> None:
+        """The deliverable, not the reasoning about the deliverable.
+
+        A review swapped this blockquote for "This round found a cheaper
+        configuration and it is a genuine saving you should adopt immediately"
+        and only the byte-hash behaviour lock fired. That lock hashes every
+        file and is regenerated by every commit, so it reports that something
+        changed and never that the change was wrong - it is a diff detector,
+        not a guard. Every other check over this section pins the prose AROUND
+        the copy. This one pins the sentence the prospective customer reads.
+        """
+        text = RUN_SAFETY.read_text()
+        self.assertIn("**Nothing was both cheaper and no worse.**", text)
+        quoted: list[str] = []
+        for line in text.split("**Nothing was both cheaper and no worse.**", 1)[
+            1
+        ].splitlines():
+            stripped = line.strip()
+            if stripped.startswith(">"):
+                quoted.append(stripped.removeprefix(">").strip())
+            elif quoted:
+                break
+        copy = " ".join(" ".join(quoted).casefold().split())
+        self.assertTrue(copy, "the null outcome has no user-facing blockquote at all")
+
+        # Every number in it is one this round counted, and each is a
+        # placeholder rather than a worked example's figure.
+        for placeholder in (
+            "`<executed trials>`",
+            "`<total combination count>`",
+            "`<n cheaper>`",
+            "`<n scored lower>`",
+            "`<n inside variance>`",
+        ):
+            with self.subTest(placeholder=placeholder):
+                self.assertIn(placeholder, copy)
+
+        for claim in (
+            "this round tested `<executed trials>` of `<total combination "
+            "count>` configurations",
+            "`<n cheaper>` of them cost less than the configuration you are "
+            "already running",
+            "`<n scored lower>` scored lower",
+            "the other `<n inside variance>` were cheaper by too small a margin "
+            "to tell a saving from the ordinary variation between two runs of "
+            "one unchanged configuration",
+            "so this round did not establish a saving",
+        ):
+            with self.subTest(claim=claim):
+                self.assertIn(claim, copy)
+
+        # It is the NULL outcome. It may not become an adoption claim, and it
+        # may not quantify over what the round did not test.
+        for forbidden in (
+            "genuine saving",
+            "you should",
+            "immediately",
+            "every configuration",
+            "frontier",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, copy)
 
     def test_the_round_never_reports_that_a_knob_did_not_matter(self) -> None:
         """Low measured importance at this trial count is undersampling.
@@ -4742,6 +4876,29 @@ class CheaperAndNotWorseFilterTests(unittest.TestCase):
         """Failing loudly, because a silent skip keeps the seed eligible."""
         with self.assertRaises(RuntimeError):
             self.select([self.trial(0.90, 0.0010)], excluded=[{"model": "m"}])
+
+    def test_an_exclusion_that_could_never_match_raises(self) -> None:
+        """The likelier failure was the silent one, which is backwards.
+
+        An unreadable `trial.config` raised; a readable one against a re-keyed
+        or non-dict `excluded` entry matched nothing, excluded nothing, and
+        returned the seed as the round's answer with no signal at all. Passing
+        round one's `best_config` is exactly how that happens, and it is the
+        easier mistake of the two to make.
+        """
+        config = {"model": "m", "temperature": 0.0}
+        trials = [self.trial(0.90, 0.0010, config=config)]
+        for label, excluded in (
+            ("a differently keyed dict", [{"model": "m", "prompt_style": "direct"}]),
+            ("a non-dict configuration object", [SimpleNamespace(model="m")]),
+            ("a bare model name", ["m"]),
+        ):
+            with self.subTest(excluded=label):
+                with self.assertRaises(RuntimeError):
+                    self.select(trials, excluded=excluded)
+
+        # ...and a seed passed in the shape the trials report still works.
+        self.assertEqual(self.select(trials, excluded=[dict(config)]), [])
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
@@ -4915,6 +5072,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "we removed the knobs that did not matter",
                 "the search showed these knobs do not matter",
                 "this round dropped the controls that had no effect",
+            ),
+        ),
+        (
+            # Three revisions of the null outcome each asserted a universal
+            # negative over a set - "every configuration tested that cost less
+            # also scored lower", then the same claim gated on "materially",
+            # then "the only configurations this round found that cost less
+            # were cheaper by less than run-to-run variance" - while the branch
+            # routing to it constrained only the trials that cleared the score
+            # bar. Each was false whenever the unexamined complement was
+            # non-empty, and each patch opened the next gap. Settled answer:
+            # report the round's own counts, which quantify over nothing.
+            "what the null cost-reduction outcome may claim",
+            ("report what this round counted, never a property of the space",),
+            (
+                "already near the pareto frontier",
+                "every configuration tested that cost less also scored lower",
+                "every other configuration tested that cost materially less",
             ),
         ),
         (
@@ -5256,6 +5431,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Net +243 bytes, measured at 63_422 - 78 bytes under the ceiling
         # above, which is the one-word-edit trip recorded twice already. So
         # 63_750, the same headroom the 63_500 decision reasoned its way to.
+        #
+        # The null-outcome re-decision below then changed no resident byte:
+        # it replaced report copy and a filter guard, both of which live in
+        # references. Re-measured at 63_422, unchanged, so this number stays
+        # where it is. Recorded rather than left silent, because a ceiling
+        # nobody re-measures is a ceiling nobody knows the headroom of.
         self.assertLess(
             resident,
             63_750,
@@ -5437,7 +5618,39 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # Measured at 251_492, so 251_750 - 258 bytes of headroom on the
         # reasoning above.
-        budget = 251_750
+        #
+        # And it bound a fourth time, which is the entry that stops the
+        # sequence rather than continuing it. That third branch was the third
+        # revision of one sentence, and all three shared a shape: the copy
+        # asserted a universal negative over a set ("every configuration
+        # tested that cost less also scored lower") while the branch routing
+        # to it constrained only a subset of that set. Such a claim is false
+        # whenever the unexamined complement is non-empty, so each qualifier
+        # closed one instance and opened the next. The copy now reports the
+        # round's own counts by category, which is true under every
+        # combination of them, needs no branch, and tells the customer more
+        # than the sentence it replaces - so the three-branch structure, the
+        # frontier claim, and their two blockquotes all leave run-safety.md,
+        # which falls 132 bytes net even after two corrections land in it: the
+        # free check now reads the same materiality bar the round's selection
+        # reads, and the sentence granting within-run costs an exactness the
+        # filter's own docstring denies is gone.
+        #
+        # The rise is entirely sdk-execution.md, +567, and it is mechanism
+        # rather than prose. The filter's `excluded` argument fails open on a
+        # readable-but-re-keyed configuration - it matches no trial, excludes
+        # nothing, and hands the seed back - while the rarer unreadable case
+        # already raised, so the likelier failure was the silent one. The
+        # guard that refuses an exclusion which could never match is real
+        # code, and the docstring says why in the same place the rest of that
+        # contract is stated.
+        #
+        # Measured at 251_927. 252_000 would leave 73 bytes, which is the
+        # one-word-edit trip recorded twice above, so 252_250 - 323 bytes,
+        # marginally over the 228-297 the last four raises settled on and
+        # taken deliberately because the boundary below it does not bind on a
+        # decision.
+        budget = 252_250
         self.assertLess(
             total,
             budget,

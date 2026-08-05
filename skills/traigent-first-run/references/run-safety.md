@@ -676,15 +676,16 @@ the run's own metric? This is a re-read of returned trials with no provider call
 `references/sdk-execution.md` gives the function.
 
 The function returns the qualifying trials cheapest first, and never the winner's own configuration.
-If it returns anything, its first entry is that cheaper configuration and the cost reduction is
-already measured. Report it and stop - there is nothing left to buy, and offering a paid round on
-top of it would be selling the user a result they already have. Report it at the claim
-strength and the provenance the paid round would get: a measured cost number, a score stated no more
-strongly than the paired counts support, and over a `🛠️` substitute a fact about the substitute
-rather than about the user's real setup. If it returns nothing, every cheaper configuration the
-first search actually tested scored below the winner, and the open question is whether a
-configuration it never tested is both cheaper and no worse. That question is the hypothesis a paid
-round would test, and it is the only reason to run one.
+Read its first entry against the materiality bar the gate below sets: cheaper by less than that bar
+is a measured difference and not yet a saving, so the check has returned nothing. When the entry
+does clear that bar the cost reduction is already measured. Report it and stop - there is
+nothing left to buy, and offering a paid round on top of it would be selling the user a result they
+already have. Report it at the claim strength and the provenance the paid round would get: a measured
+cost number, a score stated no more strongly than the paired counts support, and over a `🛠️`
+substitute a fact about the substitute rather than about the user's real setup. When the check
+returns nothing, this run holds no cheaper configuration to hand back for free, and the open question
+is whether a configuration the search never tested is both cheaper and no worse. That question is the
+hypothesis a paid round would test, and it is the only reason to run one.
 
 ### Gate
 
@@ -702,8 +703,8 @@ offer it: a round whose result could not honestly be claimed is not worth its mo
 - The completed trials show cost headroom: the cheapest completed trial cost materially less than the
   selected winner - a quarter less is the default reading of materially - so cheaper territory
   demonstrably exists for this task rather than being assumed.
-- The free check above returned nothing, so the winner is still the cheapest configuration the first
-  search tested at or above its own score.
+- The free check above returned nothing, so this run produced no cheaper configuration the round
+  could hand back for free.
 - The remaining total ceiling covers the round's estimate.
 
 A readiness band is not the gate. The band describes the components; this round's claim rests on
@@ -741,11 +742,12 @@ the result.
 Exclude the seed configuration from the round's own selection - pass it as the filter's `excluded`
 argument rather than leaving the rule in prose here. The seed is deliberately one of the second
 space's points, so the round re-measures it, and that measurement is a different run from the one
-`incumbent_cost` was recorded in. Within one run cost is exact and any strict difference is real;
-across two runs it is not, because token counts vary between runs of the same configuration. So read
-materially here the way the gate above reads it - a quarter less - before calling the round's delta a
-cost reduction. Without both rules the round hands back the configuration the user is already
-running and reports run-to-run noise as a saving.
+`incumbent_cost` was recorded in. Each cost is exact arithmetic over the token counts that run
+reported, but one configuration evaluated twice returns two different token counts - inside a single
+run as much as across two - so a strict difference is a measured difference and not yet a saving. So
+read materially here the way the gate above reads it - a quarter less - before calling the round's
+delta a cost reduction, exactly as the free check above reads it. Without both rules the round hands
+back the configuration the user is already running and reports measurement noise as a saving.
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
 produce a weaker version of the first.
@@ -779,34 +781,26 @@ evidence there was none, and a comparison with any discordant rows at this size 
 Never quote a percentage-point threshold invented before those outcomes existed, and never let "the
 optimizer picked it" stand in for evidence that the score held.
 
-**Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy:
+**Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy. Report what
+this round counted, never a property of the space: the space is larger than the round's trial cap, so
+any claim about it quantifies over configurations the round never reached.
 
-> Nothing in this round's space was cheaper than your current best without scoring below it. On this
-> evidence your configuration is already near the Pareto frontier for this space: every other
-> configuration tested that cost materially less also scored lower. That is a measured answer to the
-> question this round asked.
+> This round tested `<executed trials>` of `<total combination count>` configurations. `<n cheaper>`
+> of them cost less than the configuration you are already running: `<n scored lower>` scored lower,
+> and the other `<n inside variance>` were cheaper by too small a margin to tell a saving from the
+> ordinary variation between two runs of one unchanged configuration. So this round did not establish
+> a saving.
 
-Use the frontier sentence only when the round actually completed trials that cost less, and only when
-every other configuration that cost *materially* less also scored lower. Two rounds arrive at this
-outcome without earning that sentence, and it fails differently in each.
+Those two inner counts split the cheaper ones with nothing left over: reaching this outcome at all
+means every configuration counted among them either scored lower or was not materially cheaper -
+materiality read exactly as the selection above reads it. Write a count of zero as a plain "none" and
+drop the breakdown under it; a breakdown of an empty set reads as a pattern the round did not
+measure. The re-measured seed is not one of the cheaper ones either: two costs for one configuration
+are two measurements of the configuration the user already runs, not a cheaper alternative to it.
 
-When no completed trial cost less at all, the sentence is vacuous and reads as a finding it did not
-make: say instead that the space this round searched produced no cheaper configuration at all, which
-is a fact about that space.
-
-When one did cost less and did clear the score bar, but was cheaper by less than the materiality bar
-the selection above applies - including when the only one that cleared it was the seed, whose two
-costs are two measurements of the configuration the user already runs - the sentence is not vacuous
-but false, and the round's own trials are what contradict it. Materiality is read here exactly as it
-is read there, so this branch holds whatever that reading is. Report what those trials showed:
-
-> The only configurations this round found that cost less than your current best were cheaper by less
-> than the amount one unchanged configuration's cost moves between two runs, so this round did not
-> establish a saving. That is a measured answer to the question it asked, and a different one from
-> finding nothing cheaper at all.
-
-Bound it as honestly as the other outcome. It establishes nothing about configurations the round did
-not test, and a bounded round tests few. Do not answer it with a third round by default.
+That is a measured answer to the question this round asked, and it is bounded as honestly as the
+other outcome: it establishes nothing about configurations the round did not test, and a bounded
+round tests few. Do not answer it with a third round by default.
 
 ## Post-run verification
 
