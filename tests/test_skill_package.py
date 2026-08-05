@@ -4622,7 +4622,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        # Raised by the routing fix for `agent-no-varying-knobs`, the one cap
+        # that fires on every run by construction: the config-space document is
+        # withheld until the enhanced search writes it, so even a healthy
+        # project is capped before the search and nothing told the assistant
+        # what to do about it. That is new contract surface with no prior
+        # statement, not stage detail - and the depth went to glossary.md while
+        # SKILL.md kept only the decision, which is the policy above, so the
+        # RESIDENT number did not move at all. Measured plus the one byte a
+        # strict assertLess takes.
+        budget = 228_895
         self.assertLess(
             total,
             budget,

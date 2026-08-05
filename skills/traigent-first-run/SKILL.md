@@ -377,7 +377,8 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. After any repair or substitute creation, re-run the affected checks, the
+create or select. `agent-no-varying-knobs` before the enhanced search reports withheld evidence,
+not a defect - say so on the card and continue; see `references/glossary.md`. After any repair or substitute creation, re-run the affected checks, the
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
 
