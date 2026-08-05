@@ -557,8 +557,10 @@ supported id, keep the baseline local; never inspect private storage or use `--a
 enhanced optimization connected, require its own verified portal link, and report a direct link for
 every persisted run without implying it covers a local-only baseline.
 
-Once the enhanced search selects its winner, score only that configuration against the ten
-held-out rows; `references/evaluation-and-dataset.md` owns the rest.
+Once the enhanced search returns, select the configuration this run recommends on the **tuning**
+scores across both paid measurements - never on the held-out rows, which arbitrate nothing - and
+score only that one against the ten held-out rows;
+`references/evaluation-and-dataset.md` owns the rest.
 
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
@@ -594,8 +596,9 @@ six-row default (including its initial configuration) ran, subject only to an ap
 reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
 trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
 stop/failure reason; and a
-best configuration and non-degenerate measures exist. Verify the held-out score is the winner's
-alone, never every candidate's. Report truncation and persistence failures, require the portal
+best configuration and non-degenerate measures exist. Verify the held-out score belongs to the one
+configuration this run recommends, chosen on the tuning scores, and that no other candidate was
+scored on those rows. Report truncation and persistence failures, require the portal
 probe to have stayed green, and verify each portal link before claiming visibility.
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
@@ -613,7 +616,7 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
-- The enhanced winner's held-out score and small-sample note, shown here first.
+- The recommended configuration's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.

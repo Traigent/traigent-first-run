@@ -1314,7 +1314,7 @@ def score_dataset(
                 f"{evidence}"
             )
         evidence = (
-            f"{facts.tuning_rows} tuning rows and no independent validation set, so the "
+            f"{facts.tuning_rows} tuning rows and no held-out set, so the "
             f"result would be measured on the same rows the search used; {evidence}"
         )
     else:
@@ -2449,7 +2449,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         if unusable:
             raise PreflightInputError(
                 "declared split metrics carry no usable "
-                f"{'/'.join(unusable)} count - a declared tuning/holdout split "
+                f"{'/'.join(unusable)} count - a declared tuning/held-out split "
                 "can only be scored from all four per-split row counts, so this "
                 "preflight JSON predates the current preflight.py or was "
                 "edited; re-run preflight.py --json from the same version as "
@@ -2487,7 +2487,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             if sum(split_labelled) > aggregate_labelled:
                 raise PreflightInputError(
                     f"declared split metrics report {sum(split_labelled)} labelled "
-                    f"rows across tuning and holdout, more than the "
+                    f"rows across tuning and held-out, more than the "
                     f"{aggregate_labelled} the dataset declares in total - the "
                     "splits are disjoint, so this cannot describe one dataset; "
                     "re-run preflight.py --json from the same version as this "

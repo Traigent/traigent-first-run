@@ -935,8 +935,10 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 ## Result checks
 
-Score the reserved rows with the winning configuration, when SKILL stage 7 says to, against
-`HOLDOUT_DATASET` through the same loader and the same `task_score` the search used. The returned
+Score the reserved rows with the run's recommended configuration, when SKILL stage 7 says to,
+against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
+`references/evaluation-and-dataset.md` owns which configuration that is - one call of
+`evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
 cost joins the single running total exactly as a baseline phase does; `references/run-safety.md`
 owns what the approval discloses about those calls.
 

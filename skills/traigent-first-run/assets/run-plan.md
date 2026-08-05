@@ -52,7 +52,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Interpretation
 
-- Held-out score for the enhanced winner, beside its tuning score, and the small-sample note:
+- Held-out score for the recommended configuration, the round it came from, its tuning score, the held-out set's real/generated counts, and the small-sample note:
 - Components that remain walkthrough substitutes:
 - What the result demonstrates:
 - What the result does not establish:

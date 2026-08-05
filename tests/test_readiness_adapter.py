@@ -128,7 +128,7 @@ def _declared_split_records(
             {
                 "check": "dataset-split",
                 "status": split_status,
-                "detail": "tuning and holdout inputs are disjoint",
+                "detail": "tuning and held-out inputs are disjoint",
                 "metrics": {},
             }
         )
@@ -146,7 +146,7 @@ def _declared_split_records(
             {
                 "check": "dataset-holdout-resolution",
                 "status": "PASS",
-                "detail": "50 holdout rows; one example changes the score by 2.0 "
+                "detail": "50 held-out rows; one example changes the score by 2.0 "
                 "percentage points",
                 "metrics": holdout_metrics,
             }
@@ -170,7 +170,7 @@ def _tuning_only_records() -> list[dict]:
         {
             "check": "dataset-split",
             "status": "PASS",
-            "detail": "tuning-only dataset; no independent validation split was declared",
+            "detail": "tuning-only dataset; no held-out split was declared",
             "metrics": {"kind": "tuning-only"},
         },
         {
@@ -315,9 +315,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         power = next(
             subscore for subscore in dataset["subscores"] if subscore["name"] == "power"
         )
-        self.assertIn(
-            "18 tuning rows and no independent validation set", power["evidence"]
-        )
+        self.assertIn("18 tuning rows and no held-out set", power["evidence"])
         self.assertNotIn("no tuning set", power["evidence"])
 
     def test_real_tuning_only_preflight_replays_into_readiness(self) -> None:
@@ -345,9 +343,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset)
 
         power = _dataset_subscore(score, "power")
-        self.assertIn(
-            "18 tuning rows and no independent validation set", power["evidence"]
-        )
+        self.assertIn("18 tuning rows and no held-out set", power["evidence"])
         self.assertNotIn("no tuning set", power["evidence"])
 
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:
@@ -705,7 +701,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             {
                 "check": "dataset-holdout-resolution",
                 "status": "PASS",
-                "detail": "50 holdout rows; one example changes the score by 2.0 "
+                "detail": "50 held-out rows; one example changes the score by 2.0 "
                 "percentage points",
                 "metrics": {"holdout_rows": 50},
             },

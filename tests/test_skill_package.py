@@ -3209,7 +3209,8 @@ class SkillPackageTests(unittest.TestCase):
             "do not disclose the held-out score before stage 8"
         )
         report_index = skill.find(
-            "the enhanced winner's held-out score and small-sample note, shown here first"
+            "the recommended configuration's held-out score and small-sample note, "
+            "shown here first"
         )
         self.assertGreaterEqual(checkpoint_index, 0)
         self.assertGreaterEqual(report_index, 0)
@@ -3219,8 +3220,12 @@ class SkillPackageTests(unittest.TestCase):
             "the stage-7 checkpoint's refusal to disclose must precede stage "
             "8's actual disclosure, or the seamless ordering is not encoded",
         )
-        self.assertIn("score only that configuration against the ten", skill)
-        self.assertIn("verify the held-out score is the winner's alone", skill)
+        self.assertIn("score only that one against the ten held-out rows", skill)
+        self.assertIn(
+            "verify the held-out score belongs to the one configuration this run "
+            "recommends",
+            skill,
+        )
 
         self.assertIn(
             "discloses the enhanced winner's held-out score here", documents["guide"]
@@ -3234,7 +3239,8 @@ class SkillPackageTests(unittest.TestCase):
             "local baseline checkpoint",
             "successful cli url, or `local-only` with reason",
             "baseline-versus-enhanced comparison - measured tuning behavior",
-            "held-out score for the enhanced winner, beside its tuning score, "
+            "held-out score for the recommended configuration, the round it came "
+            "from, its tuning score, the held-out set's real/generated counts, "
             "and the small-sample note",
         ):
             with self.subTest(phrase=phrase):
@@ -3268,7 +3274,8 @@ class SkillPackageTests(unittest.TestCase):
             # One composition, applied wherever the rows come from.
             "that composition holds wherever the rows come from",
             # Top up rather than drop a band - with what it costs.
-            "top the split up with generated rows rather than dropping a band",
+            "top each set up to its composition with generated rows rather than "
+            "dropping a band",
             "cannot show that the winner generalizes to real inputs",
             # A standard error is labelled as one, beside the interval.
             "one *standard error*",
@@ -3298,6 +3305,194 @@ class SkillPackageTests(unittest.TestCase):
         # The one split that is not ten, and the floor that still binds it.
         self.assertIn(
             "a split under ten comparable rows blocks the paid comparison", dataset
+        )
+
+    def test_real_rows_are_divided_between_both_sets_before_anything_is_generated(
+        self,
+    ) -> None:
+        """The customer's rows go to both splits, in proportion, first.
+
+        "Top up the shortfall" says how many generated rows to add and is
+        silent on which set gets the real ones - so both degenerate fills were
+        available and neither was refused. The reserved split is cut "at
+        creation time, before any component design", which reads as reserve the
+        real rows first; "user-provided examples expanded into additional
+        tuning candidates" reads as the opposite. One of those leaves a
+        held-out set of nothing but generated rows, which cannot say anything
+        about real inputs - it only shows the winner survives rows the search
+        never saw - and the other leaves the search optimizing a task the
+        customer does not have.
+
+        So the division is stated as a rule with an arithmetic the assistant
+        cannot read two ways, and both failure directions are named beside it.
+        The proportion is the sets' own: at the 18/10 default, roughly two real
+        rows to tuning for every one held back.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "**real rows reach both sets before either is topped up.**", dataset
+        )
+        for phrase in (
+            # The rule, and the ordering that makes it a rule rather than a
+            # preference: divide before generating, not after.
+            "divide the real ones between them in the same proportion as the "
+            "sets themselves, rounding in the tuning set's favour, before a "
+            "single row is generated",
+            # The owner's own worked example, and the two smaller ones that
+            # pin the rounding direction.
+            "ten real rows split seven and three",
+            "four split three and one",
+            "two split one and one",
+            # Below two there is nothing to divide, and the tie-break is said
+            # rather than left to the reader.
+            "below two there is nothing to divide",
+            # Both degenerate fills are refused, not just the one that is
+            # easier to picture.
+            "in both directions",
+            "a held-out set of generated rows validates nothing about real inputs",
+            "a tuning set of generated rows searches a task the customer does not have",
+            # The composition survives the division.
+            "placing each real row in the band its own difficulty puts it in",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # And the closing report says the mixture out loud, because "held out"
+        # is a claim about what the search saw, not about where a row came
+        # from - a reader who is not told hears the second one.
+        self.assertIn(
+            "when the split was topped up, say so on the same line as its score",
+            dataset,
+        )
+        self.assertIn(
+            "how many of its rows are the customer's and how many were generated",
+            dataset,
+        )
+
+    def test_the_close_says_where_the_two_written_files_are(self) -> None:
+        """A user who wants the reserved rows gone has to be told where they are.
+
+        The run writes two files the user did not ask for. Naming them only as
+        `holdout.jsonl` tells a reader what the assistant called it, not where
+        to look on their own disk, so the path is absolute the way every other
+        path this guide asks a user to act on is absolute.
+
+        The offer is only safe because their own dataset was never edited, so
+        the conclusion is stated locally - not the preservation mandate, which
+        has a home. And it is placed: the closing summary leads with the
+        outcome and one recommendation, and file housekeeping competing with
+        that is the "menu instead of a recommendation" the flow already
+        refuses.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "name both written files in the closing summary's details layer, "
+            "by absolute path",
+            "`<project root>/traigent-runs/tuning.jsonl`",
+            "`<project root>/traigent-runs/holdout.jsonl`",
+            "so a user who wants them gone knows which file to open",
+            # Nothing is moved out and nothing is returned - the unease the
+            # owner named, answered with what the run actually does. Verified
+            # against the code: the bundled scripts write only the report path
+            # they are given, and every repair path is a working copy.
+            "both are derived: their dataset was read and rows were copied out of it",
+            "nothing was moved and nothing has to be put back",
+            "the original was never modified, lost no row, and stays the canonical copy",
+            # Safe rather than alarming: the local conclusion, not the mandate.
+            "so deleting either derived file loses nothing",
+            # Placed below the outcome, not beside it.
+            "it goes below the outcome and the recommendation, never beside them",
+            # The one thing that IS stranded, told rather than done. Nothing
+            # in the close said this before: the run repairs into a working
+            # copy, reports the better score, and the user's own file keeps
+            # the defect.
+            "only the user can carry it",
+            "their own dataset still has the defect this run worked around",
+            "name what changed and in which rows, and leave applying it to them",
+            "offer it; never write it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+    def test_one_configuration_is_selected_on_tuning_and_only_it_is_held_out_scored(
+        self,
+    ) -> None:
+        """The held-out rows report on a choice; they never make one.
+
+        The owner asked what happens when a later measurement comes back
+        worse, and answered it with "run both at the very end of the test set".
+        Running two configurations on the reserved rows and keeping the better
+        one is selection, and a set used for selection is not held out - its
+        number would carry exactly the optimism the tuning score carries, which
+        is the one failure this split exists to prevent.
+
+        The intent underneath is right and was unmet: the recommendation was
+        the enhanced search's winner by position rather than by score, so a
+        baseline that still beat it on the tuning rows lost anyway. Both paid
+        measurements now compete, on the rows already spent on selection, and
+        exactly one configuration reaches the reserved rows.
+
+        The owner's Pareto instinct lands on the tuning side, where it is
+        legitimate: at equal score, prefer the cheaper configuration.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        skill = " ".join(SKILL.read_text().casefold().split())
+        # One configuration, selected on the tuning scores across both paid
+        # measurements - not on position.
+        for phrase in (
+            "score the held-out rows once, on one configuration: the one this run recommends",
+            "select it on the **tuning** scores across both of them",
+            "the enhanced search's winner is not the answer by position",
+            "when the baseline's best configuration still scores higher on the "
+            "tuning rows, that is the one this run recommends",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # The correction, stated plainly enough that the mechanism cannot be
+        # rebuilt by someone reading only this section.
+        self.assertIn("**the held-out rows arbitrate nothing.**", dataset)
+        self.assertIn(
+            "scoring two configurations on them and keeping whichever came back "
+            "higher is selection, and a set used for selection is not held out",
+            dataset,
+        )
+        self.assertIn("it does not choose one", dataset)
+        # The tie-break the owner asked for, kept on the side that may have it.
+        self.assertIn(
+            "when two configurations score the same on the tuning rows, prefer "
+            "the cheaper one; at equal cost prefer the stronger model",
+            dataset,
+        )
+        self.assertIn(
+            "that is a decision taken on the rows selection is allowed to use", dataset
+        )
+        # SKILL.md carries the ordering mandate, and says which rows may not
+        # decide it.
+        self.assertIn(
+            "select the configuration this run recommends on the **tuning** scores "
+            "across both paid measurements - never on the held-out rows, which "
+            "arbitrate nothing",
+            skill,
+        )
+        self.assertIn(
+            "verify the held-out score belongs to the one configuration this run "
+            "recommends, chosen on the tuning scores, and that no other candidate "
+            "was scored on those rows",
+            skill,
         )
 
     def test_two_files_is_a_recorded_choice_not_an_sdk_limitation(self) -> None:
@@ -3392,6 +3587,13 @@ class SkillPackageTests(unittest.TestCase):
             'filling it converts "declares no difficulty" into full band coverage',
             dataset,
         )
+        # The exemption is deliberate and is stated with its reason, so it
+        # cannot later read as an oversight and be closed: on a generated row
+        # the band is not an estimate about someone else's data, it is part of
+        # what was written, and the row already declares itself generated.
+        self.assertIn("a generated row is the other case", dataset)
+        self.assertIn("whoever wrote the question wrote its band too", dataset)
+        self.assertIn("the row already declares itself generated", dataset)
         # One home: both call sites point at the ladder rather than restating
         # it, and the restatements they replaced must not come back.
         self.assertIn(
@@ -4765,9 +4967,98 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "followed by held-back validation",
                 "shares examples with validation",
                 "missing or overlapping validation split",
+                # The stragglers the first sweep left behind. Each one is a
+                # third noun in copy the assistant reads and repeats: the
+                # exception clause for a project's own split, the instruction
+                # naming what to call an assistant-authored one, the synthetic
+                # evidence bullet, and the bounded-subset sampling rule.
+                "own independent validation split",
+                "held-back, non-blind validation",
+                "non-blind validation evidence",
+                "the held-out ten from the holdout split",
             ),
         ),
     )
+
+    # The two splits have one customer-facing name each. These are the other
+    # spellings, in the shape they appear when a script is talking ABOUT a
+    # split rather than naming a field: a bare `holdout` is the identifier
+    # vocabulary the guide deliberately kept (`holdout.jsonl`,
+    # `HOLDOUT_DATASET`, `dataset-tune-holdout-overlap`, and the split labels a
+    # user's own dataset may carry), so only the prose forms are banned.
+    THIRD_NOUNS = (
+        "validation set",
+        "validation split",
+        "test set",
+        "held-back",
+        "holdout row",
+        "holdout set",
+        "holdout split",
+        "holdout input",
+        "tuning and holdout",
+        "tuning/holdout",
+    )
+
+    def test_no_bundled_script_prints_a_third_name_for_the_two_splits(self) -> None:
+        """The registry above reads documents; the card and preflight print too.
+
+        Both spellings this package settled against reached the user through a
+        script rather than through prose - readiness printed "held-back test
+        set" on the card's own evidence line, and preflight printed "no
+        independent validation split was declared". A corpus of markdown files
+        could not see either, so the sweep that found them was manual and the
+        next one would have to be as well.
+
+        String literals, not the whole file: `HOLDOUT_DATASET`, `holdout.jsonl`
+        and the split labels a user's dataset may legitimately carry are the
+        identifier vocabulary the decision explicitly kept. What is banned is
+        prose - a script explaining a split to the reader in a third noun.
+        """
+        for path in sorted((SKILL_ROOT / "scripts").glob("*.py")):
+            literals = [
+                node.value
+                for node in ast.walk(ast.parse(path.read_text()))
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                # Prose has spaces; an identifier, a split label, and a check
+                # id do not.
+                and " " in node.value
+            ]
+            prose = " ".join(literals).casefold()
+            for noun in self.THIRD_NOUNS:
+                with self.subTest(script=path.name, noun=noun):
+                    self.assertNotIn(
+                        noun,
+                        prose,
+                        f"{path.name} says '{noun}' to the user. The pair is "
+                        '"tuning set" and "held-out set"; a third noun sends '
+                        "the reader looking for a third split.",
+                    )
+
+    def test_the_card_and_preflight_name_the_two_splits_the_settled_way(self) -> None:
+        """The other half: the replacements are pinned, not merely the absence.
+
+        A ban alone is satisfied by deleting the sentence. These are the four
+        places a user actually reads a split's name outside the guidance - the
+        power sub-score's two no-split branches, and preflight's split
+        findings.
+        """
+        readiness = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
+        for phrase in (
+            "tuning rows and no held-out set, so the ",
+            "no tuning set and held-out set, so the result would be ",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readiness)
+        for phrase in (
+            "inputs overlap the tuning and held-out splits",
+            "tuning and held-out inputs are disjoint",
+            "tuning-only dataset; no held-out split was declared",
+            "no explicit tuning/held-out split was found",
+            "held-out rows; one example changes the score by ",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, preflight)
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
         joined = " ".join(self.conversation().values())
@@ -5040,9 +5331,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # banking the difference: other open branches draw on this same budget,
         # and each one arriving at a 42-byte ceiling turns the next raise into
         # a formality instead of a choice.
+        #
+        # The owner's second follow-up spends 238 of that 390 on the two
+        # ordering mandates only SKILL.md can carry: which configuration is
+        # selected and on which rows, and that the held-out rows may not be the
+        # ones that decide it. The depth - the arithmetic, the tie-break, the
+        # reason a set used for selection stops being held out - stayed in
+        # evaluation-and-dataset.md. That leaves 152 bytes, which this ledger
+        # has recorded four times as a ceiling that trips on a one-word edit
+        # rather than on a decision, so it rises with the change instead of
+        # after it: measured 61_848, and 62_250 puts the headroom back at 402.
         self.assertLess(
             resident,
-            62_000,
+            62_250,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5191,7 +5492,50 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # at the one home instead of restating it, which is the only reason a
         # four-rung ladder costs what a three-rung one did plus its own new
         # content. Rounded up to the next 250, as every raise above did.
-        budget = 242_000
+        #
+        # The owner's second follow-up adds 2_845, all of it again in
+        # evaluation-and-dataset.md, and each part is a rule that did not exist
+        # rather than a fuller statement of one that did:
+        #
+        #   * Which set the customer's real rows go to. "Top up the shortfall"
+        #     said how many rows to generate and nothing about where the real
+        #     ones land, so both degenerate fills were permitted and neither
+        #     was refused - and a held-out set of nothing but generated rows
+        #     validates nothing about real inputs, which is most of the reason
+        #     the split is reserved at all. The proportion, its rounding, three
+        #     worked splits, and both failure directions are what a rule needs
+        #     to survive a reader who wants a simpler answer.
+        #   * Which configuration reaches the reserved rows. The file said "the
+        #     enhanced search's winner", which selects by position: a baseline
+        #     that still beat it on the tuning rows lost anyway. Both paid
+        #     measurements now compete, on the rows selection is already paid
+        #     for.
+        #   * That the reserved rows may not arbitrate between candidates. This
+        #     is the paragraph the raise is really for. Scoring two
+        #     configurations there and keeping the better one is the natural
+        #     reading of "run both at the very end", it is selection, and it
+        #     would leave the held-out number carrying the same optimism as the
+        #     tuning score - the one failure this whole split exists to
+        #     prevent. A rule that is only implied gets rebuilt by the next
+        #     person who has a good reason.
+        #   * The tie-break that instinct does belong to, on the tuning side,
+        #     and the mixture disclosure at the close.
+        #   * What the close says about the two files the run writes. The owner
+        #     asked for the path so the reserved rows can be deleted, and
+        #     underneath it was a worry that data is moved out of their dataset
+        #     and has to be returned. It is not - the file is read and rows are
+        #     copied - but nothing said so, and an unstated relationship
+        #     between a derived artifact and the canonical one is exactly what
+        #     gets forgotten. The one thing that genuinely is stranded, a
+        #     repair living in a working copy while the user's own file keeps
+        #     the defect, had no statement anywhere in the close at all; it is
+        #     told, never written.
+        #
+        # Nothing was mirrored: SKILL.md's share is the ordering mandate and a
+        # pointer, and the four other documents are unchanged or shorter.
+        # Measured at 245_633, so 246_000 - 367 bytes, inside the 228-403 band
+        # the raises above settled on.
+        budget = 246_000
         self.assertLess(
             total,
             budget,

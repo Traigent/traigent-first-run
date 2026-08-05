@@ -490,7 +490,7 @@ Five rules make the subset honest:
    Sample size alone cannot supply a confidence interval or minimum detectable effect for a paired
    comparison, so never invent a percentage-point threshold before those outcomes exist.
 3. **Sample within each split, never across it.** Draw the 18 tuning rows from the tuning split
-   and the held-out ten from the holdout split, keeping them disjoint. A subset drawn over the combined
+   and the held-out ten from the held-out split, keeping them disjoint. A subset drawn over the combined
    set can pull the same input into both sides and fabricate a tune/holdout overlap that the
    original dataset did not have.
 4. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
@@ -519,16 +519,27 @@ component design, calibration, or optimization touches the dataset, and keep the
 for the rest of the run. That composition holds wherever the rows come from - a fully generated
 walkthrough or a bounded subset drawn from a large real dataset alike - because the rule governs
 the split this run reserves, not where the data originated. A project that already maintains its
-own independent validation split is the exception: use it as it stands rather than re-cutting it
+own independent held-out split is the exception: use it as it stands rather than re-cutting it
 to ten, and follow every claim rule below. When the rows carry no usable difficulty tags, work down
 the same ladder the bounded subset uses, and record the rung the split was cut on.
 
-When the real rows cannot fill that composition, top the split up with generated rows rather than
-dropping a band, and declare the mixture through the provenance fields above so the row says what
-it is. State what the top-up costs rather than leaving it implied: a generated held-out row cannot
-show that the winner generalizes to real inputs, only that it survives rows the tuning search
-never saw. Such a split is non-blind either way, so the synthetic-evidence rules at the end of
-this section already govern what it may claim.
+**Real rows reach both sets before either is topped up.** Take the customer's own rows first
+and generate only the shortfall - and when there are too few to fill both sets, divide the real
+ones between them in the same proportion as the sets themselves, rounding in the tuning set's
+favour, before a single row is generated. Against the 18/10 default that is about two real rows to
+tuning for every one held back: ten real rows split seven and three, four split three and one, two
+split one and one. Below two there is nothing to divide, so the one row goes to tuning where the
+search can at least see it. Filling one set with the real rows and generating the other is the
+failure this rule exists to stop, and it fails in both directions: a held-out set of generated rows
+validates nothing about real inputs, and a tuning set of generated rows searches a task the
+customer does not have.
+
+Then top each set up to its composition with generated rows rather than dropping a band, placing
+each real row in the band its own difficulty puts it in, and declare the mixture through the
+provenance fields above so the row says what it is. State what the top-up costs rather than leaving
+it implied: a generated held-out row cannot show that the winner generalizes to real inputs, only
+that it survives rows the tuning search never saw. Such a split is non-blind either way, so the
+synthetic-evidence rules at the end of this section already govern what it may claim.
 
 Write the reserved rows to their own file. The tuning rows and the held-out rows are two files,
 not one file with a column, because that separation is what physically keeps a reserved row out
@@ -581,11 +592,24 @@ Traigent real holdout support instead of this guide-authored split is tracked in
 Traigent-owned follow-up - never surface a repository, issue, or tracker reference to the user;
 the disclosure note below stays free of one.
 
-Score the held-out rows once, after the enhanced search selects its winning configuration, by
-running that exact configuration - and only that configuration - against the reserved rows.
-Never run every candidate against the held-out rows; that would use them for selection and they
-would stop being held out. Include those calls in the combined paid-work approval alongside the
-enhanced search.
+Score the held-out rows once, on one configuration: the one this run recommends. This walkthrough
+pays for two measurements, the baseline grid and the enhanced search, so select it on the **tuning**
+scores across both of them - the tuning rows are the ones already spent on selection. The enhanced
+search's winner is not the answer by position: when the baseline's best configuration still scores
+higher on the tuning rows, that is the one this run recommends and the one that gets scored. Then
+run that configuration, and only that configuration, against the reserved rows. Include those calls
+in the combined paid-work approval alongside the enhanced search.
+
+**The held-out rows arbitrate nothing.** Scoring two configurations on them and keeping whichever
+came back higher is selection, and a set used for selection is not held out: its number would carry
+the same optimism as the tuning score, which is the single thing this split exists to avoid. It
+reports on a candidate that was already chosen; it does not choose one. So the choice is made where
+selection is already paid for, and only its outcome is measured here.
+
+Cost belongs in that choice, on the tuning side. When two configurations score the same on the
+tuning rows, prefer the cheaper one; at equal cost prefer the stronger model, whose headroom a
+wider search after this walkthrough is likelier to use. That is a decision taken on the rows
+selection is allowed to use, so it costs the held-out set nothing.
 
 SKILL stages 7 and 8 own when that score is disclosed. The split itself does not change between
 the two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once,
@@ -608,16 +632,34 @@ walkthrough's. Keep the note only while one row still moves the held-out figure 
 held-out set large enough that it does not, drop the note rather than pasting a caveat the
 numbers do not need.
 
+When the split was topped up, say so on the same line as its score - how many of its rows are the
+customer's and how many were generated. "Held out" is a claim about what the search never saw, not
+a claim that the rows came from the customer's world, and a reader who is not told the difference
+will hear the second one.
+
+Name both written files in the closing summary's details layer, by absolute path -
+`<project root>/traigent-runs/tuning.jsonl` and `<project root>/traigent-runs/holdout.jsonl` - and
+say the reserved rows are the second one, so a user who wants them gone knows which file to open.
+Both are derived: their dataset was read and rows were copied out of it. Nothing was moved and
+nothing has to be put back - the original was never modified, lost no row, and stays the canonical
+copy - so deleting either derived file loses nothing. This is housekeeping, so it goes below the
+outcome and the recommendation, never beside them.
+
+One thing does have to travel back, and only the user can carry it: a repair made under "Quality
+diagnosis and repair choice" above lives in the working copy, so their own dataset still has the
+defect this run worked around. Name what changed and in which rows, and leave applying it to them.
+Offer it; never write it.
+
 Call it a sealed holdout only when its split and labels were fixed and hidden from component
 design, tuning, and winner selection until the candidate was locked. Because the assistant creates
-and can inspect the generated split, name it held-back, non-blind validation instead.
+and can inspect the generated split, call the held-out set held-back and non-blind instead.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and
 winner selection. This is a later production-promotion safeguard, not a calibration gate or a
 reason to pause the first walkthrough. Until then:
 
-- Report them as synthetic, non-blind validation evidence.
+- Report them as synthetic, non-blind held-out evidence.
 - Do not promote the result to production.
 - Do not describe the measured lift as expected customer lift.
 
