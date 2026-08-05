@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -48,26 +49,47 @@ from typing import Any
 PROBES_PER_CASE = 4
 DETERMINISTIC_SECONDS_PER_PROBE = 75
 LLM_JUDGE_SECONDS_PER_PROBE = 90
-# The ceiling is where "slow" stops being a credible explanation and a hang is
-# the likelier one, and it also stops calibration from quietly eating the run's
-# own time budget. 1800 is set from the largest case set the guide asks for -
-# three to five input/expected pairs - so a five-case matrix receives its full
-# per-probe allowance on both paths (20 x 75 = 1500, 20 x 90 = 1800) and is
-# never clamped below what `--help` promises it. The old 600 was: at the
-# two-case minimum a judge already wanted 720, so every documented judge run was
-# a flat 600 that could not cover the 90 seconds per probe it advertised. 1800
-# also still covers a one-minute-per-call evaluator out to seven cases; past
-# that, a first-run calibration matrix that large is itself the thing to
-# question.
+# Fifteen minutes, and it is an owner decision rather than a derivation. This is
+# onboarding, not a full-power run: a calibration that has not separated a good
+# answer from a bad one in fifteen minutes most probably will not, and asking a
+# first-run user to keep waiting past that buys a verdict they can already act
+# on without. The previous 1800 was derived - the largest documented case set at
+# its full per-probe allowance - and derivation is the wrong instrument for
+# "how long is it fair to ask someone to wait", which is a judgement about the
+# person and not about the work.
+#
+# So it CLAMPS, on purpose, and the clamp is the part that must be disclosed
+# rather than hidden. At 75s per probe the derivation stays whole to three cases
+# (12 x 75 = 900) and is cut at four (1200) and five (1500); a judge at 90s
+# stays whole to two (720) and is cut from three (1080). A cut case set gets
+# less per probe than `--help` quotes - 45 seconds each at five cases - so an
+# evaluator that really does take about a minute per call cannot finish a
+# five-case matrix inside this ceiling and will reach the timeout question.
+# `references/evaluation-and-dataset.md` states that consequence to the user
+# before the wait starts, and the guidance test welds it to this number.
+#
+# An explicit `--timeout` is deliberately not clamped: it is how the user's own
+# "wait, my evaluator is normally this slow" answer to the timeout question is
+# carried out, and a ceiling that overrode the person it was protecting would
+# make that answer unanswerable.
 #
 # There is no floor. One lived here at 180 and could never bind - the smallest
 # possible case set is a single case, which is four probes, which is already 300
 # seconds - and an unreachable clamp reads as a protection that is not there.
-CALIBRATION_TIMEOUT_CEILING_SECONDS = 1800
+CALIBRATION_TIMEOUT_CEILING_SECONDS = 900
 SECONDS_PER_PROBE = {
     "deterministic": DETERMINISTIC_SECONDS_PER_PROBE,
     "llm-judge": LLM_JUDGE_SECONDS_PER_PROBE,
 }
+# How long before the budget expires the run says so, and why a fixed lead
+# rather than a fraction of the budget: what the reader needs is time to decide,
+# and two minutes is two minutes whatever the budget is, while a percentage of a
+# short budget is seconds and decides nothing. At the 900-second ceiling it
+# lands at minute 13 of 15.
+#
+# There is nothing to decide about STOPPING, which is why this is a warning and
+# not a question - see `pre_cap_warning_message`.
+PRE_CAP_WARNING_LEAD_SECONDS = 120
 
 
 def calibration_timeout_seconds(case_count: int, kind: str) -> int:
@@ -77,6 +99,63 @@ def calibration_timeout_seconds(case_count: int, kind: str) -> int:
         CALIBRATION_TIMEOUT_CEILING_SECONDS,
         probes * SECONDS_PER_PROBE[kind],
     )
+
+
+def pre_cap_warning_delay(timeout_seconds: int) -> float | None:
+    """Seconds to wait before warning, or None when a warning would say nothing.
+
+    A budget no longer than the lead has no "before the cap" to warn in: the
+    warning would fire at or before the first probe call, repeating what the
+    assistant already said when it announced the wait.
+    """
+    if timeout_seconds <= PRE_CAP_WARNING_LEAD_SECONDS:
+        return None
+    return float(timeout_seconds - PRE_CAP_WARNING_LEAD_SECONDS)
+
+
+def pre_cap_warning_message(timeout_seconds: int) -> str:
+    """The pre-cap line, which is a warning and deliberately not a question.
+
+    A "stop or continue?" here would be dishonest, because the two answers are
+    not comparable: continuing costs the remaining minutes, and stopping costs
+    every minute already spent. Calibration has no resume - the authored probes
+    all run in one child that prints its result only once every case is done,
+    and the parent writes nothing until that returns - so a stop discards the
+    whole wait and a re-run starts at the first probe. Saying so is the only
+    honest version of this line; the question with real alternatives is the one
+    the timeout itself asks, after the budget has actually been spent.
+    """
+    return (
+        "CALIBRATION STILL RUNNING: "
+        f"{PRE_CAP_WARNING_LEAD_SECONDS} of the {timeout_seconds} seconds "
+        "budgeted for this calibration remain. Nothing is recorded yet and "
+        "there is no resume: calibration writes its result only when it "
+        "finishes, so stopping now discards this wait entirely and a re-run "
+        "starts from the first probe. Left alone it stops itself at the budget "
+        "and writes the timeout record, which is a result that can be acted "
+        "on. Relay this as a warning, not as a question."
+    )
+
+
+def start_pre_cap_warning(timeout_seconds: int) -> threading.Timer | None:
+    """Arm the pre-cap warning on stderr, or return None when there is none.
+
+    stderr because the documented calibration invocation is detached with
+    stdout redirected into the results file - the log is where a warning issued
+    while the run is still going can actually be read. Daemon, so the error
+    paths that return before the cancel below cannot hold the interpreter open
+    waiting for a warning about a calibration that already stopped.
+    """
+    delay = pre_cap_warning_delay(timeout_seconds)
+    if delay is None:
+        return None
+    timer = threading.Timer(
+        delay,
+        lambda: print(pre_cap_warning_message(timeout_seconds), file=sys.stderr),
+    )
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 GOOD_MINIMUM = 0.8
@@ -605,8 +684,13 @@ def parse_args() -> argparse.Namespace:
             "this is the worst-case wall time and not half of it. The default is "
             f"derived from the work - {PROBES_PER_CASE} probe calls per case at "
             f"{DETERMINISTIC_SECONDS_PER_PROBE}s each, or "
-            f"{LLM_JUDGE_SECONDS_PER_PROBE}s each for --kind llm-judge, capped at "
-            f"{CALIBRATION_TIMEOUT_CEILING_SECONDS}s"
+            f"{LLM_JUDGE_SECONDS_PER_PROBE}s each for --kind llm-judge - and then "
+            f"capped at {CALIBRATION_TIMEOUT_CEILING_SECONDS}s "
+            f"({CALIBRATION_TIMEOUT_CEILING_SECONDS // 60} minutes), which is a "
+            "ceiling on the wait rather than on the work and so gives a large "
+            "case set less per probe than the rates above. Passing this "
+            "explicitly is the user's own number and is not capped. There is no "
+            "resume: a calibration stopped before it finishes records nothing"
         ),
     )
     parser.add_argument("--json", action="store_true")
@@ -996,6 +1080,12 @@ def main() -> int:
     # decides calibration, because the authored phase runs first and takes what
     # it needs; what changes is that it can no longer be handed a second one.
     calibration_deadline = time.monotonic() + args.timeout
+    # Armed over the whole calibration, both phases, because the wall clock the
+    # user was quoted covers both. The cancel after the last probe is cleanup
+    # and is honestly not what makes this safe - the daemon flag is, since every
+    # early return below leaves the timer pending and the interpreter must not
+    # wait on it.
+    warning_timer = start_pre_cap_warning(args.timeout)
     try:
         process = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
@@ -1123,6 +1213,8 @@ def main() -> int:
                 supplemental_results[index]["exception_probes"].append(
                     {"kind": kind, **attempt}
                 )
+    if warning_timer is not None:
+        warning_timer.cancel()
 
     case_results = []
     for configured_case, case, supplemental in zip(

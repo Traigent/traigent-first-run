@@ -1685,6 +1685,67 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
+    def test_the_guide_says_what_each_probe_set_is_for(self) -> None:
+        """Two sets of probes ran and the guide never said why there were two.
+
+        Everything downstream reads only the authored ones - `readiness.py`
+        takes `cases`/`checks`/`scores`/`timed_out` and nothing else - so a
+        reader could reasonably conclude the generated ones earn nothing and
+        delete them. They earn the question the authored four cannot ask, and
+        the answer is the reason they must not decide: a permutation scoring
+        full marks is correct for an order-free task. The separation also
+        carries the repair case, which is where it matters most and where the
+        guidance said nothing at all - an author's own probes partly confirm the
+        author's own fix, and generated probes cannot be revised to pass.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "the authored probes are the verdict",
+            "the only thing `passed`, the exit code, and the readiness score are "
+            "built from",
+            "they only ever raise a question, never a verdict",
+            "only the author knows which this task is",
+            "a probe an author can revise until it passes is weak evidence about a "
+            "repair the author just wrote",
+            "the half of the evidence not confirming its own fix",
+            "read the first as the verdict and the second as the questions",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_the_short_calibration_command_routes_long_ones_to_the_detached_form(
+        self,
+    ) -> None:
+        """Two invocations for one step, and only one of them survives the wait.
+
+        The command block in the calibration section is a plain foreground run.
+        `run-safety.md` records that harnesses often kill a foreground command at
+        about five minutes, and a calibration budget now runs to fifteen - so a
+        reader who follows the first block they meet loses the whole wait AND
+        the timeout record that makes a slow evaluator legible. The pre-cap
+        warning has the same problem from the other end: it goes to stderr,
+        which only the detached form is capturing and polling.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "that form is for a calibration that returns in seconds",
+            'use the detached form in "when calibration runs long" instead',
+            "can be killed from outside before it writes anything",
+            "its warnings arrive on a stderr nobody is reading",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
     def test_calibration_modes_follow_real_task_semantics(self) -> None:
         skill_text = SKILL.read_text().casefold()
         quality_text = (
@@ -4719,7 +4780,38 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # paragraph above defines, rounded up to the next 250. The previous
         # number left ONE byte, which makes the next open PR's first character
         # the thing that fails the build.
-        budget = 231_750
+        #
+        # Raised again by the fifteen-minute calibration cap, and RESIDENT is
+        # untouched by it - measured at 61_489 before and after - because
+        # SKILL.md already carries the mandate this needs ("say what it does and
+        # how long it may take") and every byte bought here is the depth behind
+        # it, in the reference that owns the stage. That is the policy above
+        # working rather than being spent.
+        #
+        # Three things bought, none with a prior statement anywhere. What the
+        # ceiling means for a user whose evaluator is genuinely slow: it bounds
+        # the wait and not the work, so a five-pair matrix gets 45 seconds a
+        # probe instead of 75 and will not finish - a consequence that was
+        # previously invisible because no ceiling clamped a documented run.
+        # That calibration has no resume, and therefore why the pre-cap line is
+        # a warning and not a "stop or continue" question - the two answers cost
+        # different amounts and offering them as a pair hides that. And what the
+        # two probe sets are each for, which the guidance stated nowhere: the
+        # authored probes are the verdict, the generated ones only ask, and the
+        # reason they stay separate is that a probe an author can revise is weak
+        # evidence about that author's own repair.
+        #
+        # A fourth thing, found by reading the file end to end as CLAUDE.md
+        # requires rather than by reading this diff: the calibration section's
+        # own command block is a foreground run, and 250 lines later the same
+        # section requires a detached one for exactly the budget this branch
+        # sets. Whichever a reader met first was the rule. The pointer that
+        # settles it is four lines and it is the difference between losing
+        # fifteen minutes to an outside kill and recording a timeout.
+        #
+        # 234_140 measured, plus the same 371-byte headroom, rounded up to the
+        # next 250.
+        budget = 234_750
         self.assertLess(
             total,
             budget,
