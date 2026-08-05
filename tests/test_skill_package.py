@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -999,40 +1000,63 @@ class SkillPackageTests(unittest.TestCase):
         their names for their whole life. And its vocabulary covered only the
         internal test bank, so internal INFRASTRUCTURE walked straight past it:
         a private repository, two cluster names, an internal observability
-        stack, and a non-production portal hostname that resolves publicly.
-        Paths are checked now, and the vocabulary names both families.
+        stack, and a non-production hostname that resolves publicly.
+        Paths are checked now, and the vocabulary covers both families - as
+        digests, because a public file listing them is the leak it guards.
         """
-        # Assembled rather than written out: a literal here would be the very
-        # leak this test forbids, and excluding this file instead would leave a
-        # hole exactly where someone edits the rule.
-        forbidden = tuple(
-            a + b
-            for a, b in (
-                # the internal test bank and its harness
-                ("agents-", "skills"),
-                ("fixture", " bank"),
-                ("quality-", "onboarding"),
-                ("onboarding", " fixture"),
-                ("quality-test-", "multi-agent"),
-                ("multi-agents", "-test"),
-                # internal infrastructure. A reader of a public repository
-                # should not learn which private repositories, clusters, or
-                # non-production hosts exist; each of these was published.
-                # Only what no structural rule can reach belongs here. The
-                # private repository this list used to name first is now caught
-                # by shape, so naming it bought nothing and disclosed it twice
-                # - in the deleted reports, and again in the guard against them.
-                ("demo_sql", "_spider"),
-                ("Kub", "erly"),
-                ("triagent", "-dev"),
-                ("traigent-", "prod-eks"),
-                # Shortened deliberately: the deleted reports named the
-                # non-production host six times WITHOUT its domain, so a token
-                # carrying the full FQDN would have missed every one of them.
-                # (Written as a fragment for the same reason as the rest - an
-                # explanatory comment spelling it out is itself the leak, which
-                # this guard caught me doing.)
-                ("portal-", "dev"),
+        # The names are NOT in this file, in any readable form. They used to be,
+        # assembled from two adjacent fragments each, which defeats `grep` for
+        # the exact string and defeats no reader at all: the fragments sat next
+        # to each other in one tuple, under a comment saying what they were. A
+        # public repository holding a plaintext inventory of private clusters,
+        # hosts and datasets is the disclosure this test exists to prevent, and
+        # the guard was the last place still doing it.
+        #
+        # So each name is stored as the sha256 of itself, and the check hashes
+        # the TEXT instead of reading the names. That is a change to what this
+        # file reveals, not to what the check catches: `token.casefold() in
+        # text.casefold()` is exactly "some window of len(token) in the
+        # casefolded text equals the token", so hashing every window of every
+        # stored length and looking it up decides the same predicate, character
+        # for character. The lengths are here because that equivalence needs
+        # them - without them there is no window to hash.
+        #
+        # To add a name, without ever putting it in a file (mind shell history):
+        #   python3 -c 'import hashlib,sys;b=sys.argv[1].casefold().encode();\
+        #   print(len(b),hashlib.sha256(b).hexdigest())' 'the name'
+        # then insert the length and the digest below, keeping both sorted.
+        #
+        # What this still discloses, exactly: how many names there are, and the
+        # multiset of their lengths. The two are deliberately NOT paired - the
+        # algorithm does not need the pairing, and the pairing is the part a
+        # guesser would use to narrow a search. And a digest of a short,
+        # guessable name is a confirmation oracle rather than a secret - anyone
+        # who already suspects `<something>-dev` can hash it and test it against
+        # this set, and no salt can fix that, because the salt would have to
+        # ship here too. It stops a reader LEARNING the estate; it does not stop
+        # someone CONFIRMING a name they had already guessed. That is the whole
+        # of what it buys - and it is worth buying, because the reader who was
+        # learning the estate from this file was not guessing.
+        #
+        # Two families are covered: the internal test bank and its harness, and
+        # internal infrastructure - a private repository, two clusters, an
+        # internal observability stack, a non-production host. Only what no
+        # structural rule below can reach belongs here.
+        forbidden_lengths = (7, 10, 12, 13, 15, 17, 18, 24)
+        forbidden_digests = frozenset(
+            bytes.fromhex(digest)
+            for digest in (
+                "001794b3d3cdd97012ef80c1e46ea9f688286ece5e89ed910c5ff003ec24110b",
+                "0ca18865d86f87b138d88f539fd0727f4240a2836842436f86ea31f07c506b43",
+                "2595809007003a29ceb06e6ff7b42e7f79a613dec7f27f8a95c307dd39d95c6e",
+                "29598efb405e50a72098d65e2e8e8b06f66ac45ff3b5890976cbaa7ad0653da4",
+                "422bc40ddc42faf8dfbe083b601daf85e828de904e3d38b2941265e4c0200186",
+                "4f7f51f01a2ca6b25bea64840d28bb572441d9862cca573c4b1f2ee40dc12ac7",
+                "50ffa53cfa10a5cfc2eacf9a270071d184abb026770822a42a4208f47c60d5e9",
+                "5e4bce6b1241887627c40c217bbbc3449cf1671fee397a1b491e8216ae04e704",
+                "634c62abdbffeefb6b7376779adfccfaca27551686418a9fba835c24f8d2e23e",
+                "a11358728514ae1c6d7a65d99c3ac5dba1d159a302b09774af7415fe0493a5f2",
+                "f356164dd71afbb8770f4a004585d0378da7c9996b9cc41804719d89b86d2e5d",
             )
         )
         # A denylist only ever knows what already leaked. Two structural rules
@@ -1140,10 +1164,26 @@ class SkillPackageTests(unittest.TestCase):
             their bodies.
             """
             found: list[str] = []
-            lowered = text.casefold()
-            for token in forbidden:
-                if token.casefold() in lowered:
-                    found.append(f"{where}: {token!r}")
+            # Every window of every stored length, hashed and looked up. The
+            # naming of the offender comes from the TEXT, not from the digest
+            # set - which is the point: this message can only ever print a
+            # string the scanned file already contains, so a failure reports
+            # the leak that is in front of it without this file knowing the
+            # names. It prints the casefolded form, because that is the string
+            # that was matched; the author is looking at their own sentence, so
+            # the case is not what they need told. Bytes rather than characters
+            # is safe and not an approximation: UTF-8 is self-synchronising, so
+            # a byte sequence occurs in the encoding exactly when the string
+            # occurs in the text.
+            blob = text.casefold().encode("utf-8", "surrogatepass")
+            leaked: set[str] = set()
+            for length in forbidden_lengths:
+                for start in range(len(blob) - length + 1):
+                    window = blob[start : start + length]
+                    if hashlib.sha256(window).digest() in forbidden_digests:
+                        leaked.add(window.decode("utf-8", "replace"))
+            for name in sorted(leaked):
+                found.append(f"{where}: {name!r}")
             for match in repo_reference.finditer(text):
                 if match.group("tail") and not match.group("host"):
                     continue  # a package path continuing on, not a repository
