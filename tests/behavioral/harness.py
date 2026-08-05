@@ -777,9 +777,17 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         raise ContractError(
             "generated dataset must contain 28 rows with an 18/10 split"
         )
+    # This is also the tune/holdout leakage check, and the only one that can be:
+    # the two splits partition all 28 rows, so distinct ids and distinct
+    # normalized inputs across the whole file already make it impossible for a
+    # row - or a restatement of one - to sit on both sides. The separate
+    # id-overlap guard that used to follow was therefore unreachable, and
+    # deleting it left the suite green; an unreachable check reads like leakage
+    # coverage while providing none.
     if len(set(ids)) != 28 or len(set(inputs)) != 28:
         raise ContractError(
-            "generated dataset ids and normalized inputs must be unique"
+            "generated dataset ids and normalized inputs must be unique across "
+            "both splits, so no row can appear in tuning and holdout alike"
         )
     if tuning_difficulty_counts != {
         "easy": 3,
@@ -799,8 +807,6 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         raise ContractError(
             "generated dataset must contain 2 easy, 3 medium, 3 hard, and 2 very-hard holdout rows"
         )
-    if {row["id"] for row in tuning} & {row["id"] for row in holdout}:
-        raise ContractError("tuning and holdout ids overlap")
     if any(row.get("source") != "synthetic-walkthrough" for row in rows):
         raise ContractError("generated rows must retain walkthrough-only provenance")
     label_for_coverage = {

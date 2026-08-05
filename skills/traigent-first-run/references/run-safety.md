@@ -480,9 +480,10 @@ After showing the baseline result, give the connected stage a preview and approv
 - Search: added enhanced controls/combinations, the configuration ceiling below, approximate calls,
   how Traigent's managed search chooses trials while retaining baseline values, objective
   directions and weights, and the rule for recommending among tradeoffs.
-- Held-out check: once the search selects its winning configuration, ten more calls score that
-  configuration - and only that configuration - against the reserved held-out rows; include those
-  calls and their cost in this same approval rather than asking again afterward.
+- Held-out check: once the search selects its winning configuration, ten more agent calls score
+  that configuration - and only that configuration - against the reserved held-out rows, joined by
+  ten judge calls when an LLM judge grades them. Include those calls in this same approval rather
+  than asking again afterward, and add their tracked cost to the single running total.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
@@ -668,8 +669,8 @@ Before claiming success, verify:
     local-only during
     the run; any such degradation halted further paid work rather than surfacing only at the end.
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
-    named before any generalization claim, and the enhanced winner's held-out score is disclosed
-    beside it for the first time here - never at any earlier point in the run.
+    named before any generalization claim, and the held-out score SKILL stage 8 discloses appears
+    beside them.
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.

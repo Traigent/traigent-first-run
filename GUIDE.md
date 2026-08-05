@@ -129,7 +129,7 @@ exposes a public exact sync id; otherwise that result remains local. Then it sho
 result and the connected enhanced result side by side, with a verified portal link for every
 persisted run and an explicit `local-only` label for an unsynced baseline, and compares the best
 configs and their measured tuning behavior directly. It also discloses the enhanced winner's
-held-out score here, with a note on how little a ten-example gap can show.
+held-out score here, with a note saying how little ten examples can settle.
 Approve the provider-paid baseline first. After its result, preview and approve the connected
 optimization separately. The assistant chooses how many configurations it tests and which knobs it
 varies.

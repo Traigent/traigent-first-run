@@ -1106,7 +1106,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 rows by default",
+            "18 tuning rows by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
@@ -2084,6 +2084,7 @@ class SkillPackageTests(unittest.TestCase):
             'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
             'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
+            'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
             "save_to=BASELINE_RESULTS",
             "save_to=OPTIMIZED_RESULTS",
             "ObjectiveSchema.from_objectives(",
@@ -2097,7 +2098,6 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
-        self.assertNotIn("HOLDOUT_DATASET", text)
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
@@ -2260,7 +2260,7 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
             call_agent("task", {})
 
-    def test_sdk_comparison_uses_one_public_metric_contract(self) -> None:
+    def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
         functions = {}
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
@@ -2278,13 +2278,195 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "adapter around the preserved evaluator",
             "installed sdk's documented public `metric_functions` contract",
-            "baseline and enhanced search must use the same selected public evaluation path",
+            "baseline, search, and holdout must use the same selected public evaluation path",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
         self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
-        self.assertNotIn("HOLDOUT_DATASET", text)
-        self.assertNotIn("def evaluate_holdout", text)
+        self.assertIn('HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")', text)
+        self.assertIn("def holdout_agent_input(input_data)", text)
+        # Scoring the winner on reserved rows is not a generalization claim,
+        # and the closing result has to say so somewhere. Before this, no
+        # document stated it of the closing result at all: the nearest sentence
+        # read as a remedy ("score the enhanced winner against the reserved
+        # held-out rows") rather than as the limit that still stands after it.
+        self.assertIn(
+            "this first-run comparison does not establish generalization or "
+            "expected production improvement, and the held-out score does not "
+            "convert it into one",
+            normalized,
+        )
+
+        holdout_node = functions["evaluate_holdout"]
+        holdout_module = ast.fix_missing_locations(
+            ast.Module(
+                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
+            )
+        )
+        examples = [
+            SimpleNamespace(
+                input_data="classify this",
+                expected_output="urgent",
+                metadata={
+                    "id": "case-1",
+                    "source": "reviewed",
+                    "difficulty": "hard",
+                    "coverage": "priority",
+                    "split": "holdout",
+                    "metadata": {"rubric_branch": "priority"},
+                },
+            ),
+            SimpleNamespace(
+                input_data={
+                    "message": "classify that",
+                },
+                expected_output="normal",
+                metadata={},
+            ),
+        ]
+        loaded_paths = []
+        agent_calls = []
+        scorer_calls = []
+
+        class Dataset:
+            @staticmethod
+            def from_jsonl(path):
+                loaded_paths.append(path)
+                return SimpleNamespace(examples=examples)
+
+        def call_agent(message, config):
+            agent_calls.append((message, config))
+            return "urgent" if message == "classify this" else "normal", 0.25
+
+        def task_score(output, expected, input_data):
+            scorer_calls.append((output, expected, input_data))
+            return 1.0
+
+        namespace = {
+            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            "call_agent": call_agent,
+            "task_score": task_score,
+            "traigent": SimpleNamespace(Dataset=Dataset),
+        }
+        exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
+
+        config = {"model": "preserved-current-model"}
+        score, cost = namespace["evaluate_holdout"](config)
+
+        self.assertEqual(score, 1.0)
+        self.assertEqual(cost, 0.5)
+        self.assertEqual(loaded_paths, ["/project/traigent-runs/holdout.jsonl"])
+        self.assertEqual(
+            agent_calls,
+            [("classify this", config), ("classify that", config)],
+        )
+        self.assertEqual(
+            scorer_calls,
+            [
+                (
+                    "urgent",
+                    examples[0].expected_output,
+                    "classify this",
+                ),
+                (
+                    "normal",
+                    examples[1].expected_output,
+                    examples[1].input_data,
+                ),
+            ],
+        )
+
+        untracked_costs = iter((0.25, None))
+
+        def call_agent_with_untracked_cost(message, config):
+            output = "urgent" if message == "classify this" else "normal"
+            return output, next(untracked_costs)
+
+        namespace["call_agent"] = call_agent_with_untracked_cost
+        score, cost = namespace["evaluate_holdout"](config)
+        self.assertEqual(score, 1.0)
+        self.assertIsNone(cost)
+
+    def test_the_search_never_evaluates_the_reserved_rows(self) -> None:
+        """The separate file is the mechanism; the claim alone is not.
+
+        4531ae6 removed the held-out dataset *and* its plumbing, and the
+        first reinstatement restored only the dataset - so the natural
+        implementation was one 28-row `tuning.jsonl` with the reserved rows
+        inside the search, while stage 8 still printed a clean held-out line.
+        Nothing else catches that: preflight passes `dataset-split` on the
+        combined scoring file, readiness never sees the optimizer's input,
+        and no other check asserts what `eval_dataset` actually names.
+        """
+        text = SDK_EXECUTION.read_text()
+        assignments: dict[str, ast.expr] = {}
+        eval_datasets: list[ast.expr] = []
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.walk(ast.parse(source)):
+                if (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                ):
+                    assignments.setdefault(node.targets[0].id, node.value)
+                if isinstance(node, ast.Call):
+                    eval_datasets.extend(
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "eval_dataset"
+                    )
+
+        self.assertEqual(
+            len(eval_datasets),
+            1,
+            "exactly one call may declare the dataset the search evaluates",
+        )
+        evaluated = eval_datasets[0]
+        self.assertIsInstance(evaluated, ast.Name)
+        self.assertEqual(
+            evaluated.id,
+            "TUNING_DATASET",
+            "the search must evaluate the tuning file - naming the holdout "
+            "file, or a combined file carrying both splits, puts the reserved "
+            "rows back inside the selection they exist to sit outside of",
+        )
+
+        resolved = {}
+        for name in ("TUNING_DATASET", "HOLDOUT_DATASET"):
+            self.assertIn(name, assignments, f"the wrapper does not define {name}")
+            resolved[name] = eval(  # noqa: S307 - the wrapper's own expression
+                compile(
+                    ast.fix_missing_locations(ast.Expression(assignments[name])),
+                    "<sdk-dataset-paths>",
+                    "eval",
+                ),
+                {"RUN_DIR": Path("/project/traigent-runs")},
+            )
+        self.assertEqual(
+            resolved["TUNING_DATASET"], "/project/traigent-runs/tuning.jsonl"
+        )
+        self.assertEqual(
+            resolved["HOLDOUT_DATASET"], "/project/traigent-runs/holdout.jsonl"
+        )
+        self.assertNotEqual(
+            resolved["TUNING_DATASET"],
+            resolved["HOLDOUT_DATASET"],
+            "one file cannot both feed the search and be withheld from it",
+        )
+
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "write the reserved rows to their own file",
+            "two files, not one file with a column",
+            "`eval_dataset` names the tuning file only",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
 
     def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -2997,21 +3179,29 @@ class SkillPackageTests(unittest.TestCase):
             "do not say traigent prevents or corrects this",
             'do not call a gap in this range "overfitting,"',
             "never surface a repository, issue, or tracker reference to the user",
-            "optimization set (18 ex)",
-            "held-out set (10 ex)",
-            "too few examples to conclude",
+            "tuning set (<n> ex)",
+            "held-out set (<m> ex)",
+            "<m> examples cannot settle",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
-        # The disclosed note is customer-facing output, not internal engineering
-        # notes: it must never carry a repository, issue, or tracker reference.
-        for name, text in documents.items():
-            with self.subTest(no_tracker_leak=name):
-                self.assertNotIn("traigent-first-run#", text)
-                self.assertNotIn("tracking:", text)
-
         self.assertIn("28 rows split 18 tuning / 10 held-out", documents["glossary"])
+        # The glossary promised a check ten rows cannot perform, with no caveat
+        # - while the entry two lines below it carried one. It also called an
+        # 18/10 split "two halves" and offered the user three competing name
+        # pairs for the same rows.
+        glossary = documents["glossary"]
+        for phrase in (
+            "they cannot measure how much better one configuration is than another",
+            "it can show a winner still works outside the rows it was chosen on "
+            "and cannot measure by how much",
+            "two parts of your examples, not equal halves",
+            'say "tuning set" and "held-out set" to the user',
+        ):
+            with self.subTest(glossary_phrase=phrase):
+                self.assertIn(phrase, glossary)
+        self.assertNotIn("two halves of your examples", glossary)
         self.assertIn("disclosed once, beside the", documents["glossary"])
 
         skill = documents["skill"]
@@ -3049,6 +3239,100 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, run_plan)
+
+    def test_ten_held_out_rows_are_the_design_not_a_placeholder(self) -> None:
+        """The owner's rule: ten rows, composed 2/3/3/2, topped up if needed.
+
+        The first reinstatement told the assistant that growing the split past
+        ten was tracked as a Traigent-owned follow-up, which made the size read
+        as a placeholder someone would fix. It is not: ten is where readiness
+        puts its own floor, every further row is another paid call on the
+        winner, and the honest answer to the noise that leaves is to say so.
+        The composition therefore applies wherever the rows come from, real
+        data is topped up rather than allowed to drop a band, and the display
+        quotes counts because a percentage on ten rows claims ten times the
+        resolution it has.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            # Ten is a decision, with the reason the guide previously promised
+            # and never gave.
+            "ten rows is the design, not a placeholder",
+            "`dataset-below-measurable-size`",
+            "the full picture comes from running the whole dataset over a wider knob space",
+            # One composition, applied wherever the rows come from.
+            "that composition holds wherever the rows come from",
+            # Top up rather than drop a band - with what it costs.
+            "top the split up with generated rows rather than dropping a band",
+            "cannot show that the winner generalizes to real inputs",
+            # A standard error is labelled as one, beside the interval.
+            "one *standard error*",
+            "a 95% interval is roughly twice that",
+            # Counts, at the size where a percentage lies.
+            "report counts, not percentages, while the split is this small",
+            "can land lower, level, or higher",
+            # The paired-count discipline belongs on the small case, not off it.
+            "this is required on the ten-row default, not only above it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        self.assertNotIn("growing the holdout past the default ten rows", dataset)
+        # No minimum detectable effect, per the same decision: the guide still
+        # refuses to invent a threshold before paired outcomes exist.
+        self.assertIn(
+            "never invent a percentage-point threshold before those outcomes exist",
+            dataset,
+        )
+
+    # Engineering-rationale citations that predate this rule and are never
+    # instructed to be echoed to the user. Allowlisted by exact text so the
+    # corpus below can stay whole: narrowing the corpus to the documents that
+    # happen to be clean is how run-safety.md - which carries the customer
+    # facing approval copy - fell outside this check in the first place.
+    TRACKER_CITATION_ALLOWLIST = (
+        "(traigent-first-run#78)",
+        "Tracked upstream as Traigent/Traigent issue 1993.",
+        "Tracked upstream as Traigent/Traigent issue 2020.",
+    )
+    TRACKER_REFERENCE = re.compile(
+        r"traigent-first-run#\d+|traigent/traigent issue \d+", re.IGNORECASE
+    )
+    TRACKER_LINE = re.compile(r"^\s*tracking:", re.IGNORECASE | re.MULTILINE)
+
+    def test_no_assistant_facing_document_leaks_a_tracker_reference(self) -> None:
+        """Customer-facing copy is pasted verbatim; a tracker link cannot ride along.
+
+        The disclosure note is copied into the user's chat by instruction
+        ("Report it as one line..."), so an issue reference anywhere in the
+        copy the assistant reads is one autocomplete away from a customer's
+        onboarding transcript. This is a public repository: internal repo,
+        issue, and tracker names have no place in guidance the user sees.
+        """
+        for path in assistant_facing_documents():
+            raw = path.read_text()
+            # Whitespace-normalized, because an allowlisted citation wraps
+            # across lines in the source and would otherwise never match.
+            allowed = " ".join(raw.split())
+            for citation in self.TRACKER_CITATION_ALLOWLIST:
+                allowed = allowed.replace(citation, "")
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self.TRACKER_REFERENCE.findall(allowed),
+                    [],
+                    f"{path.name} carries a tracker reference outside the "
+                    "allowlisted engineering citations",
+                )
+                self.assertEqual(
+                    self.TRACKER_LINE.findall(raw),
+                    [],
+                    f"{path.name} carries a 'Tracking:' line, which the "
+                    "disclosure copy would paste to the user verbatim",
+                )
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
         readme_source = (ROOT / "README.md").read_text()
@@ -4607,9 +4891,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
+        #
+        # #127/#141 then spent that headroom down to 42 bytes without saying
+        # so, which is the state the paragraph above says a ceiling must not be
+        # left in. This branch adds 151 bytes to SKILL.md - stage 4's preflight
+        # step now names what the combined `--dataset` file holds, because the
+        # held-out rows being a separate file from the one the search evaluates
+        # is the mechanism the reinstated claim depends on, and no document
+        # said it. That is flow detail SKILL.md owns; the depth sits in
+        # evaluation-and-dataset.md. Measured resident is 61_610, so the number
+        # below restores decision-sized headroom (390 bytes) rather than
+        # banking the difference: other open branches draw on this same budget,
+        # and each one arriving at a 42-byte ceiling turns the next raise into
+        # a formality instead of a choice.
         self.assertLess(
             resident,
-            61_500,
+            62_000,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4708,11 +5005,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # pointers added in SKILL.md, sdk-execution.md, run-safety.md,
         # glossary.md, run-plan.md, and GUIDE.md were kept to the timing/
         # ownership statement each already restates conclusions from, not the
-        # mechanism itself. Base measured 228_407; this branch measures
-        # 232_621, a 4_214-byte (~4.1 KB) rise - not the 4.5 KB first
-        # estimated before the post-review wording pass below trimmed it.
-        # Measure it; do not take a side.
-        budget = 232_750
+        # mechanism itself. Base measured 228_407; that branch measured
+        # 232_611, a 4_204-byte (~4.1 KB) rise - not the 4.5 KB first
+        # estimated, and not the 232_621 / 4_214 the correcting commit itself
+        # then wrote down. Measure it; do not take a side.
+        #
+        # The review of that branch raises it again, to 238_669 measured, and
+        # the increments are all mechanism rather than restatement:
+        #
+        #   * sdk-execution.md regains `HOLDOUT_DATASET` and the ten-row
+        #     scorer. The first reinstatement restored the dataset and not the
+        #     plumbing, so nothing kept the reserved rows out of the search -
+        #     the claim was back and the mechanism was not.
+        #   * evaluation-and-dataset.md carries the owner's sizing decision:
+        #     ten rows is the design, why the floor sits there, the top-up rule
+        #     for real data that cannot fill the bands, the two-file rule, and
+        #     counts rather than percentages at a size where a percentage
+        #     claims ten times the resolution it has. The growth promise it
+        #     replaces was two lines, so this is nearly all new surface.
+        #   * glossary.md's two entries stop promising a check ten rows cannot
+        #     perform and settle on one name pair for customer copy.
+        #
+        # Against that, three duplicate statements left: the composition no
+        # longer appears in sdk-execution.md and glossary.md, and the
+        # disclosure-timing mandate no longer has a third scope in
+        # run-safety.md. Rounded up to the next 250, as the merges above did.
+        budget = 238_750
         self.assertLess(
             total,
             budget,

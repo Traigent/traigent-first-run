@@ -310,8 +310,9 @@ Follow this order:
    review pause. Clarification never authorizes changing real labels, examples, answers, or policy;
    follow `references/evaluation-and-dataset.md` for degenerate-row bounds and gold-repair rules.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
-   containing the combined tuning rows, so local structure and quality problems are
-   checked without importing user modules. Omit optional model-pricing checks in this
+   holding every row of both splits, each carrying its `split` label, so local structure and
+   quality problems are checked without importing user modules. That combined file is scoring
+   evidence; `references/evaluation-and-dataset.md` owns the files the run writes from it. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
    data and task; do not infer SDK aliases. Apply the run-scoped evaluator-method rule above: if

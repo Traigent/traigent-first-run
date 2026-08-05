@@ -42,17 +42,17 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 ## Connected-stage plan and approval
 
 - Added dimensions, total combinations, configuration ceiling, and recipients:
-- Calls, runtime, and spend:
+- Calls, including the winner's held-out scoring, runtime, and spend:
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop
   reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Held-out score for the enhanced winner, beside its tuning score, and the small-sample note:
 
 ## Interpretation
 
+- Held-out score for the enhanced winner, beside its tuning score, and the small-sample note:
 - Components that remain walkthrough substitutes:
 - What the result demonstrates:
 - What the result does not establish:

@@ -134,10 +134,13 @@ Tuning split vs holdout (validation) split
   split and labels were hidden until the candidate was locked; assistant-inspected
   or assistant-authored validation is held-back and non-blind. When the assistant
   prepares walkthrough data, the default is 28 rows split 18 tuning / 10 held-out,
-  with tuning at 3 easy, 5 medium, 5 hard, 5 very hard and held-out at 2 easy,
-  3 medium, 3 hard, 2 very hard. The held-out score is disclosed once, beside the
+  reserved at creation; `references/evaluation-and-dataset.md` owns the bands and
+  the rest. The held-out score is disclosed once, beside the
   tuning score, in the closing report after the enhanced run - not at the earlier
   baseline checkpoint.
+  Say what ten kept-back rows can and cannot do: they can catch a configuration
+  that only worked on the rows it was picked on; they cannot measure how much
+  better one configuration is than another.
 
 Provenance
   Plain: where the data came from - real production data, real inputs with
@@ -206,19 +209,25 @@ The lines under each pillar on the card
                                  score usually reports that none was provided
                                  yet rather than that your agent has none.
     tuning set / held-back test set
-                               - two halves of your examples. The search is
-                                 allowed to see the first half while it looks
-                                 for a better configuration; the second half is
+                               - two parts of your examples, not equal halves:
+                                 18 to tune on and 10 kept back, by default. The
+                                 search is allowed to see the first part while it
+                                 looks for a better configuration; the second is
                                  kept back so the final number is measured on
                                  examples the search never optimized against.
                                  Without it, a good score may only mean the
-                                 search fitted the examples it could see. It is
+                                 search fitted the examples it could see. With
+                                 ten of them, it can show a winner still works
+                                 outside the rows it was chosen on and cannot
+                                 measure by how much. It is
                                  the train/test idea, except nothing is trained:
                                  Traigent searches configurations rather than
-                                 fitting a model. The guide's files call the
-                                 second half the holdout; the card says held
-                                 back - same rows, always created by default
-                                 for generated data.
+                                 fitting a model. Say "tuning set" and "held-out
+                                 set" to the user; the card's own line prints
+                                 them as "to tune on / held back" and the guide's
+                                 files name the second one the holdout - three
+                                 spellings, the same rows, always created by
+                                 default for generated data.
     good-vs-bad examples       - answers already known to be right and known to
                                  be wrong, run through your evaluator to see how
                                  far apart it scores them. Near 1.00 it
