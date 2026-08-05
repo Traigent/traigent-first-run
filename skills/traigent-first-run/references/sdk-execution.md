@@ -964,11 +964,27 @@ def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=(
     `excluded` holds configurations this selection may not return. The round
     passes its seed, because the seed is a point in the round's own space and
     a re-measurement of it is a different run from the one `incumbent_cost`
-    came from. The free check passes nothing: its incumbent is already in its
-    own list, and the strict `<` below excludes it. Confirm `trial.config` on
-    the installed version like every other SDK name here; the raise is
-    deliberate, because silently keeping the seed is how a round hands back
-    the configuration the user already runs and calls it a saving.
+    came from. Pass that seed as the round's own trials report it - the same
+    shape and the same key set `trial.config` carries here - and never round
+    one's `best_config` object as it stands: the second space is built around
+    the seed and re-probed, so its knobs need not be round one's, and a
+    `config` that is not a dict or carries a different key set equals nothing
+    in `excluded`, which fails open silently rather than raising. The free
+    check passes its own incumbent's configuration, not nothing: the strict
+    `<` below excludes the incumbent *trial*, but not a second trial of that
+    same configuration, and a search that evaluated the winner twice returns
+    two different token counts, so the cheaper instance would be reported as a
+    `$0`-discovered saving on the configuration the user already runs. Confirm
+    `trial.config` on the installed version like every other SDK name here;
+    the raise is deliberate, because silently keeping the seed is how a round
+    hands back the configuration the user already runs and calls it a saving.
+
+    The score test below assumes a higher-is-better metric, which is what this
+    reference's `orientation="maximize"` objective declares. When the run's own
+    primary metric is one where lower is better - an error rate, a word error
+    rate, declared `minimize` - reverse that comparison for this run rather
+    than passing the metric through unchanged, or the filter selects the
+    worst-scoring cheap trial and inverts the round's one-sidedness in silence.
     """
     selected = []
     for trial in trials:

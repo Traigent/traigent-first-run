@@ -4452,7 +4452,12 @@ class SkillPackageTests(unittest.TestCase):
             "costs `$0`",
             "no provider call",
             "report it and stop - there is nothing left to buy",
-            "and never the winner, whose own cost is not below itself",
+            # the CONFIGURATION, not the trial. Strict `<` excludes the
+            # incumbent trial and not a second trial of that same
+            # configuration, so the reason this once gave was sufficient for
+            # the wrong one of the two and would have read as licence to skip
+            # the filter's `excluded` guard on the free check.
+            "and never the winner's own configuration",
             "### gate",
             "agent, dataset, and evaluator are all `✅` real",
             "cost was measured, not deducted",
@@ -4597,11 +4602,20 @@ class SkillPackageTests(unittest.TestCase):
             # vacuously true when nothing tested was cheaper, which is the other
             # shape this outcome takes - the copy must not assert a pattern the
             # round may not have produced
-            "every configuration tested that cost less also scored lower",
+            "every other configuration tested that cost materially less also "
+            "scored lower",
             # ...so the carve-out that stops it being said in that case is part
             # of the outcome, not commentary on it
             "use the frontier sentence only when the round actually completed "
             "trials that cost less",
+            # ...and bare cheapness is not the bar the SELECTION applies, so a
+            # configuration that cleared the score bar while being cheaper only
+            # inside run-to-run variance lands here with the frontier sentence
+            # asserting the opposite of what its own trials measured. That is
+            # the reachable state where the copy states a falsehood rather than
+            # a vacuity, and the seed-only case is the same defect again.
+            "the sentence is not vacuous but false, and the round's own trials "
+            "are what contradict it",
             "the sentence is vacuous and reads as a finding it did not make",
             "the space this round searched produced no cheaper configuration at all",
             "that is a measured answer to the question this round asked",
@@ -5396,7 +5410,34 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # Measured at 249_272, so 249_500 - 228 bytes of headroom on the
         # reasoning above, and still below where the catalogue had this number.
-        budget = 249_500
+        #
+        # And it bound a third time, on the verification pass over that fix -
+        # which is the argument for this ceiling rather than against it. The
+        # materiality rule added above was correct and its reporting half was
+        # not extended to match, so a round that found a configuration cheaper
+        # by less than the bar fell through to the null outcome, whose copy
+        # asserts every cheaper configuration also scored lower. That state is
+        # reachable on an expected path and the seed exclusion produces it a
+        # second way, so the copy was directed to tell a prospective customer
+        # something the run's own trials contradict. Closing it needs a third
+        # branch of the null outcome and its own user-facing sentence, and the
+        # bytes are the honest price of a report that is true in every state
+        # the selection can produce. Three smaller clauses ride along in
+        # sdk-execution.md's filter docstring: the shape the `excluded` seed
+        # must be passed in (a non-dict or a re-keyed config equals nothing and
+        # fails open), the free check needing the same guard rather than
+        # trusting a strict `<` that excludes the incumbent trial and not a
+        # second trial of the incumbent configuration, and the maximize
+        # orientation the score test assumes. That middle one also shortened a
+        # sentence in run-safety.md, which had given the strict `<` as the
+        # whole reason the free check never returns the winner - true of the
+        # winner trial, and licence to skip the guard for the winner's
+        # configuration. The conclusion stays there; the mechanism belongs to
+        # the docstring.
+        #
+        # Measured at 251_492, so 251_750 - 258 bytes of headroom on the
+        # reasoning above.
+        budget = 251_750
         self.assertLess(
             total,
             budget,

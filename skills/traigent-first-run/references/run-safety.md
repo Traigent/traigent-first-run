@@ -675,10 +675,10 @@ already paid for, is there one that cost less than the selected winner and did n
 the run's own metric? This is a re-read of returned trials with no provider call, filtered by hand;
 `references/sdk-execution.md` gives the function.
 
-The function returns the qualifying trials cheapest first, and never the winner, whose own cost is
-not below itself. If it returns anything, its first entry is that cheaper configuration and the cost
-reduction is already measured. Report it and stop - there is nothing left to buy, and offering a
-paid round on top of it would be selling the user a result they already have. Report it at the claim
+The function returns the qualifying trials cheapest first, and never the winner's own configuration.
+If it returns anything, its first entry is that cheaper configuration and the cost reduction is
+already measured. Report it and stop - there is nothing left to buy, and offering a paid round on
+top of it would be selling the user a result they already have. Report it at the claim
 strength and the provenance the paid round would get: a measured cost number, a score stated no more
 strongly than the paired counts support, and over a `🛠️` substitute a fact about the substitute
 rather than about the user's real setup. If it returns nothing, every cheaper configuration the
@@ -782,13 +782,28 @@ optimizer picked it" stand in for evidence that the score held.
 **Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy:
 
 > Nothing in this round's space was cheaper than your current best without scoring below it. On this
-> evidence your configuration is already near the Pareto frontier for this space: every
-> configuration tested that cost less also scored lower. That is a measured answer to the question
-> this round asked.
+> evidence your configuration is already near the Pareto frontier for this space: every other
+> configuration tested that cost materially less also scored lower. That is a measured answer to the
+> question this round asked.
 
-Use the frontier sentence only when the round actually completed trials that cost less. When none
-did, the sentence is vacuous and reads as a finding it did not make: say instead that the space this
-round searched produced no cheaper configuration at all, which is a fact about that space.
+Use the frontier sentence only when the round actually completed trials that cost less, and only when
+every other configuration that cost *materially* less also scored lower. Two rounds arrive at this
+outcome without earning that sentence, and it fails differently in each.
+
+When no completed trial cost less at all, the sentence is vacuous and reads as a finding it did not
+make: say instead that the space this round searched produced no cheaper configuration at all, which
+is a fact about that space.
+
+When one did cost less and did clear the score bar, but was cheaper by less than the materiality bar
+the selection above applies - including when the only one that cleared it was the seed, whose two
+costs are two measurements of the configuration the user already runs - the sentence is not vacuous
+but false, and the round's own trials are what contradict it. Materiality is read here exactly as it
+is read there, so this branch holds whatever that reading is. Report what those trials showed:
+
+> The only configurations this round found that cost less than your current best were cheaper by less
+> than the amount one unchanged configuration's cost moves between two runs, so this round did not
+> establish a saving. That is a measured answer to the question it asked, and a different one from
+> finding nothing cheaper at all.
 
 Bound it as honestly as the other outcome. It establishes nothing about configurations the round did
 not test, and a bounded round tests few. Do not answer it with a third round by default.
