@@ -369,6 +369,15 @@ class SubScore:
 PROCEED = "proceed"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
+    # A file was named and no row in it could be read. The remedy is the
+    # `dataset-integrity-fail` one, not the `dataset-absent` one: the customer
+    # has data, so sending them to collect more is the wrong instruction - and
+    # it was the instruction, because a condition id is what carries the remedy
+    # and this state borrowed `dataset-absent`'s. That produced a discontinuity
+    # in the same file: 90 of 100 rows unreadable routed to `repair-dataset`,
+    # 100 of 100 routed to `get-data`, so the more broken file was told to go
+    # and collect new data.
+    "dataset-unreadable": "repair-dataset",
     "dataset-below-measurable-size": "get-data",
     "dataset-coarse-resolution": "get-data",
     "dataset-no-expected-outputs": "label-data",
@@ -542,14 +551,30 @@ class DatasetFacts:
     # Whether a dataset reached this score at all, and if it did, how much of it
     # could be read. `exists` alone conflated two states the customer
     # experiences very differently: "you have no data" and "I could not read the
-    # data you gave me". The second is what happens when the rows are fine but
-    # the selected field names are not the ones in the file, and reporting it as
-    # the first tells a customer holding a good dataset to go and get one.
+    # data you gave me". The second has several causes - the rows are fine but
+    # the selected field names are not the ones in the file, the lines are not
+    # JSON, one field path was selected for both the input and the expected
+    # answer - and reporting any of them as the first tells a customer holding a
+    # good dataset to go and get one.
     # This mirrors AgentFacts.config_space_supplied, which already draws the
     # same line for the same reason.
     dataset_supplied: bool = False
-    candidate_rows: int | None = None
     unreadable_rows: int | None = None
+    # Preflight's own sentence about why nothing could be read, forwarded
+    # verbatim rather than re-derived here.
+    #
+    # This adapter cannot see the cause: `unreadable_rows` is the same number
+    # for a file of broken JSON, a file whose selected field names are not the
+    # ones in it, and a run that selected one field path for both the input and
+    # the expected answer. Guessing a cause from the count produced a sentence
+    # that was simply false for the third - it named "malformed lines, or
+    # missing the input or expected-answer field" and told the reader to "check
+    # both", when neither was true and preflight had already reported
+    # `input and expected-output field paths must be different`.
+    #
+    # `None` when preflight said nothing about it; then the reason names no
+    # cause at all rather than inventing one.
+    unreadable_detail: str | None = None
     rows: int | None = None
     labelled_rows: int | None = None
     tuning_rows: int | None = None
@@ -1208,37 +1233,51 @@ def score_dataset(
     subs: list[SubScore] = []
 
     if not facts.exists or not facts.rows:
-        # Three different situations used to produce one sentence. Say which.
+        # Three different situations used to produce one sentence, and one
+        # remedy. Say which, and route each to its own.
         unreadable = facts.unreadable_rows or 0
+        detail = facts.unreadable_detail
         if facts.dataset_supplied and unreadable:
-            # Both causes, never one. Preflight emits byte-identical metrics for
-            # a file whose rows are fine but whose field names differ, and a
-            # file that is not valid JSON at all - the discriminating text lives
-            # only in its human `detail` string, which this adapter does not
-            # read. An earlier version of this sentence named field selection
-            # alone, which told a customer holding genuinely broken JSON to go
-            # and check their column names: the same defect this branch exists
-            # to remove, pointed the other way. `dataset-integrity-fail` at the
-            # cap-35 branch already words this correctly; match it.
+            # Rows were counted and none survived. That is broken data, not
+            # missing data, and it is a different condition with a different
+            # remedy - `repair-dataset`, the one `dataset-integrity-fail`
+            # already carries for the same file with one readable row in it.
+            #
+            # Ceiling 25, chosen against the neighbours rather than inherited.
+            # 20 is "no data at all"; this customer has data, so it cannot be
+            # that. It is still below `dataset-no-expected-outputs` (30) and
+            # `dataset-integrity-fail` (35), both of which describe a file with
+            # at least one readable row - this one has none, so it must sit
+            # under them. Blocking, because nothing here is measurable.
+            #
+            # The cause is preflight's to state, not this adapter's to guess:
+            # every wording invented here was false for at least one of the
+            # inputs that reach this branch.
             reason = (
-                f"A dataset was provided and none of its {unreadable} row(s) "
-                "could be read - malformed lines, or missing the input or "
-                "expected-answer field. Check both before concluding the data "
-                "is missing."
+                "A dataset was provided and none of its rows could be read, so "
+                "nothing can be measured"
             )
-            evidence = "provided, no row could be read"
-        elif facts.dataset_supplied:
-            reason = (
-                "A dataset was provided but no rows could be read from it, so "
-                "nothing can be measured."
-            )
-            evidence = "provided, no rows read"
+            reason += f": {detail}" if detail else "."
+            evidence = "provided, no rows could be read"
+            caps.append(Cap("dataset-unreadable", 25, reason))
         else:
-            reason = (
-                "No dataset was provided to this score, so nothing can be measured."
-            )
-            evidence = "no dataset provided to this score"
-        caps.append(Cap("dataset-absent", 20, reason))
+            if facts.dataset_supplied:
+                # A dataset was named and preflight counted no rows to salvage
+                # - the path does not exist, or the file holds nothing. Those
+                # are different problems and preflight's `dataset-shape` FAIL
+                # says which; without it, this printed one sentence for both.
+                reason = (
+                    "A dataset was provided to this score but nothing could be "
+                    "read from it, so nothing can be measured"
+                )
+                reason += f": {detail}" if detail else "."
+                evidence = "provided, no rows read"
+            else:
+                reason = (
+                    "No dataset was provided to this score, so nothing can be measured."
+                )
+                evidence = "no dataset provided to this score"
+            caps.append(Cap("dataset-absent", 20, reason))
         subs.append(SubScore("labels", 0.0, 30.0, True, evidence))
         subs.append(SubScore("power", 0.0, 25.0, True, evidence))
         subs.append(SubScore("difficulty", 0.0, 15.0, False, evidence))
@@ -2386,12 +2425,56 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+def _dataset_absence_detail(records: Sequence[dict[str, Any]]) -> str | None:
+    """Preflight's own sentence about why no row reached the score.
+
+    Preferred from `dataset-integrity`, which names the per-row cause exactly
+    ("invalid JSON (...)", "missing selected input field 'input'", "input and
+    expected-output field paths must be different"); otherwise from
+    `dataset-shape`, which is the only witness that separates a path that does
+    not exist from a file that exists and holds nothing - two states that
+    printed byte-identical scores before this read them.
+
+    `None` when neither check FAILed with a detail, so the caller says nothing
+    about the cause rather than choosing one.
+    """
+    details = {
+        record["check"]: record.get("detail")
+        for record in records
+        if isinstance(record, dict)
+        and "check" in record
+        and record.get("status") == "FAIL"
+    }
+    for check in ("dataset-integrity", "dataset-shape"):
+        detail = details.get(check)
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return None
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
     provenance = metrics.get("dataset-provenance", {})
     difficulty = metrics.get("dataset-difficulty-coverage", {})
     integrity = metrics.get("dataset-integrity", {})
+    # Structural integrity is about malformed rows (bad JSON, non-objects,
+    # missing inputs). Rows that merely lack an expected output are unlabelled,
+    # not malformed, so they must not trip the integrity cap - they are scored
+    # through the "no expected outputs" branch instead. Read dataset-integrity
+    # directly (dataset-shape now also fails for a merely-unlabelled dataset).
+    #
+    # Checked before the no-provenance return below, not after it: that return
+    # reads the same count to decide between "broken data" and "no data", so a
+    # payload too old to carry it must refuse there too rather than quietly
+    # score as the second.
+    integrity_status = statuses.get("dataset-integrity")
+    if integrity_status == "FAIL" and "malformed_rows" not in integrity:
+        raise PreflightInputError(
+            "dataset-integrity FAILed but carries no malformed_rows count - "
+            "this preflight JSON predates the current preflight.py; re-run "
+            "preflight.py --json from the same version as this script"
+        )
     # No provenance metric at all means preflight found no rows to describe - a
     # genuinely absent or empty dataset. An unlabelled-but-present dataset now
     # carries provenance (rows > 0, labelled_rows == 0), so it lands below in the
@@ -2406,20 +2489,15 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         return DatasetFacts(
             exists=False,
             dataset_supplied=supplied,
-            candidate_rows=integrity.get("candidate_rows"),
-            unreadable_rows=integrity.get("invalid_rows"),
-        )
-    # Structural integrity is about malformed rows (bad JSON, non-objects,
-    # missing inputs). Rows that merely lack an expected output are unlabelled,
-    # not malformed, so they must not trip the integrity cap - they are scored
-    # through the "no expected outputs" branch instead. Read dataset-integrity
-    # directly (dataset-shape now also fails for a merely-unlabelled dataset).
-    integrity_status = statuses.get("dataset-integrity")
-    if integrity_status == "FAIL" and "malformed_rows" not in integrity:
-        raise PreflightInputError(
-            "dataset-integrity FAILed but carries no malformed_rows count - "
-            "this preflight JSON predates the current preflight.py; re-run "
-            "preflight.py --json from the same version as this script"
+            # `malformed_rows`, not `invalid_rows`: the latter is
+            # `malformed_rows + unlabelled_rows` (preflight.py), and an
+            # unlabelled row is a row that WAS read. The two agree on every
+            # payload that reaches this return today, because a dataset with
+            # unlabelled rows carries provenance and leaves through the branch
+            # below - so reading the sum was correct only by way of a fact
+            # asserted elsewhere. Read the count that means what this says.
+            unreadable_rows=integrity.get("malformed_rows"),
+            unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     tuning_metrics = metrics.get("dataset-tuning-size", {})
@@ -2548,6 +2626,13 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 )
     return DatasetFacts(
         exists=True,
+        # Preflight described a dataset, so one was supplied - stated here
+        # rather than left to default. `exists=True` with no usable row count
+        # (a provenance record carrying no `rows`) falls into the same
+        # no-rows branch of `score_dataset` as the returns above, where the
+        # default `False` made it say "No dataset was provided to this score"
+        # about a dataset preflight had just described.
+        dataset_supplied=True,
         rows=provenance.get("rows"),
         labelled_rows=provenance.get("labelled_rows"),
         tuning_rows=tuning_metrics.get("tuning_rows"),

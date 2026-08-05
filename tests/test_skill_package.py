@@ -3237,13 +3237,17 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # A tenth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the nine that exist today.
-        self.assertEqual(len(conditions), 9)
+        # An eleventh dataset cap must be routed too, so pin the count rather
+        # than spot-checking the ten that exist today.
+        self.assertEqual(len(conditions), 10)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
             ("dataset-absent", "creation dependency matrix"),
+            # Broken data routes to repair, and explicitly NOT to creation: the
+            # id it used to share sent a customer holding an unreadable file
+            # into the dataset-creation branch.
+            ("dataset-unreadable", "do not enter the creation dependency matrix"),
             ("dataset-no-expected-outputs", "repairing a labelled working copy"),
             ("dataset-integrity-fail", "repair and revalidate a working copy"),
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),

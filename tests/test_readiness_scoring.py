@@ -185,37 +185,108 @@ class DatasetScoringTests(unittest.TestCase):
 
         `exists=False` used to carry two situations at once: no dataset reached
         the score, and a dataset reached it whose rows could not be read with
-        the selected field names. Both printed "No dataset is connected" and
-        recommended `get-data`, so a customer with three perfectly good labelled
-        rows whose file says `question`/`answer` was told to collect data they
-        already had. The cap is still correct - nothing IS measurable - but the
-        sentence has to say which of the two it is, and name the field selection
-        as the thing to check.
+        the selected field names. Both raised `dataset-absent`, and the remedy
+        is a property of the condition - so both recommended `get-data`, and a
+        customer with three perfectly good labelled rows whose file says
+        `question`/`answer` was told to collect data they already had.
+
+        Rewording the sentence alone left that intact: the card said "a dataset
+        was provided" while `recommended_action` still said `get-data` and the
+        guide still routed the id into dataset creation. The state needs its own
+        condition, which is what carries the remedy.
         """
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=False,
                 dataset_supplied=True,
-                candidate_rows=3,
                 unreadable_rows=3,
+                unreadable_detail="3/3 rows (100.0%) are unusable; line 1: "
+                "missing selected input field 'input'",
             )
         )
-        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
-        reason = caps[0].reason
+        self.assertEqual([cap.condition for cap in caps], ["dataset-unreadable"])
+        cap = caps[0]
+        # The routing, not just the prose. This is the assertion the reworded
+        # sentence could not make.
+        self.assertEqual(cap.action_kind, "repair-dataset")
+        self.assertEqual(MODULE.recommended_action(caps), "repair-dataset")
+        self.assertNotEqual(cap.action_kind, "get-data")
+        # Broken data still blocks, and still scores under every state that has
+        # a readable row in it (30 for no expected outputs, 35 for some rows
+        # unreadable) - but above 20, which means "no data at all".
+        self.assertTrue(cap.blocks)
+        self.assertEqual(cap.ceiling, 25)
+        reason = cap.reason
         self.assertIn("A dataset was provided", reason)
-        # BOTH causes, never one. Preflight cannot tell wrong-field-names from
-        # malformed JSON - it emits identical metrics for the two - so naming
-        # only field selection would misdiagnose a genuinely broken file.
-        self.assertIn("malformed lines", reason)
-        self.assertIn("expected-answer field", reason)
         # The old sentence claimed something about the project rather than
         # about this score's input; it must not come back.
         self.assertNotIn("No dataset is connected", reason)
 
+    def test_the_cause_is_preflights_to_state_and_is_never_invented(self) -> None:
+        """The reason forwards the cause; it does not guess one and close it.
+
+        A 120-row dataset scored with one field path selected for both the input
+        and the expected answer is unreadable for a third reason preflight
+        already names. The sentence that asserted two causes and told the reader
+        to "check both before concluding the data is missing" was false for it
+        twice over: neither named cause applied, and the closure said there was
+        no third.
+        """
+        detail = (
+            "120/120 rows (100.0%) are unusable; line 1: input and "
+            "expected-output field paths must be different"
+        )
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=120,
+                unreadable_detail=detail,
+            )
+        )
+        reason = caps[0].reason
+        self.assertIn(detail, reason)
+        self.assertNotIn("Check both", reason)
+
+    def test_no_reported_cause_means_no_cause_is_named(self) -> None:
+        """Nothing to forward is not a licence to fall back on a guess."""
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=False, dataset_supplied=True, unreadable_rows=4)
+        )
+        reason = caps[0].reason
+        self.assertEqual(caps[0].condition, "dataset-unreadable")
+        for invented in ("malformed lines", "expected-answer field", "Check both"):
+            with self.subTest(invented=invented):
+                self.assertNotIn(invented, reason)
+
+    def test_a_supplied_dataset_with_no_row_count_forwards_what_was_reported(
+        self,
+    ) -> None:
+        """No rows to count at all is `dataset-absent`, and still says why.
+
+        A path that does not exist and a file that exists and holds nothing both
+        arrive here with no row count. They are different problems with
+        different repairs, and preflight's `dataset-shape` FAIL is the only
+        witness that separates them - so it is forwarded rather than flattened
+        into one sentence for both.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_detail="/tmp/nope.jsonl does not exist",
+            )
+        )
+        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
+        self.assertIn("/tmp/nope.jsonl does not exist", caps[0].reason)
+        self.assertIn("A dataset was provided to this score", caps[0].reason)
+
     def test_a_dataset_that_never_reached_the_score_says_so(self) -> None:
         """The other half: absence of input is not evidence of absence of data."""
         _, caps = MODULE.score_dataset(MODULE.DatasetFacts(exists=False))
+        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
         self.assertIn("provided to this score", caps[0].reason)
+        self.assertEqual(caps[0].action_kind, "get-data")
 
     def test_logs_without_expected_outputs_are_capped_not_merely_low(self) -> None:
         """500 unlabelled rows must not score as WORKABLE - nothing can be scored."""
