@@ -669,7 +669,7 @@ Before claiming success, verify:
     the run; any such degradation halted further paid work rather than surfacing only at the end.
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
     named before any generalization claim, and the enhanced winner's held-out score is disclosed
-    beside it for the first time here - never at the earlier local baseline checkpoint.
+    beside it for the first time here - never at any earlier point in the run.
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.

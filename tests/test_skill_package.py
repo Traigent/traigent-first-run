@@ -2986,7 +2986,6 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("create 18 tuning examples by default", text)
                 self.assertNotIn("do not create a held-back validation set", text)
                 self.assertNotIn("optional follow-up evidence", text)
-                self.assertNotIn("traigent does x to prevent this", text)
 
         dataset = documents["dataset"]
         for phrase in (
@@ -3009,7 +3008,9 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("disclosed once, beside the", documents["glossary"])
 
         skill = documents["skill"]
-        checkpoint_index = skill.find("do not disclose the held-out score yet")
+        checkpoint_index = skill.find(
+            "do not disclose the held-out score before stage 8"
+        )
         report_index = skill.find(
             "the enhanced winner's held-out score and small-sample note, shown here first"
         )
@@ -4324,6 +4325,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 configurations",
             ),
         ),
+        (
+            # #127/#141: the held-out set came back, and with it the two
+            # wrong things to say about the gap it exposes. Winner's-curse
+            # selection bias plus ten rows' sampling noise means the gap is
+            # inconclusive - not proof of overfitting, and not something
+            # holdout support (not yet a real SDK feature) already prevents.
+            "whether a tuning/held-out gap is called overfitting",
+            ('do not call a gap in this range "overfitting,"',),
+            ("small-data overfitting risk",),
+        ),
+        (
+            "whether traigent already prevents the held-out gap",
+            ("do not say traigent prevents or corrects this",),
+            ("traigent prevents overfitting", "traigent already prevents this"),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -4685,7 +4701,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # pointers added in SKILL.md, sdk-execution.md, run-safety.md,
         # glossary.md, run-plan.md, and GUIDE.md were kept to the timing/
         # ownership statement each already restates conclusions from, not the
-        # mechanism itself. Raise TOTAL by 4.5 KB against the measured 232_629.
+        # mechanism itself. Base measured 228_407; this branch measures
+        # 232_621, a 4_214-byte (~4.1 KB) rise - not the 4.5 KB first
+        # estimated before the post-review wording pass below trimmed it.
+        # Measure it; do not take a side.
         budget = 232_750
         self.assertLess(
             total,

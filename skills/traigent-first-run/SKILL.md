@@ -508,7 +508,7 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
-- Do not disclose the held-out score yet.
+- Do not disclose the held-out score before stage 8.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
@@ -604,7 +604,7 @@ auditable:
 2. **What the evidence establishes** - baseline tuning result, enhanced tuning result, and actual
    persisted runs.
 3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
-   phases, and any small-data overfitting risk.
+   phases, and any small-sample held-out gap.
 4. **Next action** - one action selected from the latest closing evidence.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
