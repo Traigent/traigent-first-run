@@ -63,9 +63,10 @@ unversioned `traigent` package.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
-- Open with `GUIDE.md`'s five-stage journey. At boundaries/long work, use `Stage <n>/5 · <name>` and
-  `Done / Now / Next`. Show observed readiness score, rows checked, calls/trials, cost, or time;
-  keep finished stages as compact checkmarks. Label estimates; never invent progress/ETA.
+- Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
+  `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
+  calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
+  invent progress/ETA.
 - Explain a blocked step in plain language and give one recommended recovery.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
@@ -129,6 +130,20 @@ Example when nothing exists:
 
 After creation, keep the three `❗` lines and add three `🛠️` lines describing the substitutes.
 For mixed states, show real components as `✅` and only generated substitutes as `🛠️`.
+
+## Opening message
+
+> **Welcome to Traigent Onboarding!**
+>
+> 1. **Inspect** - preserve your agent, dataset, and evaluator.
+> 2. **Readiness** - run free readiness research and explain its score.
+> 3. **Baseline** - measure today's setup with calls, cost, and time.
+> 4. **Optimize** - preview a bounded Traigent search after the baseline.
+> 5. **Results** - compare the runs and recommend one next step.
+>
+> I will mark each stage with measured numbers when available. Readiness checks the score and
+> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
 
 ## Guided flow
 

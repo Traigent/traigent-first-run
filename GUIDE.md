@@ -68,19 +68,9 @@ account state gets, and the two 10-day windows.
 
 ## User-facing promise
 
-Opening:
-
-> **Welcome to Traigent Onboarding!**
->
-> 1. **Inspect** - preserve your agent, dataset, and evaluator.
-> 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - measure today's setup with calls, cost, and time.
-> 4. **Optimize** - preview a bounded Traigent search after the baseline.
-> 5. **Results** - compare the runs and recommend one next step.
->
-> I will mark each stage with measured numbers when available. Readiness checks the score and
-> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
-> Baseline evidence decides the next step.
+Open with the five-stage journey under "Opening message" in
+[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md), as written there. It
+lives in the skill because the installed skill is the whole artifact for an installed run.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:

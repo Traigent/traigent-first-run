@@ -37,6 +37,25 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+def shipped_skill_files() -> set[str]:
+    """Every file the Agent Skill installer copies, as skill-relative paths.
+
+    From git rather than a filesystem walk, for the same reason the internal
+    tooling check below uses git: the question is what gets PUBLISHED, not what
+    happens to sit in the working tree.
+    """
+    prefix = "skills/traigent-first-run/"
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", prefix],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list the shipped skill: {listed.stderr.strip()}")
+    return {name[len(prefix) :] for name in listed.stdout.split("\0") if name.strip()}
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -109,6 +128,74 @@ class SkillPackageTests(unittest.TestCase):
                 relative = target.split("#", 1)[0]
                 with self.subTest(document=document.name, target=target):
                     self.assertTrue((document.parent / relative).exists())
+
+    def test_every_file_the_skill_names_is_a_file_the_skill_ships(self) -> None:
+        """An installed run has the skill directory and nothing else.
+
+        The link check above reads SKILL.md only, and only markdown links, so a
+        path written in backticks - which is how most of this guidance names a
+        file - was outside every check. `GUIDE.md` was named that way in
+        SKILL.md's operating contract while living at the repository root, which
+        the Agent Skill installer does not copy: the installed skill instructed
+        the assistant to open a document it did not have, and nothing failed.
+
+        So this resolves every file reference in every shipped document against
+        what git actually publishes under the skill directory. Two kinds of
+        reference legitimately do not resolve there, and each is named rather
+        than pattern-excluded, because a silent exclusion is how the first one
+        got in.
+        """
+        shipped = shipped_skill_files()
+        basenames = {name.rsplit("/", 1)[-1] for name in shipped}
+        # A path in the user's project that this run creates. It never resolves
+        # inside the skill and must not: the skill ships no run artifacts.
+        run_artifact = "traigent-runs/"
+        # Source-repository paths that are deliberately not installed. Each is
+        # named to a maintainer editing this package, never opened during a run.
+        unshipped = {
+            "tests/test_skill_package.py": (
+                "names the check that keeps run-safety.md's config-space table "
+                "welded to readiness.py's declaration"
+            ),
+        }
+        # Backticked paths and markdown links both, because this guidance names
+        # a file either way and the reader follows both the same.
+        reference = re.compile(
+            r"""
+            ` ( [^`\s]+ \. (?: md | py | txt | json | jsonl | ya?ml ) ) `
+            | \[ [^\]]+ \] \( ( [^)\s]+ ) \)
+            """,
+            re.VERBOSE,
+        )
+        dangling: list[str] = []
+        cited: set[str] = set()
+        for name in sorted(shipped):
+            if not name.endswith(".md"):
+                continue
+            text = (SKILL_ROOT / name).read_text()
+            for backticked, linked in reference.findall(text):
+                target = (backticked or linked).split("#", 1)[0]
+                if not target or "://" in target:
+                    continue
+                if run_artifact in target:
+                    continue
+                if target in unshipped:
+                    cited.add(target)
+                    continue
+                if target in shipped or target.rsplit("/", 1)[-1] in basenames:
+                    continue
+                dangling.append(
+                    f"{name} names {target!r}, which the skill does not ship"
+                )
+        self.assertEqual(
+            dangling,
+            [],
+            "an installed run can read only the skill directory, so a document "
+            "it cannot open is an instruction it cannot follow",
+        )
+        # The escape hatch gets the same treatment as the rule: an entry nothing
+        # cites any more is removed, not left to quietly widen what passes.
+        self.assertEqual(sorted(set(unshipped) - cited), [])
 
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
@@ -516,16 +603,13 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_free_readiness_research_is_not_presented_as_a_result(self) -> None:
         """Automatic checks validate readiness, not model performance."""
-        guide_text = " ".join(
-            (ROOT / "GUIDE.md").read_text().casefold().split()
-        ).replace(" > ", " ")
-        skill_text = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("run free readiness research", guide_text)
+        skill_text = " ".join(SKILL.read_text().casefold().split()).replace(" > ", " ")
+        self.assertIn("run free readiness research", skill_text)
         self.assertIn(
-            "score and setup—not agent accuracy or an optimization result", guide_text
+            "score and setup—not agent accuracy or an optimization result", skill_text
         )
-        self.assertIn("i explain details", guide_text)
-        self.assertIn("only if action is needed", guide_text)
+        self.assertIn("i explain details", skill_text)
+        self.assertIn("only if action is needed", skill_text)
         self.assertIn("the rendered readiness card is the summary", skill_text)
         self.assertIn(
             "do not separately explain passed calibration/mock wiring", skill_text
@@ -885,15 +969,25 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("reaching that ceiling is a decision point", normalized)
 
     def test_user_journey_is_numbered_and_reports_measured_progress(self) -> None:
+        """The opening script lives where an installed run can actually read it.
+
+        It was written in GUIDE.md and referenced from SKILL.md, and GUIDE.md is
+        not part of what the Agent Skill installer copies - so the installed
+        skill told the assistant to open with a document it did not have.
+        """
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("welcome to traigent onboarding!", guide)
+        self.assertIn("welcome to traigent onboarding!", skill)
         for stage in ("inspect", "readiness", "baseline", "optimize", "results"):
-            self.assertIn(f"**{stage}**", guide)
+            self.assertIn(f"**{stage}**", skill)
         self.assertIn("stage <n>/5", skill)
-        self.assertIn("with measured numbers when available", guide)
+        self.assertIn("with measured numbers when available", skill)
         self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
         self.assertIn("finished stages as compact checkmarks", skill)
+        # GUIDE.md keeps the cloned-repo reader pointed at it, and states it
+        # only once: a second copy is a rule that can be changed in one place.
+        self.assertIn('five-stage journey under "opening message"', guide)
+        self.assertNotIn("welcome to traigent onboarding!", guide)
 
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
@@ -4766,9 +4860,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
+        #
+        # Raised again, to 61_800, by moving the five-stage opening script out
+        # of GUIDE.md and into SKILL.md. Both documents are resident, so a move
+        # would be free; what costs 279 bytes is the pointer GUIDE.md keeps in
+        # its place, which is the price of stating the script once rather than
+        # twice. The reason it moves is the bug it fixes: `npx skills add`
+        # copies the skill directory only, so SKILL.md was directing an
+        # installed run to open a file that installation does not deliver, and
+        # the fix has to put the script where the installed artifact can read
+        # it. 300 rather than 279, because 92 bytes of headroom is the trip-on-
+        # a-word ceiling this comment already argues against; 392 keeps the
+        # 371-byte minimum above. The queued package-wide reduction frees
+        # roughly 8.5 KB of RESIDENT, and this number comes back down with it -
+        # it is not a permanent raise, it is the smallest one that lets this
+        # fix land before that reduction rather than after.
         self.assertLess(
             resident,
-            61_500,
+            61_800,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4855,7 +4964,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # The dangling-`GUIDE.md` fix adds the same 279 bytes here, since both
+        # documents are in this corpus too, and leaves 64 bytes of headroom
+        # against 228_750 - the same trip-on-a-word state the RESIDENT comment
+        # above rejects. Raised to 229_000 for that reason and no other; the
+        # measured total is 228_686.
+        budget = 229_000
         self.assertLess(
             total,
             budget,
