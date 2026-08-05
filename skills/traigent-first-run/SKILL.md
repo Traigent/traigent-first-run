@@ -530,9 +530,9 @@ total combination count; pair that count with this run's trial cap as a ceiling,
 many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
 that wording, both numbers' source, and what to say when the count cannot be computed. Disclose any
 reduction from that ceiling here rather than at the baseline approval. Say only that if the results
-show cost headroom the assistant may offer one more bounded round to try for the same quality at
-lower cost, separately priced and approved; do not front-load its gate, mechanics, thresholds, or
-expected outcome, and do not imply it will happen or that it would succeed. Never promise a pause at
+show cost varying across configurations the assistant may offer one more bounded run of the same
+shape, separately priced and approved; do not front-load its gate or mechanics, and do not imply it
+will happen or that it would find anything. Never promise a pause at
 minute 30; size the synchronous run first.
 
 Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
@@ -584,33 +584,28 @@ row baseline; generate enough real controls for the six-configuration default.
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
 
-#### Optional cost-reduction round
+#### Optional second enhanced run
 
 The completed comparison can reveal one hypothesis worth naming here, and it is the only second
-round this guide defines: **the enhanced winner's score is reachable more cheaply**. It stays
-optional and is offered only when the finished comparison earned it, against the gate in
-`references/run-safety.md`, which owns when it is offered, what it may claim, its approval, and the
-wording of its outcomes; what stays here is the ordering and the mandates below.
-It is not part of the default run, and it never proceeds on the earlier approval - it is the
-optional iteration the rule above allows, never the mandatory extra pass it refuses. A free `$0`
-re-read of the finished trials comes first and can settle the question outright; when it does, that
-answer is the result and no round is offered.
+round this guide defines: **the winner's score is available at a different price**. Cost reduction
+is another search rather than another kind of work, so this is the enhanced run repeated - seeded
+with the first run's winner, widened with the controls that carry cost including the model tier -
+and it reuses that stage's approval, run card, winner selection, and closing report instead of
+adding machinery of its own. `references/run-safety.md` owns when it is offered and what it may
+claim; `references/sdk-execution.md` owns how its space is built. It stays optional, is not part of
+the default run, and never proceeds on the earlier approval - it is the optional iteration the rule
+above allows, never the mandatory extra pass it refuses.
 
-Its objective is one-sided on purpose: **measurably lower cost at a score that did not get worse**.
-Never offer or report a round that trades score away for cost. A cheaper model with worse answers is
-available to anyone without measuring anything, so it is not a result. Cost is arithmetic over
-reported token counts and is measured directly; a score on a first-run slice is not, so the score
-half is never an improvement claim and never stronger than the paired-uncertainty rule in
-`references/evaluation-and-dataset.md` allows on the outcomes actually produced.
+Report it as a **Pareto frontier over accuracy and cost**, never as a single cheaper answer: a
+frontier carries the same score for less money and a higher score for the same money, and asserts
+neither. Never show a frontier point that scored below the configuration the user is already
+running. One point on it is the recommendation - the run's own reported winner when that floor
+admits it, otherwise the cheapest point above the floor - and it is an enhanced run's winner
+carried into stage 8 as one, so every check stage 8 applies to the first winner applies to it.
 
-The round starts from the best configuration already found and searches a second space built around
-it; `references/sdk-execution.md` owns how that space is built and run. Do not tell the user the
-round dropped the knobs that did not matter: at a first run's trial count a control that moved
-nothing was mostly undersampled, so any importance reading is a hypothesis the second space tests,
-never a finding it reports.
-
-Both of its outcomes are reported with the first comparison in stage 8 - including no cheaper
-configuration at an unchanged score, which is a measured answer rather than a failed run.
+A free `$0` frontier over the trials already paid for comes first and is reported whichever way
+this ends. Both outcomes reach stage 8, including a frontier whose only point is the configuration
+the user already runs, which is a measured answer rather than a failed run.
 
 ### 8. Verify and report
 
@@ -761,9 +756,9 @@ The first run is complete only when:
   occurred.
 - Free checks made no provider calls.
 - Each paid stage had explicit approval before its calls.
-- The free `$0` cost check ran before any cost-reduction round was offered, and any round was
-  separately approved against the remaining ceiling. Whichever produced the answer, its measured
-  cost change and its paired-count-supported score claim were reported with the first comparison.
+- The free `$0` frontier ran before any second enhanced run was offered, and any such run was
+  separately approved against the remaining ceiling. Whichever produced it, the reported frontier
+  carried measured costs, score claims the paired counts support, and no point below the floor.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were

@@ -10,7 +10,7 @@ Use this reference after component creation and before writing the run wrapper.
 4. Decorator contract
 5. Small baseline sweep
 6. Broader optimization
-7. Optional cost-reduction round
+7. Optional second enhanced run
 8. Result checks
 
 ## Capability discovery
@@ -931,163 +931,91 @@ hypothesis, and state its additional approximate time and cost. If zero trials c
 diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
-## Optional cost-reduction round
+## Optional second enhanced run
 
-`references/run-safety.md` owns whether this round is offered and what it may claim. This section
-owns how it is run. The round keeps the same objectives the first comparison used; its one-sidedness
-comes from how its winner is selected, not from the objectives.
+`references/run-safety.md` owns whether this run is offered and what its frontier may claim. This
+section owns how it is built and read. It is the enhanced search above run a second time, so
+everything under "Broader optimization" applies unchanged - the same `optimize_sync` call on
+`algorithm="auto"`, the same trial cap and cost ceiling, the same freeze/unlink/write lifecycle for
+its own config-space document, and the same persistence and portal link.
 
-**Select by hand, on the metric the run actually declared.** The run reports a best configuration of
-its own, and this round does not use it as its own answer - only as the incumbent it measures
-against; `references/run-safety.md` owns that split. Both the free
-`$0` check over the enhanced run's finished trials and the round's own result come from the same
-filter, applied each time to that run's own returned `trials` - the enhanced `optimized_results` for
-the free check, the round's own result for the round. It is arithmetic over artifacts already in
-hand, so one function serves both:
+**The second space.** Put the first run's winning configuration into it as one of its value
+combinations, so the search can actually return that point: it is the run's seed and its
+re-measurement is the fluke check, obtained without spending a trial on a deliberate repeat. Build
+the rest around it - cheaper and dearer values of the controls the winner already uses, plus the
+tiers of the model ladder above, whose section states when a model may be added and when it may
+not. Keep the space larger than the trial cap, keep every knob one the agent consumes, and re-run
+the wiring probe above against the new space. Do not reach for `default_config`: the warning above
+still applies, and it can consume a trial slot.
+
+`traigent.utils.importance` and the optimization-insights read may inform which knobs to vary. They
+are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
+undersampled.
+
+**Read the frontier by hand, on the metric the run actually declared.** The same function reads the
+first run's finished trials for the free `$0` frontier and the second run's own trials for its
+result. It is arithmetic over artifacts already in hand, so one function serves both:
 
 ```python
-def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=()):
-    """Completed trials that scored at or above `floor` and cost strictly less.
-
-    Strictly less is not yet a saving; the caller applies the saving bar
-    `references/run-safety.md` defines, over the trials this returns.
+def frontier_at_or_above(trials, metric_name, floor):
+    """Non-dominated completed trials scoring at or above `floor`, cheapest first.
 
     `metric_name` is this run's own objective name - the key wired through
     `metric_functions`, which is `"task_success"` in this reference's worked
     example - and never `"accuracy"`, which can sit in the same metrics map
     without being the scorer this run wired (Traigent/Traigent#2101).
 
-    `floor` and `incumbent_cost` both come from the incumbent trial's own
-    metrics map: `floor` is its value under this same `metric_name`, and
-    `incumbent_cost` its `"cost"`, so the two sides of the comparison are the
-    same measurement. Never pass the result's `best_score` as `floor` - under
-    the two-objective schema above it is the weighted scalarization of score
-    and cost, not the metric this filter compares.
+    `floor` is the incumbent trial's value under this same `metric_name`, so
+    both sides of the comparison are the same measurement. Never pass the
+    result's `best_score` - under the two-objective schema above it is the
+    weighted scalarization of score and cost, not the metric being compared.
 
-    `excluded` holds configurations this selection may not return. The round
-    passes its seed, because the seed is a point in the round's own space and
-    a re-measurement of it is a different run from the one `incumbent_cost`
-    came from. Pass that seed as the round's own trials report it - the same
-    shape and the same key set `trial.config` carries here - and never round
-    one's `best_config` object as it stands: the second space is built around
-    the seed and re-probed, so its knobs need not be round one's, and a
-    `config` that is not a dict or carries a different key set equals nothing
-    in `excluded`. That shape fails open - it matches no trial, excludes
-    nothing, and leaves the seed eligible - so the guard below refuses an
-    `excluded` entry that could never match. The free
-    check passes its own incumbent's configuration, not nothing: the strict
-    `<` below excludes the incumbent *trial*, but not a second trial of that
-    same configuration, and a search that evaluated the winner twice returns
-    two different token counts, so the cheaper instance would be reported as a
-    `$0`-discovered saving on the configuration the user already runs. Confirm
-    `trial.config` on the installed version like every other SDK name here;
-    the raise is deliberate, because silently keeping the seed is how a round
-    hands back the configuration the user already runs and calls it a saving.
+    The floor is what keeps the frontier honest. Without it the cheapest
+    trial is always on the frontier however badly it scored, and the report
+    hands the user a configuration worse than the one they already run.
 
-    The score test below assumes a higher-is-better metric, which is what this
-    reference's `orientation="maximize"` objective declares. When the run's own
-    primary metric is one where lower is better - an error rate, a word error
-    rate, declared `minimize` - reverse that comparison for this run rather
-    than passing the metric through unchanged, or the filter selects the
-    worst-scoring cheap trial and inverts the round's one-sidedness in silence.
+    Higher-is-better is assumed, which is what this reference's
+    `orientation="maximize"` objective declares. For a run whose primary
+    metric is one where lower is better - an error rate, declared `minimize` -
+    reverse both score comparisons rather than passing the metric through
+    unchanged, or the frontier is built out of the worst-scoring trials.
     """
-    selected = []
+    priced = []
     for trial in trials:
         if getattr(trial.status, "value", trial.status) != "completed":
             continue
-        if excluded:
-            config = getattr(trial, "config", None)
-            if config is None:
-                raise RuntimeError(
-                    "this trial exposes no configuration, so the seed cannot "
-                    "be excluded here - exclude it before calling"
-                )
-            if not isinstance(config, dict) or not any(
-                isinstance(entry, dict) and entry.keys() == config.keys()
-                for entry in excluded
-            ):
-                raise RuntimeError(
-                    "no excluded configuration has this trial's key set, so "
-                    "the exclusion can never match - pass the seed as this "
-                    "run's own trials report it"
-                )
-            if config in excluded:
-                continue
         score = trial.metrics.get(metric_name)
         cost = trial.metrics.get("cost")
         # An absent cost is not a zero. A trial the run could not price cannot
-        # take part in a cost comparison, and dropping it is the only honest
-        # move - `min()` over unpriced rows returns an arbitrary one.
+        # take part in a cost comparison, and reading it as 0.0 puts every
+        # unpriced trial on the frontier.
         if score is None or cost is None:
             continue
-        if score >= floor and cost < incumbent_cost:
-            selected.append((cost, trial))
-    return [trial for _cost, trial in sorted(selected, key=lambda row: row[0])]
+        if score >= floor:
+            priced.append((cost, score, trial))
+    frontier = [
+        (cost, score, trial)
+        for cost, score, trial in priced
+        # Dominated: some other point is no dearer and no lower-scoring, and
+        # strictly better on one of the two. Nobody would take this one.
+        if not any(
+            other_cost <= cost
+            and other_score >= score
+            and (other_cost < cost or other_score > score)
+            for other_cost, other_score, _other in priced
+        )
+    ]
+    return [trial for _cost, _score, trial in sorted(frontier, key=lambda row: row[0])]
 ```
 
-`incumbent_cost` must itself be a reported, positive cost. A `0.0` produced by unknown model pricing
-is indistinguishable in the metrics map from a genuine free route, and a comparison against it admits
-everything. `references/run-safety.md` makes measured cost a precondition for both the free check and
-the round.
+The incumbent is a point like any other and is reported as one: keeping what you already run is a
+choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
+must itself carry a reported, positive cost: a `0.0` produced by unknown model pricing is
+indistinguishable in the metrics map from a genuine free route, and `references/run-safety.md`
+makes measured cost a precondition for both reads.
 
-Do not pass `strategy=` or `strategy_params` on the round's own run: its winner is the filter above
-and nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
-
-**The seed.** Put the winning configuration into the second space as one of its value combinations,
-so it is a point the search can actually return. It is there so the search can start from a measured
-point, not so it can be reported back as the round's answer; `references/run-safety.md` owns that
-exclusion. Do not reach for `default_config`: the warning
-above still applies, and it can consume a trial slot. Build the rest of the space around that point
-- cheaper values of controls the winner already uses, and cheaper tiers only when a model change was
-separately disclosed and approved. Keep the space larger than the round's trial cap, keep every knob
-one the agent consumes, and re-run the wiring probe above against the new space.
-
-`traigent.utils.importance` and the optimization-insights read may inform which knobs to vary. They
-are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
-undersampled, and SKILL stage 7 forbids reporting that as a finding.
-
-**Warm start is a request to the backend, not a local guarantee.** Confirm the names and behaviours
-below on the installed version, as every other SDK name this document introduces already requires,
-and treat an absent name as unavailable rather than assumed; they were verified against the pinned
-release and are not a version-independent contract. `warm_start_from` takes a prior experiment id
-and seeds the new run from it. It is decorator-only: passing it to `optimize_sync` raises
-`TypeError` naming the decorator. So the round runs in its own fresh process with its own
-decoration:
-
-```python
-@traigent.optimize(
-    objectives=OBJECTIVES,
-    configuration_space=SECOND_SPACE,
-    evaluation=EvaluationOptions(
-        eval_dataset=TUNING_DATASET,
-        metric_functions={"task_success": task_score},
-    ),
-    warm_start_from=ROUND_ONE_EXPERIMENT_ID,
-)
-def agent(message: str) -> str:
-    ...
-```
-
-That decoration adds `warm_start_from` and nothing else. The round's own call is still the
-`optimize_sync` above, carrying its `algorithm`, `configuration_space`, `max_trials`, `timeout`, and
-`save_to`: a decorated space with no call-time trial cap is a search with no bound, which is the one
-thing an approved remaining ceiling cannot survive.
-
-`ROUND_ONE_EXPERIMENT_ID` is the enhanced result's public `experiment_id`, which exists only for a
-connected run and is `None` otherwise; without it, omit the argument rather than inventing an id.
-The backend applies the seeds and may refuse. The result's metadata carries `warm_start_from`
-alongside the backend's `warm_start_transfer` when one was returned, and the SDK logs a warning when
-that transfer reports zero seeds applied. The warning depends on the backend returning a transfer at
-all, so its absence is not proof the seeding happened: read `warm_start_transfer` yourself and treat
-a missing one as unconfirmed rather than successful. A refused or unconfirmed warm start started
-cold, and reporting a seeded search that did not happen is a false claim about how the result was
-reached. The round is still valid cold - its second space was built around the winner either way -
-so report it as cold rather than dropping the round.
-
-Run the round connected on `algorithm="auto"`, on the same tuning rows, evaluator, and agent call
-path as the first comparison, under the same trial-cap and cost-ceiling discipline. Persist and link
-it like any other experiment, and write its own config-space document through the same
-freeze/unlink/write lifecycle above.
+Do not pass `strategy=` or `strategy_params` on this run: its frontier is the function above and
+nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
 
 ## Result checks
 

@@ -9,7 +9,7 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 3. Approval and budgets
 4. Connected-run readiness
 5. Baseline and optimization
-6. Optional cost-reduction round
+6. Optional second enhanced run
 7. Post-run verification
 8. Recovery
 
@@ -648,216 +648,112 @@ not sweep low `max_tokens` values in any space that contains a reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
-## Optional cost-reduction round
+## Optional second enhanced run
 
-SKILL stage 7 states that this round is optional and one-sided, forbids reporting a knob as not
-mattering, and places both of its outcomes in the closing report. Everything else is owned here:
-when it is offered, the bar that separates a saving from measurement noise, what it may claim, the
-free check that precedes it, the gate, its approval, and the wording of those two outcomes.
-`references/sdk-execution.md` owns the mechanics.
+SKILL stage 7 states that this run is optional, that it is reported as an accuracy-cost frontier,
+and that no frontier point may sit below the score the user is already getting. Owned here: when it
+is offered, what the frontier may claim, and the wording of its two outcomes.
+`references/sdk-execution.md` owns the mechanics. Nothing else is restated here - it is an
+enhanced run, so the connected-stage preview and approval above, the single running total, the run
+card's ceiling-against-combination-count wording, the zero-LLM tracking probe, and the post-run
+verification list all reach it unchanged, over its own space, estimate, and the ceiling that
+remains. Declining is a normal answer and the first comparison is already a complete result; offer
+it once.
 
-### The saving bar
+The floor stage 7 sets is a number this run reads rather than a judgement it makes: the incumbent's
+score on this run's own metric, the incumbent being the configuration the user is already running -
+the enhanced run's reported winner, and the point this run is seeded from.
 
-Two of the reads below - the free `$0` check and the round's own selection - end in one question:
-is this delta a saving, or is it the noise floor of the measurement? The saving bar answers it for
-both, and it is derived rather than assumed.
+### The free frontier comes first
 
-- **Measured basis, preferred.** The round's second space is required to contain the seed
-  (`references/sdk-execution.md`), so a completed round re-evaluates it: two costs for one
-  configuration nothing changed about. Their spread is a directly observed sample of this workload's
-  run-to-run cost variance, and that spread is the bar. Any run supplies one the same way whenever
-  two of its completed trials carry an identical configuration - the enhanced run included, which is
-  where the free check would find one. Take the widest such spread when a run offers more than one,
-  which is deliberately the conservative direction: a wide outlier can only push a delta below the
-  bar, and a real saving reported honestly as a null is a recoverable error where a false saving is
-  not. Floor it at the stated basis below. Two costs are the smallest sample a spread can be taken
-  from, and the range of a sample that size understates the spread it is drawn from - at the
-  temperature 0 this guide pins for a frail exact-match metric, one unchanged configuration over the
-  same rows can return identical token counts and land the spread at exactly zero. A spread of zero,
-  or any spread narrower than the stated basis, is not evidence this workload has no cost variance;
-  it is the smallest possible sample of it. Use the stated basis there, and name it as the rule
-  below requires.
-- **Stated basis, when nothing was measured twice - and wherever the floor above sends you.** A
-  managed search need not evaluate the seed: `max_trials` is a cap and `auto` chooses its own trials,
-  so a round can finish without re-measuring the point it was built around, and an enhanced run may
-  repeat no configuration at all. On the unmeasured route and the floored one alike, the bar is then
-  a flat **5%** of the incumbent's cost. That is an assumption about this workload rather than a
-  measurement of it: run-to-run token variance on a fixed prompt set at a pinned configuration is
-  single-digit percent, driven by output-length variation alone, and 5% sits inside that band rather
-  than above it. So it does not cleanly separate a saving from noise, and saying it does would be the
-  more comfortable claim rather than the true one: a 6-9% delta is inside the same acknowledged band
-  and still clears the bar. It is a deliberate trade. A bar placed above the whole band would exclude
-  that noise and would also discard the small savings the paragraph below sizes, which are the ones
-  this round exists to find - so the stated basis buys sensitivity and pays for it in certainty, and
-  what keeps that price visible is telling the user the threshold was assumed. Name which of the two
-  bases the bar came from wherever it decides an outcome; never fall back to the stated one silently.
+The finished enhanced run already priced every trial it completed, so the accuracy-cost frontier
+over those trials costs `$0` to read: no provider call, arithmetic over returned trials.
+`references/sdk-execution.md` gives the function. Read it before offering anything and report what
+it returns either way - it is the user's own paid evidence handed back at no further cost.
 
-This is not the gate's number and must not be merged back into it. The gate asks whether cheaper
-territory exists at all, across a model ladder whose rungs differ in cost by multiples - a coarse
-question, and a quarter answers it. This bar asks whether two cost measurements of one configuration
-differ by more than the measurement's own noise, and a quarter is roughly five times that noise
-floor. Set to a quarter it discards the 5-25% savings this round is most likely to find, because the
-second space is built from cheaper values of controls the winner already uses. One question is about
-the territory; the other is about the instrument. They do not share a number.
-
-### Run the free check first
-
-Do this only once the enhanced run has finished with a best configuration **and** every completed
-trial carries a reported, positive cost. That is this precondition's one statement; the gate below
-reads it rather than restating it. Two runs fail it for opposite reasons, and which one applied is
-part of what the user is told:
+It needs measured cost to exist at all, and two runs fail that for opposite reasons the user is
+told apart:
 
 - **Cost was not tracked.** An unpriced trial is not a cheap trial, and a `0.0` standing in for
   pricing the run could not resolve is an absent cost wearing a number - indistinguishable in the
-  metrics map from a real one, and comparing against it admits everything. On an untracked-cost run
-  skip both the check and the round, and say so.
+  metrics map from a real one. Skip the frontier and the second run, and say so.
 - **The route genuinely costs nothing.** A provider-reported `0.0` with nonzero token usage is a
-  real measurement rather than a missing one, and a run with no cost has no cost to reduce. Skip
-  both the check and the round here too, and name this reason rather than the one above.
-
-Then ask the finished run a question that costs `$0`: among the trials it already completed and
-already paid for, is there one that cost less than the selected winner and did not score below it on
-the run's own metric? This is a re-read of returned trials with no provider call, filtered by hand;
-`references/sdk-execution.md` gives the function.
-
-The function returns the qualifying trials cheapest first, and never the winner's own configuration.
-Read its first entry against the saving bar above: cheaper by less than that bar
-is a measured difference and not yet a saving, so the check has returned nothing. When the entry
-does clear that bar the cost reduction is already measured, and it came out of trials the user has
-already paid for - so say so rather than reporting the number flat: this one cost them nothing and
-is already theirs. Report it and stop - there is
-nothing left to buy, and offering a paid round on top of it would be selling the user a result they
-already have. Report it at the claim strength and the provenance the paid round would get: a measured
-cost number, the bar it cleared named with the basis that bar came from, a score stated no more
-strongly than the paired counts support, and over a `🛠️` substitute a fact about the substitute
-rather than about the user's real setup. When the check
-returns nothing, this run holds no cheaper configuration to hand back for free, and the open question
-is whether a configuration the search never tested is both cheaper and no worse. That question is the
-hypothesis a paid round would test, and it is the only reason to run one.
+  real measurement rather than a missing one, and a route with no cost has no trade-off to plot.
+  Skip both here too, naming this reason rather than the one above.
 
 ### Gate
 
-Offer the round only when all of these hold. When one does not, say which in one line and do not
-offer it: a round whose result could not honestly be claimed is not worth its money.
+Offer the second run only when all of these hold. When one does not, say which in one line and do
+not offer it: a run whose result could not honestly be claimed is not worth its money.
 
-- Agent, dataset, and evaluator are all `✅` real. A cost reduction measured over a `🛠️` substitute
-  is a fact about the substitute.
+- Agent, dataset, and evaluator are all `✅` real. A frontier measured over a `🛠️` substitute is a
+  fact about the substitute.
 - The enhanced run completed with a best configuration, portal tracking stayed green, and its trial
   count met the disclosed plan or carries a concrete stop reason.
-- Cost was measured, not deducted: the free check's precondition above holds, and no phase of this
-  run took the untracked-cost path. Without measured, positive per-trial cost there is no cost
-  reduction to state, so on that path the round is not offered at all - say that plainly instead of
-  running it and reporting a number the run cannot support.
-- The completed trials show cost headroom: the cheapest completed trial cost materially less than the
-  selected winner - a quarter less is the default reading of materially - so cheaper territory
-  demonstrably exists for this task rather than being assumed.
-- The free check above returned nothing, so this run produced no cheaper configuration the round
-  could hand back for free.
-- The remaining total ceiling covers the round's estimate.
+- Cost was measured, not deducted - neither failure above applied to any phase of this run.
+- The free frontier holds something besides the incumbent. That is this task's own measured evidence
+  that accuracy and cost trade off across its configurations, which is the hypothesis a wider space
+  would test. A frontier of the incumbent alone says the trials in hand found no trade-off to widen
+  into: say that, and stop there.
+- The remaining total ceiling covers the run's estimate.
 
-A readiness band is not the gate. The band describes the components; this round's claim rests on
-what the first comparison measured, which is what the conditions above actually read.
+A readiness band is not the gate. The band describes the components; this run's claim rests on what
+the first comparison measured, which is what the conditions above actually read.
 
-### Approval
+### What the frontier may claim
 
-The round is additional paid work and takes its own explicit approval. It is never a continuation of
-an earlier stage's approval, and silence is not approval. Show the remaining ceiling, this round's
-estimate and approximate runtime against it, the seed configuration, the second space with its trial
-cap, and the objective in plain words: cost down, score not worse. The round's tracked cost joins
-the single running total the approval section above already governs. Stop before the round if its
-estimate does not fit the remainder. Do not propose raising the ceiling to make it fit: the rule
-above stands here too - offer a smaller round first, and treat a larger ceiling as the user's
-suggestion to make, never the assistant's.
+Each point is one configuration's measured cost beside its score on this run's own metric, over the
+same rows, evaluator, and agent call path as the first comparison. Dominated points are dropped - a
+configuration that cost more and scored no higher than another on the same evidence is not a
+trade-off anyone would take.
 
-Declining is a normal answer, and the first comparison is already a complete result. Offer the round
-once.
+Cost is measured directly but not exactly: one configuration evaluated twice returns two different
+token counts, inside a single run as much as across two. Report each point's measured cost and let
+the reader see the gap; never present two points a few percent apart as a saving.
 
-### Selecting the round's own winner
-
-Select it the same way the free check selects: the cheapest completed trial that scored at or above
-the incumbent on the run's own metric, using the function in `references/sdk-execution.md`.
-
-The incumbent is the enhanced run's reported winner - its `best_config`, and the configuration this
-round was seeded from. Anchoring on it is deliberate and is a different decision from the refusal
-below: the round asks whether the configuration this run already put in front of the user can be had
-more cheaply, so the thing it measures against has to be that configuration. What the refusal
-governs is what the round may report as *its own* answer. Do not report the run's `best_config` as
-the round's answer: it is chosen against the run's two declared objectives at once, so it is free to
-trade score away for cost. That filter is the only place the round's one-sidedness is enforced, so a
-winner taken from anywhere else would refuse the score-for-cost trade in the prose and perform it in
-the result.
-
-Exclude the seed configuration from the round's own selection - pass it as the filter's `excluded`
-argument rather than leaving the rule in prose here. The seed is deliberately one of the second
-space's points, so the round re-measures it, and that measurement is a different run from the one
-`incumbent_cost` was recorded in. Each cost is exact arithmetic over the token counts that run
-reported, but one configuration evaluated twice returns two different token counts - inside a single
-run as much as across two - so a strict difference is a measured difference and not yet a saving. So
-apply the saving bar defined above before calling the round's delta a cost reduction, exactly as the
-free check above applies it - and note that those two seed costs are that bar's own measured basis,
-so the re-measurement that makes this exclusion necessary is also what calibrates the bar it is
-judged against. Without both rules the round hands
-back the configuration the user is already running and reports measurement noise as a saving.
-
-If no completed trial clears that bar, the round produced the second outcome below. It did not
-produce a weaker version of the first.
-
-Clearing the bar is a selection made over noise, and saying so is what keeps the round honest.
-Several configurations are statistically indistinguishable on a first-run slice, so taking the
-cheapest of the ones that reached the incumbent's number favors whichever measured lucky. The filter
-admitting a configuration is therefore not evidence its score held; only the paired counts are.
+A frontier asserts no win, so it needs no threshold to clear and states none. What it does need is
+the score claim `references/evaluation-and-dataset.md` decides from the paired counts rather than
+from the direction of two averages: default to directional - "no score difference was detected on
+these rows" - and say "the score did not get worse" only where a justified paired uncertainty
+analysis over the completed outputs supports it. Rows where the recommended point lost and the
+incumbent won are reported even when they are outnumbered, because failing to detect a drop on a
+first-run slice is not evidence there was none. A point reaching the frontier is not evidence its
+score held: several configurations are statistically indistinguishable at this size, so the one
+that matched the incumbent's number may simply have measured lucky. Never let "the optimizer picked
+it" stand in for evidence that the score held.
 
 ### The two outcomes
 
-Both are results. Neither is apologized for. Both carry a `<the saving bar and where it came from>`
-slot, and both fill it from `### The saving bar` above under the naming rule stated there.
+Both are results. Neither is apologized for.
 
-**A cheaper configuration held the score.** State the cost reduction as the measured number it is,
-and the score at the strength the paired counts actually carry:
+**The frontier holds more than the incumbent.** Report the recommended point against the
+configuration the user runs now, then the rest of the frontier as the trade-offs it measured:
 
-> `<config>` cost `<measured>` against the previous winner's `<measured>` on the same rows,
-> evaluator, and agent call path - a `<n>%` reduction, past `<the saving bar and where it came
-> from>`. Its `<metric>` was `<value>` against `<value>` on `<n>` rows,
-> `<paired outcome counts>`. Cost here is arithmetic over reported token
-> counts, so it is measured directly. The score is not measured directly - it is a comparison over
-> `<n>` rows - so `<the score statement the counts support>`, and this run does not show the score
-> improved.
+> `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
+> configuration you are running now, on the same rows, evaluator, and agent call path -
+> `<paired outcome counts>`. Cost here is arithmetic over reported token counts, so it is measured
+> directly. The score is not measured directly - it is a comparison over `<n>` rows - so `<the score
+> statement the counts support>`. The whole frontier this run measured is `<points, cheapest
+> first>`, and two points a few percent apart in cost are inside what re-measuring one
+> configuration moves.
 
-The bracketed score statement is not decoration; it is the one sentence that has to be earned, and
-`references/evaluation-and-dataset.md` decides it from the paired counts, not from the direction of
-the two averages. Default to directional - "no score difference was detected on these rows" - and
-say "the score did not get worse" only where a justified paired uncertainty analysis over the
-completed outputs supports it. Rows where the cheaper configuration lost and the incumbent won are
-reported even when they are outnumbered: failing to detect a drop on a first-run slice is not
-evidence there was none, and a comparison with any discordant rows at this size is directional.
-Never quote a percentage-point threshold invented before those outcomes existed, and never let "the
-optimizer picked it" stand in for evidence that the score held.
+**The incumbent is the only point on it.** This is a finding, and it gets its own copy. Report what
+this run counted, never a property of the space: the space is larger than the run's trial cap, so
+any claim about the space quantifies over configurations the run never reached.
 
-**Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy. Report what
-this round counted, never a property of the space: the space is larger than the round's trial cap, so
-any claim about it quantifies over configurations the round never reached.
+> This run tested `<executed trials>` of `<total combination count>` configurations. On accuracy
+> against cost, the configuration you are already running is still the only point on the frontier:
+> nothing tested cost less at its score, and nothing scored higher at its cost. So keeping it is
+> the answer this run supports. A run this size reaches few configurations by design; widening the
+> search across your full dataset and your own controls is what the skills named at the close are
+> for.
 
-> This round tested `<executed trials>` of `<total combination count>` configurations. `<n cheaper>`
-> of them cost less than the configuration you are already running: `<n scored lower>` scored lower,
-> and the other `<n inside variance>` were cheaper by too small a margin to count as a saving against
-> `<the saving bar and where it came from>`. So this round did not establish a saving, and keeping
-> the configuration you are already running is the answer it supports. A round this size reaches few
-> configurations by design; widening the search across your full dataset and your own controls is
-> what the skills named at the close are for.
-
-Those two inner counts split the cheaper ones with nothing left over: reaching this outcome at all
-means every configuration counted among them either scored lower or did not clear the saving bar -
-applied exactly as the selection above applies it. Write a count of zero as a plain "none" and
-drop the breakdown under it; a breakdown of an empty set reads as a pattern the round did not
-measure. The re-measured seed is not one of the cheaper ones either: two costs for one configuration
-are two measurements of the configuration the user already runs, not a cheaper alternative to it.
-
-That is a measured answer to the question this round asked, and it is a service rather than a shrug:
-the user wanted to know whether a cheap win was sitting there, and now they do instead of chasing
-one. It is bounded as honestly as the other outcome - it establishes nothing about configurations the
-round did not test, and a bounded round tests few. That bound is the forward half, and it points at
-an action and never at a result: the handoff below names what a wider search would let the user *do*,
-never what it would find. Do not answer it with a third round by default.
+That is a measured answer to the question this run asked, and it is a service rather than a shrug:
+the user wanted to know whether a better trade-off was sitting there, and now they do instead of
+chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
+configurations the run did not test, and a bounded run tests few. That bound is the forward half,
+and it points at an action and never at a result: the handoff below names what a wider search would
+let the user *do*, never what it would find. Do not answer it with a third run by default.
 
 ## Post-run verification
 
@@ -881,15 +777,11 @@ Before claiming success, verify:
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.
-13. If the free `$0` check answered the question and ended it there, its report carries the same
-    measured cost change and the same paired-count-supported score claim a paid round would owe:
-    it is the cheaper path to the identical claim, never the lighter-checked one.
-14. If a cost-reduction round ran, it had its own approval, its cost joined the same running total,
-    it reused the first comparison's tuning rows, evaluator, and agent call path, its winner was
-    selected by the cheaper-and-not-worse filter on the run's own metric rather than taken from
-    `best_config`, and its report carries the measured cost change beside a score claim the paired
-    counts support. A round whose own trials came back without reported cost has no cost claim:
-    report that, not a number.
+13. Every reported frontier - the free `$0` one and any a second enhanced run produced - carries
+    measured costs, a score claim the paired counts support, and no point below the floor. A second
+    run had its own approval, its cost joined the same running total, and it reused the first
+    comparison's tuning rows, evaluator, and agent call path. Trials that came back without
+    reported cost carry no cost claim: report that, not a number.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.

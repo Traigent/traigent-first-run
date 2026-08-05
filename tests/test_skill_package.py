@@ -123,9 +123,9 @@ def load_guide_function(path: Path, definition: str):
     return namespace[definition.removeprefix("def ").removesuffix("(")]
 
 
-# The round's one-sided selection filter. It is the only executable
-# enforcement of "cheaper, and never at a lower score" in the whole package.
-CHEAPER_AND_NOT_WORSE = load_guide_function(SDK_EXECUTION, "def cheaper_and_not_worse(")
+# The second run's frontier read. Its score floor is the only executable
+# guarantee that no reported point scored below what the user already runs.
+FRONTIER_AT_OR_ABOVE = load_guide_function(SDK_EXECUTION, "def frontier_at_or_above(")
 
 
 def score_config_space(document: dict) -> tuple[object, list[str]]:
@@ -1767,13 +1767,11 @@ class SkillPackageTests(unittest.TestCase):
             "tracked spend, or conservative deduction",
             "remaining total ceiling",
             "partial/final result",
-            # The saving bar is named to the user wherever it decides an
-            # outcome, so the record has to keep WHICH basis decided this run's
-            # - a bar read as measured and a bar read as stated support
-            # different claims, and after the fact the record is the only place
-            # that distinction survives. Both readers of the bar record it.
-            "the basis it came from (measured spread, or stated)",
-            "the saving bar and its basis",
+            # Both frontiers are recorded, and the free one is recorded even
+            # when no paid run follows: it is a result the user was given, and
+            # after the fact this record is the only place it survives.
+            "free `$0` frontier over the completed enhanced trials",
+            "second enhanced run if offered",
         ):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -4164,143 +4162,202 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
 
-    def test_the_cost_reduction_round_stays_optional_and_earned(self) -> None:
-        """A second paid round has to be earned by the first one's evidence.
+    def test_the_second_enhanced_run_stays_optional_and_earned(self) -> None:
+        """A second paid run has to be earned by the first one's evidence.
 
         SKILL.md already forbids a mandatory third pass and allows another
-        iteration only after a specific hypothesis. This round is that rule
-        instantiated, so the two have to keep agreeing: the round names its
-        hypothesis, defers the gate to run-safety.md, and stays out of the
-        default run.
+        iteration only after a specific hypothesis. This run is that rule
+        instantiated, so the two have to keep agreeing: it names its
+        hypothesis, defers the gate, and stays out of the default run.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
 
-        # anchors first, and not inside a subTest: the ordering checks below
-        # index into these, and a subTest failure keeps running, so an absent
-        # anchor would surface as a ValueError instead of naming what is missing
-        self.assertIn("#### optional cost-reduction round", skill)
+        # anchors first, and not inside a subTest: the ordering check below
+        # indexes into these, so an absent anchor should name itself rather
+        # than surface as a ValueError from `.index`
+        self.assertIn("#### optional second enhanced run", skill)
         self.assertIn("do not require a third optimization pass", skill)
+        self.assertIn("## optional second enhanced run", safety)
+        self.assertIn("## optional second enhanced run", sdk)
 
         for phrase in (
-            "do not require a third optimization pass",
             "recommend another iteration only after the first result reveals a "
             "specific, worthwhile hypothesis",
-            "#### optional cost-reduction round",
-            "the enhanced winner's score is reachable more cheaply",
-            "it stays optional and is offered only when the finished comparison earned it",
-            "it is not part of the default run",
-            "it never proceeds on the earlier approval",
+            "it stays optional",
+            "is not part of the default run",
+            "never proceeds on the earlier approval",
         ):
             with self.subTest(skill_phrase=phrase):
                 self.assertIn(phrase, skill)
 
         # the entry point still promises no mandatory extra pass, and states no
-        # rule about this round that SKILL.md does not own
+        # rule about this run that SKILL.md does not own
         self.assertIn(
             "do not add an offline baseline rerun or a mandatory third", guide
         )
-        self.assertNotIn("cost-reduction round", guide)
+        self.assertNotIn("second enhanced run", guide)
 
-        # the ordering is the point: the round is named after the no-third-pass
+        # the ordering is the point: the run is named after the no-third-pass
         # rule it instantiates, never before it
         self.assertLess(
             skill.index("do not require a third optimization pass"),
-            skill.index("#### optional cost-reduction round"),
+            skill.index("#### optional second enhanced run"),
         )
-        self.assertIn("## optional cost-reduction round", safety)
 
-        # Both documents describe the same ownership split, or a reader
-        # following either sentence goes to the wrong file: SKILL.md said
-        # run-safety.md owned "everything about this round" and then stated
-        # four mandates, and run-safety.md claimed two SKILL.md also stated.
-        self.assertNotIn("owns everything about this round", skill)
+        # ...and the three documents claim three different jobs. A reader
+        # following any one of these sentences has to arrive somewhere that
+        # actually holds the answer.
         self.assertIn(
-            "which owns when it is offered, what it may claim, its approval, and "
-            "the wording of its outcomes",
+            "`references/run-safety.md` owns when it is offered and what it may "
+            "claim; `references/sdk-execution.md` owns how its space is built",
             skill,
         )
+        self.assertIn("`references/sdk-execution.md` owns the mechanics", safety)
         self.assertIn(
-            "skill stage 7 states that this round is optional and one-sided, "
-            "forbids reporting a knob as not mattering, and places both of its "
-            "outcomes in the closing report",
-            safety,
+            "`references/run-safety.md` owns whether this run is offered and "
+            "what its frontier may claim",
+            sdk,
         )
-        # ...and the separate-approval mandate has one home. SKILL.md stated
-        # it twice inside its own section - the restatement an earlier merge
-        # dropped from stage 6 - and keeps only the flow's own prohibition.
-        self.assertNotIn("needs its own explicit approval", skill)
-        self.assertIn("takes its own explicit approval", safety)
 
-    def test_the_cost_reduction_objective_is_one_sided(self) -> None:
-        """The guidance states the direction the round refuses.
+    def test_the_result_is_a_frontier_and_not_a_one_sided_saving(self) -> None:
+        """The shape of the claim, and the shape it may not slide back into.
 
-        This checks WORDING only - that each rule is stated, and stated where
-        the assistant reads it. It does not show any of them binds; the one
-        rule with an executable mechanism is checked by behaviour in
-        CheaperAndNotWorseFilterTests, and this test used to claim that ground
-        while asserting only the filter function's name.
+        A one-sided round can only report "cheaper at no lower score", which
+        needs a noise bar to separate a saving from measurement variance - and
+        this package had two unmeasured numbers holding one up. A frontier
+        asserts no win, so it needs no bar. The guard is therefore twofold: the
+        frontier vocabulary is required, and any threshold reappearing inside
+        these sections is a signal the framing slipped back.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
 
-        for phrase in (
-            "measurably lower cost at a score that did not get worse",
-            "never offer or report a round that trades score away for cost",
-            "cost is arithmetic over reported token counts and is measured directly",
-            "never stronger than the paired-uncertainty rule",
-        ):
-            with self.subTest(skill_phrase=phrase):
-                self.assertIn(phrase, skill)
-        self.assertIn("`references/evaluation-and-dataset.md`", skill)
+        self.assertIn("pareto frontier over accuracy and cost", skill)
+        self.assertIn(
+            "never show a frontier point that scored below the configuration "
+            "the user is already running",
+            skill,
+        )
+        # both wins, which is the whole reason the frontier replaced a
+        # one-sided objective
+        self.assertIn(
+            "the same score for less money and a higher score for the same money",
+            skill,
+        )
+        self.assertIn("a frontier asserts no win", safety)
+        # the floor is a number the run reads, defined once, where the run that
+        # reads it can find it
+        self.assertIn("the floor stage 7 sets is a number this run reads", safety)
+        self.assertIn("def frontier_at_or_above(", SDK_EXECUTION.read_text())
 
-        # the round's own winner comes from the one-sided filter, never from
-        # `best_config` - the prohibition needs a mechanism or it is decoration
-        for phrase in (
-            "### selecting the round's own winner",
-            "do not report the run's `best_config` as the round's answer",
-            "that filter is the only place the round's one-sidedness is enforced",
-            "would refuse the score-for-cost trade in the prose and perform it "
-            "in the result",
-            # `best_config` is ALSO the incumbent this round measures against,
-            # so the refusal above reads as leaving no sanctioned anchor at all
-            # unless the two roles are separated
-            "the incumbent is the enhanced run's reported winner - its `best_config`",
-            "anchoring on it is deliberate and is a different decision from the "
-            "refusal below",
-            "what the refusal governs is what the round may report as *its own* answer",
-            # the seed is a point in the round's own space, and its two costs
-            # come from two different runs
-            "exclude the seed configuration from the round's own selection",
-            # This sentence used to grant within-run costs an exactness the
-            # filter's own docstring denies: it said any strict difference
-            # inside one run was real, while the docstring says a search that
-            # evaluated the winner twice returns two different token counts -
-            # which happens inside one run. The docstring is the correct one,
-            # and the free check was resting its no-materiality-bar exemption
-            # on the sentence that was wrong.
-            "one configuration evaluated twice returns two different token "
-            "counts - inside a single run as much as across two - so a strict "
-            "difference is a measured difference and not yet a saving",
-            # ...and the bar it is read against is the saving bar defined once
-            # at the top of the section, never the gate's coarse quarter. The
-            # two questions are different and the numbers are ~5x apart.
-            "apply the saving bar defined above before calling the round's "
-            "delta a cost reduction",
-            "exactly as the free check above applies it",
-            # the seed re-measurement is both what forces this exclusion and
-            # what calibrates the bar the exclusion is judged against
-            "those two seed costs are that bar's own measured basis",
-            "clearing the bar is a selection made over noise",
+        # No percentage threshold anywhere in the sections that decide this
+        # run's outcome. `run-safety.md:686` asserted run-to-run token variance
+        # "is single-digit percent" and `:699` predicted "the 5-25% savings
+        # this round is most likely to find"; neither was measured, and both
+        # existed only to defend a one-sided claim. A number reappearing here
+        # is the framing sliding back, not a detail.
+        for name, document, heading in (
+            ("SKILL.md", skill, "#### optional second enhanced run"),
+            ("run-safety.md", safety, "## optional second enhanced run"),
         ):
-            with self.subTest(selection_phrase=phrase):
-                self.assertIn(phrase, safety)
-        self.assertIn("def cheaper_and_not_worse(", SDK_EXECUTION.read_text())
+            section = document.split(heading, 1)[1].split("\n## ", 1)[0]
+            section = section.split("### 8. verify and report", 1)[0]
+            section = section.split("## post-run verification", 1)[0]
+            with self.subTest(document=name):
+                self.assertEqual(
+                    re.findall(r"\d+(?:\.\d+)?\s?%", section),
+                    [],
+                    f"{name}'s second-run section states a percentage "
+                    "threshold. A frontier asserts no win and needs no bar; a "
+                    "number here means the one-sided framing came back, and "
+                    "the two it replaced were both unmeasured",
+                )
 
-        # the score claim is conditioned on the paired counts, not asserted
-        # alongside them - the template must not hardcode the conclusion
+    def test_the_gate_reads_measurement_not_a_readiness_band(self) -> None:
+        """What earns the run is what the first comparison measured.
+
+        Two of these are the conditions a hurried run would skip: an
+        untracked-cost path cannot produce a cost claim at all, and the free
+        `$0` frontier over finished trials is both the user's own evidence and
+        the gate's, so it is read before anything is offered.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        section = safety.split("## optional second enhanced run", 1)[1].split(
+            "## post-run verification", 1
+        )[0]
+
+        for phrase in (
+            "### the free frontier comes first",
+            "read it before offering anything and report what it returns either way",
+            "**cost was not tracked.**",
+            "**the route genuinely costs nothing.**",
+            "### gate",
+            "agent, dataset, and evaluator are all `✅` real",
+            "the free frontier holds something besides the incumbent",
+            "the remaining total ceiling covers the run's estimate",
+            "a readiness band is not the gate",
+        ):
+            with self.subTest(gate_phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # the free read comes before the gate that consumes it
+        self.assertLess(
+            section.index("### the free frontier comes first"),
+            section.index("### gate"),
+        )
+
+        # The old gate justified a 25% spread threshold "across a model ladder
+        # whose rungs differ in cost by multiples" while sdk-execution.md
+        # applies that ladder only when the assistant prepares a missing
+        # baseline - which the gate's own `✅`-real condition excludes. The
+        # replacement reads the free frontier instead, so neither the number
+        # nor the justification may come back.
+        self.assertNotIn("a quarter", section)
+        self.assertNotIn("model ladder", section)
+        self.assertIn(
+            "this section applies only when the assistant prepares a missing baseline",
+            " ".join(SDK_EXECUTION.read_text().casefold().split()),
+        )
+
+    def test_the_null_outcome_is_a_reported_finding(self) -> None:
+        """The copy for "nothing beat what you already run" is the customer's.
+
+        It is pinned because it is the outcome an assistant is likeliest to
+        soften, skip, or turn into a pitch for one more round - and because
+        three earlier revisions of it each asserted a universal negative over
+        the space, which is false whenever the untested complement is
+        non-empty. It reports counts and one frontier, and quantifies over
+        nothing.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         quoted = quoted_prose(RUN_SAFETY)
+
+        self.assertIn("both are results. neither is apologized for.", safety)
+        self.assertIn(
+            "report what this run counted, never a property of the space", safety
+        )
+        for phrase in (
+            "this run tested `<executed trials>` of `<total combination count>` "
+            "configurations",
+            "the configuration you are already running is still the only point "
+            "on the frontier",
+            "so keeping it is the answer this run supports",
+            "widening the search across your full dataset and your own controls "
+            "is what the skills named at the close are for",
+        ):
+            with self.subTest(null_copy=phrase):
+                self.assertIn(phrase, quoted)
+
+        # the forward half points at an action, never at a result a further run
+        # would return - that promise is the universal claim in another aim
+        self.assertIn("it points at an action and never at a result", safety)
+        self.assertIn("do not answer it with a third run by default", safety)
+
+        # the winning outcome carries evidence rather than a hardcoded verdict:
+        # the score sentence is filled from the paired counts, not asserted
         self.assertIn("`<paired outcome counts>`", quoted)
         self.assertIn("`<the score statement the counts support>`", quoted)
         self.assertIn("default to directional", safety)
@@ -4309,951 +4366,106 @@ class SkillPackageTests(unittest.TestCase):
             "uncertainty analysis over the completed outputs supports it",
             safety,
         )
-        # the stronger sentence may not appear as an unconditional template line
-        self.assertNotIn(
-            "on this evidence the score did not get worse, which is not the same "
-            "as showing it improved",
-            quoted,
-        )
-        # ...and the sentence carrying that asymmetry says which half is not
-        # measured directly. "The score comparison on `<n>` rows is not, so"
-        # elided to the nearer predicate, and a first-time user parses it alone.
-        self.assertIn(
-            "cost here is arithmetic over reported token counts, so it is "
-            "measured directly. the score is not measured directly - it is a "
-            "comparison over `<n>` rows -",
-            quoted,
-        )
-        self.assertNotIn("the score comparison on `<n>` rows is not, so", quoted)
-        self.assertIn(
-            "rows where the cheaper configuration lost and the incumbent won are "
-            "reported even when they are outnumbered",
-            safety,
-        )
         self.assertIn(
             'never let "the optimizer picked it" stand in for evidence that the '
             "score held",
             safety,
         )
 
-    def test_the_reference_states_how_the_round_is_actually_run(self) -> None:
-        """The round's own mechanics: the filter, the seed, the warm start.
-
-        This pins PROSE. It cannot execute the SDK - the validation job installs
-        only ruff and black, and the guide's whole point is that the assistant
-        installs the SDK into the user's project, not into this repo. The
-        warm-start claims below were verified against the pinned 0.25.0 while
-        writing them; re-verify when the pin moves, and do not read a green here
-        as evidence about the SDK.
-
-        An earlier revision of this section also catalogued four SDK mechanisms
-        that resemble this round's answer and are not, with the reasoning for
-        rejecting each. That catalogue is gone, and deliberately: this guide's
-        own template reaches for none of them, so the guidance was documenting
-        another repository's defects in a downstream consumer's docs, where they
-        would ossify and outlive the fix. The single pointer that replaced it is
-        pinned below so it stays a pointer.
-        """
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
-
-        for phrase in (
-            "## optional cost-reduction round",
-            # selection is by hand over the returned trials, and the same filter
-            # serves the free check and the paid round
-            "select by hand, on the metric the run actually declared",
-            # "by hand" needs something to be by-hand INSTEAD of, or a reader
-            # with no SDK knowledge cannot tell what is being avoided. This
-            # names the alternative and defers the decision rather than
-            # restating it - run-safety.md owns why `best_config` is refused.
-            "the run reports a best configuration of its own, and this round "
-            "does not use it as its own answer - only as the incumbent it "
-            "measures against",
-            # each selection reads ITS OWN run's trials. Naming one result
-            # object for both would point the round's selection back at the
-            # enhanced run, whose trials the free check already cleared - so
-            # the paid round could only ever report the null outcome.
-            "applied each time to that run's own returned `trials`",
-            # descriptive is not enough here: `optimize_sync` exposes a
-            # selection preset whose NAME matches this round's stated objective
-            # ("cost down, score not worse"), so the guidance has to refuse it
-            # in the imperative rather than merely decline to mention it
-            "do not pass `strategy=` or `strategy_params` on the round's own run",
-            "its one-sidedness comes from how its winner is selected, not from "
-            "the objectives",
-            # warm start is decorator-only, connected-only, and refusable
-            "it is decorator-only: passing it to `optimize_sync` raises `typeerror`",
-            "which exists only for a connected run and is `none` otherwise",
-            "the backend applies the seeds and may refuse",
-            "a refused or unconfirmed warm start started cold",
-            "treat a missing one as unconfirmed rather than successful",
-        ):
-            with self.subTest(sdk_phrase=phrase):
-                self.assertIn(phrase, sdk)
-
-        # an unpriced trial is dropped, never treated as cheap
-        self.assertIn("an absent cost is not a zero", sdk)
-        self.assertIn("`incumbent_cost` must itself be a reported, positive cost", sdk)
-
-        # The filter's arguments have to come from somewhere and the two
-        # nearest at-hand names are both wrong: `trial.metrics` carries the
-        # SDK's built-in `accuracy` beside the wired key, which is 0.0 on every
-        # trial under any non-exact-match evaluator - so the floor becomes 0.0
-        # and everything qualifies - and `best_score` is a scalarization of
-        # score AND cost, not the metric this filter compares.
-        docstring = " ".join(
-            python_block_containing(SDK_EXECUTION, "def cheaper_and_not_worse(")
-            .casefold()
-            .split()
-        )
-        for phrase in (
-            'and never `"accuracy"`',
-            "`floor` and `incumbent_cost` both come from the incumbent trial's own",
-            "never pass the result's `best_score` as `floor`",
-            "the two sides of the comparison are the same measurement",
-        ):
-            with self.subTest(argument_phrase=phrase):
-                self.assertIn(phrase, docstring)
-
-        # And what the filter does NOT do. Its summary line said "cost
-        # measurably less" while the comparison below it is a strict `<`;
-        # "measurably" is this guide's own word for past the saving bar
-        # (SKILL.md sets the round's objective as "measurably lower cost"), so
-        # the one line an assistant writing the wrapper is likeliest to read
-        # said the bar was already inside. It cannot move inside: the null
-        # outcome's `<n inside variance>` count IS the cheaper-and-not-worse
-        # trials that failed the bar, so they have to come back from here for
-        # that copy to be writable at all.
-        self.assertIn("cost strictly less", docstring)
-        self.assertIn("the caller applies the saving bar", docstring)
-        self.assertNotIn(
-            "cost measurably less",
-            docstring,
-            "`measurably` is this guide's word for past the saving bar, and "
-            "this filter's comparison is a bare strict `<` - the bar is the "
-            "caller's, applied over what this returns",
-        )
-
-        # WHY the free check must pass its own incumbent's configuration. A
-        # review reverted this to "the free check passes nothing, because the
-        # strict `<` below already excludes the incumbent" - which restores a
-        # real defect, because the strict `<` excludes the incumbent TRIAL and
-        # not a second trial of the incumbent CONFIGURATION - and 469 tests
-        # still passed. The mechanism is what makes the instruction followable,
-        # so the mechanism is what is pinned.
-        for phrase in (
-            "the free check passes its own incumbent's configuration, not nothing",
-            "the strict `<` below excludes the incumbent *trial*, but not a "
-            "second trial of that same configuration",
-            "a search that evaluated the winner twice returns two different "
-            "token counts",
-        ):
-            with self.subTest(free_check_mechanism=phrase):
-                self.assertIn(phrase, docstring)
-        self.assertNotIn(
-            "the free check passes nothing",
-            docstring,
-            "the strict `<` excludes the incumbent trial, not a second trial "
-            "of the incumbent configuration - this wording licenses skipping "
-            "the guard the free check needs",
-        )
-
-        # ...and the re-keyed `excluded` entry is refused rather than passing
-        # silently over every trial, which is the fail-open half of the same
-        # mechanism.
-        self.assertIn(
-            "so the guard below refuses an `excluded` entry that could never match",
-            docstring,
-        )
-
-        # the seed is a point in the second space, not `default_config`, whose
-        # trial-slot warning this reference already carries
-        self.assertIn("do not reach for `default_config`", sdk)
-        self.assertIn("it can consume a trial slot", sdk)
-        self.assertIn("keep the space larger than the round's trial cap", sdk)
-        # the decorator carries warm start; the CALL still carries the bound
-        self.assertIn(
-            "a decorated space with no call-time trial cap is a search with no "
-            "bound",
-            sdk,
-        )
-        # every other SDK name in this document is hedged against the installed
-        # version; the round's section was the only one asserting behaviour flat
-        self.assertIn(
-            "confirm the names and behaviours below on the installed version",
-            sdk,
-        )
-
-        # One refusal, one place. A reader who wonders why gets an issue link,
-        # not a re-derivation - and the count below is what keeps the link from
-        # growing back into the catalogue it replaced. Two mentions, both inside
-        # that one sentence: the parameter and its companion.
-        self.assertIn(
-            "see traigent/traigent#2100, #2101 and #2102 for why those presets "
-            "are unused here",
-            sdk,
-        )
-        self.assertEqual(
-            sdk.count("strategy"),
-            2,
-            f"`strategy` is named outside the one refusal sentence in "
-            f"{SDK_EXECUTION.name}: the round refuses the presets and points at "
-            "the SDK issues, it does not explain the mechanism again",
-        )
-        for name in ("quality_floor_min_cost", "safety_constraints"):
-            with self.subTest(mechanism=name):
-                self.assertNotIn(name, sdk)
-
-    def test_the_cost_reduction_gate_reads_measurement_not_a_readiness_band(
+    def test_the_second_run_s_winner_takes_the_first_winner_s_closing_path(
         self,
     ) -> None:
-        """The gate is what the first comparison measured, and money gates it.
+        """The reason this is a second enhanced run and not a third stage.
 
-        Two of these conditions are the ones a hurried run would skip: an
-        untracked-cost path cannot produce a cost claim at all, and a free
-        re-read of finished trials can settle the question for `$0` before
-        anything is offered.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        # the section anchor is asserted before it is split on, so a missing
-        # section names itself rather than raising IndexError from the split
-        self.assertIn("## optional cost-reduction round", safety)
-        section = safety.split("## optional cost-reduction round", 1)[1].split(
-            "## post-run verification", 1
-        )[0]
-
-        for phrase in (
-            "### run the free check first",
-            "costs `$0`",
-            "no provider call",
-            "report it and stop - there is nothing left to buy",
-            # the CONFIGURATION, not the trial. Strict `<` excludes the
-            # incumbent trial and not a second trial of that same
-            # configuration, so the reason this once gave was sufficient for
-            # the wrong one of the two and would have read as licence to skip
-            # the filter's `excluded` guard on the free check.
-            "and never the winner's own configuration",
-            "### gate",
-            "agent, dataset, and evaluator are all `✅` real",
-            "cost was measured, not deducted",
-            "no phase of this run took the untracked-cost path",
-            "on that path the round is not offered at all",
-            "the free check above returned nothing",
-            "the remaining total ceiling covers the round's estimate",
-            "a readiness band is not the gate",
-            # cheaper territory is demonstrated by the first run's own trials,
-            # never assumed
-            "the completed trials show cost headroom",
-            "a quarter less is the default reading of materially",
-            "rather than being assumed",
-            # the precondition, and both ways a run fails it
-            "every completed trial carries a reported, positive cost",
-            "on an untracked-cost run skip both the check and the round",
-            "**the route genuinely costs nothing.**",
-            "a run with no cost has no cost to reduce",
-            # The free check applies the same saving bar the round's own
-            # selection does. It used to apply none, on the strength of a
-            # sentence granting within-run costs an exactness the filter's
-            # docstring denies - so a `$0` re-read could end the round outright
-            # while reporting a difference inside measurement noise as a saving.
-            "read its first entry against the saving bar above",
-            "cheaper by less than that bar is a measured difference and not yet "
-            "a saving",
-            # ...and the sentence that used to justify the exemption also
-            # asserted a universal negative over the tested set
-            "this run holds no cheaper configuration to hand back for free",
-        ):
-            with self.subTest(gate_phrase=phrase):
-                self.assertIn(phrase, section)
-
-        # the free check has to precede the gate, because it can make the paid
-        # round unnecessary
-        self.assertLess(
-            section.index("### run the free check first"), section.index("### gate")
-        )
-
-        # One statement, one home. Stated in full twice - here and in the gate
-        # bullet - the two had already drifted: the gate defined when `0.0`
-        # counted as reported, reading as an exception to a rule that had
-        # already excluded every `0.0`, so a genuinely free route could skip
-        # the free check, pass the gate, and be sold a round to reduce zero.
-        self.assertEqual(
-            section.count("carries a reported, positive cost"),
-            1,
-            "the cost precondition is stated twice again; two statements of "
-            "one rule are what let this one drift into an exception",
-        )
-        self.assertIn("that is this precondition's one statement", section)
-        self.assertIn("the gate below reads it rather than restating it", section)
-        self.assertIn("the free check's precondition above holds", section)
-
-        # SKILL.md owns the ordered flow and did not name this step at all,
-        # though it runs before the round and can end the run on its own.
-        skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn(
-            "a free `$0` re-read of the finished trials comes first and can settle "
-            "the question outright; when it does, that answer is the result and no "
-            "round is offered",
-            skill,
-        )
-        self.assertIn(
-            "the free `$0` cost check ran before any cost-reduction round was "
-            "offered",
-            skill,
-        )
-
-    def test_the_saving_bar_is_derived_from_measurement_not_borrowed(self) -> None:
-        """The gate's bar and the result's bar answer different questions.
-
-        They were one number, and it was the gate's - "a quarter less". That is
-        right where it was written: the gate asks whether cheaper territory
-        exists at all, across a model ladder whose rungs differ in cost by
-        multiples, and a quarter answers a question that coarse. It is roughly
-        5x too coarse for the result, where the same number was standing in for
-        the noise floor between two cost measurements of ONE configuration -
-        and at that size it discards precisely the 5-25% band this round is
-        most likely to find, because the second space is built from cheaper
-        values of controls the winner already uses.
-
-        The settled answer derives the bar instead of assuming it. The round's
-        space is required to contain the seed, so a completed round re-measures
-        it and hands back two costs for one unchanged configuration; that
-        spread is this workload's own run-to-run cost variance, observed rather
-        than guessed. The fallback is stated and named out loud, never silent,
-        because a managed search need not evaluate the seed at all.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        # asserted before it is split on, so a missing section names itself
-        self.assertIn("### the saving bar", safety)
-        section = safety.split("### the saving bar", 1)[1].split(
-            "### run the free check first", 1
-        )[0]
-
-        for phrase in (
-            # one bar, one home, and both of its readers named where it is
-            # defined rather than each carrying its own copy of the rule
-            "the free `$0` check and the round's own selection - end in one question",
-            "it is derived rather than assumed",
-            # the measured basis, and where the second measurement comes from
-            "**measured basis, preferred.**",
-            "the round's second space is required to contain the seed",
-            "two costs for one configuration nothing changed about",
-            "a directly observed sample of this workload's run-to-run cost "
-            "variance, and that spread is the bar",
-            "take the widest such spread when a run offers more than one",
-            # ...and it degrades honestly rather than silently. The heading
-            # also has to admit the FLOORED path, or a reader who was just
-            # routed here by the floor reads a condition that excludes them
-            # and is left with the zero spread - back through the fix to the
-            # hole it closed.
-            "**stated basis, when nothing was measured twice - and wherever "
-            "the floor above sends you.**",
-            "on the unmeasured route and the floored one alike, the bar is "
-            "then a flat",
-            "`max_trials` is a cap and `auto` chooses its own trials",
-            "an assumption about this workload rather than a measurement of it",
-            "name which of the two bases the bar came from wherever it decides "
-            "an outcome; never fall back to the stated one silently",
-            # ...and a future editor is told why the two bars stay apart, which
-            # is the half a phrase lock cannot otherwise carry
-            "this is not the gate's number and must not be merged back into it",
-            "a quarter is roughly five times that noise floor",
-            "one question is about the territory; the other is about the "
-            "instrument. they do not share a number",
-        ):
-            with self.subTest(bar_phrase=phrase):
-                self.assertIn(phrase, section)
-
-        # It has to be defined before the first read of it, or the free check
-        # points forward at a rule the assistant has not been given yet.
-        self.assertLess(
-            safety.index("### the saving bar"),
-            safety.index("### run the free check first"),
-        )
-
-        # The fallback is a NUMBER, and the whole finding was that the borrowed
-        # one was ~5x the noise floor. Pin the magnitude and not only the
-        # sentence: an edit that restores a quarter here reads fine as prose
-        # and re-imports the defect wholesale.
-        stated = re.findall(r"the bar is then a flat \*\*(\d+)%\*\*", section)
-        self.assertEqual(
-            len(stated),
-            1,
-            "the stated fallback bar is not declared exactly once as a percent",
-        )
-        self.assertLess(
-            int(stated[0]),
-            10,
-            "run-to-run token variance on a fixed prompt set is single-digit "
-            "percent. A fallback at or above 10% is the coarse bar this rule "
-            "exists to replace, and it discards the 5-25% savings the round is "
-            "built to find",
-        )
-        # ...and the justification travels with the number, so the next editor
-        # argues with a reason rather than with a bare figure.
-        self.assertIn("single-digit percent", section)
-        self.assertIn("driven by output-length variation alone", section)
-
-        # The gate keeps its own coarse reading, and keeps it alone. Outside
-        # this section's explanation of why the two differ, "a quarter" appears
-        # only in the gate bullet it belongs to.
-        self.assertIn("a quarter less is the default reading of materially", safety)
-        self.assertEqual(
-            safety.count("a quarter"),
-            4,
-            "`a quarter` has a home this check does not know about. Three of "
-            "the four are the saving bar explaining why it is NOT this bar, "
-            "and the fourth is the gate bullet; a fifth is the two bars "
-            "merging back into one number again",
-        )
-
-    def test_the_measured_saving_bar_cannot_collapse_to_zero(self) -> None:
-        """A bar derived from two numbers needs a floor, or it is not a bar.
-
-        The measured basis is the spread between two costs for one unchanged
-        configuration, and nothing stopped that spread being zero. It is
-        reachable on this guide's own recommended setup, not in a corner case:
-        an exact-match evaluator makes the guide pin temperature to 0, the same
-        rows at temperature 0 return the same outputs and therefore the same
-        token counts, and each cost is exact arithmetic over those counts - so
-        the two costs are equal, the spread is zero, and every strictly cheaper
-        trial clears a bar of nothing. A 0.3% delta then passes the filter's
-        strict `<` and gets reported as a reduction, which is precisely the
-        false saving this bar exists to prevent, on paid work.
-
-        The range of a sample of size two understates the spread it is drawn
-        from in general and degenerates at zero, so the floor is the statistics
-        and not a patch. The aggregation rule already reasoned conservatively
-        by taking the widest spread; this guards the one direction that
-        manufactures a saving rather than discarding one.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        section = safety.split("### the saving bar", 1)[1].split(
-            "### run the free check first", 1
-        )[0]
-
-        for phrase in (
-            # the floor itself, and where a zero spread comes from
-            "floor it at the stated basis below",
-            "two costs are the smallest sample a spread can be taken from, and "
-            "the range of a sample that size understates the spread it is "
-            "drawn from",
-            "can return identical token counts and land the spread at exactly " "zero",
-            "a spread of zero, or any spread narrower than the stated basis, "
-            "is not evidence this workload has no cost variance; it is the "
-            "smallest possible sample of it",
-            # ...and it routes through the naming mandate rather than falling
-            # back silently, which is the whole point of having two bases
-            "use the stated basis there, and name it as the rule below requires",
-            # the aggregation rule now says why it is the safe direction, so a
-            # later editor arguing for "narrowest" or "mean" argues with a
-            # reason instead of with a bare word
-            "which is deliberately the conservative direction",
-            "a real saving reported honestly as a null is a recoverable error "
-            "where a false saving is not",
-        ):
-            with self.subTest(floor_phrase=phrase):
-                self.assertIn(phrase, section)
-
-    def test_the_stated_saving_bar_is_argued_as_a_trade_not_a_clean_cut(
-        self,
-    ) -> None:
-        """The justification used to argue against its own premise.
-
-        It said run-to-run variance is single-digit percent and that 5% "sits
-        inside that band with room rather than at its edge" - offered as the
-        reason the bar separates noise from saving. A floor that sits INSIDE
-        the band it excludes does not separate anything: by that paragraph's
-        own premise a 6-9% delta is acknowledged noise, clears the bar, and is
-        reported as a reduction.
-
-        The choice is still right, because a bar above the whole band would
-        discard the small savings this round is built to find. It is a trade,
-        so it is written as one - and that is the other half of why the basis
-        must be named in the copy: on this path the customer is being handed a
-        threshold that was assumed.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        section = safety.split("### the saving bar", 1)[1].split(
-            "### run the free check first", 1
-        )[0]
-
-        for phrase in (
-            "so it does not cleanly separate a saving from noise",
-            "a 6-9% delta is inside the same acknowledged band and still "
-            "clears the bar",
-            "it is a deliberate trade",
-            "the stated basis buys sensitivity and pays for it in certainty",
-            "what keeps that price visible is telling the user the threshold "
-            "was assumed",
-        ):
-            with self.subTest(trade_phrase=phrase):
-                self.assertIn(phrase, section)
-
-        # The retired claim, by substring: it is the one sentence that asserted
-        # the separation is clean, and restoring it re-imports the defect while
-        # every other phrase above still passes.
-        self.assertNotIn("with room rather than at its edge", safety)
-
-    def test_every_place_the_bar_decides_an_outcome_can_name_its_basis(
-        self,
-    ) -> None:
-        """A mandate with no slot in the copy is a mandate that never ships.
-
-        The saving bar must be named with the basis it came from "wherever it
-        decides an outcome", and it decides one in three places: the free
-        check's report-and-stop, and the two outcome blockquotes. Both
-        blockquotes are pinned verbatim customer copy, so a slot that does not
-        exist there cannot be filled at runtime however compliant the assistant
-        is.
-
-        Worse, the null blockquote was phrased in the MEASURED basis's
-        vocabulary - "the ordinary variation between two runs of one unchanged
-        configuration" - while the stated basis is reachable, and on that path
-        no two such runs exist. The copy was stating a measurement the round
-        had not made.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        quoted = quoted_prose(RUN_SAFETY)
-
-        # 1. The free check is prose, so it gets an instruction rather than a
-        #    placeholder - but it gets one.
-        self.assertIn(
-            "the bar it cleared named with the basis that bar came from", safety
-        )
-        # 2 and 3. Both blockquotes get a real slot, and one sentence sends
-        #    both of them back to the single definition.
-        self.assertIn(
-            "both carry a `<the saving bar and where it came from>` slot, and "
-            "both fill it from `### the saving bar` above under the naming "
-            "rule stated there",
-            safety,
-        )
-        self.assertIn(
-            "a `<n>%` reduction, past `<the saving bar and where it came from>`", quoted
-        )
-
-        # The measured basis's vocabulary is gone from the copy, not merely
-        # supplemented: it is only true on one of the two paths.
-        self.assertNotIn(
-            "to tell a saving from the ordinary variation between two runs of "
-            "one unchanged configuration",
-            quoted,
-        )
-
-        # Both slots are the same short noun slot, and neither carries a
-        # rationale of its own. The null slot used to append one - "or a
-        # stated 5% because nothing here was measured twice" - and the floor
-        # made it false about the customer's own run: on that path a
-        # configuration WAS measured twice and the bar is still the stated 5%.
-        # It was also a second home for the figure, an asymmetry with outcome
-        # 1's slot, and the one placeholder in the package a customer could
-        # paste verbatim as a sentence. The tying sentence above already sends
-        # both slots to the single definition, which states all three
-        # provenances.
-        self.assertIn("`<the saving bar and where it came from>`", quoted)
-        self.assertNotIn("`<the saving bar and where it came from:", quoted)
-        self.assertNotIn("because nothing here was measured twice", quoted)
-
-    def test_the_round_is_pre_disclosed_in_the_connected_approval(self) -> None:
-        """Three paid approvals, and the third lands at peak fatigue.
-
-        The walkthrough was simplified from one combined paid approval into two
-        staged ones - baseline, then connected optimization. This round adds a
-        third, and it arrives immediately after the user sees their result,
-        which is the payoff moment. A cold third ask there reads as a paywall
-        staircase however well the round itself is bounded.
-
-        The baseline approval already solved exactly this for the connected
-        run, in one clause that names the next step and front-loads nothing
-        about it. This mirrors that clause and its discipline: the round's
-        EXISTENCE is anticipated, and its gate, mechanics, thresholds, and
-        likely outcome are not.
-        """
-        flat = " ".join(SKILL.read_text().casefold().split())
-
-        # the precedent, and the mirror of it
-        self.assertIn(
-            "say only that a separately previewed managed run may follow; do "
-            "not front-load its algorithm, search space, trial arithmetic, "
-            "portal features, or insights",
-            flat,
-        )
-        self.assertIn(
-            "say only that if the results show cost headroom the assistant may "
-            "offer one more bounded round to try for the same quality at lower "
-            "cost, separately priced and approved; do not front-load its gate, "
-            "mechanics, thresholds, or expected outcome, and do not imply it "
-            "will happen or that it would succeed",
-            flat,
-        )
-
-        # It has to land inside the CONNECTED approval - after the baseline
-        # approval it mirrors, and before the round's own section. Anywhere
-        # later is not pre-disclosure; it is the cold third ask again.
-        self.assertIn("present `stage 4/5 · optimize`", flat)
-        for earlier, later in (
-            (
-                "do not front-load its algorithm, search space",
-                "present `stage 4/5 · optimize`",
-            ),
-            (
-                "present `stage 4/5 · optimize`",
-                "do not front-load its gate, mechanics, thresholds",
-            ),
-            (
-                "do not front-load its gate, mechanics, thresholds",
-                "#### optional cost-reduction round",
-            ),
-        ):
-            with self.subTest(ordering=(earlier, later)):
-                self.assertLess(flat.index(earlier), flat.index(later))
-
-        # Disclosure is not approval. The round still takes its own, and
-        # run-safety.md still owns that rule by itself.
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("takes its own explicit approval", safety)
-        self.assertIn("it never proceeds on the earlier approval", flat)
-        self.assertNotIn("needs its own explicit approval", flat)
-
-    def test_the_free_check_is_reported_as_the_thing_it_is(self) -> None:
-        """The `$0` check hands back a paid-for result at no further cost.
-
-        Every other check over this section governs what may be CLAIMED. This
-        one governs whether the customer is told what they were handed: before
-        asking for another cent, the guide re-reads trials the customer has
-        already paid for, and it can end the flow there with a measured saving.
-        Reported as a bare number that reads as a footnote to the paid round;
-        the instruction to say what it cost is what makes it land as the gift
-        it is.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("### run the free check first", safety)
-        section = safety.split("### run the free check first", 1)[1].split(
-            "### gate", 1
-        )[0]
-        for phrase in (
-            "it came out of trials the user has already paid for",
-            "so say so rather than reporting the number flat",
-            "this one cost them nothing and is already theirs",
-        ):
-            with self.subTest(free_check_copy=phrase):
-                self.assertIn(phrase, section)
-        # ...and none of that loosens the claim it is reported at
-        self.assertIn(
-            "report it at the claim strength and the provenance the paid round "
-            "would get",
-            section,
-        )
-
-    def test_the_cost_reduction_round_cannot_ride_the_earlier_approval(self) -> None:
-        """Additional paid work needs additional approval and a live remainder.
-
-        The walkthrough keeps one running total against one ceiling. A second
-        round is the easiest place to lose both - to treat an earlier stage's
-        approval as still open, and to open a second ledger beside the first.
-        """
-        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        # the section anchor is asserted before it is split on, so a missing
-        # section names itself rather than raising IndexError from the split
-        self.assertIn("## optional cost-reduction round", safety)
-        section = safety.split("## optional cost-reduction round", 1)[1].split(
-            "## post-run verification", 1
-        )[0]
-
-        for phrase in (
-            "### approval",
-            "takes its own explicit approval",
-            "it is never a continuation of an earlier stage's approval, and "
-            "silence is not approval",
-            "the round's tracked cost joins the single running total the "
-            "approval section above already governs",
-            "stop before the round if its estimate does not fit the remainder",
-            # the ceiling rule above says the assistant never proposes a bigger
-            # number; the round must not quietly become the exception
-            "do not propose raising the ceiling to make it fit",
-            "treat a larger ceiling as the user's suggestion to make, never the "
-            "assistant's",
-            "declining is a normal answer",
-            "offer the round once",
-        ):
-            with self.subTest(approval_phrase=phrase):
-                self.assertIn(phrase, section)
-
-        post_run = " ".join(
-            RUN_SAFETY.read_text()
-            .split("## Post-run verification", 1)[1]
-            .split("## Recovery", 1)[0]
-            .casefold()
-            .split()
-        )
-        self.assertIn("it had its own approval", post_run)
-        self.assertIn("its cost joined the same running total", post_run)
-        self.assertIn(
-            "its winner was selected by the cheaper-and-not-worse filter on the "
-            "run's own metric rather than taken from `best_config`",
-            post_run,
-        )
-        self.assertIn("a score claim the paired counts support", post_run)
-        self.assertIn(
-            "a round whose own trials came back without reported cost has no "
-            "cost claim",
-            post_run,
-        )
-        # The free check can end the flow carrying the same user-facing claim,
-        # and both hooks here were conditional on the paid round having run.
-        self.assertIn(
-            "if the free `$0` check answered the question and ended it there, its "
-            "report carries the same measured cost change and the same "
-            "paired-count-supported score claim a paid round would owe",
-            post_run,
-        )
-
-    def test_no_cheaper_configuration_is_a_reported_finding(self) -> None:
-        """The null outcome needs copy, or it gets reported as a failure.
-
-        "Nothing was cheaper at the same score" is the measurement working. It
-        is also the outcome most likely to be apologised for, so it gets its own
-        wording and its own bound.
-
-        The wording itself was re-decided rather than patched a fourth time.
-        Three revisions produced the same defect: the copy asserted a universal
-        negative over a set - "every configuration tested that cost less also
-        scored lower", "the only configurations this round found that cost less
-        were cheaper by less than run-to-run variance" - while the branch that
-        routed to it constrained only the subset that cleared the score bar. A
-        universal claim over a set is false whenever the unexamined complement
-        is non-empty, and each patch added a qualifier and opened the next gap.
-        The copy now reports the round's own counts by category, which is true
-        under every combination of them and needs no routing rule to stay so.
+        A separate stage recommends a configuration that never travels the
+        winner's own closing path, so whatever stage 8 requires of a winner -
+        verification, reporting, any later scoring an enhanced winner owes -
+        silently does not apply to the one the user is actually steered to.
+        Reusing the enhanced run makes that structural instead of remembered.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
-        safety = quoted_prose(RUN_SAFETY)
 
         self.assertIn(
-            "including no cheaper configuration at an unchanged score, which is a "
-            "measured answer rather than a failed run",
+            "it is an enhanced run's winner carried into stage 8 as one, so "
+            "every check stage 8 applies to the first winner applies to it",
             skill,
         )
-        for phrase in (
-            "### the two outcomes",
-            "both are results. neither is apologized for",
-            "**nothing was both cheaper and no worse.** this is a finding",
-            # the root-cause rule, stated once: observations, never a property
-            # of a space the round mostly did not visit
-            "report what this round counted, never a property of the space",
-            "the space is larger than the round's trial cap, so any claim about "
-            "it quantifies over configurations the round never reached",
-            # the two inner counts are exhaustive over the cheaper ones, which
-            # is what lets the copy drop the branch it replaced
-            "those two inner counts split the cheaper ones with nothing left over:",
-            "did not clear the saving bar - applied exactly as the selection "
-            "above applies it",
-            # a zero renders as a zero, not as a breakdown of an empty set -
-            # the "nothing cheaper ran at all" conclusion falls out of the count
-            'write a count of zero as a plain "none" and drop the breakdown '
-            "under it",
-            # the seed used to need its own branch; it is now just not one of
-            # the cheaper ones
-            "the re-measured seed is not one of the cheaper ones either",
-            "that is a measured answer to the question this round asked",
-            "it establishes nothing about configurations the round did not test",
-            "do not answer it with a third round by default",
-            # ...and it is delivered as the result it is. A null outcome told
-            # flatly reads as a failed run to the one reader who matters, and
-            # the honest framing costs nothing: the customer asked whether a
-            # cheap win was there and now knows.
-            "it is a service rather than a shrug",
-            # The forward half points at an ACTION and never at a result. Every
-            # defect this section has produced was a claim about what the round
-            # did not measure; a promise about what a further run would return
-            # is that same shape aimed at the future instead of at the space.
-            "that bound is the forward half, and it points at an action and "
-            "never at a result",
-            "the handoff below names what a wider search would let the user "
-            "*do*, never what it would find",
-        ):
-            with self.subTest(null_phrase=phrase):
-                self.assertIn(phrase, safety)
-
-        # The frontier sentence is gone rather than qualified again. It is a
-        # universal claim by construction - "already near the Pareto frontier"
-        # is a property of the whole space, asserted from a bounded sample of
-        # it - so no branch condition over the round's own trials can earn it.
-        # The counts deliver the honest half of the same message.
-        for phrase in (
-            "already near the pareto frontier",
-            "every other configuration tested that cost materially less",
-        ):
-            with self.subTest(retired_universal_claim=phrase):
-                self.assertNotIn(phrase, safety)
-
-        # glossary.md canonicalizes "Pareto frontier (optimal frontier)" and
-        # its own rule is not to switch synonyms mid-run. This sentence carried
-        # a fourth name, and the one term here a lay reader cannot look up.
-        for path in assistant_facing_documents():
-            with self.subTest(document=path.name):
-                self.assertNotIn("efficient frontier", path.read_text().casefold())
-
-    def test_the_null_outcome_copy_the_customer_reads_is_pinned(self) -> None:
-        """The deliverable, not the reasoning about the deliverable.
-
-        A review swapped this blockquote for "This round found a cheaper
-        configuration and it is a genuine saving you should adopt immediately"
-        and only the byte-hash behaviour lock fired. That lock hashes every
-        file and is regenerated by every commit, so it reports that something
-        changed and never that the change was wrong - it is a diff detector,
-        not a guard. Every other check over this section pins the prose AROUND
-        the copy. This one pins the sentence the prospective customer reads.
-        """
-        text = RUN_SAFETY.read_text()
-        self.assertIn("**Nothing was both cheaper and no worse.**", text)
-        quoted: list[str] = []
-        for line in text.split("**Nothing was both cheaper and no worse.**", 1)[
-            1
-        ].splitlines():
-            stripped = line.strip()
-            if stripped.startswith(">"):
-                quoted.append(stripped.removeprefix(">").strip())
-            elif quoted:
-                break
-        copy = " ".join(" ".join(quoted).casefold().split())
-        self.assertTrue(copy, "the null outcome has no user-facing blockquote at all")
-
-        # Every number in it is one this round counted, and each is a
-        # placeholder rather than a worked example's figure.
-        for placeholder in (
-            "`<executed trials>`",
-            "`<total combination count>`",
-            "`<n cheaper>`",
-            "`<n scored lower>`",
-            "`<n inside variance>`",
-            # ...and the bar those margins were judged against, which the copy
-            # used to state in the MEASURED basis's vocabulary while the stated
-            # basis was reachable. On that path no two runs of one unchanged
-            # configuration exist, so the sentence asserted a measurement the
-            # round had not made. The slot carries the basis instead - as a
-            # bare noun slot, like outcome 1's, with the naming rule left in
-            # `### the saving bar` where it is decided once.
-            "`<the saving bar and where it came from>`",
-        ):
-            with self.subTest(placeholder=placeholder):
-                self.assertIn(placeholder, copy)
-
-        for claim in (
-            "this round tested `<executed trials>` of `<total combination "
-            "count>` configurations",
-            "`<n cheaper>` of them cost less than the configuration you are "
-            "already running",
-            "`<n scored lower>` scored lower",
-            "the other `<n inside variance>` were cheaper by too small a margin "
-            "to count as a saving against `<the saving bar and where it came "
-            "from>`",
-            "so this round did not establish a saving",
-            # ...and it closes as a result the customer can act on rather than
-            # trailing off at the negative. Both halves are earned: the
-            # decision the counts actually support, and the bound this run
-            # chose, pointed at the handoff that addresses it.
-            "keeping the configuration you are already running is the answer "
-            "it supports",
-            "a round this size reaches few configurations by design",
-            "widening the search across your full dataset and your own controls "
-            "is what the skills named at the close are for",
-        ):
-            with self.subTest(claim=claim):
-                self.assertIn(claim, copy)
-
-        # It is the NULL outcome. It may not become an adoption claim, and it
-        # may not quantify over what the round did not test.
-        for forbidden in (
-            "genuine saving",
-            "you should",
-            "immediately",
-            "every configuration",
-            "frontier",
-            # ...nor over what a LATER run would return. The forward half is
-            # the one place engagement could buy itself a promise, and a
-            # promise about an unrun search is the same universal claim this
-            # copy was rewritten three times to remove, pointed at the future.
-            "would find",
-            "will find",
-            "will save",
-            "guaranteed",
-        ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, copy)
-
-    def test_the_round_never_reports_that_a_knob_did_not_matter(self) -> None:
-        """Low measured importance at this trial count is undersampling.
-
-        The SDK does expose importance analysis, and the tempting sentence -
-        "we dropped the knobs that were not doing anything" - is a finding the
-        evidence cannot carry. It stays a hypothesis the second space tests.
-        """
-        skill = " ".join(SKILL.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
-
+        # ...and the recommendation is one point of the reported frontier,
+        # chosen by a stated rule rather than left to taste
         self.assertIn(
-            "do not tell the user the round dropped the knobs that did not matter",
+            "the run's own reported winner when that floor admits it, otherwise "
+            "the cheapest point above the floor",
             skill,
         )
+        # the reuse is claimed on the machinery too, and the reference it
+        # points at says the same rather than restating any of it
         self.assertIn(
-            "a control that moved nothing was mostly undersampled, so any "
-            "importance reading is a hypothesis the second space tests, never a "
-            "finding it reports",
+            "it reuses that stage's approval, run card, winner selection, and "
+            "closing report instead of adding machinery of its own",
             skill,
         )
-        self.assertIn("they are inputs to a hypothesis only", sdk)
-
-        # The reintroduction guard lives in the CONTRADICTIONS registry below
-        # rather than as a forbidden-substring list here, and the difference
-        # matters: a bare `assertNotIn` on wording like "shown not to matter"
-        # also fires on a passage that FORBIDS the claim, so the check would
-        # reject the very sentence it exists to require. The registry's phrases
-        # are affirmative report copy, which a prohibition does not contain.
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("nothing else is restated here", safety)
+        self.assertIn("the post-run verification list all reach it unchanged", safety)
 
 
-class CheaperAndNotWorseFilterTests(unittest.TestCase):
-    """Behaviour of the round's filter, which is real code, not prose.
+class FrontierAtOrAboveTests(unittest.TestCase):
+    """Behaviour of the frontier read, which is real code, not prose.
 
     Every other check over this section pins a sentence, which stops silent
-    deletion and nothing more. This one runs the block: the filter is the only
-    executable enforcement of "cheaper, and never at a lower score", and the
-    check it replaced asserted the function's NAME - green against a body with
-    the score floor deleted, which is a pure cost minimiser.
+    deletion and nothing more. This one runs the block: the floor is the only
+    executable guarantee that the report never hands back a configuration worse
+    than the one the user already runs, and the check it replaced asserted the
+    function's NAME - green against a body with the floor deleted, which is a
+    pure cost minimiser.
     """
 
     @staticmethod
-    def trial(score, cost, *, status="completed", config=None):
+    def trial(score, cost, *, status="completed"):
         metrics = {}
         if score is not None:
             metrics["task_success"] = score
         if cost is not None:
             metrics["cost"] = cost
-        return SimpleNamespace(status=status, metrics=metrics, config=config)
+        return SimpleNamespace(status=status, metrics=metrics)
 
-    def select(self, trials, *, floor=0.80, incumbent_cost=0.0120, excluded=()):
-        return CHEAPER_AND_NOT_WORSE(
-            trials, "task_success", floor, incumbent_cost, excluded
-        )
+    def select(self, trials, *, floor=0.80):
+        return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor)
 
-    def test_a_cheaper_trial_qualifies_only_at_or_above_the_floor(self) -> None:
+    def test_a_trial_reaches_the_frontier_only_at_or_above_the_floor(self) -> None:
+        """Delete `score >= floor` and this fails: the cheap, bad trial is
+        Pareto-optimal on cost, so nothing else keeps it off the report."""
         for label, score, qualifies in (
             ("equal to the floor", 0.80, True),
             ("above the floor", 0.91, True),
             ("below the floor", 0.30, False),
         ):
             with self.subTest(score=label):
-                cheaper = self.trial(score, 0.0060)
-                expected = [cheaper] if qualifies else []
-                self.assertEqual(self.select([cheaper]), expected)
+                cheap = self.trial(score, 0.0060)
+                self.assertEqual(self.select([cheap]), [cheap] if qualifies else [])
 
-    def test_the_cost_comparison_is_strict(self) -> None:
-        """The incumbent's own cost is not below itself, which is what stops
-        the free check returning the winner it is measuring against."""
-        self.assertEqual(self.select([self.trial(0.95, 0.0120)]), [])
+    def test_a_dominated_point_is_not_on_the_frontier(self) -> None:
+        """Dearer and no better than another point is not a trade-off."""
+        good = self.trial(0.95, 0.0040)
+        dominated = self.trial(0.90, 0.0090)
+        self.assertEqual(self.select([good, dominated]), [good])
+
+    def test_a_genuine_trade_off_keeps_both_points(self) -> None:
+        """Cheaper-and-lower against dearer-and-higher is what a frontier is
+        for, and collapsing it to one point is the one-sided report this
+        framing replaced."""
+        cheap = self.trial(0.82, 0.0020)
+        strong = self.trial(0.97, 0.0110)
+        self.assertEqual(self.select([cheap, strong]), [cheap, strong])
+
+    def test_the_incumbent_is_a_point_like_any_other(self) -> None:
+        """Keeping what you already run is an answer the frontier shows."""
+        incumbent = self.trial(0.80, 0.0120)
+        self.assertEqual(self.select([incumbent]), [incumbent])
 
     def test_an_absent_cost_is_dropped_rather_than_read_as_zero(self) -> None:
-        """Reading a missing cost as 0.0 makes every unpriced trial cheapest."""
+        """Reading a missing cost as 0.0 puts every unpriced trial on the
+        frontier, and dominates every priced one off it."""
         self.assertEqual(self.select([self.trial(0.95, None)]), [])
         self.assertEqual(self.select([self.trial(None, 0.0010)]), [])
 
@@ -5264,57 +4476,15 @@ class CheaperAndNotWorseFilterTests(unittest.TestCase):
                     self.select([self.trial(0.95, 0.0010, status=status)]), []
                 )
 
-    def test_qualifying_trials_come_back_cheapest_first(self) -> None:
-        """run-safety.md reads entry one as the answer, so the order is load-
-        bearing rather than cosmetic."""
+    def test_the_frontier_comes_back_cheapest_first(self) -> None:
+        """run-safety.md reports the frontier cheapest first, so the order is
+        load-bearing rather than cosmetic."""
         cheapest = self.trial(0.85, 0.0020)
         middle = self.trial(0.90, 0.0050)
         dearest = self.trial(0.99, 0.0110)
         self.assertEqual(
             self.select([dearest, cheapest, middle]), [cheapest, middle, dearest]
         )
-
-    def test_the_seed_configuration_is_excluded_when_the_round_passes_it(
-        self,
-    ) -> None:
-        """The seed is a point in the round's own space, so it comes back
-        through the round's own selection - re-measured, against a cost from a
-        different run, and reported as a saving on token-count variance."""
-        seed = {"model": "m", "temperature": 0.0}
-        other = {"model": "m", "temperature": 0.2}
-        seed_trial = self.trial(0.90, 0.0118, config=seed)
-        rival = self.trial(0.90, 0.0060, config=other)
-
-        self.assertEqual(self.select([seed_trial, rival]), [rival, seed_trial])
-        self.assertEqual(self.select([seed_trial, rival], excluded=[seed]), [rival])
-
-    def test_an_exclusion_with_no_configuration_to_read_raises(self) -> None:
-        """Failing loudly, because a silent skip keeps the seed eligible."""
-        with self.assertRaises(RuntimeError):
-            self.select([self.trial(0.90, 0.0010)], excluded=[{"model": "m"}])
-
-    def test_an_exclusion_that_could_never_match_raises(self) -> None:
-        """The likelier failure was the silent one, which is backwards.
-
-        An unreadable `trial.config` raised; a readable one against a re-keyed
-        or non-dict `excluded` entry matched nothing, excluded nothing, and
-        returned the seed as the round's answer with no signal at all. Passing
-        round one's `best_config` is exactly how that happens, and it is the
-        easier mistake of the two to make.
-        """
-        config = {"model": "m", "temperature": 0.0}
-        trials = [self.trial(0.90, 0.0010, config=config)]
-        for label, excluded in (
-            ("a differently keyed dict", [{"model": "m", "prompt_style": "direct"}]),
-            ("a non-dict configuration object", [SimpleNamespace(model="m")]),
-            ("a bare model name", ["m"]),
-        ):
-            with self.subTest(excluded=label):
-                with self.assertRaises(RuntimeError):
-                    self.select(trials, excluded=excluded)
-
-        # ...and a seed passed in the shape the trials report still works.
-        self.assertEqual(self.select(trials, excluded=[dict(config)]), [])
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
@@ -5469,8 +4639,17 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # knob entry below. "trade accuracy for cost" was here and had to
             # go: it also matches "never trade accuracy for cost", so the
             # registry would have failed the guide for stating the rule.
-            "whether a second round may buy cost with score",
-            ("measurably lower cost at a score that did not get worse",),
+            #
+            # The settled answer moved when the one-sided round became a
+            # frontier. A one-sided objective refused the trade by never
+            # searching for it; a frontier searches the whole trade-off and
+            # refuses to *report* a point below what the user already gets,
+            # which is the floor named here.
+            "whether a second run may hand back a worse-scoring configuration",
+            (
+                "never show a frontier point that scored below the "
+                "configuration the user is already running",
+            ),
             (
                 "we accepted a lower score for a lower cost",
                 "the round bought a cheaper configuration at a small accuracy cost",
@@ -5482,8 +4661,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # inside a prohibition ("never that a control was shown not to
             # matter") does not belong here - it would fail the document for
             # stating the rule correctly.
+            #
+            # The agreed phrase is the rule's one home, in the continuation
+            # handoff that carries observations out of the run. The second
+            # run's own section used to restate it; that was a second home for
+            # a rule this package already had, so it went rather than the rule.
             "whether a knob that moved nothing may be reported as not mattering",
-            ("never a finding it reports",),
+            ("never as an established finding",),
             (
                 "we removed the knobs that did not matter",
                 "the search showed these knobs do not matter",
@@ -5499,9 +4683,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # routing to it constrained only the trials that cleared the score
             # bar. Each was false whenever the unexamined complement was
             # non-empty, and each patch opened the next gap. Settled answer:
-            # report the round's own counts, which quantify over nothing.
-            "what the null cost-reduction outcome may claim",
-            ("report what this round counted, never a property of the space",),
+            # report the run's own counts, which quantify over nothing.
+            "what the null second-run outcome may claim",
+            ("report what this run counted, never a property of the space",),
             (
                 "already near the pareto frontier",
                 "every configuration tested that cost less also scored lower",
@@ -5509,26 +4693,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
-            # The connected approval now pre-discloses that the round EXISTS,
-            # so the third ask is anticipated rather than cold. Disclosure is
-            # not approval, and the two are one sentence apart: said the other
-            # way round, the third gate collapses into the second and the round
-            # stops being optional while the guide still calls it optional.
-            "whether pre-disclosing the round also approves it",
-            ("it never proceeds on the earlier approval",),
+            # The connected approval now pre-discloses that the run EXISTS, so
+            # the third ask is anticipated rather than cold. Disclosure is not
+            # approval, and the two are one sentence apart: said the other way
+            # round, the third gate collapses into the second and the run stops
+            # being optional while the guide still calls it optional.
+            "whether pre-disclosing the second run also approves it",
+            ("never proceeds on the earlier approval",),
             (
-                "approving the optimization also approves the cost-reduction round",
-                "the optimize approval covers the cost-reduction round",
-                "no further approval is needed for the cost-reduction round",
+                "approving the optimization also approves the second run",
+                "the optimize approval covers the second enhanced run",
+                "no further approval is needed for the second enhanced run",
             ),
         ),
         (
-            "whether the second round is part of the default run",
-            ("it is not part of the default run",),
+            "whether the second run is part of the default run",
+            ("is not part of the default run",),
             (
-                "the walkthrough always runs a second cost-reduction round",
-                "every first run finishes with a cost-reduction round",
-                "run the cost-reduction round after the comparison",
+                "the walkthrough always runs a second enhanced run",
+                "every first run finishes with a second enhanced run",
+                "run the second enhanced run after the comparison",
             ),
         ),
         (
@@ -5889,9 +5073,35 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # three are depth and report copy behind one stage, which run-safety.md
         # owns. Re-measured at 63_722, unchanged, so this number stays. Recorded
         # for the reason the unchanged re-measurement above was.
+        #
+        # The round is then restructured, and this number comes DOWN. Cost
+        # reduction is another search rather than another kind of work, so it
+        # stops being a third stage carrying its own approval, gate, saving
+        # bar, and one-sided objective, and becomes a second ENHANCED run:
+        # seeded with the first run's winner, widened with the controls that
+        # carry cost, and reported as an accuracy-cost frontier. What this
+        # document owns shrinks with it to four things - the ordering, the
+        # frontier mandate, the score floor, and the sentence that makes the
+        # second run's winner an enhanced winner and so carries it down the
+        # closing path the first winner takes. Everything the old section
+        # restated from stage 7 (the approval, the run card, the winner
+        # selection, the closing report) is a pointer now, at machinery this
+        # document already stages one heading above.
+        #
+        # Two paragraphs leave outright. The one-sidedness argument goes with
+        # the objective it defended: a frontier reports both wins and asserts
+        # neither, so the cost-versus-score asymmetry it carried lives once, in
+        # the outcome copy that has to state it to a customer. And the
+        # knob-importance mandate goes because this document's own close
+        # already states it - a second home for an existing rule, which is the
+        # defect this package names rather than emphasis.
+        #
+        # Measured at 63_404 against the restructured branch's 63_722, so
+        # 63_750 - 346 bytes, in line with the 228-339 the raises above settled
+        # on and clear of the one-word-edit trip recorded three times.
         self.assertLess(
             resident,
-            64_000,
+            63_750,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -6231,7 +5441,50 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Read that as the ceiling's answer to a section whose last three
         # commits were all corrections to one 40-line rule: it is not the
         # rule's size that has been wrong, so more room is not the fix.
-        budget = 257_500
+        #
+        # It then FALLS 13_960, to 15_001 over the 228_407 this branch left
+        # trunk at, and the fall is a restructure rather than a trim. The
+        # round's own machinery was the cost: a separate stage needs a gate, an
+        # approval, a winner-selection rule, a seed-exclusion rule, and a bar
+        # to tell a saving from measurement noise - and that bar needed a
+        # section of its own, two bases, a floor, and a naming mandate that had
+        # to reach three delivery points. Run as a second ENHANCED run it needs
+        # none of them: the approval, the run card, the running total, the
+        # tracking probe, and the post-run list are the ones stage 7 already
+        # defines, and run-safety.md points at them instead of restating them.
+        #
+        # The bar goes with the claim it propped up. A one-sided round reports
+        # "cheaper at a score that did not get worse", which is a WIN, and a
+        # win needs a threshold separating it from noise; two of the numbers
+        # holding that threshold up were never measured - run-to-run token
+        # variance asserted as "single-digit percent", and a predicted "5-25%
+        # savings this round is most likely to find". A frontier asserts no
+        # win. Each point is a measured pair, the reader sees the gap, and the
+        # only rule left is the one this package already had: the score claim
+        # comes from the paired counts. Cost noise survives as a caveat beside
+        # the points rather than as a bar deciding an outcome, which is what
+        # made it need a number.
+        #
+        # The gate loses its number the same way. It justified "a quarter less"
+        # by a model ladder whose own section applies only when the assistant
+        # prepares a missing baseline - which the gate's `✅`-real condition
+        # excludes, so the justification covered none of the gated population.
+        # It now reads the free `$0` frontier over trials the first run already
+        # paid for: more than the incumbent on it is this task's own measured
+        # evidence that accuracy and cost trade off, and nothing else is.
+        #
+        # sdk-execution.md falls for one more reason worth naming: the
+        # warm-start contract goes. It was 1.4 KB of hedged, version-dependent
+        # SDK behaviour for an optimisation the round works without - the
+        # second space contains the winner either way, which is the seeding
+        # this guide actually relies on - and this repository has already
+        # decided once that documenting another repository's surface here
+        # ossifies it. What remains is the seed as a point in the space.
+        #
+        # Measured at 243_408, so 243_750 - 342 bytes, at the top of the
+        # 228-339 band and taken deliberately: 243_500 leaves 92, which is the
+        # one-word-edit trip this comment has recorded four times.
+        budget = 243_750
         self.assertLess(
             total,
             budget,
