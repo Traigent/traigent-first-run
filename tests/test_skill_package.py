@@ -2651,7 +2651,12 @@ class SkillPackageTests(unittest.TestCase):
             # The destination itself, so the branch cannot silently go back to
             # naming a site it never gives an address for.
             "https://traigent.ai",
-            "those four are exclusive and cover every user",
+            # The four branches partition what the user *holds*. They cannot
+            # also partition how long ago it happened - a customer who
+            # registered five weeks ago and saved their key classifies as
+            # "key in hand" and is still refused once the access period is
+            # spent - so the list must not claim to cover every user.
+            "those four are exclusive on what the user holds",
             "registering is not the same as holding a key",
             "the key is created in the portal, not issued by registering",
             "top-bar key control",
@@ -2662,6 +2667,17 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+        # A present-substring pin cannot see a residual. The unnamed form said
+        # "start at the Traigent site" in three places; one substitution left
+        # two of them behind and this file still passed, twice. The negative is
+        # the half that fails on a leftover.
+        self.assertNotIn("at the traigent site", normalized)
+        # The other half of the same over-claim. The "key in hand" branch is
+        # the one a long-registered customer reads, and the access-period
+        # paragraph below says a valid key is still refused once the period is
+        # spent - so this branch must not close the question either.
+        self.assertNotIn("nothing else is required", normalized)
 
     def test_both_emailed_codes_are_handled_as_credentials(self) -> None:
         """The two emailed codes are bearer credentials; the link is not.

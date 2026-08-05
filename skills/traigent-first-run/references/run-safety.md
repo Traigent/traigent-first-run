@@ -151,7 +151,7 @@ Do not assume the user walked the whole path. Getting the second email and regis
 acts, and many people read the email and stop. Establish where they actually are before naming a
 destination:
 
-- **Already registered, key in hand** - they only need to paste it; nothing else is required.
+- **Already registered, key in hand** - they only need to paste it.
 - **Already registered, no key in hand** - registering is not the same as holding a key. The key is
   created in the portal, not issued by registering, and it is shown once, so anyone who skipped that
   step or did not save the value creates a fresh one - the top-bar key control, or
@@ -162,14 +162,14 @@ destination:
   and then, once in the portal, create a full-access key from the top-bar key control and save it
   as it is shown. Only then return here to paste it.
 - **Not registered, with no usable access code** - they never started, they are still waiting on
-  one of the two emails, or their code is older than 10 days. All three resolve the same way:
-  start (or restart) at `https://traigent.ai` (given as a clickable link) and request a fresh code -
-  the only address to hand this user, since the registration page refuses anyone without a code. An
-  expired code cannot be revived, and waiting longer will not make one arrive if the first step was
-  never taken.
+  one of the two emails, or their code is older than 10 days. All three resolve the same way: send
+  them to `https://traigent.ai` as a clickable link. An expired code cannot be revived, and waiting
+  will not deliver one that was never requested.
 
-Those four are exclusive and cover every user: registered or not, and within each, holding the
-thing they need or not. Ask which one applies; do not infer it from how far along they sound.
+Those four are exclusive on what the user holds: registered or not, and within each, holding the
+thing they need or not. They do not say how long ago; a run later refused for account or plan
+reasons is the spent access period below, not a wrong branch here. Ask which one applies; do not
+infer it from how far along they sound.
 
 Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
 user in. Never hand the registration address to someone who does not have one yet - that page will
