@@ -55,6 +55,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -145,14 +146,14 @@ class OfflineSocketContractTests(unittest.TestCase):
             # Skipping is right for a contributor who has not installed the
             # pinned stack, and wrong for CI, where this module IS the
             # no-spend guarantee. Removing one install line from the workflow
-            # turned the whole guarantee into `4 skipped` and left the run
+            # turns the whole guarantee into `4 skipped` and leaves the run
             # green, so under CI a missing dependency is a failure: a guarantee
             # nobody watched run is not a guarantee.
             if os.environ.get("CI"):
                 self.fail(
                     "litellm is missing under CI, so the offline-socket "
-                    "guarantee did not run. Install the pinned stack before "
-                    "the suite - this must never degrade to a skip in CI."
+                    f"guarantee did not run. Install {REQUIREMENTS} before the "
+                    "suite - this must never degrade to a skip in CI."
                 )
             self.skipTest(
                 "litellm is not installed in this environment; install the "
@@ -246,7 +247,7 @@ class OfflineSocketContractTests(unittest.TestCase):
             if os.environ.get("CI"):
                 self.fail(
                     "traigent is missing under CI, so the only test that "
-                    "imports it did not run. Install the pinned stack before "
+                    f"imports it did not run. Install {REQUIREMENTS} before "
                     "the suite."
                 )
             self.skipTest(
@@ -269,6 +270,135 @@ class OfflineSocketContractTests(unittest.TestCase):
             "importing traigent under the documented offline flags must "
             "also attempt zero outbound sockets",
         )
+
+
+# Makes the two dependencies above look absent to this module without
+# uninstalling anything, by shadowing ``importlib.util.find_spec`` at
+# interpreter startup. Everything not named still resolves normally, so the
+# child is a normal interpreter in every other respect.
+_MISSING_DEPENDENCY_SHIM = """\
+import importlib.util
+
+_MISSING = frozenset({missing!r})
+_real_find_spec = importlib.util.find_spec
+
+
+def _find_spec(name, package=None):
+    if name in _MISSING:
+        return None
+    return _real_find_spec(name, package)
+
+
+importlib.util.find_spec = _find_spec
+"""
+
+# Set in every child spawned below. The ``-k`` selector already keeps a child
+# from re-collecting this class, but a future refactor that drops the selector
+# would otherwise fork bomb, so the guard is enforced twice.
+_CHILD_MARKER = "TRAIGENT_OFFLINE_SOCKET_GUARD_CHILD"
+
+
+class MissingDependencyPolicyTests(unittest.TestCase):
+    """The CI guard is now the only thing between "green" and "unproven".
+
+    Nothing else asserts it exists, so one deleted branch would silently
+    restore the exact defect this module was changed to close: a workflow that
+    loses an install line reporting ``4 skipped`` and a green run. These tests
+    drive the real module in a subprocess with a dependency made to look
+    absent, and pin both directions - fail under ``CI``, skip without it.
+    """
+
+    def setUp(self) -> None:
+        if os.environ.get(_CHILD_MARKER):
+            self.skipTest("running inside a spawned child; do not recurse")
+
+    def _run_module(
+        self,
+        *,
+        missing: tuple[str, ...],
+        ci: bool,
+        selector: str = "OfflineSocketContractTests",
+    ) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as shim_directory:
+            Path(shim_directory, "sitecustomize.py").write_text(
+                _MISSING_DEPENDENCY_SHIM.format(missing=missing), encoding="utf-8"
+            )
+            environment = dict(os.environ)
+            # Prepend rather than replace: the shim has to be found first, but
+            # a contributor's existing PYTHONPATH must keep working.
+            environment["PYTHONPATH"] = os.pathsep.join(
+                path for path in (shim_directory, os.environ.get("PYTHONPATH")) if path
+            )
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            environment[_CHILD_MARKER] = "1"
+            if ci:
+                environment["CI"] = "true"
+            else:
+                environment.pop("CI", None)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    "tests",
+                    "-p",
+                    Path(__file__).name,
+                    "-k",
+                    selector,
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+
+    def test_missing_litellm_under_ci_fails_instead_of_skipping(self) -> None:
+        process = self._run_module(missing=("litellm",), ci=True)
+        self.assertNotEqual(
+            process.returncode,
+            0,
+            "a missing litellm under CI must fail the run, not skip it; got a "
+            f"zero exit with stderr={process.stderr!r}",
+        )
+        self.assertIn("litellm is missing under CI", process.stderr)
+        self.assertNotIn("OK (skipped", process.stderr)
+        # The reader of a CI log has no repository in front of them, so the
+        # message has to name the file to install from.
+        self.assertIn(str(REQUIREMENTS), process.stderr)
+
+    def test_missing_traigent_under_ci_fails_instead_of_skipping(self) -> None:
+        process = self._run_module(
+            missing=("traigent",),
+            ci=True,
+            selector="test_traigent_import_also_makes_zero_outbound_socket_attempts",
+        )
+        self.assertNotEqual(
+            process.returncode,
+            0,
+            "a missing traigent under CI must fail the run, not skip it; got a "
+            f"zero exit with stderr={process.stderr!r}",
+        )
+        self.assertIn("traigent is missing under CI", process.stderr)
+        self.assertIn(str(REQUIREMENTS), process.stderr)
+
+    def test_missing_dependency_without_ci_still_skips_cleanly(self) -> None:
+        """A contributor without the pinned stack must not see a red suite."""
+        process = self._run_module(
+            missing=("litellm", "traigent"),
+            ci=False,
+        )
+        self.assertEqual(
+            process.returncode,
+            0,
+            "without CI a missing dependency must still skip, so a contributor "
+            f"who has not installed the pinned stack sees green; stderr="
+            f"{process.stderr!r}",
+        )
+        self.assertIn("skipped", process.stderr)
 
 
 if __name__ == "__main__":
