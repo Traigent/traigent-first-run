@@ -1324,7 +1324,7 @@ def score_dataset(
         if effective < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = (
-            "no tuning set and held-back test set, so the result would be "
+            "no tuning set and held-out set, so the result would be "
             f"measured on the same rows the search used; {evidence}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))

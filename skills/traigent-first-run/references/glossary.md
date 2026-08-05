@@ -126,13 +126,13 @@ Baseline run vs enhanced run
   sweep when the assistant had to prepare one); the enhanced run is the broader,
   cloud-assisted search that looks for better configurations.
 
-Tuning split vs holdout (validation) split
-  Plain: the tuning part is what we optimize against; validation data is kept
-  aside and used at the end to check we did not just memorize the tuning part.
+Tuning set vs held-out set
+  Plain: the tuning set is what we optimize against; the held-out set is kept
+  aside and used at the end to check we did not just memorize the tuning rows.
   Note: if the same examples appear in both, the result is optimistic and cannot
-  be trusted (this is "leakage"). Call validation a sealed holdout only if its
-  split and labels were hidden until the candidate was locked; assistant-inspected
-  or assistant-authored validation is held-back and non-blind. When the assistant
+  be trusted (this is "leakage"). Call a held-out set a sealed holdout only if its
+  split and labels were hidden until the candidate was locked; an assistant-inspected
+  or assistant-authored one is held-back and non-blind. When the assistant
   prepares walkthrough data, the default is 28 rows split 18 tuning / 10 held-out,
   reserved at creation; `references/evaluation-and-dataset.md` owns the bands and
   the rest. The held-out score is disclosed once, beside the
@@ -208,8 +208,7 @@ The lines under each pillar on the card
                                  run is deliberately not counted, so an opening
                                  score usually reports that none was provided
                                  yet rather than that your agent has none.
-    tuning set / held-back test set
-                               - two parts of your examples, not equal halves:
+    tuning set / held-out set  - two parts of your examples, not equal halves:
                                  18 to tune on and 10 kept back, by default. The
                                  search is allowed to see the first part while it
                                  looks for a better configuration; the second is
@@ -223,10 +222,12 @@ The lines under each pillar on the card
                                  the train/test idea, except nothing is trained:
                                  Traigent searches configurations rather than
                                  fitting a model. Say "tuning set" and "held-out
-                                 set" to the user; the card's own line prints
-                                 them as "to tune on / held back" and the guide's
-                                 files name the second one the holdout - three
-                                 spellings, the same rows, always created by
+                                 set" to the user, and only that pair. The card's
+                                 own line prints them as "to tune on / held back"
+                                 and the guide's files name the second one the
+                                 holdout; "validation" and "test set" are the
+                                 reader's own words, borrowed only to bridge to
+                                 them. Same rows either way, always created by
                                  default for generated data.
     good-vs-bad examples       - answers already known to be right and known to
                                  be wrong, run through your evaluator to see how

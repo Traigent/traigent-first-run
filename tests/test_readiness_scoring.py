@@ -370,7 +370,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(power.value, 18.4)
         self.assertEqual(
             power.evidence,
-            "no tuning set and held-back test set, so the result would be measured on the same rows the search used; 100 examples - substantial "
+            "no tuning set and held-out set, so the result would be measured on the same rows the search used; 100 examples - substantial "
             "comparison set",
         )
 

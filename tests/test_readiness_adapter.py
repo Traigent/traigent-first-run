@@ -859,7 +859,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
-            self.assertIn("no tuning set and held-back test set", power["evidence"])
+            self.assertIn("no tuning set and held-out set", power["evidence"])
             conditions = {cap["condition"] for cap in score["caps"]}
             self.assertIn("dataset-tune-holdout-overlap", conditions)
 
@@ -881,7 +881,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
             self.assertEqual(power["value"], 17.6)
-            self.assertIn("no tuning set and held-back test set", power["evidence"])
+            self.assertIn("no tuning set and held-out set", power["evidence"])
 
     def test_old_preflight_json_without_malformed_count_fails_loudly(self) -> None:
         """Version-skew guard: integrity FAIL without `malformed_rows` must not

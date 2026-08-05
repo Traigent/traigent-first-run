@@ -3288,6 +3288,123 @@ class SkillPackageTests(unittest.TestCase):
             "never invent a percentage-point threshold before those outcomes exist",
             dataset,
         )
+        # "Ten" and "at least ten" are different rules, and the file carried
+        # both shapes: a fixed composition beside a sentence about adjusting
+        # size, and a readiness floor that fires at nine. The floor and the
+        # design agree only because the design sits exactly on it, so say which
+        # of the two the number is.
+        self.assertIn("ten is therefore exact in both directions", dataset)
+        self.assertIn("never a floor to grow from", dataset)
+        # The one split that is not ten, and the floor that still binds it.
+        self.assertIn(
+            "a split under ten comparable rows blocks the paid comparison", dataset
+        )
+
+    def test_two_files_is_a_recorded_choice_not_an_sdk_limitation(self) -> None:
+        """Why the reserved rows get a file, answered where the rule lives.
+
+        `eval_dataset` accepts rows as well as a path on the pinned SDK, so
+        "just choose which rows go where" is a real alternative rather than a
+        misunderstanding. It is declined for a reason the guide has to carry or
+        the next reader re-opens it: a filter is a predicate that has to keep
+        being right, and this package already lost the reserved rows exactly
+        once, when they sat inside the file the search was handed. Two files,
+        beside an untouched original, is also the honest answer to "sounds like
+        many files".
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "two files is a choice, not a limitation the sdk imposes", dataset
+        )
+        self.assertIn("`eval_dataset` also takes rows directly", dataset)
+        self.assertIn(
+            "a file the search was never given cannot leak a row however the "
+            "predicate drifts",
+            dataset,
+        )
+        self.assertIn("beside the user's untouched original", dataset)
+
+    def test_the_difficulty_ladder_has_four_rungs_and_one_home(self) -> None:
+        """Rank the rows before falling through to a random sample.
+
+        The ladder used to go difficulty tags -> coverage/scenario tags ->
+        seeded random, which discarded a judgement the assistant had already
+        made: it is reading the rows in order to pick from them, so it can rank
+        them, and it can ask whether the other tags differ in difficulty at all
+        rather than assuming they do. Two rungs go in between.
+
+        Both new rungs need a brake. "Clear" is a feeling unless something can
+        refute it, so the school-levels test asks the estimate to separate the
+        extremes rather than order the middle. And an estimate is the
+        assistant's opinion: declared through the provenance machinery this file
+        already has, and kept out of the scored `difficulty` field on rows the
+        user brought, because filling that field would clear a spread complaint
+        on the assistant's own judgement.
+
+        One home, because the ladder had two: the bounded subset and the
+        reserved split each stated it, which is the shape of every contradiction
+        this package has produced.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("### choosing rows when difficulty is not labelled", dataset)
+        for rung in (
+            "**the rows carry difficulty tags.** stratify on them.",
+            "**rank the rows yourself.**",
+            "**the rows carry other tags**",
+            "**neither holds.** take a seeded random sample",
+        ):
+            with self.subTest(rung=rung):
+                self.assertIn(rung, dataset)
+        # Rung 3 judges the tags before trusting them, and names what it got
+        # when they turn out not to differ.
+        self.assertIn(
+            "judge by that same test whether those groups actually differ in difficulty",
+            dataset,
+        )
+        self.assertIn("call that topical spread, not difficulty spread", dataset)
+        # The falsifier, in the owner's own framing.
+        for phrase in (
+            "difficulty is clear when the bands differ the way school levels differ",
+            "12-to-15-year-old",
+            "short single-table sql query against a long multi-join one",
+            '"clear" has to be falsifiable or it is a feeling',
+            "separate the extremes, not to order the middle",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # An estimate is declared, and cannot buy the difficulty sub-score.
+        self.assertIn("`difficulty_provenance`", dataset)
+        self.assertIn(
+            "on rows the user brought, keep it out of the `difficulty` field itself",
+            dataset,
+        )
+        self.assertIn(
+            'filling it converts "declares no difficulty" into full band coverage',
+            dataset,
+        )
+        # One home: both call sites point at the ladder rather than restating
+        # it, and the restatements they replaced must not come back.
+        self.assertIn(
+            'work down the ladder in "choosing rows when difficulty is not labelled"',
+            dataset,
+        )
+        self.assertIn("work down the same ladder the bounded subset uses", dataset)
+        for restatement in (
+            "spread the pick across the coverage/scenario tags instead",
+            "fall back exactly as the bounded subset above does",
+        ):
+            with self.subTest(restatement=restatement):
+                self.assertNotIn(restatement, dataset)
 
     # Engineering-rationale citations that predate this rule and are never
     # instructed to be echoed to the user. Allowlisted by exact text so the
@@ -4631,6 +4748,25 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ("do not say traigent prevents or corrects this",),
             ("traigent prevents overfitting", "traigent already prevents this"),
         ),
+        (
+            # ML's conventional triple is train/validation/test, and this run
+            # has neither three splits nor any training: the search optimizes
+            # on one set, and the winner alone is scored on the other. The
+            # package was spending four names on those two - "held-out",
+            # "holdout", "validation", "test set" - so a reader met a third
+            # word before finishing the first. One pair in customer copy; the
+            # rest only to bridge to the reader's own vocabulary.
+            "what the two splits are called in customer copy",
+            ('say "tuning set" and "held-out set" to the user, and only that pair',),
+            (
+                "tuning split vs holdout (validation) split",
+                "tuning set / held-back test set",
+                "no tuning set and held-back test set",
+                "followed by held-back validation",
+                "shares examples with validation",
+                "missing or overlapping validation split",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -5030,7 +5166,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # longer appears in sdk-execution.md and glossary.md, and the
         # disclosure-timing mandate no longer has a third scope in
         # run-safety.md. Rounded up to the next 250, as the merges above did.
-        budget = 238_750
+        #
+        # The owner's follow-up on that branch raises it once more, to 241_849
+        # measured, and every byte of it is in evaluation-and-dataset.md - the
+        # one home for dataset construction, so nothing was mirrored elsewhere:
+        #
+        #   * The difficulty ladder gains its two middle rungs. It used to go
+        #     difficulty tags -> coverage/scenario tags -> seeded random, which
+        #     threw away a judgement the assistant had already made: it is
+        #     reading the rows to pick from them, so it can rank them, and it
+        #     can ask whether the other tags differ in difficulty at all before
+        #     stratifying on them as a proxy. The school-levels test is what
+        #     makes "clear" falsifiable rather than a feeling, and the
+        #     provenance sentence is what stops a self-ranked split reading as
+        #     a customer-labelled one.
+        #   * Two sentences say why the split is two files rather than a row
+        #     filter, because `eval_dataset` does accept rows and the next
+        #     reader would otherwise re-litigate a settled choice.
+        #   * Ten is stated as exact in both directions, with the one split
+        #     that is not ten and the floor that still binds it.
+        #
+        # Against that, the ladder had been stated twice - once for the bounded
+        # subset and once for the reserved split - and both call sites now point
+        # at the one home instead of restating it, which is the only reason a
+        # four-rung ladder costs what a three-rung one did plus its own new
+        # content. Rounded up to the next 250, as every raise above did.
+        budget = 242_000
         self.assertLess(
             total,
             budget,

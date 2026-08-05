@@ -100,7 +100,7 @@ tested and any concrete shortfall reason. If you already have a baseline, the fi
 preserves its exact rows and models instead of padding it.
 The assistant attempts an exact upload without rerunning that baseline only when the installed
 public SDK exposes its sync id; otherwise it remains local. Both measurements use the same data,
-evaluator, and objectives, followed by held-back validation. Validation is called sealed only when
+evaluator, and objectives, followed by the held-out set. A held-out set is called sealed only when
 its split and labels stayed hidden until the candidate was locked. Any later iteration is optional,
 not required.
 
@@ -136,7 +136,7 @@ evaluator is usually what moves it.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
-shares examples with validation, a dataset that is mostly or entirely generated, or simply too few
+shares examples with the held-out set, a dataset that is mostly or entirely generated, or too few
 comparable examples for a stable comparison. A cap is a ceiling on the result, not a
 deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
 number simply cannot claim more than the evidence supports.
