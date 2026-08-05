@@ -164,16 +164,12 @@ destination:
 - **Not registered, with no usable access code** - they never started, they are still waiting on
   one of the two emails, or their code is older than 10 days. All three resolve the same way:
   start (or restart) at `https://traigent.ai` (given as a clickable link) and request a fresh code -
-  the only address to hand this user, since the registration page will refuse them. An expired code
-  cannot be revived, and waiting longer will not make one arrive if the first step was never taken.
+  the only address to hand this user, since the registration page refuses anyone without a code. An
+  expired code cannot be revived, and waiting longer will not make one arrive if the first step was
+  never taken.
 
-- **Already registered, key in hand, portal period spent** - account and key both valid, use still
-  refused. Anyone who registered over 10 days ago is here. See the account-or-plan refusal below.
-
-Gates in one funnel, not a grid: a code lives 10 days so it can be spent registering, and
-registering opens 10 days of portal use. The last gate is invisible from the first two - account and
-key look complete while the period behind them is gone. Ask which gate applies; never infer it from
-how far along they sound.
+Those four are exclusive and cover every user: registered or not, and within each, holding the
+thing they need or not. Ask which one applies; do not infer it from how far along they sound.
 
 Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
 user in. Never hand the registration address to someone who does not have one yet - that page will
@@ -191,9 +187,6 @@ product use. The API key is a separate thing: the key authenticates the run and 
 grant portal access, so a perfectly valid key is still refused once the period is over. The account,
 its data, and its keys all survive that expiry; runs resume when the user buys a plan on the same
 account.
-
-Establish the period before the provider-paid baseline: that spend comes first, so a spent period
-otherwise surfaces only after the user paid.
 
 That is a second key-shaped failure whose remedy is the opposite of the read-only one below. If a
 connected run is refused for account or plan reasons rather than authentication, stop and report it

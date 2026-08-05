@@ -2632,28 +2632,16 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
             "do not assume the user walked the whole path",
-            # All five state labels, so a branch cannot be dropped or merged
+            # All four state labels, so a branch cannot be dropped or merged
             # back into an overlapping pair while the test still passes.
             "already registered, key in hand",
             "already registered, no key in hand",
             "not registered, holding an access code still inside its 10 days",
             "not registered, with no usable access code",
-            # The fifth was missing, and its absence was invisible because the
-            # account-state list called itself exclusive on the wrong
-            # dimensions. The two
-            # windows are separate: a code lives 10 days so it can be spent on
-            # registering, and registering opens 10 days of portal use. An
-            # account and a valid key both look complete while the second window
-            # is already gone, so "registered, key in hand" was being read as
-            # "ready" for a user whose run cannot finish.
-            "already registered, key in hand, portal period spent",
-            "gates in one funnel, not a grid",
-            # The destination for the user who has nothing yet. The guide used
-            # to say "the Traigent site" and name no address, while forbidding
-            # the one address it did hold.
+            # The destination itself, so the branch cannot silently go back to
+            # naming a site it never gives an address for.
             "https://traigent.ai",
-            # The refusal has to be discovered before the user pays, not after.
-            "establish the period before the provider-paid baseline",
+            "those four are exclusive and cover every user",
             "registering is not the same as holding a key",
             "the key is created in the portal, not issued by registering",
             "top-bar key control",
@@ -4642,20 +4630,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        # Raised to the MEASURED merged figure by the access-code fix, per the
-        # policy above: this is new contract surface with no prior statement,
-        # not stage detail that could move to a reference. It buys three things
-        # run-safety.md alone can carry - the account state the list of states
-        # omitted (registered, key valid, portal period already spent), the only
-        # destination a user holding no code may be given, and the instruction
-        # to establish the period BEFORE the provider-paid baseline rather than
-        # after it. The first two were absent, not duplicated, so there is no
-        # de-duplication pass that pays for them; the third moves a discovery in
-        # front of a charge. Measured, not rounded, so the next edit is weighed
-        # rather than absorbed into banked headroom. The comparison is a strict
-        # `assertLess`, so this is the measured 228_994 plus the one byte that
-        # takes - not a round number chosen for room.
-        budget = 228_995
+        budget = 228_750
         self.assertLess(
             total,
             budget,
