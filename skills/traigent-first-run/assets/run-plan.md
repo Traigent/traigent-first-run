@@ -48,8 +48,8 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Free cost check over the completed enhanced trials, when cost was measured - the cheaper-at-no-lower-score trials it returned, or empty:
-- Cost-reduction round if offered - gate met, separate approval, ceiling before/after, seed config, second space and cap, warm-start id with the backend's transfer or refusal, run ID, portal link, measured cost change, and the score claim with its paired outcome counts:
+- Free cost check over the completed enhanced trials, when cost was measured - the cheaper-at-no-lower-score trials it returned, or empty, and the saving bar read against them with the basis it came from (measured spread, or stated):
+- Cost-reduction round if offered - gate met, separate approval, ceiling before/after, seed config, second space and cap, warm-start id with the backend's transfer or refusal, run ID, portal link, measured cost change, the saving bar and its basis, and the score claim with its paired outcome counts:
 
 ## Interpretation
 

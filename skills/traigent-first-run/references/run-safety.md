@@ -667,15 +667,30 @@ both, and it is derived rather than assumed.
   configuration nothing changed about. Their spread is a directly observed sample of this workload's
   run-to-run cost variance, and that spread is the bar. Any run supplies one the same way whenever
   two of its completed trials carry an identical configuration - the enhanced run included, which is
-  where the free check would find one. Take the widest such spread when a run offers more than one.
+  where the free check would find one. Take the widest such spread when a run offers more than one,
+  which is deliberately the conservative direction: a wide outlier can only push a delta below the
+  bar, and a real saving reported honestly as a null is a recoverable error where a false saving is
+  not. Floor it at the stated basis below. Two costs are the smallest sample a spread can be taken
+  from, and the range of a sample that size understates the spread it is drawn from - at the
+  temperature 0 this guide pins for a frail exact-match metric, one unchanged configuration over the
+  same rows can return identical token counts and land the spread at exactly zero. A spread of zero,
+  or any spread narrower than the stated basis, is not evidence this workload has no cost variance;
+  it is the smallest possible sample of it. Use the stated basis there, and name it as the rule
+  below requires.
 - **Stated basis, when nothing was measured twice.** A managed search need not evaluate the seed:
   `max_trials` is a cap and `auto` chooses its own trials, so a round can finish without re-measuring
   the point it was built around, and an enhanced run may repeat no configuration at all. The bar is
   then a flat **5%** of the incumbent's cost. That is an assumption about this workload rather than a
   measurement of it: run-to-run token variance on a fixed prompt set at a pinned configuration is
-  single-digit percent, driven by output-length variation alone, and 5% sits inside that band with
-  room rather than at its edge. Name which of the two bases the bar came from wherever it decides an
-  outcome; never fall back to the stated one silently.
+  single-digit percent, driven by output-length variation alone, and 5% sits inside that band rather
+  than above it. So it does not cleanly separate a saving from noise, and saying it does would be
+  the more comfortable claim rather than the true one: a 6-9% delta is inside the same acknowledged
+  band and still clears the bar. It is a deliberate trade. A bar placed above the whole band would
+  exclude that noise and would also discard the small savings the paragraph below sizes, which are
+  the ones this round exists to find - so the stated basis buys sensitivity and pays for it in
+  certainty, and what keeps that price visible is telling the user the threshold was assumed. Name
+  which of the two bases the bar came from wherever it decides an outcome; never fall back to the
+  stated one silently.
 
 This is not the gate's number and must not be merged back into it. The gate asks whether cheaper
 territory exists at all, across a model ladder whose rungs differ in cost by multiples - a coarse
@@ -713,8 +728,9 @@ already paid for - so say so rather than reporting the number flat: this one cos
 is already theirs. Report it and stop - there is
 nothing left to buy, and offering a paid round on top of it would be selling the user a result they
 already have. Report it at the claim strength and the provenance the paid round would get: a measured
-cost number, a score stated no more strongly than the paired counts support, and over a `🛠️`
-substitute a fact about the substitute rather than about the user's real setup. When the check
+cost number, the bar it cleared named with the basis that bar came from, a score stated no more
+strongly than the paired counts support, and over a `🛠️` substitute a fact about the substitute
+rather than about the user's real setup. When the check
 returns nothing, this run holds no cheaper configuration to hand back for free, and the open question
 is whether a configuration the search never tested is both cheaper and no worse. That question is the
 hypothesis a paid round would test, and it is the only reason to run one.
@@ -793,14 +809,16 @@ admitting a configuration is therefore not evidence its score held; only the pai
 
 ### The two outcomes
 
-Both are results. Neither is apologized for.
+Both are results. Neither is apologized for. Both carry a `<the saving bar and where it came from>`
+slot, and both fill it from `### The saving bar` above under the naming rule stated there.
 
 **A cheaper configuration held the score.** State the cost reduction as the measured number it is,
 and the score at the strength the paired counts actually carry:
 
 > `<config>` cost `<measured>` against the previous winner's `<measured>` on the same rows,
-> evaluator, and agent call path - a `<n>%` reduction. Its `<metric>` was `<value>` against
-> `<value>` on `<n>` rows, `<paired outcome counts>`. Cost here is arithmetic over reported token
+> evaluator, and agent call path - a `<n>%` reduction, past `<the saving bar and where it came
+> from>`. Its `<metric>` was `<value>` against `<value>` on `<n>` rows,
+> `<paired outcome counts>`. Cost here is arithmetic over reported token
 > counts, so it is measured directly. The score is not measured directly - it is a comparison over
 > `<n>` rows - so `<the score statement the counts support>`, and this run does not show the score
 > improved.
@@ -821,9 +839,10 @@ any claim about it quantifies over configurations the round never reached.
 
 > This round tested `<executed trials>` of `<total combination count>` configurations. `<n cheaper>`
 > of them cost less than the configuration you are already running: `<n scored lower>` scored lower,
-> and the other `<n inside variance>` were cheaper by too small a margin to tell a saving from the
-> ordinary variation between two runs of one unchanged configuration. So this round did not establish
-> a saving, and keeping the configuration you are already running is the answer it supports. A round
+> and the other `<n inside variance>` were cheaper by too small a margin to count as a saving against
+> `<the saving bar and where it came from: the spread of one configuration this run measured twice,
+> or a stated 5% because nothing here was measured twice>`. So this round did not establish a
+> saving, and keeping the configuration you are already running is the answer it supports. A round
 > this size reaches few configurations by design; widening the search across your full dataset and
 > your own controls is what the skills named at the close are for.
 

@@ -4673,6 +4673,153 @@ class SkillPackageTests(unittest.TestCase):
             "merging back into one number again",
         )
 
+    def test_the_measured_saving_bar_cannot_collapse_to_zero(self) -> None:
+        """A bar derived from two numbers needs a floor, or it is not a bar.
+
+        The measured basis is the spread between two costs for one unchanged
+        configuration, and nothing stopped that spread being zero. It is
+        reachable on this guide's own recommended setup, not in a corner case:
+        an exact-match evaluator makes the guide pin temperature to 0, the same
+        rows at temperature 0 return the same outputs and therefore the same
+        token counts, and each cost is exact arithmetic over those counts - so
+        the two costs are equal, the spread is zero, and every strictly cheaper
+        trial clears a bar of nothing. A 0.3% delta then passes the filter's
+        strict `<` and gets reported as a reduction, which is precisely the
+        false saving this bar exists to prevent, on paid work.
+
+        The range of a sample of size two understates the spread it is drawn
+        from in general and degenerates at zero, so the floor is the statistics
+        and not a patch. The aggregation rule already reasoned conservatively
+        by taking the widest spread; this guards the one direction that
+        manufactures a saving rather than discarding one.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        section = safety.split("### the saving bar", 1)[1].split(
+            "### run the free check first", 1
+        )[0]
+
+        for phrase in (
+            # the floor itself, and where a zero spread comes from
+            "floor it at the stated basis below",
+            "two costs are the smallest sample a spread can be taken from, and "
+            "the range of a sample that size understates the spread it is "
+            "drawn from",
+            "can return identical token counts and land the spread at exactly " "zero",
+            "a spread of zero, or any spread narrower than the stated basis, "
+            "is not evidence this workload has no cost variance; it is the "
+            "smallest possible sample of it",
+            # ...and it routes through the naming mandate rather than falling
+            # back silently, which is the whole point of having two bases
+            "use the stated basis there, and name it as the rule below requires",
+            # the aggregation rule now says why it is the safe direction, so a
+            # later editor arguing for "narrowest" or "mean" argues with a
+            # reason instead of with a bare word
+            "which is deliberately the conservative direction",
+            "a real saving reported honestly as a null is a recoverable error "
+            "where a false saving is not",
+        ):
+            with self.subTest(floor_phrase=phrase):
+                self.assertIn(phrase, section)
+
+    def test_the_stated_saving_bar_is_argued_as_a_trade_not_a_clean_cut(
+        self,
+    ) -> None:
+        """The justification used to argue against its own premise.
+
+        It said run-to-run variance is single-digit percent and that 5% "sits
+        inside that band with room rather than at its edge" - offered as the
+        reason the bar separates noise from saving. A floor that sits INSIDE
+        the band it excludes does not separate anything: by that paragraph's
+        own premise a 6-9% delta is acknowledged noise, clears the bar, and is
+        reported as a reduction.
+
+        The choice is still right, because a bar above the whole band would
+        discard the small savings this round is built to find. It is a trade,
+        so it is written as one - and that is the other half of why the basis
+        must be named in the copy: on this path the customer is being handed a
+        threshold that was assumed.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        section = safety.split("### the saving bar", 1)[1].split(
+            "### run the free check first", 1
+        )[0]
+
+        for phrase in (
+            "so it does not cleanly separate a saving from noise",
+            "a 6-9% delta is inside the same acknowledged band and still "
+            "clears the bar",
+            "it is a deliberate trade",
+            "the stated basis buys sensitivity and pays for it in certainty",
+            "what keeps that price visible is telling the user the threshold "
+            "was assumed",
+        ):
+            with self.subTest(trade_phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # The retired claim, by substring: it is the one sentence that asserted
+        # the separation is clean, and restoring it re-imports the defect while
+        # every other phrase above still passes.
+        self.assertNotIn("with room rather than at its edge", safety)
+
+    def test_every_place_the_bar_decides_an_outcome_can_name_its_basis(
+        self,
+    ) -> None:
+        """A mandate with no slot in the copy is a mandate that never ships.
+
+        The saving bar must be named with the basis it came from "wherever it
+        decides an outcome", and it decides one in three places: the free
+        check's report-and-stop, and the two outcome blockquotes. Both
+        blockquotes are pinned verbatim customer copy, so a slot that does not
+        exist there cannot be filled at runtime however compliant the assistant
+        is.
+
+        Worse, the null blockquote was phrased in the MEASURED basis's
+        vocabulary - "the ordinary variation between two runs of one unchanged
+        configuration" - while the stated basis is reachable, and on that path
+        no two such runs exist. The copy was stating a measurement the round
+        had not made.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        quoted = quoted_prose(RUN_SAFETY)
+
+        # 1. The free check is prose, so it gets an instruction rather than a
+        #    placeholder - but it gets one.
+        self.assertIn(
+            "the bar it cleared named with the basis that bar came from", safety
+        )
+        # 2 and 3. Both blockquotes get a real slot, and one sentence sends
+        #    both of them back to the single definition.
+        self.assertIn(
+            "both carry a `<the saving bar and where it came from>` slot, and "
+            "both fill it from `### the saving bar` above under the naming "
+            "rule stated there",
+            safety,
+        )
+        self.assertIn(
+            "a `<n>%` reduction, past `<the saving bar and where it came from>`", quoted
+        )
+
+        # The measured basis's vocabulary is gone from the copy, not merely
+        # supplemented: it is only true on one of the two paths.
+        self.assertNotIn(
+            "to tell a saving from the ordinary variation between two runs of "
+            "one unchanged configuration",
+            quoted,
+        )
+
+        # The null slot names the stated fallback by figure, which is a second
+        # home for a number decided once above. Bind them, so an edit to the
+        # bar cannot leave the customer copy quoting the old one.
+        section = safety.split("### the saving bar", 1)[1].split(
+            "### run the free check first", 1
+        )[0]
+        stated = re.findall(r"the bar is then a flat \*\*(\d+)%\*\*", section)
+        self.assertEqual(len(stated), 1)
+        self.assertIn(
+            f"or a stated {stated[0]}% because nothing here was measured twice",
+            quoted,
+        )
+
     def test_the_round_is_pre_disclosed_in_the_connected_approval(self) -> None:
         """Three paid approvals, and the third lands at peak fatigue.
 
@@ -4946,6 +5093,12 @@ class SkillPackageTests(unittest.TestCase):
             "`<n cheaper>`",
             "`<n scored lower>`",
             "`<n inside variance>`",
+            # ...and the bar those margins were judged against, which the copy
+            # used to state in the MEASURED basis's vocabulary while the stated
+            # basis was reachable. On that path no two runs of one unchanged
+            # configuration exist, so the sentence asserted a measurement the
+            # round had not made. The slot carries the basis instead.
+            "`<the saving bar and where it came from:",
         ):
             with self.subTest(placeholder=placeholder):
                 self.assertIn(placeholder, copy)
@@ -4957,8 +5110,9 @@ class SkillPackageTests(unittest.TestCase):
             "already running",
             "`<n scored lower>` scored lower",
             "the other `<n inside variance>` were cheaper by too small a margin "
-            "to tell a saving from the ordinary variation between two runs of "
-            "one unchanged configuration",
+            "to count as a saving against `<the saving bar and where it came "
+            "from: the spread of one configuration this run measured twice, or "
+            "a stated 5% because nothing here was measured twice>`",
             "so this round did not establish a saving",
             # ...and it closes as a result the customer can act on rather than
             # trailing off at the negative. Both halves are earned: the
@@ -5694,6 +5848,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # spent. Measured at 63_722, which leaves 28 bytes under the ceiling
         # above - the one-word-edit trip this comment has now recorded three
         # times - so 64_000, and 278 bytes on the reasoning those entries set.
+        #
+        # The saving bar's floor, its basis slots, and the honesty rewrite of
+        # its stated justification then changed no resident byte either: all
+        # three are depth and report copy behind one stage, which run-safety.md
+        # owns. Re-measured at 63_722, unchanged, so this number stays. Recorded
+        # for the reason the unchanged re-measurement above was.
         self.assertLess(
             resident,
             64_000,
@@ -5953,7 +6113,50 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # recorded above, so 255_750 - 339 bytes, marginally over the 228-323
         # the last five raises settled on and taken for the same reason the
         # last one was.
-        budget = 255_750
+        #
+        # It rises 1_838 for two corrections to that same bar and one honesty
+        # edit, all inside run-safety.md. The resident number above does not
+        # move at all: none of it is a mandate or an ordering decision, so
+        # SKILL.md is untouched.
+        #
+        # The bar had no floor. Its preferred basis is the spread between two
+        # costs for ONE unchanged configuration, and nothing stopped that
+        # spread being zero - reachable on this guide's own recommended setup
+        # rather than in a corner: an exact-match evaluator makes the guide pin
+        # temperature to 0, the same rows at temperature 0 return the same
+        # token counts, and each cost is exact arithmetic over those counts, so
+        # the two costs are equal. At a bar of zero every strictly cheaper
+        # trial clears it and a 0.3% delta is reported as a saving, which is
+        # the false claim this bar exists to prevent, on paid work. The range
+        # of a sample of size two understates the spread it is drawn from and
+        # degenerates at zero, so the floor is the statistics rather than a
+        # patch, and it routes through the naming rule already stated here
+        # instead of falling back silently. The aggregation rule gains the one
+        # clause saying why "widest" is the safe direction, which is what a
+        # later editor needs to argue with.
+        #
+        # The naming mandate then had nowhere to land. It says to name the
+        # basis "wherever it decides an outcome", and the three delivery
+        # points - the free check's report-and-stop and the two outcome
+        # blockquotes - had no slot for it, so on pinned verbatim customer copy
+        # it could never ship. Worse, the null blockquote was phrased in the
+        # MEASURED basis's vocabulary while the stated basis is reachable, so
+        # on that path it stated a measurement the round had not made. Each of
+        # the three now has a slot, and one sentence sends both blockquotes
+        # back to the single definition rather than restating it.
+        #
+        # The 5% justification rides along because it argued against itself: a
+        # noise floor sitting INSIDE the band it excludes separates nothing,
+        # and by that paragraph's own premise a 6-9% delta is acknowledged
+        # noise that clears the bar. The choice is still right - a bar above
+        # the whole band discards the small savings this round is built to
+        # find - so it is written as the trade it is, which is also the second
+        # reason the basis has to reach the customer.
+        #
+        # Measured at 257_249. 257_500 leaves 251 bytes, inside the 228-339
+        # band the last six raises settled on and clear of the one-word-edit
+        # trip recorded three times above.
+        budget = 257_500
         self.assertLess(
             total,
             budget,
