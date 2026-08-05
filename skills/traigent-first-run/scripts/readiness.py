@@ -1738,11 +1738,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # minimum over all caps whatever their `blocks`, so the score stays
         # capped at 45 until wiring evidence exists. Only the claim that the run
         # is stopped goes away.
-        cap = (
-            NOTHING_WIRED_CAP
-            if facts.config_space_supplied
-            else NOT_YET_MEASURED_CAP
-        )
+        cap = NOTHING_WIRED_CAP if facts.config_space_supplied else NOT_YET_MEASURED_CAP
         return nothing_to_search_pillar(evidence), [cap], []
 
     if facts.wired is None:
