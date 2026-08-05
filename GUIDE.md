@@ -59,9 +59,9 @@ Use the bundled tools:
 
 When a credential handoff is needed, use the selected credential source: normally the chosen
 project-root `.env`, or the external local file the user explicitly named for this run. Open that
-exact absolute path once, using the first available GUI editor; if that is unavailable, fall back
-to the IDE or editor associated with the chosen project directory, and if headless, print the full
-path and stop. Open it only for the missing key, never to duplicate one that is already available.
+exact absolute path once, using the first available GUI editor; in a headless session, or when no
+graphical handler is available, print the full path and stop. Open it only for the missing key,
+never to duplicate one that is already available.
 For a new Traigent key after the baseline, refresh/reopen the same file so the new
 `TRAIGENT_API_KEY=` line is visible, then follow `references/run-safety.md` for the clickable
 registration link and the two 10-day windows.
@@ -115,11 +115,10 @@ The default paid path uses two measurements with the same tuning data, evaluator
 agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible six-configuration sweep. The
-   assistant automatically uses the vendor the project already has configured when one is already
-   available; the user only gets asked to choose if there is no usable vendor already configured
-   for the project. The user sees its best configuration, primary tuning metric, cost, latency,
-   trial/failure count, and a short note for each knob before any Traigent account/key request.
+   when no baseline exists does the assistant prepare a credible six-configuration sweep. Stage 5
+   of `SKILL.md` owns how the provider route is resolved and when the user is asked about it. The
+   user sees its best configuration, primary tuning metric, cost, latency, trial/failure count, and
+   a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
    configurations from a materially larger search space.

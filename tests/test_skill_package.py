@@ -3259,6 +3259,80 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
 
+    def test_every_evaluator_cap_condition_has_a_documented_branch(self) -> None:
+        """The dataset caps were routed exhaustively; the evaluator ones were not.
+
+        SKILL.md's paragraph opens "Evaluator and agent caps route through the
+        rules that already own them" and then named three of the four the
+        scorer can emit. `evaluator-timeout` is blocking, ceilings the whole
+        score at 45, and carries the remedy `bound-evaluator-cost` - a word
+        that appeared in no guidance document, so an assistant holding that
+        payload had nothing to route it to. Enumerated from the module rather
+        than listed here, for the same reason the dataset check pins its count:
+        a fifth evaluator cap must be routed too.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("evaluator-")
+        }
+        self.assertEqual(len(conditions), 4)
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split(
+            "evaluator and agent caps route through the rules that already own them", 1
+        )[1]
+        for condition, branch in (
+            ("evaluator-unresolved", "inspect, repair, or replace"),
+            ("evaluator-invalid", "inspect, repair, or replace"),
+            ("evaluator-timeout", "bound what one scoring call costs"),
+            ("evaluator-absent", "create or select"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, conditions)
+                self.assertLess(routing.index(condition), routing.index(branch))
+
+    def test_the_billing_cap_disclaimer_has_exactly_one_home(self) -> None:
+        """It had two, and one of them was a stranded lowercase fragment.
+
+        SKILL.md carried a bare sentence - no paragraph, no sentence case -
+        restating what run-safety.md's budget section already owned, and the
+        two drifted: run-safety.md's copy sat fifty lines below its own
+        conditional version of the same rule. CLAUDE.md's "one decision, one
+        home" is the rule; this is the check for this instance of it.
+        """
+        occurrences = sum(
+            " ".join(path.read_text().casefold().split()).count(
+                "never call the walkthrough ceiling a hard provider-billing cap"
+            )
+            for path in assistant_facing_documents()
+        )
+        self.assertEqual(occurrences, 1)
+
+    def test_the_subjunctive_ceiling_is_explained_by_both_of_its_causes(
+        self,
+    ) -> None:
+        """`binds` is `cap.ceiling == overall`, and `overall` has two inputs.
+
+        The glossary is the file the assistant phrases from, and it said "would
+        limit to" marks a ceiling that "only starts to matter once something
+        lower is cleared" - true of a stricter cap, false of the other half.
+        `overall` is `min(weighted_average, min(ceilings))`, so a sole ceiling
+        above the average is equally not the operative limit. README.md already
+        stated both causes; the two must not disagree.
+        """
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        sentence = glossary.split('"would limit to" is', 1)[1].split(".", 1)[0]
+        self.assertIn("stricter", sentence)
+        self.assertIn("average", sentence)
+        self.assertNotIn(
+            "only starts to matter once something lower is cleared", glossary
+        )
+        self.assertIn("your average simply has not climbed that high yet", readme)
+
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
@@ -4271,6 +4345,61 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 visible trials",
                 "10-12 visible enhanced rows",
                 "10-12 configurations",
+            ),
+        ),
+        (
+            # SKILL.md stage 5 asks, recommends preserving the agent's route,
+            # and requires recipient disclosure before changing it. GUIDE.md
+            # described the same situation as resolved silently in favour of
+            # whichever vendor has a key - which sends the user's prompts to a
+            # different company with no disclosure at all. The route sentence
+            # landed in GUIDE.md (f2573a3) a day before 402023e settled the
+            # rule in SKILL.md, run-safety.md and .env.example without
+            # revisiting it.
+            "who picks the provider route when the configured vendor has no key",
+            ("never rewrite a route merely to match a key",),
+            (
+                "the assistant automatically uses the vendor the project already has configured",
+                "the user only gets asked to choose if there is no usable vendor",
+            ),
+        ),
+        (
+            # run-safety.md owns the credential handoff and allows two rungs:
+            # the graphical opener, or printing the path. GUIDE.md and SKILL.md
+            # inserted a third - "fall back to the IDE or editor associated
+            # with the project directory" - which no mechanism in this
+            # repository implements, at the one gate where the next step is the
+            # user pasting a secret.
+            "how many rungs the credential handoff falls back through",
+            ("when no graphical handler is available, print the",),
+            (
+                "fall back to the ide or editor associated with the chosen project directory",
+                "fall back to the ide or editor already associated with the selected project directory",
+            ),
+        ),
+        (
+            # The ceiling is not a billing guarantee in either case: the SDK
+            # enforces its own per-optimization limit and "does not yet share
+            # one cumulative budget with calibration and other calls". Two
+            # documents attached "when cost is untracked" to that sentence,
+            # which licenses telling a user with tracked cost that $5.00 is
+            # guaranteed.
+            "whether the walkthrough ceiling is ever a billing guarantee",
+            ("never call the walkthrough ceiling a hard provider-billing cap",),
+            (
+                "for untracked cost, call it an execution stop target",
+                "when any cost is untracked, that target is a conservative control",
+            ),
+        ),
+        (
+            # `model` is a swept knob carrying three values, so "no swept knob
+            # taking more than two values" contradicted the same paragraph's
+            # "three models × two temperatures" and the fence's own
+            # `assert configuration_count(BASELINE_SPACE) == 6`.
+            "how large the generated baseline sweep may be",
+            ("the three ladder models by one further swept knob taking two values",),
+            (
+                "at most three swept knobs, with no swept knob taking more than two values",
             ),
         ),
     )

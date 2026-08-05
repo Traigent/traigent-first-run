@@ -1774,12 +1774,32 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         )
 
     if not varying:
+        # Two ways to have nothing to search, and one sentence was false about
+        # the second. `{"seed": [1, 2, 3, 4, 5]}` wired reaches here with five
+        # values on the only setting the document names - "every setting has
+        # only one value to try" is a count the same card contradicts two lines
+        # up, where it prints "1 combinations x 5 repeats = 5 runs". `seed` is
+        # excluded from scoring on purpose (EXCLUDED_KNOBS): sweeping it
+        # measures run-to-run variance rather than configuration quality. So
+        # the honest reason names the exclusion instead of miscounting the
+        # values, and what counts is unchanged.
+        excluded = [knob.name for knob in knobs if knob.kind == "excluded"]
         caps.append(
             Cap(
                 "agent-no-varying-knobs",
                 45,
-                "Every setting has only one value to try, so every configuration "
-                "would be identical.",
+                (
+                    "Every setting has only one value to try, so every "
+                    "configuration would be identical."
+                    if scoreable
+                    else (
+                        "The only wired setting(s) - "
+                        + ", ".join(sorted(excluded))
+                        + " - measure run-to-run variance rather than "
+                        "configuration quality, so there is nothing for the "
+                        "search to choose between."
+                    )
+                ),
             )
         )
 
@@ -1792,14 +1812,25 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         if repeats <= 1
         else f"{space_size} combinations x {repeats} repeats = {run_count} runs"
     )
+    # The denominator counts SCOREABLE wired knobs, so a document wiring only
+    # `seed` printed "0 of 0 wired knobs" against a `wired` list holding one
+    # name. Both numbers are right about what they measure and the line said
+    # neither, so it names the knobs it left out rather than changing what it
+    # counts.
+    left_out = sorted(knob.name for knob in knobs if knob.kind == "excluded")
+    counted = f"{len(varying)} of {len(scoreable)} wired knobs actually vary"
+    if left_out:
+        counted += (
+            f" ({', '.join(left_out)} not counted: sweeping it measures "
+            "run-to-run variance, not quality)"
+        )
     subs.append(
         SubScore(
             "knob-count",
             knob_count_points(len(varying), run_count, facts.max_trials),
             35.0,
             True,
-            f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
-            + combinations,
+            f"{counted}; " + combinations,
         )
     )
 

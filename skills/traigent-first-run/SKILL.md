@@ -375,9 +375,10 @@ rather than the condition id:
 
 Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
-invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
-the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. After any repair or substitute creation, re-run the affected checks, the
+invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-timeout` (the evaluator
+did not finish) routes there too - bound what one scoring call costs, then re-calibrate; that cost
+is paid again on every row of every trial; `evaluator-absent` routes through the absent-evidence
+reading in the opening readiness gate and the creation dependency matrix - create or select. After any repair or substitute creation, re-run the affected checks, the
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
 
@@ -463,8 +464,6 @@ Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop.
 
-never call the walkthrough ceiling a hard provider-billing cap.
-
 After the approved live provider probe, derive internal time bounds from observed latency and the
 baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
 time/cost; do not ask the user to select implementation timeouts.
@@ -542,12 +541,11 @@ unrecorded. Reuse a preserved suitable key or establish exactly one of the four 
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
 handoff and have the user enter credentials locally, never in chat. Use the same selected
 credential file: the target-project `.env`, or the user-named external source already used for
-the baseline. Open that exact absolute path once, using the first available GUI editor; if that is
-unavailable, fall back to the IDE or editor already associated with the selected project directory,
-and if headless, print the full path and stop. Open it only so the user can add
-`TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same file so the new line is
-visible, and follow
-`references/run-safety.md` for the clickable registration link and the two 10-day windows.
+the baseline. Open that exact absolute path once, using the first available GUI editor; in a
+headless session, or when no graphical handler is available, print the full path and stop. Open it
+only so the user can add `TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same
+file so the new line is visible, and follow `references/run-safety.md` for the clickable
+registration link and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a
