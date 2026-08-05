@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -37,23 +38,34 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
-def shipped_skill_files() -> set[str]:
-    """Every file the Agent Skill installer copies, as skill-relative paths.
+SKILL_PREFIX = "skills/traigent-first-run/"
+
+
+def tracked_files() -> set[str]:
+    """Every repository-relative path git publishes.
 
     From git rather than a filesystem walk, for the same reason the internal
     tooling check below uses git: the question is what gets PUBLISHED, not what
     happens to sit in the working tree.
     """
-    prefix = "skills/traigent-first-run/"
     listed = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files", "-z", "--", prefix],
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
         capture_output=True,
         text=True,
         check=False,
     )
     if listed.returncode != 0:
-        raise RuntimeError(f"could not list the shipped skill: {listed.stderr.strip()}")
-    return {name[len(prefix) :] for name in listed.stdout.split("\0") if name.strip()}
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {name for name in listed.stdout.split("\0") if name.strip()}
+
+
+def shipped_skill_files() -> set[str]:
+    """Every file the Agent Skill installer copies, as skill-relative paths."""
+    return {
+        name[len(SKILL_PREFIX) :]
+        for name in tracked_files()
+        if name.startswith(SKILL_PREFIX)
+    }
 
 
 def conversation_contract_documents() -> list[Path]:
@@ -129,73 +141,142 @@ class SkillPackageTests(unittest.TestCase):
                 with self.subTest(document=document.name, target=target):
                     self.assertTrue((document.parent / relative).exists())
 
-    def test_every_file_the_skill_names_is_a_file_the_skill_ships(self) -> None:
-        """An installed run has the skill directory and nothing else.
+    def test_every_file_the_guidance_names_is_a_file_that_exists(self) -> None:
+        """A named file the reader cannot open is an instruction they cannot follow.
 
-        The link check above reads SKILL.md only, and only markdown links, so a
-        path written in backticks - which is how most of this guidance names a
-        file - was outside every check. `GUIDE.md` was named that way in
+        The link check above reads SKILL.md only, and only markdown-link syntax,
+        so a path written in backticks - which is how most of this guidance names
+        a file - was outside every check. `GUIDE.md` was named that way in
         SKILL.md's operating contract while living at the repository root, which
         the Agent Skill installer does not copy: the installed skill instructed
         the assistant to open a document it did not have, and nothing failed.
 
-        So this resolves every file reference in every shipped document against
-        what git actually publishes under the skill directory. Two kinds of
-        reference legitimately do not resolve there, and each is named rather
-        than pattern-excluded, because a silent exclusion is how the first one
-        got in.
+        Each document is resolved from where its reader actually stands. An
+        installed run has the skill directory and nothing else, so a shipped
+        document resolves against what git publishes under it. GUIDE.md is read
+        from a clone, and its own "Start here" section sends the reader into the
+        resolved skill directory for bundled files, so it resolves against the
+        repository and that directory both - which is also why it must say which
+        one it means when it names a bundled file.
         """
         shipped = shipped_skill_files()
-        basenames = {name.rsplit("/", 1)[-1] for name in shipped}
-        # A path in the user's project that this run creates. It never resolves
-        # inside the skill and must not: the skill ships no run artifacts.
-        run_artifact = "traigent-runs/"
-        # Source-repository paths that are deliberately not installed. Each is
-        # named to a maintainer editing this package, never opened during a run.
+        repository = tracked_files()
+        # Source-repository paths that are deliberately not installed. Named
+        # rather than pattern-excluded, because a silent exclusion is how the
+        # defect above got in. Each is addressed to a maintainer editing this
+        # package and is never opened during a run.
         unshipped = {
             "tests/test_skill_package.py": (
                 "names the check that keeps run-safety.md's config-space table "
                 "welded to readiness.py's declaration"
             ),
         }
-        # Backticked paths and markdown links both, because this guidance names
-        # a file either way and the reader follows both the same.
-        reference = re.compile(
-            r"""
-            ` ( [^`\s]+ \. (?: md | py | txt | json | jsonl | ya?ml ) ) `
-            | \[ [^\]]+ \] \( ( [^)\s]+ ) \)
-            """,
-            re.VERBOSE,
-        )
-        dangling: list[str] = []
         cited: set[str] = set()
-        for name in sorted(shipped):
-            if not name.endswith(".md"):
-                continue
-            text = (SKILL_ROOT / name).read_text()
-            for backticked, linked in reference.findall(text):
-                target = (backticked or linked).split("#", 1)[0]
+
+        def unresolved(document: Path, text: str, roots: list[tuple[str, set[str]]]):
+            """Report every reference in one document that resolves nowhere."""
+            for raw in self._file_references(text):
+                target = self._reference_path(raw)
                 if not target or "://" in target:
                     continue
-                if run_artifact in target:
+                # A path in the user's project that this run creates. It never
+                # resolves in a guidance corpus and must not: no run artifact
+                # is shipped, and none exists before the run makes it.
+                if target.startswith("traigent-runs/"):
                     continue
                 if target in unshipped:
                     cited.add(target)
                     continue
-                if target in shipped or target.rsplit("/", 1)[-1] in basenames:
+                if any(
+                    self._resolves(document, target, base, files)
+                    for base, files in roots
+                ):
                     continue
-                dangling.append(
-                    f"{name} names {target!r}, which the skill does not ship"
+                yield f"{document} names {target!r}, which nothing here provides"
+
+        dangling: list[str] = []
+        for name in sorted(shipped):
+            if name.endswith(".md"):
+                dangling += unresolved(
+                    Path(name), (SKILL_ROOT / name).read_text(), [("", shipped)]
                 )
+        dangling += unresolved(
+            Path("GUIDE.md"),
+            (ROOT / "GUIDE.md").read_text(),
+            [("", repository), (SKILL_PREFIX, repository)],
+        )
         self.assertEqual(
             dangling,
             [],
-            "an installed run can read only the skill directory, so a document "
-            "it cannot open is an instruction it cannot follow",
+            "guidance names a file its reader cannot open",
         )
         # The escape hatch gets the same treatment as the rule: an entry nothing
         # cites any more is removed, not left to quietly widen what passes.
         self.assertEqual(sorted(set(unshipped) - cited), [])
+
+    # Fenced blocks are stripped: an illustrative path inside a code sample is
+    # not an instruction to open a file, and treating it as one makes the check
+    # fail on its own examples.
+    _FENCE = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+    _INLINE_CODE = re.compile(r"`([^`]+)`")
+    _MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)\)")
+    _NAMES_A_FILE = re.compile(r"\.(?:md|py|txt|json|jsonl|ya?ml)$")
+
+    @classmethod
+    def _file_references(cls, text: str) -> list[str]:
+        """Every token in one document that names a file, as written."""
+        body = cls._FENCE.sub("", text)
+        found = [
+            token
+            for span in cls._INLINE_CODE.findall(body)
+            for token in span.split()
+            if cls._NAMES_A_FILE.search(cls._reference_path(token))
+        ]
+        return found + cls._MARKDOWN_LINK.findall(body)
+
+    @staticmethod
+    def _reference_path(raw: str) -> str:
+        """The path a reader would open, without the sentence around it.
+
+        A reference is written into prose, so it arrives carrying an anchor, a
+        comma, or the quotes of the shell line it sits in. Matching the raw
+        token instead means `GUIDE.md#start-here` - the natural way to write the
+        defect this test exists to catch, since GUIDE.md has a `## Start here` -
+        is not recognised as a reference at all.
+        """
+        target = raw.split("#", 1)[0].split("?", 1)[0]
+        # Trailing punctuation is stripped separately from leading, so that a
+        # sentence-ending `SKILL.md.` loses its full stop while a dotfile keeps
+        # its leading one.
+        target = target.lstrip("\"'`(*").rstrip("\"'`),;:!?.")
+        # `.../a/b` is this guidance's elision for "under some absolute prefix".
+        return target[4:] if target.startswith(".../") else target
+
+    @staticmethod
+    def _resolves(document: Path, target: str, base: str, files: set[str]) -> bool:
+        """Does `target`, read in `document`, name a file that exists?
+
+        Candidates are paths, never basenames: a basename fallback passes
+        `assets/glossary.md` for a file that lives in `references/`, which is
+        not checking the reference the reader was given. The bundle root and its
+        two directories are candidates because that is how these documents cite
+        each other - `run-safety.md` from a sibling reference, `readiness.py`
+        from SKILL.md - and each is a real directory, not a wildcard.
+        """
+        # A `..` climbs out of the bundle, and one of the candidate prefixes
+        # would then let it climb back in - `scripts/../scripts/readiness.py`
+        # normalizes onto a real file. Guidance never needs to write one.
+        if ".." in target.split("/"):
+            return False
+        for prefix in ("", str(document.parent) + "/", "references/", "scripts/"):
+            candidate = posixpath.normpath(
+                posixpath.join(base, prefix.lstrip("./"), target)
+            )
+            if candidate.startswith(("..", "/")):
+                continue
+            if candidate in files:
+                return True
+        return False
 
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
@@ -4860,24 +4941,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
-        #
-        # Raised again, to 61_800, by moving the five-stage opening script out
-        # of GUIDE.md and into SKILL.md. Both documents are resident, so a move
-        # would be free; what costs 279 bytes is the pointer GUIDE.md keeps in
-        # its place, which is the price of stating the script once rather than
-        # twice. The reason it moves is the bug it fixes: `npx skills add`
-        # copies the skill directory only, so SKILL.md was directing an
-        # installed run to open a file that installation does not deliver, and
-        # the fix has to put the script where the installed artifact can read
-        # it. 300 rather than 279, because 92 bytes of headroom is the trip-on-
-        # a-word ceiling this comment already argues against; 392 keeps the
-        # 371-byte minimum above. The queued package-wide reduction frees
-        # roughly 8.5 KB of RESIDENT, and this number comes back down with it -
-        # it is not a permanent raise, it is the smallest one that lets this
-        # fix land before that reduction rather than after.
         self.assertLess(
             resident,
-            61_800,
+            61_500,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4964,13 +5030,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        #
-        # The dangling-`GUIDE.md` fix adds the same 279 bytes here, since both
-        # documents are in this corpus too, and leaves 64 bytes of headroom
-        # against 228_750 - the same trip-on-a-word state the RESIDENT comment
-        # above rejects. Raised to 229_000 for that reason and no other; the
-        # measured total is 228_686.
-        budget = 229_000
+        budget = 228_750
         self.assertLess(
             total,
             budget,

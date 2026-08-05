@@ -69,8 +69,7 @@ account state gets, and the two 10-day windows.
 ## User-facing promise
 
 Open with the five-stage journey under "Opening message" in
-[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md), as written there. It
-lives in the skill because the installed skill is the whole artifact for an installed run.
+[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md), as written there.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
