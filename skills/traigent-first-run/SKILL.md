@@ -600,8 +600,9 @@ Report it as a **Pareto frontier over accuracy and cost**, never as a single che
 frontier carries the same score for less money and a higher score for the same money, and asserts
 neither. Never show a frontier point that scored below the configuration the user is already
 running. One point on it is the recommendation - the run's own reported winner when that floor
-admits it, otherwise the cheapest point above the floor - and it is an enhanced run's winner
-carried into stage 8 as one, so every check stage 8 applies to the first winner applies to it.
+admits it, otherwise the cheapest point above the floor. That point replaces the first run's winner
+as the one this walkthrough recommends and is an enhanced run's winner exactly as it was, so every
+check stage 8 applies to the first winner applies to this one instead.
 
 A free `$0` frontier over the trials already paid for comes first and is reported whichever way
 this ends. Both outcomes reach stage 8, including a frontier whose only point is the configuration

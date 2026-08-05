@@ -4386,8 +4386,10 @@ class SkillPackageTests(unittest.TestCase):
         skill = " ".join(SKILL.read_text().casefold().split())
 
         self.assertIn(
-            "it is an enhanced run's winner carried into stage 8 as one, so "
-            "every check stage 8 applies to the first winner applies to it",
+            "that point replaces the first run's winner as the one this "
+            "walkthrough recommends and is an enhanced run's winner exactly as "
+            "it was, so every check stage 8 applies to the first winner applies "
+            "to this one instead",
             skill,
         )
         # ...and the recommendation is one point of the reported frontier,
@@ -5096,9 +5098,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # already states it - a second home for an existing rule, which is the
         # defect this package names rather than emphasis.
         #
-        # Measured at 63_404 against the restructured branch's 63_722, so
-        # 63_750 - 346 bytes, in line with the 228-339 the raises above settled
-        # on and clear of the one-word-edit trip recorded three times.
+        # Measured at 63_486 against the pre-restructure branch's 63_722, so
+        # 63_750 - 264 bytes, inside the 228-339 the raises above settled on
+        # and clear of the one-word-edit trip recorded three times.
         self.assertLess(
             resident,
             63_750,
@@ -5442,7 +5444,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # commits were all corrections to one 40-line rule: it is not the
         # rule's size that has been wrong, so more room is not the fix.
         #
-        # It then FALLS 13_960, to 15_001 over the 228_407 this branch left
+        # It then FALLS 13_701, to 15_260 over the 228_407 this branch left
         # trunk at, and the fall is a restructure rather than a trim. The
         # round's own machinery was the cost: a separate stage needs a gate, an
         # approval, a winner-selection rule, a seed-exclusion rule, and a bar
@@ -5481,10 +5483,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # decided once that documenting another repository's surface here
         # ossifies it. What remains is the seed as a point in the space.
         #
-        # Measured at 243_408, so 243_750 - 342 bytes, at the top of the
-        # 228-339 band and taken deliberately: 243_500 leaves 92, which is the
-        # one-word-edit trip this comment has recorded four times.
-        budget = 243_750
+        # Measured at 243_667, so 243_750 - 83 bytes, which is the one-word-edit
+        # trip this comment has recorded four times, so 244_000: 333 bytes,
+        # inside the 228-339 band the raises above settled on and still 13_368
+        # below where the pre-restructure branch had this number.
+        budget = 244_000
         self.assertLess(
             total,
             budget,

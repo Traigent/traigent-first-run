@@ -942,11 +942,13 @@ its own config-space document, and the same persistence and portal link.
 **The second space.** Put the first run's winning configuration into it as one of its value
 combinations, so the search can actually return that point: it is the run's seed and its
 re-measurement is the fluke check, obtained without spending a trial on a deliberate repeat. Build
-the rest around it - cheaper and dearer values of the controls the winner already uses, plus the
-tiers of the model ladder above, whose section states when a model may be added and when it may
-not. Keep the space larger than the trial cap, keep every knob one the agent consumes, and re-run
-the wiring probe above against the new space. Do not reach for `default_config`: the warning above
-still applies, and it can consume a trial slot.
+the rest around it - cheaper and dearer values of the controls the winner already uses, and the
+model tier, which is usually the knob carrying most of the cost. A model the first comparison never
+measured changes the experiment, so it is the separately disclosed and approved model comparison
+the sections above require, and this run's own approval is where it is disclosed. Keep the space
+larger than the trial cap, keep every knob one the agent consumes, and re-run the wiring probe
+above against the new space. Do not reach for `default_config`: the warning above still applies,
+and it can consume a trial slot.
 
 `traigent.utils.importance` and the optimization-insights read may inform which knobs to vary. They
 are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
