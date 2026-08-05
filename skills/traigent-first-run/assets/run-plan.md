@@ -48,8 +48,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Free `$0` frontier over the completed enhanced trials, when cost was measured - its points with their measured cost and score, or the incumbent alone:
-- Second enhanced run if offered - gate met, separate approval, ceiling before/after, seed config, second space and cap, run ID, portal link, its frontier, the recommended point, and the score claim with its paired outcome counts:
+- Accuracy-cost frontiers - the free `$0` one over the completed enhanced trials with its points, and, if a second enhanced run was offered, its gate, separate approval, ceiling before/after, seed config, space and cap, run ID, portal link, frontier, recommended point, and score claim with paired outcome counts:
 
 ## Interpretation
 

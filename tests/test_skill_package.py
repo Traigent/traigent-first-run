@@ -1770,8 +1770,9 @@ class SkillPackageTests(unittest.TestCase):
             # Both frontiers are recorded, and the free one is recorded even
             # when no paid run follows: it is a result the user was given, and
             # after the fact this record is the only place it survives.
-            "free `$0` frontier over the completed enhanced trials",
-            "second enhanced run if offered",
+            "accuracy-cost frontiers - the free `$0` one over the completed "
+            "enhanced trials",
+            "if a second enhanced run was offered",
         ):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -5444,7 +5445,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # commits were all corrections to one 40-line rule: it is not the
         # rule's size that has been wrong, so more room is not the fix.
         #
-        # It then FALLS 13_701, to 15_260 over the 228_407 this branch left
+        # It then FALLS 13_771, to 15_190 over the 228_407 this branch left
         # trunk at, and the fall is a restructure rather than a trim. The
         # round's own machinery was the cost: a separate stage needs a gate, an
         # approval, a winner-selection rule, a seed-exclusion rule, and a bar
@@ -5483,10 +5484,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # decided once that documenting another repository's surface here
         # ossifies it. What remains is the seed as a point in the space.
         #
-        # Measured at 243_667, so 243_750 - 83 bytes, which is the one-word-edit
-        # trip this comment has recorded four times, so 244_000: 333 bytes,
-        # inside the 228-339 band the raises above settled on and still 13_368
-        # below where the pre-restructure branch had this number.
+        # Measured at 243_597, so 244_000 - 403 bytes. Over the 228-339 band
+        # the raises above settled on, and taken deliberately: 243_750 leaves
+        # 153, inside the one-word-edit trip this comment has recorded four
+        # times. It is still 13_368 below where the pre-restructure branch had
+        # this number, and the next edit here should have to argue for its
+        # bytes rather than find them waiting.
         budget = 244_000
         self.assertLess(
             total,
