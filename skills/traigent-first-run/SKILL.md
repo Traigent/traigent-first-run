@@ -529,7 +529,10 @@ calls. In the enhanced run card, repeat the baseline knobs, label every addition
 total combination count; pair that count with this run's trial cap as a ceiling, never a range: how
 many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
 that wording, both numbers' source, and what to say when the count cannot be computed. Disclose any
-reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
+reduction from that ceiling here rather than at the baseline approval. Say only that if the results
+show cost headroom the assistant may offer one more bounded round to try for the same quality at
+lower cost, separately priced and approved; do not front-load its gate, mechanics, thresholds, or
+expected outcome, and do not imply it will happen or that it would succeed. Never promise a pause at
 minute 30; size the synchronous run first.
 
 Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;

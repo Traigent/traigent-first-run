@@ -4276,8 +4276,15 @@ class SkillPackageTests(unittest.TestCase):
             "one configuration evaluated twice returns two different token "
             "counts - inside a single run as much as across two - so a strict "
             "difference is a measured difference and not yet a saving",
-            "so read materially here the way the gate above reads it - a quarter less",
-            "exactly as the free check above reads it",
+            # ...and the bar it is read against is the saving bar defined once
+            # at the top of the section, never the gate's coarse quarter. The
+            # two questions are different and the numbers are ~5x apart.
+            "apply the saving bar defined above before calling the round's "
+            "delta a cost reduction",
+            "exactly as the free check above applies it",
+            # the seed re-measurement is both what forces this exclusion and
+            # what calibrates the bar the exclusion is judged against
+            "those two seed costs are that bar's own measured basis",
             "clearing the bar is a selection made over noise",
         ):
             with self.subTest(selection_phrase=phrase):
@@ -4517,12 +4524,12 @@ class SkillPackageTests(unittest.TestCase):
             "on an untracked-cost run skip both the check and the round",
             "**the route genuinely costs nothing.**",
             "a run with no cost has no cost to reduce",
-            # The free check applies the same materiality bar the round's own
+            # The free check applies the same saving bar the round's own
             # selection does. It used to apply none, on the strength of a
             # sentence granting within-run costs an exactness the filter's
             # docstring denies - so a `$0` re-read could end the round outright
             # while reporting a difference inside measurement noise as a saving.
-            "read its first entry against the materiality bar the gate below sets",
+            "read its first entry against the saving bar above",
             "cheaper by less than that bar is a measured difference and not yet "
             "a saving",
             # ...and the sentence that used to justify the exemption also
@@ -4566,6 +4573,195 @@ class SkillPackageTests(unittest.TestCase):
             "the free `$0` cost check ran before any cost-reduction round was "
             "offered",
             skill,
+        )
+
+    def test_the_saving_bar_is_derived_from_measurement_not_borrowed(self) -> None:
+        """The gate's bar and the result's bar answer different questions.
+
+        They were one number, and it was the gate's - "a quarter less". That is
+        right where it was written: the gate asks whether cheaper territory
+        exists at all, across a model ladder whose rungs differ in cost by
+        multiples, and a quarter answers a question that coarse. It is roughly
+        5x too coarse for the result, where the same number was standing in for
+        the noise floor between two cost measurements of ONE configuration -
+        and at that size it discards precisely the 5-25% band this round is
+        most likely to find, because the second space is built from cheaper
+        values of controls the winner already uses.
+
+        The settled answer derives the bar instead of assuming it. The round's
+        space is required to contain the seed, so a completed round re-measures
+        it and hands back two costs for one unchanged configuration; that
+        spread is this workload's own run-to-run cost variance, observed rather
+        than guessed. The fallback is stated and named out loud, never silent,
+        because a managed search need not evaluate the seed at all.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        # asserted before it is split on, so a missing section names itself
+        self.assertIn("### the saving bar", safety)
+        section = safety.split("### the saving bar", 1)[1].split(
+            "### run the free check first", 1
+        )[0]
+
+        for phrase in (
+            # one bar, one home, and both of its readers named where it is
+            # defined rather than each carrying its own copy of the rule
+            "the free `$0` check and the round's own selection - end in one question",
+            "it is derived rather than assumed",
+            # the measured basis, and where the second measurement comes from
+            "**measured basis, preferred.**",
+            "the round's second space is required to contain the seed",
+            "two costs for one configuration nothing changed about",
+            "a directly observed sample of this workload's run-to-run cost "
+            "variance, and that spread is the bar",
+            "take the widest such spread when a run offers more than one",
+            # ...and it degrades honestly rather than silently
+            "**stated basis, when nothing was measured twice.**",
+            "`max_trials` is a cap and `auto` chooses its own trials",
+            "an assumption about this workload rather than a measurement of it",
+            "name which of the two bases the bar came from wherever it decides "
+            "an outcome; never fall back to the stated one silently",
+            # ...and a future editor is told why the two bars stay apart, which
+            # is the half a phrase lock cannot otherwise carry
+            "this is not the gate's number and must not be merged back into it",
+            "a quarter is roughly five times that noise floor",
+            "one question is about the territory; the other is about the "
+            "instrument. they do not share a number",
+        ):
+            with self.subTest(bar_phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # It has to be defined before the first read of it, or the free check
+        # points forward at a rule the assistant has not been given yet.
+        self.assertLess(
+            safety.index("### the saving bar"),
+            safety.index("### run the free check first"),
+        )
+
+        # The fallback is a NUMBER, and the whole finding was that the borrowed
+        # one was ~5x the noise floor. Pin the magnitude and not only the
+        # sentence: an edit that restores a quarter here reads fine as prose
+        # and re-imports the defect wholesale.
+        stated = re.findall(r"the bar is then a flat \*\*(\d+)%\*\*", section)
+        self.assertEqual(
+            len(stated),
+            1,
+            "the stated fallback bar is not declared exactly once as a percent",
+        )
+        self.assertLess(
+            int(stated[0]),
+            10,
+            "run-to-run token variance on a fixed prompt set is single-digit "
+            "percent. A fallback at or above 10% is the coarse bar this rule "
+            "exists to replace, and it discards the 5-25% savings the round is "
+            "built to find",
+        )
+        # ...and the justification travels with the number, so the next editor
+        # argues with a reason rather than with a bare figure.
+        self.assertIn("single-digit percent", section)
+        self.assertIn("driven by output-length variation alone", section)
+
+        # The gate keeps its own coarse reading, and keeps it alone. Outside
+        # this section's explanation of why the two differ, "a quarter" appears
+        # only in the gate bullet it belongs to.
+        self.assertIn("a quarter less is the default reading of materially", safety)
+        self.assertEqual(
+            safety.count("a quarter"),
+            4,
+            "`a quarter` has a home this check does not know about. Three of "
+            "the four are the saving bar explaining why it is NOT this bar, "
+            "and the fourth is the gate bullet; a fifth is the two bars "
+            "merging back into one number again",
+        )
+
+    def test_the_round_is_pre_disclosed_in_the_connected_approval(self) -> None:
+        """Three paid approvals, and the third lands at peak fatigue.
+
+        The walkthrough was simplified from one combined paid approval into two
+        staged ones - baseline, then connected optimization. This round adds a
+        third, and it arrives immediately after the user sees their result,
+        which is the payoff moment. A cold third ask there reads as a paywall
+        staircase however well the round itself is bounded.
+
+        The baseline approval already solved exactly this for the connected
+        run, in one clause that names the next step and front-loads nothing
+        about it. This mirrors that clause and its discipline: the round's
+        EXISTENCE is anticipated, and its gate, mechanics, thresholds, and
+        likely outcome are not.
+        """
+        flat = " ".join(SKILL.read_text().casefold().split())
+
+        # the precedent, and the mirror of it
+        self.assertIn(
+            "say only that a separately previewed managed run may follow; do "
+            "not front-load its algorithm, search space, trial arithmetic, "
+            "portal features, or insights",
+            flat,
+        )
+        self.assertIn(
+            "say only that if the results show cost headroom the assistant may "
+            "offer one more bounded round to try for the same quality at lower "
+            "cost, separately priced and approved; do not front-load its gate, "
+            "mechanics, thresholds, or expected outcome, and do not imply it "
+            "will happen or that it would succeed",
+            flat,
+        )
+
+        # It has to land inside the CONNECTED approval - after the baseline
+        # approval it mirrors, and before the round's own section. Anywhere
+        # later is not pre-disclosure; it is the cold third ask again.
+        self.assertIn("present `stage 4/5 · optimize`", flat)
+        for earlier, later in (
+            (
+                "do not front-load its algorithm, search space",
+                "present `stage 4/5 · optimize`",
+            ),
+            (
+                "present `stage 4/5 · optimize`",
+                "do not front-load its gate, mechanics, thresholds",
+            ),
+            (
+                "do not front-load its gate, mechanics, thresholds",
+                "#### optional cost-reduction round",
+            ),
+        ):
+            with self.subTest(ordering=(earlier, later)):
+                self.assertLess(flat.index(earlier), flat.index(later))
+
+        # Disclosure is not approval. The round still takes its own, and
+        # run-safety.md still owns that rule by itself.
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("takes its own explicit approval", safety)
+        self.assertIn("it never proceeds on the earlier approval", flat)
+        self.assertNotIn("needs its own explicit approval", flat)
+
+    def test_the_free_check_is_reported_as_the_thing_it_is(self) -> None:
+        """The `$0` check hands back a paid-for result at no further cost.
+
+        Every other check over this section governs what may be CLAIMED. This
+        one governs whether the customer is told what they were handed: before
+        asking for another cent, the guide re-reads trials the customer has
+        already paid for, and it can end the flow there with a measured saving.
+        Reported as a bare number that reads as a footnote to the paid round;
+        the instruction to say what it cost is what makes it land as the gift
+        it is.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("### run the free check first", safety)
+        section = safety.split("### run the free check first", 1)[1].split(
+            "### gate", 1
+        )[0]
+        for phrase in (
+            "it came out of trials the user has already paid for",
+            "so say so rather than reporting the number flat",
+            "this one cost them nothing and is already theirs",
+        ):
+            with self.subTest(free_check_copy=phrase):
+                self.assertIn(phrase, section)
+        # ...and none of that loosens the claim it is reported at
+        self.assertIn(
+            "report it at the claim strength and the provenance the paid round "
+            "would get",
+            section,
         )
 
     def test_the_cost_reduction_round_cannot_ride_the_earlier_approval(self) -> None:
@@ -4669,7 +4865,8 @@ class SkillPackageTests(unittest.TestCase):
             # the two inner counts are exhaustive over the cheaper ones, which
             # is what lets the copy drop the branch it replaced
             "those two inner counts split the cheaper ones with nothing left over:",
-            "materiality read exactly as the selection above reads it",
+            "did not clear the saving bar - applied exactly as the selection "
+            "above applies it",
             # a zero renders as a zero, not as a breakdown of an empty set -
             # the "nothing cheaper ran at all" conclusion falls out of the count
             'write a count of zero as a plain "none" and drop the breakdown '
@@ -4680,6 +4877,19 @@ class SkillPackageTests(unittest.TestCase):
             "that is a measured answer to the question this round asked",
             "it establishes nothing about configurations the round did not test",
             "do not answer it with a third round by default",
+            # ...and it is delivered as the result it is. A null outcome told
+            # flatly reads as a failed run to the one reader who matters, and
+            # the honest framing costs nothing: the customer asked whether a
+            # cheap win was there and now knows.
+            "it is a service rather than a shrug",
+            # The forward half points at an ACTION and never at a result. Every
+            # defect this section has produced was a claim about what the round
+            # did not measure; a promise about what a further run would return
+            # is that same shape aimed at the future instead of at the space.
+            "that bound is the forward half, and it points at an action and "
+            "never at a result",
+            "the handoff below names what a wider search would let the user "
+            "*do*, never what it would find",
         ):
             with self.subTest(null_phrase=phrase):
                 self.assertIn(phrase, safety)
@@ -4750,6 +4960,15 @@ class SkillPackageTests(unittest.TestCase):
             "to tell a saving from the ordinary variation between two runs of "
             "one unchanged configuration",
             "so this round did not establish a saving",
+            # ...and it closes as a result the customer can act on rather than
+            # trailing off at the negative. Both halves are earned: the
+            # decision the counts actually support, and the bound this run
+            # chose, pointed at the handoff that addresses it.
+            "keeping the configuration you are already running is the answer "
+            "it supports",
+            "a round this size reaches few configurations by design",
+            "widening the search across your full dataset and your own controls "
+            "is what the skills named at the close are for",
         ):
             with self.subTest(claim=claim):
                 self.assertIn(claim, copy)
@@ -4762,6 +4981,14 @@ class SkillPackageTests(unittest.TestCase):
             "immediately",
             "every configuration",
             "frontier",
+            # ...nor over what a LATER run would return. The forward half is
+            # the one place engagement could buy itself a promise, and a
+            # promise about an unrun search is the same universal claim this
+            # copy was rewritten three times to remove, pointed at the future.
+            "would find",
+            "will find",
+            "will save",
+            "guaranteed",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, copy)
@@ -5090,6 +5317,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "already near the pareto frontier",
                 "every configuration tested that cost less also scored lower",
                 "every other configuration tested that cost materially less",
+            ),
+        ),
+        (
+            # The connected approval now pre-discloses that the round EXISTS,
+            # so the third ask is anticipated rather than cold. Disclosure is
+            # not approval, and the two are one sentence apart: said the other
+            # way round, the third gate collapses into the second and the round
+            # stops being optional while the guide still calls it optional.
+            "whether pre-disclosing the round also approves it",
+            ("it never proceeds on the earlier approval",),
+            (
+                "approving the optimization also approves the cost-reduction round",
+                "the optimize approval covers the cost-reduction round",
+                "no further approval is needed for the cost-reduction round",
             ),
         ),
         (
@@ -5437,9 +5678,25 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # references. Re-measured at 63_422, unchanged, so this number stays
         # where it is. Recorded rather than left silent, because a ceiling
         # nobody re-measures is a ceiling nobody knows the headroom of.
+        #
+        # It then rises 300 bytes for the one thing this document owns in the
+        # third-approval fix. The walkthrough was simplified from one combined
+        # paid approval into two staged ones - baseline, then connected
+        # optimization - and this round adds a third that lands immediately
+        # after the user sees their result, which is the payoff moment and the
+        # point of highest fatigue. Pre-disclosing the round's EXISTENCE in the
+        # connected approval is an ordering-and-disclosure mandate about an
+        # approval SKILL.md already stages, so it is this document's own job,
+        # and it mirrors the clause stage 6 already carries for the connected
+        # run one step earlier. None of the round's gate, mechanics,
+        # thresholds, or expected outcome travels with it; all of that stays in
+        # run-safety.md, which is the policy below working rather than being
+        # spent. Measured at 63_722, which leaves 28 bytes under the ceiling
+        # above - the one-word-edit trip this comment has now recorded three
+        # times - so 64_000, and 278 bytes on the reasoning those entries set.
         self.assertLess(
             resident,
-            63_750,
+            64_000,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5650,7 +5907,53 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # marginally over the 228-297 the last four raises settled on and
         # taken deliberately because the boundary below it does not bind on a
         # decision.
-        budget = 252_250
+        #
+        # It rises 3_484 for the materiality fix, and the reason is worth more
+        # than the number. The round's RESULT had no bar of its own: it read
+        # the gate's "a quarter less". That is right for the question the gate
+        # asks - does cheaper territory exist at all for this task, across a
+        # model ladder whose rungs differ in cost by multiples - and roughly
+        # five times too coarse for the question the result asks, which is
+        # whether two cost measurements of ONE configuration differ by more
+        # than the measurement's own noise. Run-to-run token variance on a
+        # fixed prompt set is single-digit percent, so at a quarter the result
+        # discarded precisely the 5-25% band this round is most likely to
+        # find - the second space is built from cheaper values of controls the
+        # winner already uses, which is where small honest savings live.
+        #
+        # The fix derives the bar rather than assuming a number, and the
+        # derivation is why it costs a section instead of a sentence. The
+        # round's own space is REQUIRED to contain the seed, so a completed
+        # round re-evaluates it and returns two costs for one unchanged
+        # configuration: a directly observed sample of this workload's
+        # run-to-run cost variance. That has to carry its own honest
+        # degradation, because a managed search need not evaluate the seed -
+        # `max_trials` is a cap and `auto` picks its trials - so a stated 5%
+        # fallback travels with its justification and must be named out loud
+        # wherever it decides an outcome. And it has to say plainly why the
+        # gate's question and the result's question do not share a number, or
+        # the next editor merges them back and re-imports the defect whole.
+        # Against that, three readers - the free check, the round's own
+        # selection, and the null outcome - now point at one definition
+        # instead of restating a figure each.
+        #
+        # Two copy edits ride along, and neither weakens a claim. The free `$0`
+        # check hands the customer a saving out of trials they have already
+        # paid for and said so nowhere, so it read as a footnote to the paid
+        # round instead of as the better outcome it is. The null outcome
+        # stopped at the negative rather than at the decision its own counts
+        # support and the bound the graduation handoff addresses. The forward
+        # half points at what the user could DO and never at what a further run
+        # would return - that promise is the universal-claim shape this section
+        # has already been rewritten three times to remove, aimed at the future
+        # instead of at the space, and the pinned copy now forbids it by
+        # substring.
+        #
+        # Measured at 255_411. 255_500 leaves 89 bytes, the one-word-edit trip
+        # recorded above, so 255_750 - 339 bytes, marginally over the 228-323
+        # the last five raises settled on and taken for the same reason the
+        # last one was.
+        budget = 255_750
         self.assertLess(
             total,
             budget,

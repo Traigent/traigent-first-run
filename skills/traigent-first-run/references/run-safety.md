@@ -652,8 +652,38 @@ failure mode justify them.
 
 SKILL stage 7 states that this round is optional and one-sided, forbids reporting a knob as not
 mattering, and places both of its outcomes in the closing report. Everything else is owned here:
-when it is offered, what it may claim, the free check that precedes it, the gate, its approval, and
-the wording of those two outcomes. `references/sdk-execution.md` owns the mechanics.
+when it is offered, the bar that separates a saving from measurement noise, what it may claim, the
+free check that precedes it, the gate, its approval, and the wording of those two outcomes.
+`references/sdk-execution.md` owns the mechanics.
+
+### The saving bar
+
+Two of the reads below - the free `$0` check and the round's own selection - end in one question:
+is this delta a saving, or is it the noise floor of the measurement? The saving bar answers it for
+both, and it is derived rather than assumed.
+
+- **Measured basis, preferred.** The round's second space is required to contain the seed
+  (`references/sdk-execution.md`), so a completed round re-evaluates it: two costs for one
+  configuration nothing changed about. Their spread is a directly observed sample of this workload's
+  run-to-run cost variance, and that spread is the bar. Any run supplies one the same way whenever
+  two of its completed trials carry an identical configuration - the enhanced run included, which is
+  where the free check would find one. Take the widest such spread when a run offers more than one.
+- **Stated basis, when nothing was measured twice.** A managed search need not evaluate the seed:
+  `max_trials` is a cap and `auto` chooses its own trials, so a round can finish without re-measuring
+  the point it was built around, and an enhanced run may repeat no configuration at all. The bar is
+  then a flat **5%** of the incumbent's cost. That is an assumption about this workload rather than a
+  measurement of it: run-to-run token variance on a fixed prompt set at a pinned configuration is
+  single-digit percent, driven by output-length variation alone, and 5% sits inside that band with
+  room rather than at its edge. Name which of the two bases the bar came from wherever it decides an
+  outcome; never fall back to the stated one silently.
+
+This is not the gate's number and must not be merged back into it. The gate asks whether cheaper
+territory exists at all, across a model ladder whose rungs differ in cost by multiples - a coarse
+question, and a quarter answers it. This bar asks whether two cost measurements of one configuration
+differ by more than the measurement's own noise, and a quarter is roughly five times that noise
+floor. Set to a quarter it discards the 5-25% savings this round is most likely to find, because the
+second space is built from cheaper values of controls the winner already uses. One question is about
+the territory; the other is about the instrument. They do not share a number.
 
 ### Run the free check first
 
@@ -676,9 +706,11 @@ the run's own metric? This is a re-read of returned trials with no provider call
 `references/sdk-execution.md` gives the function.
 
 The function returns the qualifying trials cheapest first, and never the winner's own configuration.
-Read its first entry against the materiality bar the gate below sets: cheaper by less than that bar
+Read its first entry against the saving bar above: cheaper by less than that bar
 is a measured difference and not yet a saving, so the check has returned nothing. When the entry
-does clear that bar the cost reduction is already measured. Report it and stop - there is
+does clear that bar the cost reduction is already measured, and it came out of trials the user has
+already paid for - so say so rather than reporting the number flat: this one cost them nothing and
+is already theirs. Report it and stop - there is
 nothing left to buy, and offering a paid round on top of it would be selling the user a result they
 already have. Report it at the claim strength and the provenance the paid round would get: a measured
 cost number, a score stated no more strongly than the paired counts support, and over a `🛠️`
@@ -745,8 +777,10 @@ space's points, so the round re-measures it, and that measurement is a different
 `incumbent_cost` was recorded in. Each cost is exact arithmetic over the token counts that run
 reported, but one configuration evaluated twice returns two different token counts - inside a single
 run as much as across two - so a strict difference is a measured difference and not yet a saving. So
-read materially here the way the gate above reads it - a quarter less - before calling the round's
-delta a cost reduction, exactly as the free check above reads it. Without both rules the round hands
+apply the saving bar defined above before calling the round's delta a cost reduction, exactly as the
+free check above applies it - and note that those two seed costs are that bar's own measured basis,
+so the re-measurement that makes this exclusion necessary is also what calibrates the bar it is
+judged against. Without both rules the round hands
 back the configuration the user is already running and reports measurement noise as a saving.
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
@@ -789,18 +823,23 @@ any claim about it quantifies over configurations the round never reached.
 > of them cost less than the configuration you are already running: `<n scored lower>` scored lower,
 > and the other `<n inside variance>` were cheaper by too small a margin to tell a saving from the
 > ordinary variation between two runs of one unchanged configuration. So this round did not establish
-> a saving.
+> a saving, and keeping the configuration you are already running is the answer it supports. A round
+> this size reaches few configurations by design; widening the search across your full dataset and
+> your own controls is what the skills named at the close are for.
 
 Those two inner counts split the cheaper ones with nothing left over: reaching this outcome at all
-means every configuration counted among them either scored lower or was not materially cheaper -
-materiality read exactly as the selection above reads it. Write a count of zero as a plain "none" and
+means every configuration counted among them either scored lower or did not clear the saving bar -
+applied exactly as the selection above applies it. Write a count of zero as a plain "none" and
 drop the breakdown under it; a breakdown of an empty set reads as a pattern the round did not
 measure. The re-measured seed is not one of the cheaper ones either: two costs for one configuration
 are two measurements of the configuration the user already runs, not a cheaper alternative to it.
 
-That is a measured answer to the question this round asked, and it is bounded as honestly as the
-other outcome: it establishes nothing about configurations the round did not test, and a bounded
-round tests few. Do not answer it with a third round by default.
+That is a measured answer to the question this round asked, and it is a service rather than a shrug:
+the user wanted to know whether a cheap win was sitting there, and now they do instead of chasing
+one. It is bounded as honestly as the other outcome - it establishes nothing about configurations the
+round did not test, and a bounded round tests few. That bound is the forward half, and it points at
+an action and never at a result: the handoff below names what a wider search would let the user *do*,
+never what it would find. Do not answer it with a third round by default.
 
 ## Post-run verification
 
