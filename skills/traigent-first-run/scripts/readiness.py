@@ -539,6 +539,17 @@ class ReadinessScore:
 @dataclass(frozen=True)
 class DatasetFacts:
     exists: bool = False
+    # Whether a dataset reached this score at all, and if it did, how much of it
+    # could be read. `exists` alone conflated two states the customer
+    # experiences very differently: "you have no data" and "I could not read the
+    # data you gave me". The second is what happens when the rows are fine but
+    # the selected field names are not the ones in the file, and reporting it as
+    # the first tells a customer holding a good dataset to go and get one.
+    # This mirrors AgentFacts.config_space_supplied, which already draws the
+    # same line for the same reason.
+    dataset_supplied: bool = False
+    candidate_rows: int | None = None
+    unreadable_rows: int | None = None
     rows: int | None = None
     labelled_rows: int | None = None
     tuning_rows: int | None = None
@@ -1197,18 +1208,31 @@ def score_dataset(
     subs: list[SubScore] = []
 
     if not facts.exists or not facts.rows:
-        caps.append(
-            Cap(
-                "dataset-absent",
-                20,
-                "No dataset is connected, so nothing can be measured.",
+        # Three different situations used to produce one sentence. Say which.
+        unreadable = facts.unreadable_rows or 0
+        if facts.dataset_supplied and unreadable:
+            reason = (
+                f"A dataset was provided and none of its {unreadable} row(s) "
+                "could be read with the selected input and expected-answer "
+                "field names - check the field selection before concluding "
+                "the data is missing."
             )
-        )
-        subs.append(SubScore("labels", 0.0, 30.0, True, "no dataset"))
-        subs.append(SubScore("power", 0.0, 25.0, True, "no dataset"))
-        subs.append(SubScore("difficulty", 0.0, 15.0, False, "no dataset"))
-        subs.append(SubScore("diversity", 0.0, 20.0, False, "no dataset"))
-        subs.append(SubScore("provenance", 0.0, 10.0, True, "no dataset"))
+            evidence = "provided, no row readable with the selected fields"
+        elif facts.dataset_supplied:
+            reason = (
+                "A dataset was provided but no rows could be read from it, so "
+                "nothing can be measured."
+            )
+            evidence = "provided, no rows read"
+        else:
+            reason = "No dataset was provided to this score, so nothing can be measured."
+            evidence = "no dataset provided to this score"
+        caps.append(Cap("dataset-absent", 20, reason))
+        subs.append(SubScore("labels", 0.0, 30.0, True, evidence))
+        subs.append(SubScore("power", 0.0, 25.0, True, evidence))
+        subs.append(SubScore("difficulty", 0.0, 15.0, False, evidence))
+        subs.append(SubScore("diversity", 0.0, 20.0, False, evidence))
+        subs.append(SubScore("provenance", 0.0, 10.0, True, evidence))
         return combine("dataset", subs), caps
 
     rows = facts.rows
@@ -1423,11 +1447,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     subs: list[SubScore] = []
 
     if not facts.present:
+        # Same distinction the dataset pillar draws above, and the one the
+        # evaluator pillar already learned once: `evaluator-unresolved` exists
+        # because telling a customer to CONNECT a file already in their tree is
+        # the wrong instruction. The remaining gap was the sentence used when
+        # nothing reached the score at all, which claimed the project has no
+        # evaluation method rather than that this score was not given one.
         caps.append(
             Cap(
                 "evaluator-absent",
                 40,
-                "No evaluation method is connected, so no result can be trusted.",
+                "No evaluation method was provided to this score, so no result "
+                "can be trusted yet.",
             )
         )
         subs.append(SubScore("calibration", 0.0, 40.0, True, "no evaluator"))
@@ -2355,7 +2386,18 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # carries provenance (rows > 0, labelled_rows == 0), so it lands below in the
     # exists=True branch and reaches the cap-30 "no expected outputs" case.
     if not provenance:
-        return DatasetFacts(exists=False)
+        # Preflight ran no dataset check at all -> nothing was supplied. It ran
+        # one and salvaged nothing -> a dataset was supplied and could not be
+        # read. Both used to arrive here as a bare exists=False.
+        supplied = any(
+            str(record.get("check", "")).startswith("dataset-") for record in records
+        )
+        return DatasetFacts(
+            exists=False,
+            dataset_supplied=supplied,
+            candidate_rows=integrity.get("candidate_rows"),
+            unreadable_rows=integrity.get("invalid_rows"),
+        )
     # Structural integrity is about malformed rows (bad JSON, non-objects,
     # missing inputs). Rows that merely lack an expected output are unlabelled,
     # not malformed, so they must not trip the integrity cap - they are scored

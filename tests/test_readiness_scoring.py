@@ -180,6 +180,39 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
         self.assertEqual(pillar.score, 0)
 
+    def test_a_supplied_but_unreadable_dataset_is_not_called_absent(self) -> None:
+        """A customer holding good rows must never be told to go and get data.
+
+        `exists=False` used to carry two situations at once: no dataset reached
+        the score, and a dataset reached it whose rows could not be read with
+        the selected field names. Both printed "No dataset is connected" and
+        recommended `get-data`, so a customer with three perfectly good labelled
+        rows whose file says `question`/`answer` was told to collect data they
+        already had. The cap is still correct - nothing IS measurable - but the
+        sentence has to say which of the two it is, and name the field selection
+        as the thing to check.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                candidate_rows=3,
+                unreadable_rows=3,
+            )
+        )
+        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
+        reason = caps[0].reason
+        self.assertIn("A dataset was provided", reason)
+        self.assertIn("field names", reason)
+        # The old sentence claimed something about the project rather than
+        # about this score's input; it must not come back.
+        self.assertNotIn("No dataset is connected", reason)
+
+    def test_a_dataset_that_never_reached_the_score_says_so(self) -> None:
+        """The other half: absence of input is not evidence of absence of data."""
+        _, caps = MODULE.score_dataset(MODULE.DatasetFacts(exists=False))
+        self.assertIn("provided to this score", caps[0].reason)
+
     def test_logs_without_expected_outputs_are_capped_not_merely_low(self) -> None:
         """500 unlabelled rows must not score as WORKABLE - nothing can be scored."""
         _, caps = MODULE.score_dataset(
