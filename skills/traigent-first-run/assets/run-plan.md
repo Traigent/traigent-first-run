@@ -46,8 +46,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
-- Connected optimization run ID, configurations tested of the total, partial/final result, stop
-  reason, and verified portal link:
+- Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
 - Accuracy-cost frontier for each run - its points, the recommended one, and the score claim with paired outcome counts:
 
