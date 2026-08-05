@@ -625,6 +625,64 @@ class StaticPreflightTests(unittest.TestCase):
             integrity.detail,
         )
 
+    def test_one_cause_is_reported_once_however_many_rows_share_it(self) -> None:
+        """The detail grew with the file instead of with what is wrong with it.
+
+        Readiness forwards this string verbatim onto the card, so six rows
+        missing the same selected field printed that sentence six times - 347
+        characters, one fact. Nothing there was wrong, only repeated; the
+        remedy is to say each distinct cause once, keep the first line it was
+        seen on so the file can be opened at it, and count the rest.
+        """
+        rows = [{"question": f"q{index}", "answer": f"a{index}"} for index in range(6)]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.status, MODULE.FAIL)
+        cause = "missing selected input field 'input'"
+        self.assertEqual(integrity.detail.count(cause), 1)
+        # The line to open, and how many others share the cause.
+        self.assertIn(f"line 1 (+5 more): {cause}", integrity.detail)
+        # Every row is still counted; only the repetition is gone.
+        self.assertIn("6/6 rows (100.0%) are unusable", integrity.detail)
+        self.assertLess(len(integrity.detail), 200)
+
+    def test_distinct_causes_each_get_a_slot_rather_than_the_first_one_repeating(
+        self,
+    ) -> None:
+        """The report cap now bounds causes, which is what a reader needs.
+
+        Capping ROWS spent all five slots on whichever cause happened to come
+        first, so a file with several different problems reported one of them.
+        """
+        rows = [
+            '{"question": "q", "answer": "a"}',
+            "not json at all",
+            '["not", "an", "object"]',
+            '{"input": "q"}',
+            '{"question": "q2", "answer": "a2"}',
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(rows) + "\n")
+            MODULE.check_dataset(dataset)
+
+        detail = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        ).detail
+        for cause in (
+            "line 1 (+1 more): missing selected input field 'input'",
+            "row is not an object",
+            "invalid JSON",
+        ):
+            with self.subTest(cause=cause):
+                self.assertIn(cause, detail)
+
     def test_dataset_normalization_contract_violation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"

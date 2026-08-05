@@ -353,7 +353,7 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: `proceed` unless a blocking cap fires, otherwise the lowest-ceiling blocking
-remedy. Present reasons in user language; keep machine vocabulary and condition ids internal.
+remedy.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id:
@@ -372,9 +372,10 @@ rather than the condition id:
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
-- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
-- `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
-  justified uncertainty; call a small or flat difference directional or inconclusive.
+- `dataset-below-measurable-size` and `dataset-coarse-resolution` - more comparable examples is
+  what lifts either; until then call rankings exploratory, and after paired outputs exist report
+  paired outcome counts and justified uncertainty, calling a small or flat difference directional
+  or inconclusive.
 
 Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
 connected file with no honestly declarable method) and `evaluator-invalid` route through the

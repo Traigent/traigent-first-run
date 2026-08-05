@@ -288,12 +288,103 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertIn("provided to this score", caps[0].reason)
         self.assertEqual(caps[0].action_kind, "get-data")
 
+    def test_an_empty_file_does_not_read_like_a_broken_one(self) -> None:
+        """The two sentences must not be interchangeable, because the fixes are not.
+
+        `dataset-absent` on a supplied path routes to `get-data` and
+        `dataset-unreadable` routes to `repair-dataset` - opposite
+        instructions - and the card used to state them as "nothing could be
+        read from it" and "none of its rows could be read". A reader picking a
+        branch off the prose cannot tell those apart, which is the same defect
+        as the id that carried the wrong remedy, moved into the sentence.
+        """
+        _, absent = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_detail="dataset has no usable rows",
+            )
+        )
+        _, unreadable = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=6,
+                unreadable_detail="6/6 rows (100.0%) are unusable; line 1: x",
+            )
+        )
+        self.assertEqual(absent[0].action_kind, "get-data")
+        self.assertEqual(unreadable[0].action_kind, "repair-dataset")
+        # The prose has to carry the difference the action makes. `get-data` is
+        # the right instruction only because there is nothing here to repair,
+        # so the sentence says exactly that.
+        self.assertIn("holds no rows at all", absent[0].reason)
+        self.assertIn("nothing to repair", absent[0].reason)
+        self.assertNotIn("nothing to repair", unreadable[0].reason)
+        # Both still name what was given rather than what the customer has.
+        self.assertIn("A dataset was provided to this score", absent[0].reason)
+
     def test_logs_without_expected_outputs_are_capped_not_merely_low(self) -> None:
         """500 unlabelled rows must not score as WORKABLE - nothing can be scored."""
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
         )
         self.assertIn("dataset-no-expected-outputs", [cap.condition for cap in caps])
+
+    def test_unlabelled_rows_are_not_also_reported_as_missing_rows(self) -> None:
+        """One fact, one cap, one remedy - and it must be the repairable one.
+
+        With rows present and none labelled, the scoreable count is zero, so
+        the power ceiling fired too: `dataset-below-measurable-size`, whose
+        remedy is `get-data`. The card then carried two FIX lines for one fact
+        and the second told a customer holding 500 usable inputs to go and
+        collect examples - the very instruction `dataset-unreadable` was added
+        to stop giving.
+
+        `label-data` is the remedy that repairs what they already have, and the
+        labels cap already carries it.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
+        )
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-no-expected-outputs"]
+        )
+        self.assertEqual(MODULE.recommended_action(caps), "label-data")
+        self.assertNotIn("get-data", [cap.action_kind for cap in caps])
+
+    def test_suppressing_that_duplicate_moves_no_number(self) -> None:
+        """The removed ceiling was never the operative one, so nothing changes.
+
+        30 sits below 74, so the labels cap set the score with or without it.
+        Asserted rather than argued, because "this changes no number" is the
+        claim that makes the suppression safe.
+        """
+        pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
+        )
+        with_duplicate = [*caps, MODULE.power_ceiling(0)]
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+        kept = MODULE.aggregate([pillar], caps, [], weights)
+        restored = MODULE.aggregate([pillar], with_duplicate, [], weights)
+        self.assertEqual(kept.overall, restored.overall)
+        self.assertEqual(kept.status, restored.status)
+        self.assertEqual(kept.recommended_action, restored.recommended_action)
+
+    def test_a_zero_from_any_other_source_still_raises_the_ceiling(self) -> None:
+        """Only the zero the labels cap owns is suppressed, not every zero."""
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=60,
+                labelled_rows=60,
+                tuning_rows=60,
+                holdout_rows=0,
+                tuning_labelled_rows=60,
+                holdout_labelled_rows=0,
+            )
+        )
+        self.assertIn("dataset-below-measurable-size", [cap.condition for cap in caps])
 
     def test_fully_synthetic_dataset_is_capped_however_good(self) -> None:
         facts = MODULE.DatasetFacts(

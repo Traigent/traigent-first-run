@@ -18,6 +18,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Calibration cases and results artifacts:
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
+- Row ids repaired into the working copy, and row ids generated to fill a gap:
 - Opening readiness score before any creation or repair - overall, band, binding caps:
 - Latest revalidated readiness score - overall, band, binding caps, and what changed:
 

@@ -1266,9 +1266,20 @@ def score_dataset(
                 # - the path does not exist, or the file holds nothing. Those
                 # are different problems and preflight's `dataset-shape` FAIL
                 # says which; without it, this printed one sentence for both.
+                #
+                # "nothing could be read from it" was one word away from the
+                # `dataset-unreadable` sentence directly above, and the two
+                # route to opposite remedies: repair the file you have, or go
+                # and get data. A reader cannot pick a branch off two sentences
+                # that differ by "and none of its rows" versus "but nothing".
+                # So this one says the thing that makes `get-data` the right
+                # instruction - there are no rows here to repair - which is
+                # exactly what separates it from the state above, where there
+                # are rows and every one of them is broken.
                 reason = (
-                    "A dataset was provided to this score but nothing could be "
-                    "read from it, so nothing can be measured"
+                    "A dataset was provided to this score and it holds no rows "
+                    "at all, so there is nothing to measure and nothing to "
+                    "repair"
                 )
                 reason += f": {detail}" if detail else "."
                 evidence = "provided, no rows read"
@@ -1288,6 +1299,9 @@ def score_dataset(
     rows = facts.rows
     reference_free = scores_without_a_reference(evaluator_method)
     labelled = facts.labelled_rows if facts.labelled_rows is not None else 0
+    # Whether the reason nothing is scoreable is already named, and already
+    # routed, by the labels cap below. Read by the power ceiling further down.
+    unlabelled_capped = False
     if reference_free:
         subs.append(
             SubScore(
@@ -1300,6 +1314,7 @@ def score_dataset(
             )
         )
     elif labelled == 0:
+        unlabelled_capped = True
         caps.append(
             Cap(
                 "dataset-no-expected-outputs",
@@ -1406,7 +1421,22 @@ def score_dataset(
     # STRONG in the same breath (#88). The ceiling is what stops a result
     # presenting as trustworthy when nothing measurable was measured.
     ceiling = power_ceiling(effective)
-    if ceiling is not None:
+    # A zero that the labels cap already owns is not a second finding.
+    #
+    # When rows exist and none carries an expected output, `effective` is zero
+    # BECAUSE of that, and `dataset-no-expected-outputs` has already said so
+    # and routed it to `label-data` - repair the rows the customer is holding.
+    # Appending the power ceiling here restated the same zero as
+    # `dataset-below-measurable-size`, whose remedy is `get-data`: the card
+    # carried two FIX lines for one fact, and the second told a customer with
+    # 50 perfectly good inputs to go and collect examples. That is the defect
+    # this file already fixed for `dataset-unreadable`, one condition over.
+    #
+    # Suppressing it moves no number: 30 is below the 74 ceiling, so the labels
+    # cap is the operative one either way and the run stays blocked. When the
+    # zero has any other source - an empty side of a declared split - nothing
+    # else has named it, so the ceiling still fires.
+    if ceiling is not None and not (effective == 0 and unlabelled_capped):
         caps.append(ceiling)
 
     if facts.difficulty_tagged_rows:

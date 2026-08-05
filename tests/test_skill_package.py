@@ -3257,10 +3257,24 @@ class SkillPackageTests(unittest.TestCase):
                 "dataset-generated-answer-key",
                 "a person reviews a sample of the answers",
             ),
+            # Both map to `get-data`, and neither bullet said anything about
+            # data: one said "call rankings exploratory" and the other said
+            # report paired uncertainty. Read together with the action they
+            # emit, the guidance told a customer to hedge the claim and never
+            # what would lift the ceiling. The branch has to do what the action
+            # name says, or the two halves route differently.
+            ("dataset-below-measurable-size", "more comparable examples"),
+            ("dataset-coarse-resolution", "more comparable examples"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)
                 self.assertLess(routing.index(condition), routing.index(branch))
+        # Every dataset condition the scorer can raise is routed here, not just
+        # the ones this table spells out. The count above pins how many exist;
+        # this pins that none of them reaches a reader with no branch at all.
+        for condition in conditions:
+            with self.subTest(condition=condition):
+                self.assertIn(condition, routing)
         self.assertIn("present the reason rather than the condition id", normalized)
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
@@ -3274,6 +3288,11 @@ class SkillPackageTests(unittest.TestCase):
             "and what changed:",
             "readiness transition",
             "`🛠️` substitute",
+            # the record has to have somewhere to put what this run changed on
+            # the customer's behalf, or the obligation to name it lands in
+            # free text and stops being auditable
+            "row ids repaired into the working copy, and row ids generated to "
+            "fill a gap:",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
@@ -3309,6 +3328,68 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never real-world readiness", norm("component-creation.md"))
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
+
+    def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
+        self,
+    ) -> None:
+        """The assistant has the file open; a relayed summary is a guess it did not have to make.
+
+        The card's reason forwards preflight's own FAIL detail, which is honest
+        but second-hand: it names a count, a percentage, and a line. The user
+        can read that much themselves. What only the assistant can do is open
+        the file and say which field the rows actually use against the one the
+        run selected - which is also what turns "your data is unusable" into a
+        one-line fix.
+
+        Stated in the reference that owns the dataset stage and nowhere else,
+        per CLAUDE.md: a second statement of a rule is a rule that can be
+        changed in one place.
+        """
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "where to look, not what to report",
+            "open the file at those lines",
+            "the field the rows use against the field the run selected",
+            "relaying a summary they could have read themselves",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, evaluation)
+        # One home. SKILL.md carries the flow and the routing, not the depth.
+        self.assertNotIn(
+            "open the file at those lines",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
+
+    def test_rows_changed_on_the_users_behalf_are_named_by_id(self) -> None:
+        """ "Some rows were fixed" cannot be inspected, and neither can a count.
+
+        Two things this guide does to a customer's data - repairing rows into a
+        working copy, and generating rows to fill a gap - were reported without
+        saying WHICH rows. The ids are already the identifier here: the bounded
+        subset records the ones it chose, and an excluded degenerate gold
+        records its own. This reuses them rather than adding a second scheme.
+        """
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "name what changed by row id",
+            "these ids were repaired, these ids are synthetic",
+            "record both lists in `traigent-runs/run-plan.md` and say them to the user",
+            # the reuse is the point - a second identifier scheme would be a
+            # second place for two records of the same row to disagree
+            "so reuse them rather than inventing a second way to point at a row",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, evaluation)
 
     def test_first_json_fence_in_run_safety_is_the_config_space_example(self) -> None:
         """Guard the positional dependency the next test relies on.
@@ -4626,7 +4707,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #144 then adds two obligations to evaluation-and-dataset.md, the
+        # reference that already owns the dataset stage, and both are new
+        # contract surface rather than stage detail moved out of SKILL.md.
+        # First: when rows cannot be read, diagnose from the file rather than
+        # relaying the check's summary - the assistant has the file open and
+        # the user does not, so a forwarded count is a guess it did not have to
+        # make. Second: name by row id what this run repaired or generated on
+        # the customer's behalf, reusing the ids the subset and degenerate-gold
+        # rules already record, plus the one run-plan.md line that gives the
+        # second of those somewhere to land. Roughly 1.4 KB together.
+        #
+        # RESIDENT falls by 42 bytes in the same commit rather than rising:
+        # SKILL.md's cap routing merged the two `get-data` conditions into one
+        # branch that names the remedy, and dropped a third statement of "keep
+        # condition ids out of user-facing text" that the same section and the
+        # resident bullet list each already make. So the policy above is
+        # working - depth landed in the reference, and the resident document
+        # got smaller while gaining a routing fix.
+        #
+        # Measured, not estimated: 230_070. The next 250 would be 230_250,
+        # which banks 180 bytes - and the RESIDENT note above already records
+        # what a ceiling that thin costs: it trips on a one-word edit rather
+        # than on a decision, so the next person raises it without weighing
+        # anything. 230_500 leaves 430, the same order of headroom that number
+        # settled on.
+        budget = 230_500
         self.assertLess(
             total,
             budget,
