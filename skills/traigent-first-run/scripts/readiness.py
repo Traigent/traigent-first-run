@@ -1234,7 +1234,9 @@ def score_dataset(
             )
             evidence = "provided, no rows read"
         else:
-            reason = "No dataset was provided to this score, so nothing can be measured."
+            reason = (
+                "No dataset was provided to this score, so nothing can be measured."
+            )
             evidence = "no dataset provided to this score"
         caps.append(Cap("dataset-absent", 20, reason))
         subs.append(SubScore("labels", 0.0, 30.0, True, evidence))
