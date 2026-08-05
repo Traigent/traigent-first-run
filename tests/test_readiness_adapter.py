@@ -350,6 +350,75 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         )
         self.assertNotIn("no tuning set", power["evidence"])
 
+    def test_a_dataset_with_other_field_names_is_not_reported_as_absent(self) -> None:
+        """The bug this pair exists for, end to end through the real pipeline.
+
+        Three well-formed, fully labelled rows whose file says `question` /
+        `answer` were scored as "No dataset is connected" with the machine
+        recommendation `get-data` - the customer was told to go and collect
+        data they already had. Preflight had already reported the real cause.
+
+        This lives in the ADAPTER tests on purpose. The scoring tests build
+        DatasetFacts by hand, so they cannot see `dataset_facts_from_preflight`
+        losing the distinction, and mutating the adapter to drop it left the
+        whole suite green.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {"id": "1", "question": "refund my order", "answer": "refund"},
+                {"id": "2", "question": "where is my package", "answer": "tracking"},
+                {"id": "3", "question": "cancel subscription", "answer": "cancel"},
+            ]
+            dataset = _write_jsonl(directory, "customer.jsonl", rows)
+            score = _score(dataset)
+
+        caps = {cap["condition"]: cap for cap in score["caps"]}
+        self.assertIn("dataset-absent", caps)
+        reason = caps["dataset-absent"]["reason"]
+        # It must say a dataset WAS provided ...
+        self.assertIn("A dataset was provided", reason)
+        # ... and must not claim the project has none.
+        self.assertNotIn("No dataset is connected", reason)
+        self.assertNotIn("No dataset was provided", reason)
+        # It must name BOTH causes rather than asserting one: preflight emits
+        # identical metrics for wrong field names and for malformed JSON.
+        self.assertIn("malformed lines", reason)
+        self.assertIn("expected-answer field", reason)
+
+    def test_a_dataset_that_never_reached_the_score_is_reported_as_absent(self) -> None:
+        """The other half, also end to end: preflight run with no --dataset.
+
+        `_preflight_records` always passes `--dataset`, so this one drives
+        preflight directly - the state under test is precisely its absence.
+        """
+        preflight = subprocess.run(
+            [sys.executable, str(PREFLIGHT), "--defer-missing-sdk", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(preflight.returncode, (0, 1), preflight.stderr)
+        records = json.loads(preflight.stdout)
+        self.assertEqual(
+            [r for r in records if str(r.get("check", "")).startswith("dataset-")],
+            [],
+            "preflight emitted a dataset check without a dataset",
+        )
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(records),
+            capture_output=True,
+            text=True,
+        )
+        score = json.loads(process.stdout)
+
+        caps = {cap["condition"]: cap for cap in score["caps"]}
+        self.assertIn("dataset-absent", caps)
+        reason = caps["dataset-absent"]["reason"]
+        self.assertIn("provided to this score", reason)
+        # Must not borrow the supplied-but-unreadable sentence.
+        self.assertNotIn("A dataset was provided", reason)
+
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:
         """C1: 150 real rows with inputs but no expected outputs.
 

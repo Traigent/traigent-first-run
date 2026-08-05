@@ -203,7 +203,11 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
         reason = caps[0].reason
         self.assertIn("A dataset was provided", reason)
-        self.assertIn("field names", reason)
+        # BOTH causes, never one. Preflight cannot tell wrong-field-names from
+        # malformed JSON - it emits identical metrics for the two - so naming
+        # only field selection would misdiagnose a genuinely broken file.
+        self.assertIn("malformed lines", reason)
+        self.assertIn("expected-answer field", reason)
         # The old sentence claimed something about the project rather than
         # about this score's input; it must not come back.
         self.assertNotIn("No dataset is connected", reason)

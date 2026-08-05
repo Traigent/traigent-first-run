@@ -1211,13 +1211,22 @@ def score_dataset(
         # Three different situations used to produce one sentence. Say which.
         unreadable = facts.unreadable_rows or 0
         if facts.dataset_supplied and unreadable:
+            # Both causes, never one. Preflight emits byte-identical metrics for
+            # a file whose rows are fine but whose field names differ, and a
+            # file that is not valid JSON at all - the discriminating text lives
+            # only in its human `detail` string, which this adapter does not
+            # read. An earlier version of this sentence named field selection
+            # alone, which told a customer holding genuinely broken JSON to go
+            # and check their column names: the same defect this branch exists
+            # to remove, pointed the other way. `dataset-integrity-fail` at the
+            # cap-35 branch already words this correctly; match it.
             reason = (
                 f"A dataset was provided and none of its {unreadable} row(s) "
-                "could be read with the selected input and expected-answer "
-                "field names - check the field selection before concluding "
-                "the data is missing."
+                "could be read - malformed lines, or missing the input or "
+                "expected-answer field. Check both before concluding the data "
+                "is missing."
             )
-            evidence = "provided, no row readable with the selected fields"
+            evidence = "provided, no row could be read"
         elif facts.dataset_supplied:
             reason = (
                 "A dataset was provided but no rows could be read from it, so "
@@ -1447,18 +1456,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     subs: list[SubScore] = []
 
     if not facts.present:
-        # Same distinction the dataset pillar draws above, and the one the
-        # evaluator pillar already learned once: `evaluator-unresolved` exists
-        # because telling a customer to CONNECT a file already in their tree is
-        # the wrong instruction. The remaining gap was the sentence used when
-        # nothing reached the score at all, which claimed the project has no
-        # evaluation method rather than that this score was not given one.
+        # Deliberately left as-is. The dataset pillar above earns its new
+        # phrasing with a new fact (`dataset_supplied`); this pillar has no
+        # equivalent, and `present=False` covers both "no evaluator reached this
+        # score" and "a path was supplied that does not exist". Rewording it to
+        # "was provided to this score" without that fact would be false in the
+        # second case - one WAS provided. Giving this pillar the same fact is a
+        # follow-up, not a free rename.
         caps.append(
             Cap(
                 "evaluator-absent",
                 40,
-                "No evaluation method was provided to this score, so no result "
-                "can be trusted yet.",
+                "No evaluation method is connected, so no result can be trusted.",
             )
         )
         subs.append(SubScore("calibration", 0.0, 40.0, True, "no evaluator"))
