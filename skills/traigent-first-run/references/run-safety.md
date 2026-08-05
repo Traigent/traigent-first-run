@@ -677,20 +677,20 @@ both, and it is derived rather than assumed.
   or any spread narrower than the stated basis, is not evidence this workload has no cost variance;
   it is the smallest possible sample of it. Use the stated basis there, and name it as the rule
   below requires.
-- **Stated basis, when nothing was measured twice.** A managed search need not evaluate the seed:
-  `max_trials` is a cap and `auto` chooses its own trials, so a round can finish without re-measuring
-  the point it was built around, and an enhanced run may repeat no configuration at all. The bar is
-  then a flat **5%** of the incumbent's cost. That is an assumption about this workload rather than a
+- **Stated basis, when nothing was measured twice - and wherever the floor above sends you.** A
+  managed search need not evaluate the seed: `max_trials` is a cap and `auto` chooses its own trials,
+  so a round can finish without re-measuring the point it was built around, and an enhanced run may
+  repeat no configuration at all. On the unmeasured route and the floored one alike, the bar is then
+  a flat **5%** of the incumbent's cost. That is an assumption about this workload rather than a
   measurement of it: run-to-run token variance on a fixed prompt set at a pinned configuration is
   single-digit percent, driven by output-length variation alone, and 5% sits inside that band rather
-  than above it. So it does not cleanly separate a saving from noise, and saying it does would be
-  the more comfortable claim rather than the true one: a 6-9% delta is inside the same acknowledged
-  band and still clears the bar. It is a deliberate trade. A bar placed above the whole band would
-  exclude that noise and would also discard the small savings the paragraph below sizes, which are
-  the ones this round exists to find - so the stated basis buys sensitivity and pays for it in
-  certainty, and what keeps that price visible is telling the user the threshold was assumed. Name
-  which of the two bases the bar came from wherever it decides an outcome; never fall back to the
-  stated one silently.
+  than above it. So it does not cleanly separate a saving from noise, and saying it does would be the
+  more comfortable claim rather than the true one: a 6-9% delta is inside the same acknowledged band
+  and still clears the bar. It is a deliberate trade. A bar placed above the whole band would exclude
+  that noise and would also discard the small savings the paragraph below sizes, which are the ones
+  this round exists to find - so the stated basis buys sensitivity and pays for it in certainty, and
+  what keeps that price visible is telling the user the threshold was assumed. Name which of the two
+  bases the bar came from wherever it decides an outcome; never fall back to the stated one silently.
 
 This is not the gate's number and must not be merged back into it. The gate asks whether cheaper
 territory exists at all, across a model ladder whose rungs differ in cost by multiples - a coarse
@@ -840,11 +840,10 @@ any claim about it quantifies over configurations the round never reached.
 > This round tested `<executed trials>` of `<total combination count>` configurations. `<n cheaper>`
 > of them cost less than the configuration you are already running: `<n scored lower>` scored lower,
 > and the other `<n inside variance>` were cheaper by too small a margin to count as a saving against
-> `<the saving bar and where it came from: the spread of one configuration this run measured twice,
-> or a stated 5% because nothing here was measured twice>`. So this round did not establish a
-> saving, and keeping the configuration you are already running is the answer it supports. A round
-> this size reaches few configurations by design; widening the search across your full dataset and
-> your own controls is what the skills named at the close are for.
+> `<the saving bar and where it came from>`. So this round did not establish a saving, and keeping
+> the configuration you are already running is the answer it supports. A round this size reaches few
+> configurations by design; widening the search across your full dataset and your own controls is
+> what the skills named at the close are for.
 
 Those two inner counts split the cheaper ones with nothing left over: reaching this outcome at all
 means every configuration counted among them either scored lower or did not clear the saving bar -

@@ -1767,6 +1767,13 @@ class SkillPackageTests(unittest.TestCase):
             "tracked spend, or conservative deduction",
             "remaining total ceiling",
             "partial/final result",
+            # The saving bar is named to the user wherever it decides an
+            # outcome, so the record has to keep WHICH basis decided this run's
+            # - a bar read as measured and a bar read as stated support
+            # different claims, and after the fact the record is the only place
+            # that distinction survives. Both readers of the bar record it.
+            "the basis it came from (measured spread, or stated)",
+            "the saving bar and its basis",
         ):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -4407,6 +4414,25 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(argument_phrase=phrase):
                 self.assertIn(phrase, docstring)
 
+        # And what the filter does NOT do. Its summary line said "cost
+        # measurably less" while the comparison below it is a strict `<`;
+        # "measurably" is this guide's own word for past the saving bar
+        # (SKILL.md sets the round's objective as "measurably lower cost"), so
+        # the one line an assistant writing the wrapper is likeliest to read
+        # said the bar was already inside. It cannot move inside: the null
+        # outcome's `<n inside variance>` count IS the cheaper-and-not-worse
+        # trials that failed the bar, so they have to come back from here for
+        # that copy to be writable at all.
+        self.assertIn("cost strictly less", docstring)
+        self.assertIn("the caller applies the saving bar", docstring)
+        self.assertNotIn(
+            "cost measurably less",
+            docstring,
+            "`measurably` is this guide's word for past the saving bar, and "
+            "this filter's comparison is a bare strict `<` - the bar is the "
+            "caller's, applied over what this returns",
+        )
+
         # WHY the free check must pass its own incumbent's configuration. A
         # review reverted this to "the free check passes nothing, because the
         # strict `<` below already excludes the incumbent" - which restores a
@@ -4614,8 +4640,15 @@ class SkillPackageTests(unittest.TestCase):
             "a directly observed sample of this workload's run-to-run cost "
             "variance, and that spread is the bar",
             "take the widest such spread when a run offers more than one",
-            # ...and it degrades honestly rather than silently
-            "**stated basis, when nothing was measured twice.**",
+            # ...and it degrades honestly rather than silently. The heading
+            # also has to admit the FLOORED path, or a reader who was just
+            # routed here by the floor reads a condition that excludes them
+            # and is left with the zero spread - back through the fix to the
+            # hole it closed.
+            "**stated basis, when nothing was measured twice - and wherever "
+            "the floor above sends you.**",
+            "on the unmeasured route and the floored one alike, the bar is "
+            "then a flat",
             "`max_trials` is a cap and `auto` chooses its own trials",
             "an assumption about this workload rather than a measurement of it",
             "name which of the two bases the bar came from wherever it decides "
@@ -4807,18 +4840,19 @@ class SkillPackageTests(unittest.TestCase):
             quoted,
         )
 
-        # The null slot names the stated fallback by figure, which is a second
-        # home for a number decided once above. Bind them, so an edit to the
-        # bar cannot leave the customer copy quoting the old one.
-        section = safety.split("### the saving bar", 1)[1].split(
-            "### run the free check first", 1
-        )[0]
-        stated = re.findall(r"the bar is then a flat \*\*(\d+)%\*\*", section)
-        self.assertEqual(len(stated), 1)
-        self.assertIn(
-            f"or a stated {stated[0]}% because nothing here was measured twice",
-            quoted,
-        )
+        # Both slots are the same short noun slot, and neither carries a
+        # rationale of its own. The null slot used to append one - "or a
+        # stated 5% because nothing here was measured twice" - and the floor
+        # made it false about the customer's own run: on that path a
+        # configuration WAS measured twice and the bar is still the stated 5%.
+        # It was also a second home for the figure, an asymmetry with outcome
+        # 1's slot, and the one placeholder in the package a customer could
+        # paste verbatim as a sentence. The tying sentence above already sends
+        # both slots to the single definition, which states all three
+        # provenances.
+        self.assertIn("`<the saving bar and where it came from>`", quoted)
+        self.assertNotIn("`<the saving bar and where it came from:", quoted)
+        self.assertNotIn("because nothing here was measured twice", quoted)
 
     def test_the_round_is_pre_disclosed_in_the_connected_approval(self) -> None:
         """Three paid approvals, and the third lands at peak fatigue.
@@ -5097,8 +5131,10 @@ class SkillPackageTests(unittest.TestCase):
             # used to state in the MEASURED basis's vocabulary while the stated
             # basis was reachable. On that path no two runs of one unchanged
             # configuration exist, so the sentence asserted a measurement the
-            # round had not made. The slot carries the basis instead.
-            "`<the saving bar and where it came from:",
+            # round had not made. The slot carries the basis instead - as a
+            # bare noun slot, like outcome 1's, with the naming rule left in
+            # `### the saving bar` where it is decided once.
+            "`<the saving bar and where it came from>`",
         ):
             with self.subTest(placeholder=placeholder):
                 self.assertIn(placeholder, copy)
@@ -5111,8 +5147,7 @@ class SkillPackageTests(unittest.TestCase):
             "`<n scored lower>` scored lower",
             "the other `<n inside variance>` were cheaper by too small a margin "
             "to count as a saving against `<the saving bar and where it came "
-            "from: the spread of one configuration this run measured twice, or "
-            "a stated 5% because nothing here was measured twice>`",
+            "from>`",
             "so this round did not establish a saving",
             # ...and it closes as a result the customer can act on rather than
             # trailing off at the negative. Both halves are earned: the
@@ -6115,9 +6150,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # last one was.
         #
         # It rises 1_838 for two corrections to that same bar and one honesty
-        # edit, all inside run-safety.md. The resident number above does not
-        # move at all: none of it is a mandate or an ordering decision, so
-        # SKILL.md is untouched.
+        # edit - 1_713 in run-safety.md, which owns all three, and 125 in
+        # assets/run-plan.md, which has to record the basis for the run to be
+        # auditable after the fact. The resident number above does not move at
+        # all: none of it is a mandate or an ordering decision, so SKILL.md is
+        # untouched.
         #
         # The bar had no floor. Its preferred basis is the spread between two
         # costs for ONE unchanged configuration, and nothing stopped that
@@ -6156,6 +6193,44 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Measured at 257_249. 257_500 leaves 251 bytes, inside the 228-339
         # band the last six raises settled on and clear of the one-word-edit
         # trip recorded three times above.
+        #
+        # It rises 119 more, and the direction is worth recording because the
+        # commit that caused it deletes prose. The floor above created a THIRD
+        # provenance the copy did not account for - a configuration measured
+        # twice whose spread was floored, so the bar is the stated 5% anyway -
+        # and on this guide's own recommended setup that is the normal case,
+        # not the corner: an exact-match metric pins temperature to 0, the
+        # round's space must contain the seed, and identical token counts land
+        # the spread at exactly zero. Two passages then read as false on that
+        # path. The stated-basis heading said "when nothing was measured
+        # twice", which a literal reader on the floored path takes as "not
+        # mine" - back out of the fix and into the zero spread it closed - so
+        # it now admits the floored route by name. And the null blockquote's
+        # slot carried an inline rationale ("or a stated 5% because nothing
+        # here was measured twice") that was simply untrue about that
+        # customer's own run; it is deleted, leaving the bare noun slot outcome
+        # 1 already used. run-safety.md therefore FALLS 23.
+        #
+        # The whole 142-byte rise is one docstring in sdk-execution.md, and it
+        # is the same class of defect in code. `cheaper_and_not_worse` opened
+        # "cost measurably less" while its comparison is a strict `<`;
+        # "measurably" is this guide's own word for past the saving bar
+        # (SKILL.md states the round's objective as "measurably lower cost"),
+        # so the first line told an assistant writing the wrapper that the bar
+        # was already inside the filter. It is not, and it must not be: the
+        # null outcome's `<n inside variance>` count IS the cheaper-and-not-
+        # worse trials that failed the bar, so the filter has to return them
+        # for the report to be writable. The line now says "strictly less" and
+        # names the caller as the one who applies the bar.
+        #
+        # Measured at 257_368, so the ceiling below holds and is deliberately
+        # not topped up. 132 bytes of headroom is under the 228-339 band the
+        # raises settled on and above the 73-89 one-word-edit trip, and this
+        # commit is a polish pass over a section seven reviews have now walked
+        # end to end - the next edit here should have to argue for its bytes.
+        # Read that as the ceiling's answer to a section whose last three
+        # commits were all corrections to one 40-line rule: it is not the
+        # rule's size that has been wrong, so more room is not the fix.
         budget = 257_500
         self.assertLess(
             total,

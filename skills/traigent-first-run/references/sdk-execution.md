@@ -947,7 +947,10 @@ hand, so one function serves both:
 
 ```python
 def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=()):
-    """Completed trials that scored at or above `floor` and cost measurably less.
+    """Completed trials that scored at or above `floor` and cost strictly less.
+
+    Strictly less is not yet a saving; the caller applies the saving bar
+    `references/run-safety.md` defines, over the trials this returns.
 
     `metric_name` is this run's own objective name - the key wired through
     `metric_functions`, which is `"task_success"` in this reference's worked
