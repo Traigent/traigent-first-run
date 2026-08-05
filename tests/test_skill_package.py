@@ -1018,7 +1018,10 @@ class SkillPackageTests(unittest.TestCase):
                 # internal infrastructure. A reader of a public repository
                 # should not learn which private repositories, clusters, or
                 # non-production hosts exist; each of these was published.
-                ("Traigent", "Backend"),
+                # Only what no structural rule can reach belongs here. The
+                # private repository this list used to name first is now caught
+                # by shape, so naming it bought nothing and disclosed it twice
+                # - in the deleted reports, and again in the guard against them.
                 ("demo_sql", "_spider"),
                 ("Kub", "erly"),
                 ("triagent", "-dev"),
@@ -1038,9 +1041,9 @@ class SkillPackageTests(unittest.TestCase):
         #
         # 1. Repository references are checked against an ALLOWLIST of the
         #    organisation's PUBLIC repositories. That inversion matters: the
-        #    private set is 25+ and grows whenever someone creates a repo, so a
-        #    denylist of it is stale by construction, while the public set is
-        #    small and changes rarely. Anything not on it fails closed.
+        #    private set is 47 today and grows whenever someone creates a repo,
+        #    so a denylist of it is stale by construction, while the public set
+        #    is 6 and changes rarely. Anything not on it fails closed.
         # 2. A bare UUID is never customer guidance. Every one that shipped was
         #    a real session or experiment identifier from a production run.
         public_repos = {
@@ -1051,23 +1054,60 @@ class SkillPackageTests(unittest.TestCase):
             "tvl",
             "traigentschema",
         }
-        # Case-SENSITIVE, and deliberately so. The organisation is `Traigent/`
-        # with a capital T; the SDK's Python package path is lowercase
+        # Case-INSENSITIVE, because GitHub owner segments are: a URL written
+        # `github.com/traigent/<repo>` resolves to exactly the same repository
+        # as `Traigent/<repo>`, and the lowercase form is what people actually
+        # type into a URL. (This comment cannot spell the leak out with a real
+        # example, because the guard reads its own file and would flag it -
+        # which is itself the demonstration.) An earlier revision matched
+        # case-SENSITIVELY to spare the SDK's Python package path
         # `traigent/config_generator/presets/...`, which readiness.py cites
-        # legitimately. Matching case-insensitively flagged that citation as a
-        # private repository - a false red on correct content, which is how a
-        # guard teaches people to route around it.
+        # legitimately - but that bought one false red back at the cost of
+        # opening the entire class: every private repository passed when the
+        # organisation was written in lowercase.
+        # The discriminator is structural instead of orthographic. A package
+        # path continues into a further segment (`traigent/config_generator/`),
+        # while a repository reference ends there - unless it is a github.com
+        # URL, where a trailing slash leads to `/blob/...` rather than into a
+        # package. So: a trailing slash means "package path" only when no host
+        # precedes it.
         # Kept separate from public_repos on purpose: these are not
         # repositories at all, they are slash-joined product phrases ("the
         # Traigent/LiteLLM import path"). Calling them public would be a
         # different claim from calling them not-a-repo, and the distinction is
         # what stops this exception quietly widening.
         not_repositories = {"litellm"}
-        repo_reference = re.compile(r"Traigent/([A-Za-z0-9._-]+)")
+        repo_reference = re.compile(
+            r"(?P<host>github\.com/)?traigent/(?P<repo>[A-Za-z0-9._-]+)(?P<tail>/)?",
+            re.IGNORECASE,
+        )
         uuid_reference = re.compile(
             r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
             re.IGNORECASE,
         )
+        # A private repository named WITHOUT the `Traigent/` prefix - the bare
+        # CamelCase form, in prose or in a filename - is invisible to the rule
+        # above, which needs the organisation segment to anchor on. The
+        # obvious repair is to add all 47 private names to `forbidden`, and it
+        # is the wrong one: this file is published, so every name added to it
+        # is itself disclosed, and a denylist of a set that grows weekly is
+        # stale the moment someone creates a repo.
+        # So match the SHAPE instead. Internal repositories are `Traigent` +
+        # CamelCase; the public ones that share it are already in the allowlist
+        # and are checked against it, so this needs to know nothing secret to
+        # fail closed on a name nobody has seen yet.
+        internal_repo_shape = re.compile(r"\bTraigent[A-Z][A-Za-z0-9]*")
+        # The two canonical documentation placeholders (RFC 9562 nil and max).
+        # A guide that documents experiment and session identifiers has to be
+        # able to show the shape of one, and a guard that answers "you leaked a
+        # production identifier" to the nil UUID is wrong in the way that
+        # teaches an author to route around it. Only these two literals are
+        # exempt - there is deliberately no `example-` prefix escape, because
+        # that would let a real identifier through behind a marker.
+        uuid_placeholders = {
+            "00000000-0000-0000-0000-000000000000",
+            "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        }
         # The file list comes from git, not a filesystem walk. `harness.py`
         # already learned this: a walk needs a hand-maintained list of what to
         # skip, and that list can only ever name the droppings someone already
@@ -1087,6 +1127,60 @@ class SkillPackageTests(unittest.TestCase):
             raise RuntimeError(
                 f"could not list tracked files from git: {listed.stderr.strip()}"
             )
+
+        def scan(text: str, where: str) -> list[str]:
+            """Every rule, over one string - a filename as readily as a body.
+
+            The rules used to be split by accident rather than by intent: the
+            token denylist ran over both, while the repository and UUID rules
+            ran over file CONTENTS only. That made a leak in a *filename*
+            invisible to them by construction, which is the same shape of
+            omission this test exists to close - and two of the three reports
+            this pull request deletes leaked through their names as much as
+            their bodies.
+            """
+            found: list[str] = []
+            lowered = text.casefold()
+            for token in forbidden:
+                if token.casefold() in lowered:
+                    found.append(f"{where}: {token!r}")
+            for match in repo_reference.finditer(text):
+                if match.group("tail") and not match.group("host"):
+                    continue  # a package path continuing on, not a repository
+                # `foo.git` and a sentence-final `foo.` are the same repository
+                # as `foo`. Without this, the canonical clone URL of a PUBLIC
+                # repo fails the check, and the failure message invites the
+                # author to "fix" it by adding `traigent-first-run.git` to the
+                # allowlist - which is how an allowlist fills up with junk.
+                repo = match.group("repo").rstrip(".")
+                if repo.casefold().endswith(".git"):
+                    repo = repo[: -len(".git")]
+                # `Traigent/LiteLLM` and similar prose are not repositories;
+                # only flag a name that is not a known public repo AND looks
+                # like one of ours.
+                if repo.casefold() in not_repositories:
+                    continue
+                if repo.casefold() not in public_repos:
+                    found.append(
+                        f"{where}: names a non-public repository {repo!r} "
+                        "(add it to public_repos only if it really is public)"
+                    )
+            for camel in internal_repo_shape.findall(text):
+                if camel.casefold() in public_repos:
+                    continue
+                found.append(
+                    f"{where}: names a non-public repository {camel!r} "
+                    "(add it to public_repos only if it really is public)"
+                )
+            for match in uuid_reference.finditer(text):
+                if match.group(0).casefold() in uuid_placeholders:
+                    continue
+                found.append(
+                    f"{where}: contains a bare UUID - every one that has "
+                    "shipped was a real session or experiment identifier"
+                )
+            return found
+
         offenders: list[str] = []
         for name in listed.stdout.split("\0"):
             if not name:
@@ -1095,34 +1189,12 @@ class SkillPackageTests(unittest.TestCase):
             # The PATH is checked before the contents, and unconditionally: a
             # file that cannot be decoded still has a name, and a name is
             # published in the tree listing whether or not anyone opens it.
-            lowered_name = name.casefold()
-            for token in forbidden:
-                if token.casefold() in lowered_name:
-                    offenders.append(f"{name} (in the filename): {token!r}")
+            offenders.extend(scan(name, f"{name} (in the filename)"))
             try:
                 raw = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue  # binary or deleted-but-tracked; no prose to leak
-            text = raw.casefold()
-            for token in forbidden:
-                if token.casefold() in text:
-                    offenders.append(f"{name}: {token!r}")
-            for repo in repo_reference.findall(raw):
-                # `Traigent/LiteLLM` and similar prose are not repositories;
-                # only flag a name that is not a known public repo AND looks
-                # like one of ours.
-                if repo.casefold() in not_repositories:
-                    continue
-                if repo.casefold() not in public_repos:
-                    offenders.append(
-                        f"{name}: names a non-public repository {repo!r} "
-                        "(add it to public_repos only if it really is public)"
-                    )
-            if uuid_reference.search(raw):
-                offenders.append(
-                    f"{name}: contains a bare UUID - every one that has shipped "
-                    "was a real session or experiment identifier"
-                )
+            offenders.extend(scan(raw, name))
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
