@@ -1023,8 +1023,50 @@ class SkillPackageTests(unittest.TestCase):
                 ("Kub", "erly"),
                 ("triagent", "-dev"),
                 ("traigent-", "prod-eks"),
-                ("portal-", "dev.traigent.ai"),
+                # Shortened deliberately: the deleted reports named the
+                # non-production host six times WITHOUT its domain, so a token
+                # carrying the full FQDN would have missed every one of them.
+                # (Written as a fragment for the same reason as the rest - an
+                # explanatory comment spelling it out is itself the leak, which
+                # this guard caught me doing.)
+                ("portal-", "dev"),
             )
+        )
+        # A denylist only ever knows what already leaked. Two structural rules
+        # cover the classes instead, so the next name nobody has thought of is
+        # caught the first time rather than after the incident.
+        #
+        # 1. Repository references are checked against an ALLOWLIST of the
+        #    organisation's PUBLIC repositories. That inversion matters: the
+        #    private set is 25+ and grows whenever someone creates a repo, so a
+        #    denylist of it is stale by construction, while the public set is
+        #    small and changes rarely. Anything not on it fails closed.
+        # 2. A bare UUID is never customer guidance. Every one that shipped was
+        #    a real session or experiment identifier from a production run.
+        public_repos = {
+            "traigent",
+            "traigent-first-run",
+            "traigent-web",
+            "traigent-skills",
+            "tvl",
+            "traigentschema",
+        }
+        # Case-SENSITIVE, and deliberately so. The organisation is `Traigent/`
+        # with a capital T; the SDK's Python package path is lowercase
+        # `traigent/config_generator/presets/...`, which readiness.py cites
+        # legitimately. Matching case-insensitively flagged that citation as a
+        # private repository - a false red on correct content, which is how a
+        # guard teaches people to route around it.
+        # Kept separate from public_repos on purpose: these are not
+        # repositories at all, they are slash-joined product phrases ("the
+        # Traigent/LiteLLM import path"). Calling them public would be a
+        # different claim from calling them not-a-repo, and the distinction is
+        # what stops this exception quietly widening.
+        not_repositories = {"litellm"}
+        repo_reference = re.compile(r"Traigent/([A-Za-z0-9._-]+)")
+        uuid_reference = re.compile(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+            re.IGNORECASE,
         )
         # The file list comes from git, not a filesystem walk. `harness.py`
         # already learned this: a walk needs a hand-maintained list of what to
@@ -1058,12 +1100,29 @@ class SkillPackageTests(unittest.TestCase):
                 if token.casefold() in lowered_name:
                     offenders.append(f"{name} (in the filename): {token!r}")
             try:
-                text = path.read_text(encoding="utf-8").casefold()
+                raw = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue  # binary or deleted-but-tracked; no prose to leak
+            text = raw.casefold()
             for token in forbidden:
                 if token.casefold() in text:
                     offenders.append(f"{name}: {token!r}")
+            for repo in repo_reference.findall(raw):
+                # `Traigent/LiteLLM` and similar prose are not repositories;
+                # only flag a name that is not a known public repo AND looks
+                # like one of ours.
+                if repo.casefold() in not_repositories:
+                    continue
+                if repo.casefold() not in public_repos:
+                    offenders.append(
+                        f"{name}: names a non-public repository {repo!r} "
+                        "(add it to public_repos only if it really is public)"
+                    )
+            if uuid_reference.search(raw):
+                offenders.append(
+                    f"{name}: contains a bare UUID - every one that has shipped "
+                    "was a real session or experiment identifier"
+                )
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
@@ -2694,7 +2753,7 @@ class SkillPackageTests(unittest.TestCase):
             "the confirmation code and the access code are credentials",
             "never ask the user to paste either one into chat",
             "never repeat one back",
-            # The link must stay credential-free — see #2463.
+            # The link must stay credential-free.
             "carries no credential",
             "the registration address itself is not a credential",
         ):
