@@ -25,7 +25,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_TIMEOUT_SECONDS = 30
+# Five minutes, not thirty seconds. The point of calibration is to learn whether
+# the user's evaluator can tell a right answer from a wrong one, and thirty
+# seconds answers that only for evaluators that were never in doubt. An
+# evaluator that takes a minute per pass - a local model, a heavy normalisation,
+# a network lookup - was being killed before it could report, and "we stopped
+# it" was then scored as "we could not verify it". Letting it finish is the
+# whole job; a slow evaluator is a cost signal, not a broken one.
+#
+# The judge budget below is separate and already derived from the probe count,
+# so this governs the deterministic path. Five minutes is long enough for any
+# evaluator a first run should be waiting on, and short enough to be a stop
+# rather than a hang - and the guide now says what the stage is doing and
+# roughly how long before it starts, so the wait is disclosed rather than silent.
+DEFAULT_TIMEOUT_SECONDS = 300
 # An LLM judge does not leave the process once - it makes four probe calls per
 # case, and a reasoning model can think for a minute or more on each. A
 # deterministic scorer's 30 seconds reported a *working* judge as timed out,

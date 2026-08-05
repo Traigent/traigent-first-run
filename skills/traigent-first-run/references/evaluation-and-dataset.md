@@ -427,6 +427,22 @@ the user asks for it.
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
+## When calibration runs long
+
+Say what the stage does and roughly how long before it starts: it runs the user's evaluator over a
+few known-good and known-bad answers to prove it separates them. For a judge that is a model call
+per probe, so give a minute-scale estimate rather than silence. Finishing matters more than
+finishing fast - an evaluator nobody could measure makes every later number unverifiable.
+
+If a specific avoidable cause is visible - a per-call sleep, a retry loop, an uncached model load -
+name that fix in the readiness summary, and again at the close if it was not taken.
+
+On a timeout do not call the evaluator broken. Ask once, offering only what applies: wait, because
+it is normally this slow; take a named fix, when the cause is certain; score with a different judge
+model or a deterministic comparison where the task allows one; retry, since a stuck vendor looks
+identical from here; or build a new evaluation method together. Ask once, not per option - repeated
+questions cost more attention than the wait they save.
+
 ## First-run subset for a large dataset
 
 A first run has to show the capability, not exhaust the dataset. Above roughly 100 usable rows,

@@ -4622,7 +4622,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        # Raised by the calibration-timeout fix. Two things bought, both new
+        # contract surface with no prior statement: what the assistant tells the
+        # user before a stage that can take minutes, and what it does when that
+        # stage times out - previously nothing, so a slow evaluator was reported
+        # as an unverifiable one and the run stopped there.
+        #
+        # The depth sits in the evaluation reference, which owns this stage, and
+        # SKILL.md took one sentence, so RESIDENT moves 213 bytes while TOTAL
+        # moves 953. Measured, not rounded.
+        budget = 229_704
         self.assertLess(
             total,
             budget,
