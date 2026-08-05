@@ -131,7 +131,7 @@ At the secret-entry gate, show only the URL needed for the selected service:
 These account/key links are necessary actions, not educational detours. Do not show every provider
 link; show only the selected provider and Traigent when each key becomes necessary.
 
-A first-time user reaches that key page one way. They start at the Traigent site and submit their
+A first-time user reaches that key page one way. They start at `https://traigent.ai` and submit their
 email address, and Traigent sends a six-digit confirmation code that proves the mailbox and expires
 within minutes. Once they enter it, a second email arrives carrying a single-use access code, valid
 for 10 days, that authorizes one portal registration. The registration link in that same email is
@@ -173,7 +173,7 @@ thing they need or not. Ask which one applies; do not infer it from how far alon
 
 Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
 user in. Never hand the registration address to someone who does not have one yet - that page will
-refuse them, and the fix is to start at the Traigent site, not to retry the link.
+refuse them, and the fix is to start at `https://traigent.ai`, not to retry the link.
 
 The confirmation code and the access code are credentials, not navigation. The first proves the
 mailbox and the second authorizes creating an account, so never ask the user to paste either one

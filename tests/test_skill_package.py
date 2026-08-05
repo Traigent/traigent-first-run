@@ -171,6 +171,16 @@ class SkillPackageTests(unittest.TestCase):
         for url in urls:
             host = url.split("/", 3)[2]
             self.assertIn(host, allowed_hosts)
+            # Host granularity is enough for the provider links, and not enough
+            # for this one: `traigent.ai/register` is a page that does not exist
+            # and is the exact shape run-safety forbids handing to a user with
+            # no access code. The public site is only ever given bare.
+            if host == "traigent.ai":
+                self.assertEqual(
+                    url.rstrip(").,"),
+                    "https://traigent.ai",
+                    "the public site is handed over bare, never with a path",
+                )
 
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
         skill_text = SKILL.read_text().casefold()
