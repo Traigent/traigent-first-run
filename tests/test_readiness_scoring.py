@@ -2130,10 +2130,22 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         """
         coarse = MODULE.power_ceiling(15)
         self.assertFalse(coarse.blocks)
-        # Too few to measure anything IS a stop: there is nothing to compare.
-        self.assertTrue(MODULE.power_ceiling(3).blocks)
         # And the ceiling still binds even though it does not block.
         self.assertEqual(coarse.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
+        # Its smaller twin used to block, and the line asserting that read
+        # "too few to measure anything IS a stop: there is nothing to compare".
+        # That is true of one of the two states this cap covers and false of the
+        # other, and the cap already wrote them as two different reasons. Three
+        # comparable examples is the wiring check the guide sanctions -
+        # preflight WARNs rather than FAILs at that size and SKILL.md routes it
+        # to "call rankings exploratory" - and the cap's own closing sentence,
+        # "treat any difference as a hint, not a result", is advice for a run
+        # that happens. Zero scoreable examples is the stop the old line
+        # described, and it keeps blocking.
+        small = MODULE.power_ceiling(3)
+        self.assertFalse(small.blocks)
+        self.assertEqual(small.ceiling, MODULE.WIRING_CHECK_CEILING)
+        self.assertTrue(MODULE.power_ceiling(0).blocks)
 
     def test_an_absent_settings_document_bounds_the_score_without_blocking(
         self,
@@ -2188,6 +2200,30 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertTrue(caps[0].blocks)
         self.assertEqual(score.status, "BLOCKED")
         self.assertEqual(score.recommended_action, "vary-knobs")
+
+    def test_the_absent_document_lines_are_true_at_both_gates(self) -> None:
+        """Both spellings of one fact, not just the one that was fixed.
+
+        The cap reason was made tense-neutral because this branch is reached at
+        the CLOSE too - SKILL.md passes `--config-space` only when the enhanced
+        search emitted one, so a stopped, failed, or zero-trial search lands
+        here, and this module cannot tell that apart from the opening gate. The
+        pillar evidence printed beside it kept saying "yet", which is the same
+        claim that the search has not happened, in the line the card actually
+        renders as the agent pillar's only row.
+
+        Asserted over the word rather than the sentence: a reason string test
+        pins wording, and this pins the one thing that cannot be true at both
+        gates. `not yet measured` elsewhere in the file is untouched - that is a
+        different check and a different claim.
+        """
+        pillar, caps, _ = MODULE.score_agent(MODULE.AgentFacts())
+        lines = [sub.evidence for sub in pillar.subscores] + [caps[0].reason]
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertNotIn(" yet", line)
+        # Still one fact, so the card still collapses it to one row.
+        self.assertEqual(len(set(sub.evidence for sub in pillar.subscores)), 1)
 
     def test_every_other_no_knob_state_still_blocks_the_run(self) -> None:
         """Only the absent document was reclassified - the other three were not.
@@ -2351,7 +2387,11 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertIn("LIMITED TO 89", advisory)
         self.assertNotIn("BLOCKED", advisory)
 
-        blocking = rendered(MODULE.power_ceiling(3))
+        # `power_ceiling(0)`, not `(3)`: three comparable examples is a wiring
+        # check, which is a run the guide sanctions, so that cap is advisory
+        # now. Zero scoreable examples is the state that still blocks - there is
+        # nothing to compare, so there is no result for a ceiling to bound.
+        blocking = rendered(MODULE.power_ceiling(0))
         self.assertIn("PAID RUN BLOCKED", blocking)
         self.assertIn("FIX BEFORE PAID RUN", blocking)
         self.assertNotIn("LIMITED TO", blocking)
@@ -2437,6 +2477,207 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_an_unknown_size_is_not_capped(self) -> None:
         """No size reported is not the same claim as a small size."""
         self.assertIsNone(MODULE.power_ceiling(None))
+
+
+def _clean_dataset(**overrides: object) -> "MODULE.DatasetFacts":
+    """A dataset with nothing wrong with it, minus whatever a test changes.
+
+    Built once because the point of these tests is what ONE difference does, and
+    a fact set assembled per test drifts into carrying two.
+    """
+    facts = dict(
+        exists=True,
+        rows=240,
+        labelled_rows=240,
+        tuning_rows=120,
+        holdout_rows=120,
+        tuning_labelled_rows=120,
+        holdout_labelled_rows=120,
+        difficulty_bands=("easy", "medium", "hard", "very-hard"),
+        difficulty_tagged_rows=240,
+        duplicate_status="PASS",
+        near_duplicate_status="PASS",
+        collected_rows=240,
+        answerable_rows=240,
+        sources=("production-support-desk",),
+    )
+    facts.update(overrides)
+    return MODULE.DatasetFacts(**facts)
+
+
+class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
+    """The sibling of the `agent-no-varying-knobs` routing fix, one cap over.
+
+    `blocks` answers "does this stop the run", not "is this true", and SKILL.md
+    already decides which a condition is: it routes every cap by id, and a route
+    asking for a creation or repair is a stop while a route that only scopes
+    what the result may claim is a ceiling. Four conditions were reading their
+    route wrongly.
+
+    The one that made it visible is the guide's own finish line.
+    `tests/behavioral/scenarios/partial-missing-dataset` is a real agent, a real
+    evaluator, a walkthrough dataset this guide writes for a user who has none,
+    and `closing_beats_opening: true` - the designed success. It closed on
+    "65/100 WORKABLE (PAID RUN BLOCKED)" with `recommended_action:
+    connect-real-data`, demanding real data from the one user who by
+    construction has none.
+
+    Nothing here relaxes a ceiling. 65, 70, 74 and 75 still bind, still print,
+    and still hold the score down; what goes away is the stop and the repair.
+    """
+
+    def _score(self, facts: "MODULE.DatasetFacts") -> "MODULE.ReadinessScore":
+        pillar, caps = MODULE.score_dataset(facts, "normalized-exact")
+        others = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("evaluation", "agent")
+        ]
+        return MODULE.aggregate(
+            [pillar, *others], caps, (), dict(MODULE.DEFAULT_WEIGHTS)
+        )
+
+    def test_a_generated_walkthrough_dataset_is_bounded_not_blocked(self) -> None:
+        score = self._score(
+            _clean_dataset(
+                collected_rows=0, synthesised_rows=240, sources=("synthetic",)
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.blocks) for cap in score.caps],
+            [("dataset-fully-synthetic", False)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "proceed")
+        # The ceiling is the whole point and is untouched.
+        self.assertEqual(score.overall, MODULE.FULLY_SYNTHETIC_CEILING)
+        self.assertLess(score.overall, score.weighted_average)
+
+    def test_a_mostly_generated_dataset_is_bounded_not_blocked(self) -> None:
+        score = self._score(
+            _clean_dataset(
+                collected_rows=96,
+                synthesised_rows=144,
+                sources=("production", "synthetic"),
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.blocks) for cap in score.caps],
+            [("dataset-mostly-synthetic", False)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "proceed")
+        self.assertEqual(score.overall, MODULE.MOSTLY_SYNTHETIC_CEILING)
+
+    def test_a_model_written_answer_key_is_bounded_not_blocked(self) -> None:
+        score = self._score(_clean_dataset(generated_answer_rows=240))
+        self.assertEqual(
+            [(cap.condition, cap.blocks) for cap in score.caps],
+            [("dataset-generated-answer-key", False)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "proceed")
+        self.assertEqual(score.overall, MODULE.GENERATED_ANSWER_KEY_CEILING)
+
+    def test_a_wiring_check_sized_dataset_is_bounded_not_blocked(self) -> None:
+        score = self._score(
+            _clean_dataset(
+                rows=18,
+                labelled_rows=18,
+                tuning_rows=9,
+                holdout_rows=9,
+                tuning_labelled_rows=9,
+                holdout_labelled_rows=9,
+                collected_rows=18,
+                answerable_rows=18,
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.blocks) for cap in score.caps],
+            [("dataset-below-measurable-size", False)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "proceed")
+        self.assertEqual(score.overall, MODULE.WIRING_CHECK_CEILING)
+
+    def test_a_split_with_nothing_scoreable_still_blocks(self) -> None:
+        """The state the old flat `blocks=True` was actually right about.
+
+        Every label on one side of a declared split: the aggregate count is
+        non-zero so `dataset-no-expected-outputs` does not fire, and nothing can
+        be compared. No other cap stops this, so this one must.
+        """
+        score = self._score(_clean_dataset(labelled_rows=120, tuning_labelled_rows=0))
+        self.assertEqual(
+            [(cap.condition, cap.blocks) for cap in score.caps],
+            [("dataset-below-measurable-size", True)],
+        )
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "get-data")
+
+    def test_a_condition_asking_for_a_creation_or_repair_still_blocks(self) -> None:
+        """The other half of the rule, so this is a partition and not a purge.
+
+        Each route is quoted from SKILL.md's own cap-routing list, which is
+        what decides the classification.
+        """
+        for condition, action, facts in (
+            # "enter the creation dependency matrix"
+            ("dataset-absent", "get-data", _clean_dataset(exists=False, rows=None)),
+            # "recommend repairing a labelled working copy"
+            (
+                "dataset-no-expected-outputs",
+                "label-data",
+                _clean_dataset(
+                    labelled_rows=0, tuning_labelled_rows=0, holdout_labelled_rows=0
+                ),
+            ),
+            # "repair a disjoint split"
+            (
+                "dataset-tune-holdout-overlap",
+                "resplit-dataset",
+                _clean_dataset(split_overlap=True),
+            ),
+            # "repair and revalidate a working copy"
+            (
+                "dataset-integrity-fail",
+                "repair-dataset",
+                _clean_dataset(integrity_failed=True),
+            ),
+        ):
+            with self.subTest(condition=condition):
+                score = self._score(facts)
+                blocking = [cap for cap in score.caps if cap.blocks]
+                self.assertIn(condition, [cap.condition for cap in blocking])
+                self.assertEqual(score.status, "BLOCKED")
+                self.assertEqual(score.recommended_action, action)
+
+    def test_a_bounded_dataset_is_not_handed_a_repair_to_make(self) -> None:
+        """The durable report, which outlives the terminal the card printed to.
+
+        `action_kind` is keyed by condition, so it survives on every cap in
+        `--json` for a machine; what may not appear is the word "fix" over a
+        state nothing is wrong with.
+        """
+        for facts in (
+            _clean_dataset(
+                collected_rows=0, synthesised_rows=240, sources=("synthetic",)
+            ),
+            _clean_dataset(generated_answer_rows=240),
+        ):
+            score = self._score(facts)
+            with self.subTest(cap=score.caps[0].condition):
+                report = MODULE.render_markdown(score)
+                self.assertIn(score.caps[0].condition, report)
+                self.assertNotIn("fix: `", report)
+                self.assertNotIn(
+                    "What is blocking a trustworthy result",
+                    report,
+                )
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                self.assertNotIn("PAID RUN BLOCKED", card)
+                self.assertIn(f"LIMITED TO {score.overall}", card)
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
@@ -2937,21 +3178,21 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
                     0.0,
                     25.0,
                     False,
-                    "no settings document was provided to this score yet",
+                    "no settings document was provided to this score",
                 ),
                 MODULE.SubScore(
                     "knob-count",
                     0.0,
                     35.0,
                     True,
-                    "no settings document was provided to this score yet",
+                    "no settings document was provided to this score",
                 ),
                 MODULE.SubScore(
                     "variation",
                     0.0,
                     40.0,
                     False,
-                    "no settings document was provided to this score yet",
+                    "no settings document was provided to this score",
                 ),
             ),
         )
@@ -2961,7 +3202,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             unicode_ok=False,
         )
         self.assertEqual(
-            card.count("no settings document was provided to this score yet"), 1
+            card.count("no settings document was provided to this score"), 1
         )
 
     def test_a_single_check_keeps_its_label(self) -> None:

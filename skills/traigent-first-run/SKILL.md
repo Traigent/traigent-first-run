@@ -356,7 +356,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 remedy. Present reasons in user language; keep machine vocabulary and condition ids internal.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
-rather than the condition id:
+rather than the condition id. A route asking for a creation or repair blocks the run; one that only
+scopes what the result may claim is an advisory ceiling, never a repair to route:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
@@ -377,7 +378,9 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `agent-no-varying-knobs` is an advisory ceiling, never a repair to route: before
+create or select; `evaluator-timeout` means calibration ran and did not finish, so nothing about
+this evaluator is established and a paid run would buy the same wait per row - raise the budget,
+bound the evaluator's cost, or replace it, then re-calibrate before any paid work. `agent-no-varying-knobs` is an advisory ceiling, never a repair to route: before
 the enhanced run there is no document to score, and afterwards a missing one is that run's own
 outcome to report, not a defect in the project. After any repair or substitute creation, re-run the
 affected checks, the applicable calibration, and the score, then update the latest recorded result

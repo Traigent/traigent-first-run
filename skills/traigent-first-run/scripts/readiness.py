@@ -399,6 +399,22 @@ class Cap:
     # bounded. Conflating them marked a healthy 30-row dataset BLOCKED and told
     # the assistant not to proceed with a run that was worth doing - against the
     # guide's own rule that a low score never stops the walkthrough.
+    #
+    # Which one a condition is, is not decided here case by case. SKILL.md
+    # routes every cap by id, and the route already answers the question:
+    #
+    #   route asks for a creation or a repair   -> blocks (the run waits)
+    #   route scopes what the RESULT may claim  -> advisory (the run proceeds)
+    #
+    # Read off that table, `dataset-absent` ("enter the creation dependency
+    # matrix"), `dataset-no-expected-outputs`, `dataset-integrity-fail` and
+    # `dataset-tune-holdout-overlap` ("repair a disjoint split") block, and the
+    # three evaluator conditions block through the invalid-evaluator paragraph -
+    # "do not run paid optimization against it". The synthetic-provenance,
+    # generated-answer-key and small-sample conditions do not: their routes are
+    # "apply the walkthrough labeling rules", "scope the claim", "before a
+    # correctness claim", and "call rankings exploratory". Those are sentences
+    # about the claim, and a ceiling is how this module says them.
     blocks: bool = True
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -905,6 +921,22 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
                 if effective_n
                 else "no example can be scored, so nothing can be compared."
             ),
+            # The two reasons above are two different findings, and only one of
+            # them stops anything. With examples to compare on, this is the
+            # wiring check the guide itself sanctions - preflight WARNs rather
+            # than FAILs at this size, `size_points` calls it "a wiring check,
+            # not a score", and SKILL.md routes it to "call rankings
+            # exploratory, not stable comparisons". Blocking contradicted the
+            # cap's own last sentence on the same card: "treat any difference
+            # as a hint, not a result" is advice for a run that happens.
+            # Its 89-ceiling twin below already had this right.
+            #
+            # Zero scoreable examples is the other finding, and it keeps
+            # blocking: nothing can be compared at all, so there is no result
+            # to bound. That state is reachable with the aggregate label count
+            # non-zero - every label on one side of a declared split - where no
+            # other cap fires to stop it.
+            blocks=effective_n == 0,
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
@@ -963,6 +995,43 @@ GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a mod
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
+# All three are advisory, by the rule on `Cap.blocks`: SKILL.md routes them to
+# "apply the walkthrough labeling rules", "scope the claim" and "before a
+# correctness claim" - sentences about what the result may say, not repairs the
+# run waits on. Blocking made the guide contradict itself at its own finish
+# line. Generated data is what the guide CREATES for a user who has none, so
+# `tests/behavioral/scenarios/partial-missing-dataset` - real agent, real
+# evaluator, an 18-row walkthrough dataset this guide wrote, and
+# `closing_beats_opening: true` - closed on "65/100 WORKABLE (PAID RUN
+# BLOCKED)" and "fix: connect-real-data", demanding real data from the one
+# user who by construction has none. The glossary says the opposite in so many
+# words: "synthetic data is fine for a first run but cannot prove real-world".
+#
+# The ceilings are untouched and still bind - 65, 70 and 75 are exactly how
+# "cannot prove real-world" is said in a number. `aggregate` takes the minimum
+# over all caps whatever their `blocks`.
+FULLY_SYNTHETIC_CAP = Cap(
+    "dataset-fully-synthetic",
+    FULLY_SYNTHETIC_CEILING,
+    "The dataset is generated, so a high score here measures the walkthrough, "
+    "not real-world readiness.",
+    blocks=False,
+)
+MOSTLY_SYNTHETIC_CAP = Cap(
+    "dataset-mostly-synthetic",
+    MOSTLY_SYNTHETIC_CEILING,
+    "Most of the dataset is generated, so the result mostly measures invented "
+    "examples rather than real traffic.",
+    blocks=False,
+)
+GENERATED_ANSWER_KEY_CAP = Cap(
+    "dataset-generated-answer-key",
+    GENERATED_ANSWER_KEY_CEILING,
+    "Every expected answer was written by a model, so a score measures "
+    "agreement with that model rather than correctness.",
+    blocks=False,
+)
+
 
 def _row_count(value: Any, name: str) -> int:
     """Read one provenance row count, refusing a present-but-impossible one.
@@ -1011,14 +1080,7 @@ def score_provenance(
             return (
                 SYNTHESISED_ROW_POINTS,
                 "fully generated - cannot represent production traffic",
-                [
-                    Cap(
-                        "dataset-fully-synthetic",
-                        FULLY_SYNTHETIC_CEILING,
-                        "The dataset is generated, so a high score here measures "
-                        "the walkthrough, not real-world readiness.",
-                    )
-                ],
+                [FULLY_SYNTHETIC_CAP],
             )
         if "unknown" in facts.sources or not facts.sources:
             return (
@@ -1051,25 +1113,11 @@ def score_provenance(
 
     synthesised_share = facts.synthesised_rows / counted
     if facts.synthesised_rows == counted:
-        caps.append(
-            Cap(
-                "dataset-fully-synthetic",
-                FULLY_SYNTHETIC_CEILING,
-                "The dataset is generated, so a high score here measures the "
-                "walkthrough, not real-world readiness.",
-            )
-        )
+        caps.append(FULLY_SYNTHETIC_CAP)
     elif synthesised_share > MOSTLY_SYNTHETIC_SHARE:
         # Without this the any()->all() correction would hand every mixture a
         # free pass: a 90%-generated dataset would lose its ceiling entirely.
-        caps.append(
-            Cap(
-                "dataset-mostly-synthetic",
-                MOSTLY_SYNTHETIC_CEILING,
-                "Most of the dataset is generated, so the result mostly "
-                "measures invented examples rather than real traffic.",
-            )
-        )
+        caps.append(MOSTLY_SYNTHETIC_CAP)
 
     # The expected answers are the ruler every score is measured against. When
     # all of them were written by a model, an accuracy number reports agreement
@@ -1083,14 +1131,7 @@ def score_provenance(
         >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
         and facts.synthesised_rows != counted
     ):
-        caps.append(
-            Cap(
-                "dataset-generated-answer-key",
-                GENERATED_ANSWER_KEY_CEILING,
-                "Every expected answer was written by a model, so a score "
-                "measures agreement with that model rather than correctness.",
-            )
-        )
+        caps.append(GENERATED_ANSWER_KEY_CAP)
 
     return (
         round(points, 2),
@@ -1731,7 +1772,14 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         evidence = (
             "the settings document lists no settings"
             if facts.config_space_supplied
-            else "no settings document was provided to this score yet"
+            # No "yet": the same tense bug the cap reason beside it was fixed
+            # for. This branch is also reached at the CLOSE by a stopped,
+            # failed, or zero-trial search, and there "yet" claims the search
+            # has not happened - which this module cannot know and which is
+            # false exactly when the reader has just watched one fail. Two
+            # spellings of one fact, fourteen lines apart, and only one of them
+            # was made true at both gates.
+            else "no settings document was provided to this score"
         )
         # `blocks` answers "does this stop the run", not "is this true" - the
         # comment on the field says so, and says every cap used to imply BLOCKED

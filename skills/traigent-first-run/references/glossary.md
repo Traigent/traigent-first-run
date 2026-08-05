@@ -248,19 +248,20 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
-  Some caps block because something is missing or invalid, or because there is
-  too little comparable evidence for a trustworthy paid comparison - a broken
-  evaluator, no dataset, or fewer than ten comparable examples. Others say only
-  that a small but measurable comparison set limits claim strength until the
-  completed paired outcomes support an uncertainty analysis. That limits what
-  the result may claim without saying anything is wrong with your setup.
+  Some caps block because something has to be created or repaired before a paid
+  comparison is worth making - a broken evaluator, no dataset, no expected
+  answers, nothing scoreable in the split the search would tune on. Others say
+  only that generated data, or a comparison set too small to settle a close
+  call, limits claim strength until real rows or completed paired outcomes
+  support more. That limits what the result may claim without saying anything is
+  wrong with your setup.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
   limit to" is one that only starts to matter once something lower is cleared.
   Blocked: the flag the card shows when a blocking cap fired. It does not mean
-  every component is broken; it means the current state is missing, invalid, or
-  has too little comparable evidence for a trustworthy paid comparison. A cap
+  every component is broken; it means one thing in the current state must be
+  created or repaired before a paid comparison is worth making. A cap
   that only limits the claim does not set it, because the run is still worth
   making. Either way the card names the specific thing rather than only lowering
   a number.

@@ -653,7 +653,13 @@ class SkillPackageTests(unittest.TestCase):
             "total combination count beside the ceiling",
             "number of configurations actually tested and any concrete shortfall reason",
             "cannot yet support a trustworthy paid comparison",
-            "too little comparable evidence exists",
+            # This used to pin "too little comparable evidence exists" as a
+            # meaning of PAID RUN BLOCKED. The scorer no longer blocks on a
+            # small comparison set or on generated data - both are runs the
+            # guide sanctions, and both are now ceilings - so the phrase pinned
+            # a promise the card had stopped keeping. What the README must
+            # still carry is the boundary itself, from the other side.
+            "they do not stop the run or ask you to fix anything",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
@@ -1053,10 +1059,18 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("whenever at least one cap fired", glossary)
         self.assertNotIn("only a broken grading signal", glossary)
         self.assertNotIn("something is broken, and paid work", glossary)
+        # Three phrases left this list because the code stopped doing what they
+        # said. "fewer than ten comparable examples" was named here as a reason
+        # a cap blocks; a wiring-check-sized dataset is now an advisory ceiling,
+        # so the glossary was teaching the reader a rule the card had stopped
+        # following - and a glossary is what the assistant answers the user's
+        # question from. "too little comparable evidence" and "something is
+        # missing or invalid" went with it, because both were the same claim
+        # about what Blocked means. What replaces them is the boundary itself,
+        # which is what this test was always guarding.
         for phrase in (
-            "something is missing or invalid",
-            "too little comparable evidence for a trustworthy paid comparison",
-            "fewer than ten comparable examples",
+            "created or repaired before a paid comparison is worth making",
+            "nothing scoreable in the split the search would tune on",
             "limits what the result may claim without saying anything is wrong",
             "it does not mean every component is broken",
             "a cap that only limits the claim does not set it",
@@ -3226,6 +3240,36 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{safety} {sdk}")
 
+    def test_every_condition_the_scorer_can_raise_has_a_documented_branch(
+        self,
+    ) -> None:
+        """The sibling below covers the dataset caps; nothing covered the rest.
+
+        SKILL.md's own sentence says "evaluator and agent caps route through the
+        rules that already own them" and then named three of the four evaluator
+        conditions. `evaluator-timeout` blocks the paid run and appeared nowhere
+        in the package - not in SKILL.md, not in a reference, not in the
+        glossary - while SKILL.md separately forbids showing a condition id to
+        the user. So the assistant met a stop it could not explain and could not
+        name, and a sentence claiming completeness is exactly what stops anyone
+        checking.
+
+        Read off `ACTION_FOR_CONDITION`, which is already the single home for
+        "every condition this scorer can emit" - a hand-kept list here would go
+        stale the same way the prose did.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split("route every active dataset cap", 1)[1]
+        for condition in sorted(READINESS.ACTION_FOR_CONDITION):
+            with self.subTest(condition=condition):
+                self.assertIn(
+                    condition,
+                    routing,
+                    f"{condition} can stop or bound a run and the guidance "
+                    "never names it, so the assistant has no branch to take "
+                    "and no words to say - condition ids stay internal",
+                )
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
@@ -3258,6 +3302,46 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(condition, conditions)
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
+        # And the rule that decides which routes stop the run, checked against
+        # the scorer rather than only quoted. Without it the routing list is
+        # nine branches a reader classifies one at a time, which is how four of
+        # them came to block while a fifth saying the same kind of thing did
+        # not. Deliberately paired with the module: guidance that says
+        # "advisory" over a scorer that blocks is the contradiction, not either
+        # half alone.
+        self.assertIn(
+            "a route asking for a creation or repair blocks the run; one that "
+            "only scopes what the result may claim is an advisory ceiling, "
+            "never a repair to route",
+            normalized,
+        )
+        blocking = {
+            "dataset-absent",
+            "dataset-no-expected-outputs",
+            "dataset-integrity-fail",
+            "dataset-tune-holdout-overlap",
+        }
+        scoping = {
+            "dataset-fully-synthetic",
+            "dataset-mostly-synthetic",
+            "dataset-generated-answer-key",
+            "dataset-below-measurable-size",
+            "dataset-coarse-resolution",
+        }
+        self.assertEqual(blocking | scoping, conditions)
+        for cap in (
+            value
+            for value in vars(READINESS).values()
+            if isinstance(value, READINESS.Cap)
+        ):
+            if cap.condition in scoping:
+                with self.subTest(cap=cap.condition):
+                    self.assertFalse(
+                        cap.blocks,
+                        f"SKILL.md routes {cap.condition} by scoping the claim, "
+                        "so the scorer may bound the score and may not stop the "
+                        "run or demand a repair",
+                    )
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
@@ -4551,9 +4635,40 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # discipline while spending the thing the number protects, so the
         # ceiling moves instead and says so: 397 bytes of headroom, deliberately
         # over the 371 floor rather than under it.
+        #
+        # Raised again, to 61_900, by the sibling routing fix one cap over: the
+        # dataset caps that only scope a claim - generated data, a small
+        # comparison set - were blocking the run and demanding repairs, so the
+        # guide's own walkthrough finish line read "PAID RUN BLOCKED" with
+        # "connect-real-data" for the one user who by construction has no real
+        # data. The rule that settles it belongs in SKILL.md's cap-routing
+        # paragraph, because routing is what that paragraph decides: a route
+        # asking for a creation or repair blocks, a route that only scopes the
+        # claim is a ceiling. One sentence, 152 bytes, and it retires four
+        # case-by-case judgements rather than adding a fifth. The depth behind
+        # it went to README.md, which is outside this budget by design - it is
+        # the human explanation, not an instruction the assistant carries.
+        # That sentence alone measures RESIDENT 61_505.
+        #
+        # A second sentence, 259 bytes, in the same paragraph: `evaluator-timeout`
+        # blocks the paid run, and the sentence introducing that list claims
+        # evaluator caps "route through the rules that already own them" while
+        # naming only three of the four. Nothing anywhere in the package named
+        # this condition or its remedy, and SKILL.md forbids showing a condition
+        # id to the user - so the assistant met a stop it could not explain and
+        # could not name. A blocking cap with no route is the same defect as a
+        # route the scorer contradicts, from the other end, and it is this
+        # paragraph's job either way. It is longer than the rule above because
+        # it is the whole route, not a pointer to one: what the timeout
+        # establishes (nothing), what a paid run would then buy, and the three
+        # things that clear it.
+        #
+        # RESIDENT measures 61_764, +411 over the 61_353 this branch already
+        # disclosed. 62_150 leaves 386, over the 371 floor and not banking a
+        # rounder number nobody weighed.
         self.assertLess(
             resident,
-            61_750,
+            62_150,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -4664,7 +4779,29 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # increment against the base it branched from, so a ceiling this tight
         # is one that the NEXT merge trips rather than a choice anyone made.
         # 601 bytes, deliberately over the 371 floor named above.
-        budget = 230_250
+        #
+        # The claim-scoping cap fix carries no reference depth at all: its one
+        # new sentence is the SKILL.md routing rule, already counted above.
+        # Adding a matching one to run-safety.md was considered and refused -
+        # SKILL.md already forbids marking synthetic material `✅`, requires the
+        # provenance limitation before the numbers, and forbids promoting a
+        # configuration from a fully synthetic run, so a fourth sentence saying
+        # `status: OK` is not a production verdict would be the restatement this
+        # budget exists to price. The depth that would have gone there went to
+        # README.md, which this budget deliberately excludes.
+        #
+        # glossary.md is the one reference that does move, by 15 bytes, and only
+        # because it was stating the old behaviour as fact: its `Cap` and
+        # `Blocked` entries told the reader that "fewer than ten comparable
+        # examples" blocks and that Blocked means "too little comparable
+        # evidence". Both are now false, and a glossary is what the assistant
+        # answers the user's question from. Correcting a sentence that has
+        # stopped being true is not new surface.
+        #
+        # TOTAL measures 230_075, +426 over the 229_649 base - 411 of it the
+        # SKILL.md routing paragraph and 15 the glossary correction. 230_500
+        # leaves 425, over the 371 floor.
+        budget = 230_500
         self.assertLess(
             total,
             budget,
