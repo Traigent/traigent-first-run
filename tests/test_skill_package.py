@@ -992,6 +992,15 @@ class SkillPackageTests(unittest.TestCase):
 
         Credit the mechanism ("a consumer that cross-checks the action against
         the caps") rather than the tool, and this stays true.
+
+        Two things this got wrong, both found with the leak live and this test
+        green. It matched file CONTENTS only, so an internal name in a FILENAME
+        was invisible by construction - two published reports carried one in
+        their names for their whole life. And its vocabulary covered only the
+        internal test bank, so internal INFRASTRUCTURE walked straight past it:
+        a private repository, two cluster names, an internal observability
+        stack, and a non-production portal hostname that resolves publicly.
+        Paths are checked now, and the vocabulary names both families.
         """
         # Assembled rather than written out: a literal here would be the very
         # leak this test forbids, and excluding this file instead would leave a
@@ -999,10 +1008,22 @@ class SkillPackageTests(unittest.TestCase):
         forbidden = tuple(
             a + b
             for a, b in (
+                # the internal test bank and its harness
                 ("agents-", "skills"),
                 ("fixture", " bank"),
                 ("quality-", "onboarding"),
                 ("onboarding", " fixture"),
+                ("quality-test-", "multi-agent"),
+                ("multi-agents", "-test"),
+                # internal infrastructure. A reader of a public repository
+                # should not learn which private repositories, clusters, or
+                # non-production hosts exist; each of these was published.
+                ("Traigent", "Backend"),
+                ("demo_sql", "_spider"),
+                ("Kub", "erly"),
+                ("triagent", "-dev"),
+                ("traigent-", "prod-eks"),
+                ("portal-", "dev.traigent.ai"),
             )
         )
         # The file list comes from git, not a filesystem walk. `harness.py`
@@ -1029,12 +1050,19 @@ class SkillPackageTests(unittest.TestCase):
             if not name:
                 continue
             path = ROOT / name
+            # The PATH is checked before the contents, and unconditionally: a
+            # file that cannot be decoded still has a name, and a name is
+            # published in the tree listing whether or not anyone opens it.
+            lowered_name = name.casefold()
+            for token in forbidden:
+                if token.casefold() in lowered_name:
+                    offenders.append(f"{name} (in the filename): {token!r}")
             try:
                 text = path.read_text(encoding="utf-8").casefold()
             except (UnicodeDecodeError, OSError):
                 continue  # binary or deleted-but-tracked; no prose to leak
             for token in forbidden:
-                if token in text:
+                if token.casefold() in text:
                     offenders.append(f"{name}: {token!r}")
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
@@ -2657,7 +2685,7 @@ class SkillPackageTests(unittest.TestCase):
         The registration link is deliberately excluded: it carries no credential
         (`/register?lead=1`), because a credential in a URL is logged by nginx,
         kept in browser history and forwarded in the Referer header - the leak
-        TraigentBackend #2463 exists to remove. The guide must keep saying the
+        a backend change exists to remove. The guide must keep saying the
         link is plain, so nobody "helpfully" restores a one-click redeem URL and
         reintroduces it.
         """
