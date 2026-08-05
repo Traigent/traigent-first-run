@@ -242,11 +242,11 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   repair, create, or continue as a clearly labeled walkthrough. A low number
   alone does not stop a safe walkthrough, but a blocking cap does stop paid
   optimization when the current components or evidence cannot support a
-  trustworthy comparison. One exception, and it caps every run:
-  the config-space document is withheld until the enhanced search writes it, so
-  `agent-no-varying-knobs` scores withheld evidence, not a defective project.
-  Say the search is not configured yet, do not send the user to fix knobs, and
-  do not stop - the baseline that follows resolves it.
+  trustworthy comparison. Before the enhanced search there is no
+  config-space document to score, so `agent-no-varying-knobs` is advisory there:
+  it bounds the score at 45 and stops nothing. The enhanced search writes that
+  document - the baseline does not - so a run that stops at the baseline keeps
+  the ceiling, correctly.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

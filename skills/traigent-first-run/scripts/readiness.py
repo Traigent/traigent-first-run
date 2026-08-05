@@ -1648,6 +1648,15 @@ NOTHING_WIRED_CAP = Cap(
     "nothing to search.",
 )
 
+NOT_YET_MEASURED_CAP = Cap(
+    "agent-no-varying-knobs",
+    45,
+    "No settings document has reached this score yet, so the settings the "
+    "search will vary cannot be credited. The enhanced search writes that "
+    "document; the score is bounded until it does.",
+    blocks=False,
+)
+
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
     45,
@@ -1710,7 +1719,31 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             if facts.config_space_supplied
             else "no settings document was provided to this score yet"
         )
-        return nothing_to_search_pillar(evidence), [NOTHING_WIRED_CAP], []
+        # `blocks` answers "does this stop the run", not "is this true" - the
+        # comment on the field says so, and says every cap used to imply BLOCKED
+        # back when every cap meant something was broken. Both states here are
+        # true; only one of them stops anything.
+        #
+        # A supplied document that lists nothing IS a defect: the user handed
+        # over their wiring and there is nothing in it. No document at all is
+        # not - the guide withholds one found before this run's search, so the
+        # ordinary opening state is that none reached the score, and the very
+        # next step is the baseline, which runs regardless. Reporting that as
+        # BLOCKED told every project, including a perfect one, that its paid run
+        # was stopped, and set `recommended_action` to `vary-knobs` - a repair
+        # for a defect the user does not have - on the last card shown before
+        # they are asked to pay.
+        #
+        # The ceiling is unchanged and still applies: `aggregate` takes the
+        # minimum over all caps whatever their `blocks`, so the score stays
+        # capped at 45 until wiring evidence exists. Only the claim that the run
+        # is stopped goes away.
+        cap = (
+            NOTHING_WIRED_CAP
+            if facts.config_space_supplied
+            else NOT_YET_MEASURED_CAP
+        )
+        return nothing_to_search_pillar(evidence), [cap], []
 
     if facts.wired is None:
         # Declared knobs, unattested wiring. The document lists controls but
