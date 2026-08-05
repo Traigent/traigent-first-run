@@ -502,8 +502,8 @@ feature, so that claim would not be true. Do not call a gap in this range "overf
 name it for what it is, the ordinary result of picking the best of several configurations on a
 small sample, and say plainly that ten examples cannot tell how much of it is real. Growing the
 holdout past the default ten rows, and giving Traigent real holdout support instead of this
-guide-authored split, are tracked in `traigent-first-run#141`; name that issue from the disclosure
-note below rather than promising either capability in the guide text.
+guide-authored split, is tracked internally as a Traigent-owned follow-up - never surface a
+repository, issue, or tracker reference to the user; the disclosure note below stays free of one.
 
 Score the held-out rows once, after the enhanced search selects its winning configuration, by
 running that exact configuration - and only that configuration - against the ten held-out rows.
@@ -520,7 +520,7 @@ the winner it is scoring actually exists. Report it as one line, not a statistic
 Optimization set (18 ex): <tuning score>%
 Held-out set (10 ex):     <held-out score>%
 Note: too few examples to conclude. A gap like this is expected when the
-best of many configs is picked on a small sample. Tracking: traigent-first-run#141
+best of many configs is picked on a small sample.
 ```
 
 Call it a sealed holdout only when its split and labels were fixed and hidden from component

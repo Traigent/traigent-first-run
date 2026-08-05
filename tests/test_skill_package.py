@@ -2996,13 +2996,20 @@ class SkillPackageTests(unittest.TestCase):
             "ten rows cannot resolve a small gap",
             "do not say traigent prevents or corrects this",
             'do not call a gap in this range "overfitting,"',
-            "traigent-first-run#141",
+            "never surface a repository, issue, or tracker reference to the user",
             "optimization set (18 ex)",
             "held-out set (10 ex)",
             "too few examples to conclude",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
+
+        # The disclosed note is customer-facing output, not internal engineering
+        # notes: it must never carry a repository, issue, or tracker reference.
+        for name, text in documents.items():
+            with self.subTest(no_tracker_leak=name):
+                self.assertNotIn("traigent-first-run#", text)
+                self.assertNotIn("tracking:", text)
 
         self.assertIn("28 rows split 18 tuning / 10 held-out", documents["glossary"])
         self.assertIn("disclosed once, beside the", documents["glossary"])
