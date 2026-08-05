@@ -938,25 +938,51 @@ owns how it is run. The round keeps the same objectives the first comparison use
 comes from how its winner is selected, not from the objectives.
 
 **Select by hand, on the metric the run actually declared.** The run reports a best configuration of
-its own, and this round does not use it; `references/run-safety.md` owns that decision. Both the free
+its own, and this round does not use it as its own answer - only as the incumbent it measures
+against; `references/run-safety.md` owns that split. Both the free
 `$0` check over the enhanced run's finished trials and the round's own result come from the same
 filter, applied each time to that run's own returned `trials` - the enhanced `optimized_results` for
 the free check, the round's own result for the round. It is arithmetic over artifacts already in
 hand, so one function serves both:
 
 ```python
-def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost):
+def cheaper_and_not_worse(trials, metric_name, floor, incumbent_cost, excluded=()):
     """Completed trials that scored at or above `floor` and cost measurably less.
 
     `metric_name` is this run's own objective name - the key wired through
     `metric_functions`, which is `"task_success"` in this reference's worked
-    example. `floor` is the incumbent trial's value of that same key, so the
-    two sides of the comparison are the same measurement.
+    example - and never `"accuracy"`, which can sit in the same metrics map
+    without being the scorer this run wired (Traigent/Traigent#2101).
+
+    `floor` and `incumbent_cost` both come from the incumbent trial's own
+    metrics map: `floor` is its value under this same `metric_name`, and
+    `incumbent_cost` its `"cost"`, so the two sides of the comparison are the
+    same measurement. Never pass the result's `best_score` as `floor` - under
+    the two-objective schema above it is the weighted scalarization of score
+    and cost, not the metric this filter compares.
+
+    `excluded` holds configurations this selection may not return. The round
+    passes its seed, because the seed is a point in the round's own space and
+    a re-measurement of it is a different run from the one `incumbent_cost`
+    came from. The free check passes nothing: its incumbent is already in its
+    own list, and the strict `<` below excludes it. Confirm `trial.config` on
+    the installed version like every other SDK name here; the raise is
+    deliberate, because silently keeping the seed is how a round hands back
+    the configuration the user already runs and calls it a saving.
     """
     selected = []
     for trial in trials:
         if getattr(trial.status, "value", trial.status) != "completed":
             continue
+        if excluded:
+            config = getattr(trial, "config", None)
+            if config is None:
+                raise RuntimeError(
+                    "this trial exposes no configuration, so the seed cannot "
+                    "be excluded here - exclude it before calling"
+                )
+            if config in excluded:
+                continue
         score = trial.metrics.get(metric_name)
         cost = trial.metrics.get("cost")
         # An absent cost is not a zero. A trial the run could not price cannot
@@ -978,7 +1004,9 @@ Do not pass `strategy=` or `strategy_params` on the round's own run: its winner 
 and nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
 
 **The seed.** Put the winning configuration into the second space as one of its value combinations,
-so it is a point the search can actually return. Do not reach for `default_config`: the warning
+so it is a point the search can actually return. It is there so the search can start from a measured
+point, not so it can be reported back as the round's answer; `references/run-safety.md` owns that
+exclusion. Do not reach for `default_config`: the warning
 above still applies, and it can consume a trial slot. Build the rest of the space around that point
 - cheaper values of controls the winner already uses, and cheaper tiers only when a model change was
 separately disclosed and approved. Keep the space larger than the round's trial cap, keep every knob
@@ -988,9 +1016,12 @@ one the agent consumes, and re-run the wiring probe above against the new space.
 are inputs to a hypothesis only: at this trial count a control that moved nothing was mostly
 undersampled, and SKILL stage 7 forbids reporting that as a finding.
 
-**Warm start is a request to the backend, not a local guarantee.** `warm_start_from` takes a prior
-experiment id and seeds the new run from it. It is decorator-only: passing it to `optimize_sync`
-raises `TypeError` naming the decorator. So the round runs in its own fresh process with its own
+**Warm start is a request to the backend, not a local guarantee.** Confirm the names and behaviours
+below on the installed version, as every other SDK name this document introduces already requires,
+and treat an absent name as unavailable rather than assumed; they were verified against the pinned
+release and are not a version-independent contract. `warm_start_from` takes a prior experiment id
+and seeds the new run from it. It is decorator-only: passing it to `optimize_sync` raises
+`TypeError` naming the decorator. So the round runs in its own fresh process with its own
 decoration:
 
 ```python

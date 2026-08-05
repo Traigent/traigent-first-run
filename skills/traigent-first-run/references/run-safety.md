@@ -650,17 +650,25 @@ failure mode justify them.
 
 ## Optional cost-reduction round
 
-SKILL stage 7 states that this round is optional and one-sided. Everything else about it is owned
-here: when it is offered, what it may claim, the free check that precedes it, the gate, its
-approval, and its two outcomes. `references/sdk-execution.md` owns the mechanics.
+SKILL stage 7 states that this round is optional and one-sided, forbids reporting a knob as not
+mattering, and places both of its outcomes in the closing report. Everything else is owned here:
+when it is offered, what it may claim, the free check that precedes it, the gate, its approval, and
+the wording of those two outcomes. `references/sdk-execution.md` owns the mechanics.
 
 ### Run the free check first
 
 Do this only once the enhanced run has finished with a best configuration **and** every completed
-trial carries a reported, positive cost. Without that, the question below has no answer worth
-reading: an unpriced trial is not a cheap trial, and a `0.0` from unknown model pricing looks
-identical in the metrics map to a genuine free route. On an untracked-cost run skip both the check
-and the round, and say so.
+trial carries a reported, positive cost. That is this precondition's one statement; the gate below
+reads it rather than restating it. Two runs fail it for opposite reasons, and which one applied is
+part of what the user is told:
+
+- **Cost was not tracked.** An unpriced trial is not a cheap trial, and a `0.0` standing in for
+  pricing the run could not resolve is an absent cost wearing a number - indistinguishable in the
+  metrics map from a real one, and comparing against it admits everything. On an untracked-cost run
+  skip both the check and the round, and say so.
+- **The route genuinely costs nothing.** A provider-reported `0.0` with nonzero token usage is a
+  real measurement rather than a missing one, and a run with no cost has no cost to reduce. Skip
+  both the check and the round here too, and name this reason rather than the one above.
 
 Then ask the finished run a question that costs `$0`: among the trials it already completed and
 already paid for, is there one that cost less than the selected winner and did not score below it on
@@ -687,13 +695,10 @@ offer it: a round whose result could not honestly be claimed is not worth its mo
   is a fact about the substitute.
 - The enhanced run completed with a best configuration, portal tracking stayed green, and its trial
   count met the disclosed plan or carries a concrete stop reason.
-- Cost was measured, not deducted. Every completed enhanced trial carries a reported, positive cost
-  and no phase of this run took the untracked-cost path above. `0.0` counts as reported only when
-  nonzero token usage proves a genuine free route; a `0.0` standing in for pricing the run could not
-  resolve is an absent cost wearing a number, and comparing against it admits everything. Without
-  measured per-trial cost there is no cost reduction to state, so on that path the round is not
-  offered at all - say that plainly instead of running it and reporting a number the run cannot
-  support.
+- Cost was measured, not deducted: the free check's precondition above holds, and no phase of this
+  run took the untracked-cost path. Without measured, positive per-trial cost there is no cost
+  reduction to state, so on that path the round is not offered at all - say that plainly instead of
+  running it and reporting a number the run cannot support.
 - The completed trials show cost headroom: the cheapest completed trial cost materially less than the
   selected winner - a quarter less is the default reading of materially - so cheaper territory
   demonstrably exists for this task rather than being assumed.
@@ -721,11 +726,26 @@ once.
 ### Selecting the round's own winner
 
 Select it the same way the free check selects: the cheapest completed trial that scored at or above
-the incumbent on the run's own metric, using the function in `references/sdk-execution.md`. Do not
-report the run's `best_config` as the round's answer: it is chosen against the run's two declared
-objectives at once, so it is free to trade score away for cost. That filter is the only place the
-round's one-sidedness is enforced, so a winner taken from anywhere else would refuse the
-score-for-cost trade in the prose and perform it in the result.
+the incumbent on the run's own metric, using the function in `references/sdk-execution.md`.
+
+The incumbent is the enhanced run's reported winner - its `best_config`, and the configuration this
+round was seeded from. Anchoring on it is deliberate and is a different decision from the refusal
+below: the round asks whether the configuration this run already put in front of the user can be had
+more cheaply, so the thing it measures against has to be that configuration. What the refusal
+governs is what the round may report as *its own* answer. Do not report the run's `best_config` as
+the round's answer: it is chosen against the run's two declared objectives at once, so it is free to
+trade score away for cost. That filter is the only place the round's one-sidedness is enforced, so a
+winner taken from anywhere else would refuse the score-for-cost trade in the prose and perform it in
+the result.
+
+Exclude the seed configuration from the round's own selection - pass it as the filter's `excluded`
+argument rather than leaving the rule in prose here. The seed is deliberately one of the second
+space's points, so the round re-measures it, and that measurement is a different run from the one
+`incumbent_cost` was recorded in. Within one run cost is exact and any strict difference is real;
+across two runs it is not, because token counts vary between runs of the same configuration. So read
+materially here the way the gate above reads it - a quarter less - before calling the round's delta a
+cost reduction. Without both rules the round hands back the configuration the user is already
+running and reports run-to-run noise as a saving.
 
 If no completed trial clears that bar, the round produced the second outcome below. It did not
 produce a weaker version of the first.
@@ -745,8 +765,9 @@ and the score at the strength the paired counts actually carry:
 > `<config>` cost `<measured>` against the previous winner's `<measured>` on the same rows,
 > evaluator, and agent call path - a `<n>%` reduction. Its `<metric>` was `<value>` against
 > `<value>` on `<n>` rows, `<paired outcome counts>`. Cost here is arithmetic over reported token
-> counts and is measured directly. The score comparison on `<n>` rows is not, so `<the score
-> statement the counts support>` - and this run does not show the score improved.
+> counts, so it is measured directly. The score is not measured directly - it is a comparison over
+> `<n>` rows - so `<the score statement the counts support>`, and this run does not show the score
+> improved.
 
 The bracketed score statement is not decoration; it is the one sentence that has to be earned, and
 `references/evaluation-and-dataset.md` decides it from the paired counts, not from the direction of
@@ -761,7 +782,7 @@ optimizer picked it" stand in for evidence that the score held.
 **Nothing was both cheaper and no worse.** This is a finding, and it gets its own copy:
 
 > Nothing in this round's space was cheaper than your current best without scoring below it. On this
-> evidence your configuration is already near the efficient frontier for this space: every
+> evidence your configuration is already near the Pareto frontier for this space: every
 > configuration tested that cost less also scored lower. That is a measured answer to the question
 > this round asked.
 
@@ -794,7 +815,10 @@ Before claiming success, verify:
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.
-13. If a cost-reduction round ran, it had its own approval, its cost joined the same running total,
+13. If the free `$0` check answered the question and ended it there, its report carries the same
+    measured cost change and the same paired-count-supported score claim a paid round would owe:
+    it is the cheaper path to the identical claim, never the lighter-checked one.
+14. If a cost-reduction round ran, it had its own approval, its cost joined the same running total,
     it reused the first comparison's tuning rows, evaluator, and agent call path, its winner was
     selected by the cheaper-and-not-worse filter on the run's own metric rather than taken from
     `best_config`, and its report carries the measured cost change beside a score claim the paired

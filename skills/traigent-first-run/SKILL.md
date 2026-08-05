@@ -586,9 +586,12 @@ reveals a specific, worthwhile hypothesis.
 The completed comparison can reveal one hypothesis worth naming here, and it is the only second
 round this guide defines: **the enhanced winner's score is reachable more cheaply**. It stays
 optional and is offered only when the finished comparison earned it, against the gate in
-`references/run-safety.md`, which owns everything about this round except the two decisions below.
+`references/run-safety.md`, which owns when it is offered, what it may claim, its approval, and the
+wording of its outcomes; what stays here is the ordering and the mandates below.
 It is not part of the default run, and it never proceeds on the earlier approval - it is the
-optional iteration the rule above allows, never the mandatory extra pass it refuses.
+optional iteration the rule above allows, never the mandatory extra pass it refuses. A free `$0`
+re-read of the finished trials comes first and can settle the question outright; when it does, that
+answer is the result and no round is offered.
 
 Its objective is one-sided on purpose: **measurably lower cost at a score that did not get worse**.
 Never offer or report a round that trades score away for cost. A cheaper model with worse answers is
@@ -603,9 +606,8 @@ round dropped the knobs that did not matter: at a first run's trial count a cont
 nothing was mostly undersampled, so any importance reading is a hypothesis the second space tests,
 never a finding it reports.
 
-The round needs its own explicit approval against the remaining walkthrough ceiling, and both of its
-outcomes are reported with the first comparison in stage 8 - including no cheaper configuration at
-an unchanged score, which is a measured answer rather than a failed run.
+Both of its outcomes are reported with the first comparison in stage 8 - including no cheaper
+configuration at an unchanged score, which is a measured answer rather than a failed run.
 
 ### 8. Verify and report
 
@@ -756,7 +758,8 @@ The first run is complete only when:
   occurred.
 - Free checks made no provider calls.
 - Each paid stage had explicit approval before its calls.
-- Any cost-reduction round was separately approved against the remaining ceiling, and its measured
+- The free `$0` cost check ran before any cost-reduction round was offered, and any round was
+  separately approved against the remaining ceiling. Whichever produced the answer, its measured
   cost change and its paired-count-supported score claim were reported with the first comparison.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.

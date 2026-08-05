@@ -58,6 +58,28 @@ def quoted_prose(path: Path) -> str:
     return " ".join(" ".join(lines).casefold().split())
 
 
+def python_block_containing(path: Path, needle: str) -> str:
+    """The one fenced ```python block of `path` that contains `needle`.
+
+    Raises unless exactly one block matches, so a check written against "the
+    filter" cannot read a different block once the document grows another, nor
+    pass against zero blocks once the code it binds is deleted outright.
+    """
+    blocks = [
+        block
+        for block in re.findall(
+            r"^```python\n(.*?)^```", path.read_text(), re.DOTALL | re.MULTILINE
+        )
+        if needle in block
+    ]
+    if len(blocks) != 1:
+        raise AssertionError(
+            f"{needle!r} appears in {len(blocks)} fenced python blocks of "
+            f"{path.name}; exactly one is required"
+        )
+    return blocks[0]
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -87,6 +109,23 @@ READINESS = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
 sys.modules[_SPEC.name] = READINESS
 _SPEC.loader.exec_module(READINESS)
+
+
+def load_guide_function(path: Path, definition: str):
+    """Execute one fenced block of the guidance and return the function it defines.
+
+    Loaded here for the same reason `readiness.py` is loaded above: the guide
+    publishes real code, and a check that reads it as text can only prove the
+    text is present.
+    """
+    namespace: dict = {}
+    exec(python_block_containing(path, definition), namespace)  # noqa: S102
+    return namespace[definition.removeprefix("def ").removesuffix("(")]
+
+
+# The round's one-sided selection filter. It is the only executable
+# enforcement of "cheaper, and never at a lower score" in the whole package.
+CHEAPER_AND_NOT_WORSE = load_guide_function(SDK_EXECUTION, "def cheaper_and_not_worse(")
 
 
 def score_config_space(document: dict) -> tuple[object, list[str]]:
@@ -4165,14 +4204,36 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertIn("## optional cost-reduction round", safety)
 
-    def test_the_cost_reduction_objective_is_one_sided(self) -> None:
-        """Cheaper-and-worse is not a result, so it may not be offered as one.
+        # Both documents describe the same ownership split, or a reader
+        # following either sentence goes to the wrong file: SKILL.md said
+        # run-safety.md owned "everything about this round" and then stated
+        # four mandates, and run-safety.md claimed two SKILL.md also stated.
+        self.assertNotIn("owns everything about this round", skill)
+        self.assertIn(
+            "which owns when it is offered, what it may claim, its approval, and "
+            "the wording of its outcomes",
+            skill,
+        )
+        self.assertIn(
+            "skill stage 7 states that this round is optional and one-sided, "
+            "forbids reporting a knob as not mattering, and places both of its "
+            "outcomes in the closing report",
+            safety,
+        )
+        # ...and the separate-approval mandate has one home. SKILL.md stated
+        # it twice inside its own section - the restatement an earlier merge
+        # dropped from stage 6 - and keeps only the flow's own prohibition.
+        self.assertNotIn("needs its own explicit approval", skill)
+        self.assertIn("takes its own explicit approval", safety)
 
-        The whole value of the round is the direction it refuses, and a
-        direction stated only in prose is not refused anywhere. So this checks
-        both halves: that the guidance says it, and that the round's winner
-        comes from a filter that enforces it rather than from whatever the run
-        reported as its best configuration.
+    def test_the_cost_reduction_objective_is_one_sided(self) -> None:
+        """The guidance states the direction the round refuses.
+
+        This checks WORDING only - that each rule is stated, and stated where
+        the assistant reads it. It does not show any of them binds; the one
+        rule with an executable mechanism is checked by behaviour in
+        CheaperAndNotWorseFilterTests, and this test used to claim that ground
+        while asserting only the filter function's name.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -4195,6 +4256,20 @@ class SkillPackageTests(unittest.TestCase):
             "that filter is the only place the round's one-sidedness is enforced",
             "would refuse the score-for-cost trade in the prose and perform it "
             "in the result",
+            # `best_config` is ALSO the incumbent this round measures against,
+            # so the refusal above reads as leaving no sanctioned anchor at all
+            # unless the two roles are separated
+            "the incumbent is the enhanced run's reported winner - its `best_config`",
+            "anchoring on it is deliberate and is a different decision from the "
+            "refusal below",
+            "what the refusal governs is what the round may report as *its own* answer",
+            # the seed is a point in the round's own space, and its two costs
+            # come from two different runs
+            "exclude the seed configuration from the round's own selection",
+            "within one run cost is exact and any strict difference is real; "
+            "across two runs it is not",
+            "so read materially here the way the gate above reads it - a quarter less",
+            "clearing the bar is a selection made over noise",
         ):
             with self.subTest(selection_phrase=phrase):
                 self.assertIn(phrase, safety)
@@ -4216,6 +4291,26 @@ class SkillPackageTests(unittest.TestCase):
             "on this evidence the score did not get worse, which is not the same "
             "as showing it improved",
             quoted,
+        )
+        # ...and the sentence carrying that asymmetry says which half is not
+        # measured directly. "The score comparison on `<n>` rows is not, so"
+        # elided to the nearer predicate, and a first-time user parses it alone.
+        self.assertIn(
+            "cost here is arithmetic over reported token counts, so it is "
+            "measured directly. the score is not measured directly - it is a "
+            "comparison over `<n>` rows -",
+            quoted,
+        )
+        self.assertNotIn("the score comparison on `<n>` rows is not, so", quoted)
+        self.assertIn(
+            "rows where the cheaper configuration lost and the incumbent won are "
+            "reported even when they are outnumbered",
+            safety,
+        )
+        self.assertIn(
+            'never let "the optimizer picked it" stand in for evidence that the '
+            "score held",
+            safety,
         )
 
     def test_the_reference_states_how_the_round_is_actually_run(self) -> None:
@@ -4248,7 +4343,8 @@ class SkillPackageTests(unittest.TestCase):
             # names the alternative and defers the decision rather than
             # restating it - run-safety.md owns why `best_config` is refused.
             "the run reports a best configuration of its own, and this round "
-            "does not use it",
+            "does not use it as its own answer - only as the incumbent it "
+            "measures against",
             # each selection reads ITS OWN run's trials. Naming one result
             # object for both would point the round's selection back at the
             # enhanced run, whose trials the free check already cleared - so
@@ -4271,15 +4367,47 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(sdk_phrase=phrase):
                 self.assertIn(phrase, sdk)
 
-        self.assertIn("def cheaper_and_not_worse(", SDK_EXECUTION.read_text())
         # an unpriced trial is dropped, never treated as cheap
         self.assertIn("an absent cost is not a zero", sdk)
         self.assertIn("`incumbent_cost` must itself be a reported, positive cost", sdk)
+
+        # The filter's arguments have to come from somewhere and the two
+        # nearest at-hand names are both wrong: `trial.metrics` carries the
+        # SDK's built-in `accuracy` beside the wired key, which is 0.0 on every
+        # trial under any non-exact-match evaluator - so the floor becomes 0.0
+        # and everything qualifies - and `best_score` is a scalarization of
+        # score AND cost, not the metric this filter compares.
+        docstring = " ".join(
+            python_block_containing(SDK_EXECUTION, "def cheaper_and_not_worse(")
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            'and never `"accuracy"`',
+            "`floor` and `incumbent_cost` both come from the incumbent trial's own",
+            "never pass the result's `best_score` as `floor`",
+            "the two sides of the comparison are the same measurement",
+        ):
+            with self.subTest(argument_phrase=phrase):
+                self.assertIn(phrase, docstring)
 
         # the seed is a point in the second space, not `default_config`, whose
         # trial-slot warning this reference already carries
         self.assertIn("do not reach for `default_config`", sdk)
         self.assertIn("it can consume a trial slot", sdk)
+        self.assertIn("keep the space larger than the round's trial cap", sdk)
+        # the decorator carries warm start; the CALL still carries the bound
+        self.assertIn(
+            "a decorated space with no call-time trial cap is a search with no "
+            "bound",
+            sdk,
+        )
+        # every other SDK name in this document is hedged against the installed
+        # version; the round's section was the only one asserting behaviour flat
+        self.assertIn(
+            "confirm the names and behaviours below on the installed version",
+            sdk,
+        )
 
         # One refusal, one place. A reader who wonders why gets an issue link,
         # not a re-derivation - and the count below is what keeps the link from
@@ -4324,6 +4452,7 @@ class SkillPackageTests(unittest.TestCase):
             "costs `$0`",
             "no provider call",
             "report it and stop - there is nothing left to buy",
+            "and never the winner, whose own cost is not below itself",
             "### gate",
             "agent, dataset, and evaluator are all `✅` real",
             "cost was measured, not deducted",
@@ -4332,6 +4461,16 @@ class SkillPackageTests(unittest.TestCase):
             "the free check above returned nothing",
             "the remaining total ceiling covers the round's estimate",
             "a readiness band is not the gate",
+            # cheaper territory is demonstrated by the first run's own trials,
+            # never assumed
+            "the completed trials show cost headroom",
+            "a quarter less is the default reading of materially",
+            "rather than being assumed",
+            # the precondition, and both ways a run fails it
+            "every completed trial carries a reported, positive cost",
+            "on an untracked-cost run skip both the check and the round",
+            "**the route genuinely costs nothing.**",
+            "a run with no cost has no cost to reduce",
         ):
             with self.subTest(gate_phrase=phrase):
                 self.assertIn(phrase, section)
@@ -4340,6 +4479,36 @@ class SkillPackageTests(unittest.TestCase):
         # round unnecessary
         self.assertLess(
             section.index("### run the free check first"), section.index("### gate")
+        )
+
+        # One statement, one home. Stated in full twice - here and in the gate
+        # bullet - the two had already drifted: the gate defined when `0.0`
+        # counted as reported, reading as an exception to a rule that had
+        # already excluded every `0.0`, so a genuinely free route could skip
+        # the free check, pass the gate, and be sold a round to reduce zero.
+        self.assertEqual(
+            section.count("carries a reported, positive cost"),
+            1,
+            "the cost precondition is stated twice again; two statements of "
+            "one rule are what let this one drift into an exception",
+        )
+        self.assertIn("that is this precondition's one statement", section)
+        self.assertIn("the gate below reads it rather than restating it", section)
+        self.assertIn("the free check's precondition above holds", section)
+
+        # SKILL.md owns the ordered flow and did not name this step at all,
+        # though it runs before the round and can end the run on its own.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "a free `$0` re-read of the finished trials comes first and can settle "
+            "the question outright; when it does, that answer is the result and no "
+            "round is offered",
+            skill,
+        )
+        self.assertIn(
+            "the free `$0` cost check ran before any cost-reduction round was "
+            "offered",
+            skill,
         )
 
     def test_the_cost_reduction_round_cannot_ride_the_earlier_approval(self) -> None:
@@ -4396,6 +4565,14 @@ class SkillPackageTests(unittest.TestCase):
             "cost claim",
             post_run,
         )
+        # The free check can end the flow carrying the same user-facing claim,
+        # and both hooks here were conditional on the paid round having run.
+        self.assertIn(
+            "if the free `$0` check answered the question and ended it there, its "
+            "report carries the same measured cost change and the same "
+            "paired-count-supported score claim a paid round would owe",
+            post_run,
+        )
 
     def test_no_cheaper_configuration_is_a_reported_finding(self) -> None:
         """The null outcome needs copy, or it gets reported as a failure.
@@ -4416,17 +4593,30 @@ class SkillPackageTests(unittest.TestCase):
             "### the two outcomes",
             "both are results. neither is apologized for",
             "**nothing was both cheaper and no worse.** this is a finding",
-            "your configuration is already near the efficient frontier for this space",
+            "your configuration is already near the pareto frontier for this space",
             # vacuously true when nothing tested was cheaper, which is the other
             # shape this outcome takes - the copy must not assert a pattern the
             # round may not have produced
             "every configuration tested that cost less also scored lower",
+            # ...so the carve-out that stops it being said in that case is part
+            # of the outcome, not commentary on it
+            "use the frontier sentence only when the round actually completed "
+            "trials that cost less",
+            "the sentence is vacuous and reads as a finding it did not make",
+            "the space this round searched produced no cheaper configuration at all",
             "that is a measured answer to the question this round asked",
             "it establishes nothing about configurations the round did not test",
             "do not answer it with a third round by default",
         ):
             with self.subTest(null_phrase=phrase):
                 self.assertIn(phrase, safety)
+
+        # glossary.md canonicalizes "Pareto frontier (optimal frontier)" and
+        # its own rule is not to switch synonyms mid-run. This sentence carried
+        # a fourth name, and the one term here a lay reader cannot look up.
+        for path in assistant_facing_documents():
+            with self.subTest(document=path.name):
+                self.assertNotIn("efficient frontier", path.read_text().casefold())
 
     def test_the_round_never_reports_that_a_knob_did_not_matter(self) -> None:
         """Low measured importance at this trial count is undersampling.
@@ -4456,6 +4646,88 @@ class SkillPackageTests(unittest.TestCase):
         # also fires on a passage that FORBIDS the claim, so the check would
         # reject the very sentence it exists to require. The registry's phrases
         # are affirmative report copy, which a prohibition does not contain.
+
+
+class CheaperAndNotWorseFilterTests(unittest.TestCase):
+    """Behaviour of the round's filter, which is real code, not prose.
+
+    Every other check over this section pins a sentence, which stops silent
+    deletion and nothing more. This one runs the block: the filter is the only
+    executable enforcement of "cheaper, and never at a lower score", and the
+    check it replaced asserted the function's NAME - green against a body with
+    the score floor deleted, which is a pure cost minimiser.
+    """
+
+    @staticmethod
+    def trial(score, cost, *, status="completed", config=None):
+        metrics = {}
+        if score is not None:
+            metrics["task_success"] = score
+        if cost is not None:
+            metrics["cost"] = cost
+        return SimpleNamespace(status=status, metrics=metrics, config=config)
+
+    def select(self, trials, *, floor=0.80, incumbent_cost=0.0120, excluded=()):
+        return CHEAPER_AND_NOT_WORSE(
+            trials, "task_success", floor, incumbent_cost, excluded
+        )
+
+    def test_a_cheaper_trial_qualifies_only_at_or_above_the_floor(self) -> None:
+        for label, score, qualifies in (
+            ("equal to the floor", 0.80, True),
+            ("above the floor", 0.91, True),
+            ("below the floor", 0.30, False),
+        ):
+            with self.subTest(score=label):
+                cheaper = self.trial(score, 0.0060)
+                expected = [cheaper] if qualifies else []
+                self.assertEqual(self.select([cheaper]), expected)
+
+    def test_the_cost_comparison_is_strict(self) -> None:
+        """The incumbent's own cost is not below itself, which is what stops
+        the free check returning the winner it is measuring against."""
+        self.assertEqual(self.select([self.trial(0.95, 0.0120)]), [])
+
+    def test_an_absent_cost_is_dropped_rather_than_read_as_zero(self) -> None:
+        """Reading a missing cost as 0.0 makes every unpriced trial cheapest."""
+        self.assertEqual(self.select([self.trial(0.95, None)]), [])
+        self.assertEqual(self.select([self.trial(None, 0.0010)]), [])
+
+    def test_only_completed_trials_are_considered(self) -> None:
+        for status in ("failed", SimpleNamespace(value="failed")):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    self.select([self.trial(0.95, 0.0010, status=status)]), []
+                )
+
+    def test_qualifying_trials_come_back_cheapest_first(self) -> None:
+        """run-safety.md reads entry one as the answer, so the order is load-
+        bearing rather than cosmetic."""
+        cheapest = self.trial(0.85, 0.0020)
+        middle = self.trial(0.90, 0.0050)
+        dearest = self.trial(0.99, 0.0110)
+        self.assertEqual(
+            self.select([dearest, cheapest, middle]), [cheapest, middle, dearest]
+        )
+
+    def test_the_seed_configuration_is_excluded_when_the_round_passes_it(
+        self,
+    ) -> None:
+        """The seed is a point in the round's own space, so it comes back
+        through the round's own selection - re-measured, against a cost from a
+        different run, and reported as a saving on token-count variance."""
+        seed = {"model": "m", "temperature": 0.0}
+        other = {"model": "m", "temperature": 0.2}
+        seed_trial = self.trial(0.90, 0.0118, config=seed)
+        rival = self.trial(0.90, 0.0060, config=other)
+
+        self.assertEqual(self.select([seed_trial, rival]), [rival, seed_trial])
+        self.assertEqual(self.select([seed_trial, rival], excluded=[seed]), [rival])
+
+    def test_an_exclusion_with_no_configuration_to_read_raises(self) -> None:
+        """Failing loudly, because a silent skip keeps the seed eligible."""
+        with self.assertRaises(RuntimeError):
+            self.select([self.trial(0.90, 0.0010)], excluded=[{"model": "m"}])
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
@@ -4956,9 +5228,23 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # 23-byte failure recorded above. 321 bytes is marginally under the 371
         # named there and is accepted deliberately - a ceiling that falls should
         # bind, and the next raise past it is still a choice someone has to make.
+        #
+        # A review pass over that restore found ten more findings, of which
+        # exactly two land here because only two are SKILL.md's own job: the
+        # free `$0` check is a step in the ordered flow with its own
+        # terminating outcome and this document did not name it at all, and the
+        # completion criterion that verified only the paid round now covers
+        # whichever of the two produced the answer. Against those, the
+        # separate-approval mandate LEAVES this document - it was stated twice
+        # inside one section, the restatement the earlier merge deliberately
+        # dropped from stage 6, and run-safety.md's approval section owns it.
+        #
+        # Net +243 bytes, measured at 63_422 - 78 bytes under the ceiling
+        # above, which is the one-word-edit trip recorded twice already. So
+        # 63_750, the same headroom the 63_500 decision reasoned its way to.
         self.assertLess(
             resident,
-            63_500,
+            63_750,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5090,7 +5376,27 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # rather than absorbing it. Re-measured at 245_203, so 245_500 - still
         # 4_500 below where the catalogue had this number, and 297 bytes of
         # headroom on the same reasoning as before.
-        budget = 245_500
+        #
+        # It bound again on the next review pass, and here the reasons matter
+        # more than the bytes: every one of the ten findings was a rule stated
+        # with nothing holding it up. The `"accuracy"` prohibition the cut
+        # carried off and the restore missed - without it nothing stops the
+        # score floor being read from the SDK's built-in exact-match rate,
+        # which is `0.0` under any graded or judged evaluator, admits every
+        # trial, and crowns the cheapest. The seed returning through the
+        # round's OWN selection as a saving measured against run-to-run
+        # variance. `best_config` refused as the round's answer by a sentence
+        # that also read as refusing it as the round's anchor. The cost
+        # precondition stated twice and already drifted into an exception. A
+        # fourth synonym for the Pareto frontier in the copy the null outcome
+        # depends on. The free check's terminating claim escaping both post-run
+        # hooks. The warm-start section asserting SDK behaviour flat where
+        # every other name in that document is hedged. And an elided "is not"
+        # in the sentence carrying the whole cost-versus-score asymmetry.
+        #
+        # Measured at 249_272, so 249_500 - 228 bytes of headroom on the
+        # reasoning above, and still below where the catalogue had this number.
+        budget = 249_500
         self.assertLess(
             total,
             budget,
