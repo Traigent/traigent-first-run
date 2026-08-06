@@ -504,9 +504,11 @@ def require_untruncated_completion(response) -> None:
         raise RuntimeError(
             "The provider truncated this completion (finish_reason='length'). "
             "It is not a measurement and must not be scored: a cut-off answer "
-            "scores 0 rather than low and can crown a weaker model. Raise this "
-            "configuration's cap and re-run it, or drop it and report it as "
-            "excluded"
+            "scores 0 rather than low and can crown a weaker model. This "
+            "wrapper sets no max_tokens, so if your own agent sets one, raise "
+            "it and re-run this configuration; otherwise the answer ran into "
+            "the model's own output limit, so drop this configuration and "
+            "report it as excluded"
         )
 
 
@@ -521,10 +523,8 @@ def build_request(message: str, config: dict) -> dict:
     if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
         # Reasoning models reject sampled temperature, so this model swaps the
         # sampling control for an effort setting rather than sending both. No
-        # `max_tokens`: a cap sized for the model in front of us is the wrong
-        # size for the next one, so the truncation would be ours, on a
-        # configuration the user never chose. Caught after the fact by
-        # `require_untruncated_completion`, never predicted before it.
+        # `max_tokens` here or on any other tier - `run-safety.md` owns why,
+        # and it is not an oversight to correct.
         sampling_kwargs = {"reasoning_effort": STRONG_REASONING_EFFORT}
     return {
         "model": config["model"],

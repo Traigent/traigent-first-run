@@ -601,8 +601,15 @@ class SkillPackageTests(unittest.TestCase):
         except RuntimeError as error:  # pragma: no cover - asserted below
             message = str(error)
         self.assertIn("not a measurement", message)
-        # A bare failure is not actionable; the repair is named.
-        self.assertIn("Raise this configuration's cap", message)
+        # A bare failure is not actionable; the repair is named - and it names
+        # BOTH repairs, because this wrapper sets no cap of its own. "Raise
+        # this configuration's cap" was the whole message while the wrapper
+        # sent `max_tokens` 4096; with no cap of ours the usual cause is the
+        # model's own output limit, for which raising a cap is unperformable.
+        self.assertIn("This wrapper sets no max_tokens", message)
+        self.assertIn("if your own agent sets one, raise it", message)
+        self.assertIn("the model's own output limit", message)
+        self.assertIn("report it as excluded", message)
 
         # Only truncation. Every other stop reason is a real measurement, and a
         # guard that refused them would break the run it exists to protect.

@@ -229,9 +229,9 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
 # is not a behaviour lever - it decides whether an answer exists, not whether it
 # is good - and it is worse than uninformative, because driving it down does not
 # merely fail to inform the comparison, it corrupts it. A cap that cuts the
-# answer off returns `finish_reason ==
-# "length"`, which scores 0 rather than low, so the model that truncated loses a
-# comparison it may have won. See `references/run-safety.md`, which owns why a
+# answer off returns `finish_reason == "length"`, which scores 0 rather than
+# low, so the model that truncated loses a comparison it may have won. See
+# `references/run-safety.md`, which owns why a
 # low cap is dangerous and requires the generated wrapper to refuse a truncated
 # trial as a non-measurement rather than let it be scored.
 #
@@ -261,11 +261,13 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
-# `max_tokens` is deliberately absent from every catalog in this file - the
-# high-impact catalogs below, `CANONICAL_RANGES` above, and `OPEN_CATEGORICAL_
-# KNOBS` - so no recommendation path can suggest it to an assistant composing a
-# space. `EXCLUDED_KNOB_REASONS` then refuses it credit if an author declares it
-# anyway. Absent from the catalogs, never refused in a document: the rule
+# `max_tokens` is deliberately absent from every catalog in this file: the
+# high-impact catalogs below, and `CANONICAL_RANGES`, `OPEN_CATEGORICAL_KNOBS`,
+# `NOISE_FLOORS` and `KNOB_ALIASES` above. Those catalogs are the
+# recommendation path - an assistant composing a space reads them to decide what
+# is worth tuning - so a knob named in any of them is a knob this guide
+# proposes. `EXCLUDED_KNOB_REASONS` then refuses it credit if an author declares
+# it anyway. Absent from the catalogs, never refused in a document: the rule
 # constrains what this guide PROPOSES, never what the customer is allowed to
 # write.
 #
@@ -278,9 +280,9 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # generated wrapper refuses a trial the provider reports as truncated, which is
 # a fact rather than a forecast.
 #
-# Nor does any cap get introduced. `references/sdk-execution.md` owns that rule
-# and the generated wrapper sends no `max_tokens` at all; the danger it closes
-# is a cross-run one, which is why no single run could show it. A cap sized to
+# Nor does any cap get introduced. `references/run-safety.md` owns that rule and
+# the generated wrapper it describes sends no `max_tokens` at all; the danger it
+# closes is a cross-run one, which is why no single run could show it. A cap sized to
 # the baseline's medium model is a cap the enhanced run's stronger or reasoning
 # model can exceed, so the truncation would be introduced BY this guide, between
 # two runs, on a configuration the customer never chose.
