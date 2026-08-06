@@ -247,6 +247,58 @@ PINNED_KNOB_CREDIT = 0.10
 MODEL_BREADTH_LADDER = {1: PINNED_KNOB_CREDIT, 2: 0.60}
 MODEL_BREADTH_FULL = 3
 
+# The agent pillar's two sub-scores, and why they are 55 and 45 rather than the
+# 35/40/25 they replace.
+#
+# A third sub-score, `coverage`, scored `1.0 - missing/len(HIGH_IMPACT_KNOBS[
+# agent_type])` out of 25 and is gone. Two things were wrong with it and only
+# the first was noticed at the time.
+#
+# It restated `knob-count`. The line beside it already reads "4 of 4 wired
+# knobs actually vary", so a pillar carrying both charged twice for one fact.
+# The rewrite considered - "any knob with 2+ values counts" - would have made
+# the restatement exact rather than approximate, which is why it was dropped.
+#
+# The second is worse, and it is measured. `present` was built from `scoreable`,
+# which includes PINNED knobs, so coverage graded whether the catalog names
+# appeared in the document, not whether anything was tuned. A space declaring
+# `model: [a], temperature: [0], prompt_style: [direct]` - every configuration
+# identical, `agent-no-varying-knobs` firing on the same card - scored coverage
+# 25/25, full marks, from the sub-score displayed to the customer as "the
+# settings that matter most". It was not a redundant measure of the right
+# thing; it was a confident measure of the wrong thing.
+#
+# And it punished better knobs. Measured on this scorer: `model, temperature,
+# prompt_style` (the general catalog, exactly) scores coverage 25/25 and the
+# pillar 90, while `model, thinking_shape, reflect, self_consistency` scores
+# 8.33/25 and the pillar 78 - twelve points for bringing four levers instead of
+# three, with an evidence line reading `not tuning: temperature, prompt_style`,
+# which tells the customer to sweep the knob this guide now pins at 0 and calls
+# surface noise.
+#
+# The remaining two are NOT scaled proportionally. 35:40 became 55:45, so the
+# order of the two swapped, and the reason is this branch's base. Categorical
+# breadth now
+# earns FULL credit at two values, and the walkthrough's own enhanced space is
+# four binary categoricals - so `variation` saturates for the common case and
+# has stopped discriminating between spaces worth running and spaces that are
+# not. `knob-count` is what still reads the space against the trial cap: it is
+# the sub-score that separates one varying knob from four, and 24 reachable
+# configurations from 1024 against a cap of 12.
+#
+# 55/45 and not 60/40, because `variation` is still the only place a fake sweep
+# is refused - the numeric noise floor that scores `temperature: [0.1, 0.115]`
+# at zero, and the pinned-knob credit - and the two shapes that test the gap
+# stay ordered correctly at 55/45 and start to compress past it: a ten-knob
+# space of two-value categoricals measures 83 against the tight three-knob
+# space's 85, and at 60/40 that margin is 81 against 84 while the one-knob
+# space it should also be beaten by falls to 61.
+#
+# Not 50/50 either. Equal weights are the same reflex as scaling: a number that
+# looks neutral, chosen because it needs no argument.
+KNOB_COUNT_WEIGHT = 55.0
+VARIATION_WEIGHT = 45.0
+
 # Below these deltas two values are the same configuration in practice.
 NOISE_FLOORS: dict[str, float] = {"temperature": 0.05, "top_p": 0.05}
 DEFAULT_NOISE_FRACTION = 0.02
@@ -483,7 +535,6 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     # agent
     "knob-count": "settings that vary",
     "variation": "how widely each setting varies",
-    "coverage": "the settings that matter most",
 }
 
 
@@ -1703,29 +1754,50 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     return combine("evaluation", subs), caps
 
 
+# The knob-count ladder, as SHARES of whatever this sub-score is worth. It was
+# written as points out of 35, which meant the weight and the shape of the curve
+# were the same numbers - so re-weighting the pillar silently flattened the
+# ladder instead of rescaling it (26/35 became 26/55, and one varying knob went
+# from 34% of the sub-score to 22% with nobody deciding that). The ratios are
+# the judgement; the weight is a separate decision, made once at
+# `KNOB_COUNT_WEIGHT`.
+KNOB_COUNT_ONE = 12.0 / 35.0
+KNOB_COUNT_FEW = 26.0 / 35.0
+KNOB_COUNT_FULL = 1.0
+# The floor a space too large for its trial budget is damped to, and the step
+# each knob past six costs.
+KNOB_COUNT_OVERSIZED = 24.0 / 35.0
+KNOB_COUNT_STEP = 2.0 / 35.0
+
+
 def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> float:
     """Plateau, not a ramp.
 
     More knobs is not monotonically better: a space far larger than the trial
     budget cannot be explored, so a twelve-knob space against a twelve-trial cap
     is worse than four. A ramp would tell users to keep adding knobs forever.
+
+    Returns points out of `KNOB_COUNT_WEIGHT`, from shares held above, so the
+    curve and the pillar weight can be changed independently.
     """
     if varying == 0:
         return 0.0
     if varying == 1:
-        base = 12.0
+        share = KNOB_COUNT_ONE
     elif varying <= 3:
-        base = 26.0
+        share = KNOB_COUNT_FEW
     elif varying <= 6:
-        base = 35.0
+        share = KNOB_COUNT_FULL
     else:
-        base = max(24.0, 35.0 - 2.0 * (varying - 6))
+        share = max(
+            KNOB_COUNT_OVERSIZED, KNOB_COUNT_FULL - KNOB_COUNT_STEP * (varying - 6)
+        )
     # Compared as integers rather than through `space_size / max_trials`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
     if max_trials and space_size and space_size > 20 * max_trials:
-        base = min(base, 24.0)
-    return base
+        share = min(share, KNOB_COUNT_OVERSIZED)
+    return round(KNOB_COUNT_WEIGHT * share, 2)
 
 
 NOTHING_WIRED_CAP = Cap(
@@ -1764,9 +1836,8 @@ def nothing_to_search_pillar(evidence: str) -> Pillar:
     return combine(
         "agent",
         [
-            SubScore("knob-count", 0.0, 35.0, True, evidence),
-            SubScore("variation", 0.0, 40.0, False, evidence),
-            SubScore("coverage", 0.0, 25.0, False, evidence),
+            SubScore("knob-count", 0.0, KNOB_COUNT_WEIGHT, True, evidence),
+            SubScore("variation", 0.0, VARIATION_WEIGHT, False, evidence),
         ],
     )
 
@@ -1883,7 +1954,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         SubScore(
             "knob-count",
             knob_count_points(len(varying), run_count, facts.max_trials),
-            35.0,
+            KNOB_COUNT_WEIGHT,
             True,
             f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
             + combinations,
@@ -1896,36 +1967,17 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         subs.append(
             SubScore(
                 "variation",
-                round(40.0 * mean_quality, 2),
-                40.0,
+                round(VARIATION_WEIGHT * mean_quality, 2),
+                VARIATION_WEIGHT,
                 True,
                 f"weakest knob '{weakest.name}' at {weakest.quality:.0%}",
             )
         )
     else:
-        subs.append(SubScore("variation", 0.0, 40.0, False, "no scoreable knobs"))
-
-    catalog = HIGH_IMPACT_KNOBS.get(facts.agent_type or "general")
-    if catalog:
-        # Already canonical: `canonical_alias_names` renamed the facts above.
-        present = {knob.name for knob in scoreable}
-        missing = [name for name in catalog if name not in present]
-        fraction = 1.0 - (len(missing) / len(catalog))
         subs.append(
-            SubScore(
-                "coverage",
-                round(25.0 * fraction, 2),
-                25.0,
-                True,
-                (
-                    f"not tuning: {', '.join(missing)}"
-                    if missing
-                    else "every high-impact knob for this agent type is tuned"
-                ),
-            )
+            SubScore("variation", 0.0, VARIATION_WEIGHT, False, "no scoreable knobs")
         )
-    else:
-        subs.append(SubScore("coverage", 0.0, 25.0, False, "agent type not recognized"))
+
     return combine("agent", subs), caps, knobs
 
 

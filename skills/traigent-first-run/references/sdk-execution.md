@@ -135,7 +135,7 @@ evidence about two levers rather than one. The user approves the doubled number 
 Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
 wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
 walkthrough conditional, dropping temperature in that branch alone and silently giving the enhanced
-space a second size nothing wrote down. Pinning it always makes both branches identical, 6 and 48
+space a second size nothing wrote down. Pinning it always makes both branches identical, 12 and 48
 whether the strong tier reasons or not.
 
 The four behaviour knobs are **prompt style**, **pre-action reflect**, **thinking shape** (direct or
@@ -232,7 +232,7 @@ accurate. So when the strong tier is a reasoning model, pin its calling conventi
 both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling parameters such a
 model rejects. Nothing else changes: temperature is already pinned for every space, and the four
 behaviour knobs are real for a reasoning model and a sampling model alike, so both branches run the
-same 6 and 48.
+same 12 and 48.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
@@ -431,8 +431,10 @@ ENHANCED_SPACE = {
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
     "reflect": [False, True],
 }
-# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
-# the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
+# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE names
+# the high-impact catalog this walkthrough drew its knobs from; it is recorded
+# on the score and changes no number, because the sub-score that once graded a
+# space against that catalog was removed. WIRED_KNOBS names only the dimensions
 # call_agent below actually consumes - a knob listed here that the agent ignores
 # is a false claim about the search space. The scorer cannot check that claim,
 # so the assert under `demonstrably_wired` below checks it here at load time.
