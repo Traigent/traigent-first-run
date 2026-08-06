@@ -1879,6 +1879,52 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(word=word):
                 self.assertNotIn(word, guide)
 
+    # Where the user is sent, and how they get there. Both belong to the
+    # reference that performs the handoff; GUIDE.md's paragraph points at it and
+    # states neither. Addresses are matched as a shape rather than by hostname,
+    # because the defect is naming *a* destination here, whichever one it is.
+    _NAMES_A_DESTINATION = re.compile(
+        r"https?://|\btraigent\.ai\b|\bregistration link\b|\bregister\b"
+    )
+
+    def test_the_guide_sends_the_reader_to_the_reference_and_names_no_address(
+        self,
+    ) -> None:
+        """The same paragraph, and the same rule, from the other direction.
+
+        This one has a history that is not the rung's. GUIDE.md used to promise
+        `references/run-safety.md` held "the clickable registration link", and
+        #148 established that there is no single link to promise: which address
+        a user gets depends on which of four account states they are in, and a
+        user with no access code who is handed the portal's register page is
+        handed a page that refuses them. #148 changed this sentence to point at
+        the reference for "which address each account state gets" instead.
+
+        Nothing held that. #148's own checks are on `run-safety.md`, where the
+        addresses live, so the GUIDE.md half was pinned by nothing - verified by
+        restoring the old sentence on trunk, where the full suite stays green.
+        That matters here because this branch rewrites exactly that sentence,
+        and every pull request whose base predates #148 still carries the old
+        wording: whichever way one of those conflicts is resolved, the promise
+        of a single clickable link can come back and no check would notice.
+
+        So the shape is asserted rather than the sentence: GUIDE.md names no
+        address, of any form, and keeps the pointer that replaced the promise.
+        The rule is the same "one decision, one home" the rung check above
+        applies to the mechanism - the destination is stated where the handoff
+        is performed, and the entry point sends the reader there.
+        """
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        named = sorted(set(self._NAMES_A_DESTINATION.findall(guide)))
+        self.assertEqual(
+            named,
+            [],
+            "GUIDE.md names a registration destination; which address a user "
+            "gets depends on their account state, so a single one stated here "
+            "is wrong for three of the four (#148)",
+        )
+        self.assertIn("for which address each account state gets", guide)
+
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
