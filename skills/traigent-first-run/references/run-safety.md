@@ -479,7 +479,8 @@ Before the provider-paid baseline, show only its immediate scope:
 
 After showing the baseline result, give the connected stage a preview and approval:
 
-- Search: added enhanced controls/combinations, the configuration ceiling below, approximate calls,
+- Search: added enhanced controls/combinations, any knob of theirs left out and what the baseline
+  showed about it, the configuration ceiling below, approximate calls,
   how Traigent's managed search chooses trials while retaining baseline values, objective
   directions and weights, and the rule for recommending among tradeoffs.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
@@ -608,15 +609,29 @@ agents, add task-relevant non-model controls only to the enhanced space by defau
 format, retrieval depth, few-shot count, tool policy, or repair behavior; do not force the
 generated example's controls onto an unrelated task.
 
-This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
-levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
-more configurations than the trial cap, but from a handful of meaningful levers, never a wall of
-knobs added just to manufacture a visible improvement. Present it that way too: a deliberately small
-enhancement for the first look, a small slice of what Traigent can drive rather than its full
-capability.
+This is a getting-familiar first run: a few of the most relevant knobs, never a wall of knobs added
+to manufacture a visible improvement. Present it that way too: a deliberately small enhancement for
+the first look, a small slice of what Traigent can drive rather than its full capability.
 
-A knob that does not influence the agent code is not a real optimization variable. Native boolean
-knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
+A customer who brings ten wired knobs does not get all ten, and the reason is arithmetic. Ten knobs
+at two values each is 1024 configurations against a 12-trial cap - 1% of the space sampled - and
+the scorer damps knob-count points to their floor past 20x the cap, 240 configurations at that
+default. They plateau at four to six varying knobs and fall from seven. Aim there: the space this
+budget can explore, not the largest that fits.
+
+Which of theirs to keep is the baseline's call, not preference. For each knob the baseline VARIED,
+compare the best score on each of its values: a spread under the evaluator's separation margin -
+0.05 normalized, calibration's own number - did not move the baseline, and that knob is a candidate
+to drop. A knob the baseline never varied is not a candidate: silence is not a null result, and an
+assistant-prepared baseline sweeps only `model` and `temperature`. Six trials across a knob's
+values is three observations a side at most - enough to prefer one knob over another, never enough
+to prove one does nothing. Say `did not move the baseline`, never `does not matter`.
+
+Fill the freed slots from the failure-mode levers below, once the customer's evidenced knobs are
+seated: where the evidence ties, keep theirs - they know their agent. Name every knob left out, and
+why, in the approval preview, so they can object before paying for a space that excluded it.
+
+Native boolean knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
 sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
 controls to keep an assistant-prepared baseline meaningful in that case. Preserve a user-owned
 baseline's temperature behavior exactly, including an unset provider default; record resulting
@@ -764,7 +779,7 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   `optimize_sync` mid-run without rolling back its spend, so run a long paid optimization detached
   and poll its log rather than letting the tool timeout abandon paid trials.
 - Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
-  classification; do not add a duplicate retry loop.
+  classification.
 - Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
   do not retry or describe every case as "no tokens." An unfunded OpenRouter key returns HTTP 402 and
   silently fails trials - verify funding before paid work; a free-tier optimization-sample quota

@@ -446,6 +446,74 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("inventory presence—not values", skill_text)
         self.assertIn("never rewrite a route merely to match a key", skill_text)
 
+    def test_the_knob_selection_rule_matches_the_arithmetic_it_cites(self) -> None:
+        """The guidance told the assistant to keep "a few" and stopped there.
+
+        There was no rule for WHICH of a customer's own knobs to keep, no
+        statement of what the space may cost, and no gate anywhere if the
+        assistant kept all of them: a ten-knob space at 1024 configurations
+        against a 12-trial cap raises no cap and prints no note - it just
+        quietly loses points. Measured on this scorer, ten of a customer's own
+        knobs score the agent pillar 49 and the same customer's first four score
+        60, for no reason except the ratio of space to budget.
+
+        So the rule now names the numbers, and this asserts they are the
+        scorer's numbers rather than a plausible-sounding pair. Guidance that
+        cites arithmetic it does not share with the code is guidance that goes
+        stale silently, which is the failure this file exists to catch.
+        """
+        text = RUN_SAFETY.read_text()
+        start = text.index("A customer who brings ten wired knobs")
+        rule = " ".join(text[start : text.index("Native boolean knobs", start)].split())
+
+        for phrase in (
+            "1024 configurations against a 12-trial cap",
+            "past 20x the cap, 240 configurations",
+            "plateau at four to six varying knobs and fall from seven",
+            "the space this budget can explore, not the largest that fits",
+            # the evidence rule, and the honesty about how weak it is
+            "For each knob the baseline VARIED",
+            "a spread under the evaluator's separation margin",
+            "0.05 normalized",
+            "never varied is not a candidate",
+            "silence is not a null result",
+            "three observations a side at most",
+            "never enough to prove one does nothing",
+            "`did not move the baseline`, never `does not matter`",
+            # preference, and the record the customer can object to
+            "where the evidence ties, keep theirs",
+            "Name every knob left out, and why, in the approval preview",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, rule)
+
+        scripts = str(SKILL_ROOT / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        readiness = importlib.import_module("readiness")
+        points = readiness.knob_count_points
+        best = max(points(count, 0, None) for count in range(1, 20))
+        self.assertEqual([points(n, 0, None) for n in (4, 5, 6)], [best] * 3)
+        self.assertLess(points(7, 0, None), best)
+        # 240 is 20 x the default cap, and it is the threshold the rule quotes:
+        # a space at it is unpunished and a space past it is damped to the floor.
+        # The floor is the ramp's own asymptote, taken from the ramp rather
+        # than written down again here.
+        floor = points(100, 0, None)
+        self.assertLess(floor, best)
+        self.assertEqual(points(4, 240, 12), best)
+        self.assertEqual(points(4, 241, 12), floor)
+        # And the separation margin is calibration's, not a number invented for
+        # the prose - two homes for one threshold is how they drift apart.
+        calibration = importlib.import_module("calibrate_evaluator")
+        self.assertIn(f"{calibration.SEPARATION_MARGIN} normalized", rule)
+
+        # The approval preview is where the rejected knobs are named, so the
+        # obligation has to be in the preview's own checklist, not only in the
+        # paragraph that decides them.
+        preview = text[text.index("give the connected stage a preview") :]
+        self.assertIn("any knob of theirs left out and what the baseline", preview)
+
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -4855,7 +4923,35 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # The baseline-evidence knob-selection rule then raises this, and the
+        # raise is itemized because the alternative was to fund it by deleting
+        # things nobody weighed. The rule is ~1_400 bytes and it is not
+        # compressible below that: the arithmetic it aims at (the knob-count
+        # plateau, and the 20x-trial-cap damping) has to be stated or the target
+        # is a preference; the evidence test has to say what "no measurable
+        # difference" means AND admit that six baseline trials is three
+        # observations a side; and the record-and-object obligation is the only
+        # thing that lets the customer see what was dropped.
+        #
+        # It is paid for as far as it honestly can be, which was less than it
+        # looked. Five restatements were identified and three of them turned out
+        # not to be restatements at all: the tests already pin the config-space
+        # staleness mechanism, the approvals-section timeout pair, and the
+        # privacy-audit framing sentence, so deleting any of them broke a guard
+        # rather than freeing a byte - a second home someone asserted on purpose
+        # is a decision, not duplication, and that is exactly the distinction
+        # this ledger is supposed to make. They were put back. What genuinely
+        # went is 118 bytes: a verbatim duplicate of the knob-wiring sentence
+        # (83), already carried where `probe_wiring` enforces it, and the second
+        # copy of the retry prohibition (35).
+        #
+        # So the rest is a raise rather than a trade, stated as one. Net +1_136,
+        # measured at 229_652. 230_000 and not 229_750: 98 bytes is a ceiling
+        # that trips on a one-word edit, which this file has now recorded three
+        # times, and 348 is within a rounding of the 371 named as the smallest
+        # headroom that keeps the next raise a choice.
+        budget = 230_000
         self.assertLess(
             total,
             budget,
