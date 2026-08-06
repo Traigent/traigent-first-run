@@ -143,5 +143,97 @@ class SynthesisedDataIsWorkableAndNeverStrongTests(unittest.TestCase):
         )
 
 
+class TheCustomerFacingTablesStateTheScorersNumbersTests(unittest.TestCase):
+    """The user reads the tables; the run is scored by the constants.
+
+    `evaluation-and-dataset.md` prints the provenance points and the provenance
+    ceilings as tables a user is expected to plan against. Nothing held either
+    table to `readiness.py`: with the ceiling moved to 74 and the table left at
+    75 the whole suite passed, so the published document was free to describe a
+    scoring rule the scorer does not implement.
+
+    That is not only a drafting risk. #165 rewrites both of these tables and
+    `readiness.py` in the same region, so the two conflict together - and one
+    whole-file `--theirs` on the document restores the table's 75 while the
+    code auto-merges to 74, which is precisely the state that just passed. The
+    binding lives in this file because #159 and #165 both leave it alone: no
+    resolution of either branch can take the document's side and the check that
+    would object in one move.
+
+    Neither test restates a number. Each reads the column out of the document
+    and compares it against the constants the scorer uses, so a change to
+    either side alone fails, and the rows are matched by position - the ladder's
+    order is itself a claim the prose makes about it.
+    """
+
+    DOCUMENT = (
+        ROOT
+        / "skills"
+        / "traigent-first-run"
+        / "references"
+        / "evaluation-and-dataset.md"
+    )
+
+    def _table_column(self, heading: str) -> list[float]:
+        """The last column of the first table under `heading`, as numbers."""
+        lines = self.DOCUMENT.read_text(encoding="utf-8").splitlines()
+        self.assertIn(heading, lines, f"{self.DOCUMENT.name} lost {heading!r}")
+        rows: list[str] = []
+        for line in lines[lines.index(heading) + 1 :]:
+            stripped = line.strip()
+            if stripped.startswith("|"):
+                rows.append(stripped)
+            elif rows:
+                break
+        self.assertGreater(len(rows), 2, f"no table follows {heading!r}")
+        return [
+            float(row.strip("|").rsplit("|", 1)[-1].strip())
+            for row in rows[2:]  # rows[0] is the header, rows[1] the separator
+        ]
+
+    def _assert_column_is(self, heading: str, names: list[str]) -> None:
+        documented = self._table_column(heading)
+        expected = [float(getattr(MODULE, name)) for name in names]
+        self.assertEqual(
+            len(documented),
+            len(names),
+            f"the table under {heading!r} has {len(documented)} rows and "
+            f"readiness.py has {len(names)} values for it",
+        )
+        for row, (stated, scored, name) in enumerate(
+            zip(documented, expected, names), start=1
+        ):
+            with self.subTest(constant=name):
+                self.assertEqual(
+                    stated,
+                    scored,
+                    f"row {row} under {heading!r} states {stated:g} and "
+                    f"readiness.py scores with {name} = {scored:g}",
+                )
+
+    def test_the_documented_ceilings_are_the_ceilings_the_scorer_applies(
+        self,
+    ) -> None:
+        self._assert_column_is(
+            "### Provenance ceilings",
+            [
+                "FULLY_SYNTHETIC_CEILING",
+                "MOSTLY_SYNTHETIC_CEILING",
+                "GENERATED_ANSWER_KEY_CEILING",
+            ],
+        )
+
+    def test_the_documented_row_points_are_the_points_the_scorer_awards(self) -> None:
+        self._assert_column_is(
+            "### Declaring provenance",
+            [
+                "COLLECTED_ROW_POINTS",
+                "GENERATED_ANSWER_ROW_POINTS",
+                "UNDECLARED_ROW_POINTS",
+                "SYNTHESISED_ROW_POINTS",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
