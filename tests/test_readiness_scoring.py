@@ -62,17 +62,17 @@ class KnobVariationTests(unittest.TestCase):
         self.assertIn("only one value - nothing to search", knob.notes)
 
     def test_categorical_knob_scores_on_breadth(self) -> None:
-        one = MODULE.knob_variation("prompt_policy", ["direct"])
-        two = MODULE.knob_variation("prompt_policy", ["direct", "structured"])
+        one = MODULE.knob_variation("prompt_style", ["direct"])
+        two = MODULE.knob_variation("prompt_style", ["direct", "structured"])
         three = MODULE.knob_variation(
-            "prompt_policy", ["direct", "structured", "criteria_first"]
+            "prompt_style", ["direct", "structured", "criteria_first"]
         )
         self.assertEqual(one.quality, 0.0)
         self.assertGreater(three.quality, two.quality)
         self.assertEqual(three.quality, 1.0)
 
     def test_duplicate_values_do_not_inflate_breadth(self) -> None:
-        knob = MODULE.knob_variation("prompt_policy", ["direct", "direct", "direct"])
+        knob = MODULE.knob_variation("prompt_style", ["direct", "direct", "direct"])
         self.assertEqual(knob.distinct_values, 1)
         self.assertEqual(knob.quality, 0.0)
 
@@ -1024,58 +1024,6 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(aliased.wired, ("temperature",))
 
-    def test_an_alias_spelling_is_a_declared_name_not_a_phantom(self) -> None:
-        """The phantom check ran before the names were collapsed, and refused
-        a spelling this module itself defines as legal.
-
-        `wired: ["prompt_style", "prompt_policy"]` against a space declaring
-        `prompt_style` scored on the parent and became exit 2 with "'wired'
-        names 'prompt_policy', which is not declared in 'knobs'" - a sentence
-        that is false by this module's own semantics, because the name does
-        match that knob through `KNOB_ALIASES`. The normalization step has to
-        run before the validation step that reads the names it normalizes.
-        """
-        document = {
-            "knobs": {"prompt_style": ["a", "b"]},
-            "wired": ["prompt_style", "prompt_policy"],
-        }
-        facts = MODULE.agent_facts_from_config_space(document)
-        # one dimension, named once, whichever spellings `wired` used
-        self.assertEqual(facts.wired, ("prompt_style",))
-        pillar, caps, _ = MODULE.score_agent(facts)
-        self.assertEqual([cap.condition for cap in caps], [])
-        single = MODULE.agent_facts_from_config_space(
-            {"knobs": {"prompt_style": ["a", "b"]}, "wired": ["prompt_style"]}
-        )
-        self.assertEqual(pillar.score, MODULE.score_agent(single)[0].score)
-
-        # `bounds` addresses knobs by name the same way and is read the same way
-        ranged = MODULE.agent_facts_from_config_space(
-            {
-                "knobs": {"prompt_style": [1, 5]},
-                "wired": ["prompt_policy"],
-                "bounds": {"prompt_policy": {"low": 1, "high": 5}},
-            }
-        )
-        self.assertEqual(ranged.bounds, {"prompt_style": {"low": 1.0, "high": 5.0}})
-
-        # and a real typo is still refused, naming the spelling that was written
-        for field, document in (
-            ("wired", {"knobs": {"prompt_style": ["a"]}, "wired": ["prompt_polciy"]}),
-            (
-                "bounds",
-                {
-                    "knobs": {"prompt_style": ["a"]},
-                    "bounds": {"prompt_polciy": {"low": 0, "high": 1}},
-                },
-            ),
-        ):
-            with self.subTest(field=field):
-                with self.assertRaises(MODULE.ConfigSpaceInputError) as typo:
-                    MODULE.agent_facts_from_config_space(document)
-                self.assertIn(f"'{field}'", str(typo.exception))
-                self.assertIn("'prompt_polciy'", str(typo.exception))
-
     def test_integral_max_trials_scores_however_json_spelled_it(self) -> None:
         """`12.0` is the same trial budget as `12`, and scored as one.
 
@@ -1185,34 +1133,43 @@ class AgentScoringTests(unittest.TestCase):
         pillar, _, _ = MODULE.score_agent(MODULE.AgentFacts(**kwargs))
         return next(s for s in pillar.subscores if s.name == "coverage")
 
-    def test_either_prompt_dimension_spelling_earns_the_same_credit(self) -> None:
-        """The catalog names one spelling; both must score the same.
+    def test_the_catalog_knows_exactly_one_spelling_of_each_knob(self) -> None:
+        """There is no synonym table, and there must not be a single-entry one.
 
-        The walkthrough template emits `prompt_style` while the catalog and the
-        adapter tests' healthy space use `prompt_policy`. Whichever name the
-        catalog carries, the other one is the same search dimension, so
-        crediting only one docks a correct document a quarter of its coverage
-        points for spelling. The evidence line must still name exactly one of
-        them, or "not tuning:" turns into a list of synonyms.
+        `KNOB_ALIASES` mapped `prompt_policy` onto `prompt_style` to keep a
+        catalog defect from docking a correct walkthrough. That defect was
+        fixed in the same commit - the `general` catalog spells the dimension
+        `prompt_style` - and the alias outlived its cause, one pair for one
+        knob, while `temp`/`temperature` and `n_shot`/`fewshot_k` got none. It
+        also invented a refusal: two spellings declared over different values
+        was an exit-2 error that only existed because the old name was kept.
+
+        So an unrecognized spelling is now what it always was for every other
+        knob in the catalog - a knob the scorer does not recognize as the
+        catalog dimension, reported as untuned rather than silently renamed.
+        Reinstating any alias table fails here.
         """
         knobs = {"model": ["a", "b"], "temperature": [0.0, 0.6]}
-        for name in ("prompt_style", "prompt_policy"):
-            with self.subTest(spelling=name):
-                coverage = self._coverage(
-                    agent_type="general",
-                    knobs=dict(knobs, **{name: ["direct", "structured"]}),
-                    wired=("model", "temperature", name),
-                )
-                self.assertEqual(coverage.value, 25.0)
-                self.assertIn("every high-impact knob", coverage.evidence)
-
-        missing = self._coverage(
+        synonym = self._coverage(
             agent_type="general",
-            knobs=knobs,
-            wired=("model", "temperature"),
+            knobs=dict(knobs, prompt_policy=["direct", "structured"]),
+            wired=("model", "temperature", "prompt_policy"),
         )
-        self.assertIn("not tuning: prompt_style", missing.evidence)
-        self.assertNotIn("prompt_policy", missing.evidence)
+        self.assertIn("not tuning: prompt_style", synonym.evidence)
+        self.assertLess(synonym.value, 25.0)
+        # And the name is judged exactly as written everywhere else too: the
+        # phantom check no longer routes through an alias table, so its
+        # ordering against a normalization step is not a defect surface.
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"prompt_style": ["a", "b"]}, "wired": ["prompt_policy"]}
+            )
+        self.assertIn(
+            "'prompt_policy' (did you mean 'prompt_style'?)",
+            str(raised.exception),
+            "the general form of what the alias bought: name the canonical "
+            "spelling for every knob, instead of substituting one silently",
+        )
 
     def test_not_sweeping_max_tokens_is_not_a_coverage_gap(self) -> None:
         """`max_tokens` is a capacity guard, so omitting it must not cost points.
@@ -1492,98 +1449,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         )
         pillar, _, _ = MODULE.score_agent(crowded)
         self.assertGreater(pillar.score, 0)
-
-    def test_one_dimension_earns_one_dimension_of_credit(self) -> None:
-        """The alias was normalized inside coverage, after everything counted.
-
-        Knob-count, variation and the combination count had already run, so
-        declaring `prompt_style` and `prompt_policy` over the same values
-        scored higher than declaring either alone, claimed one more varying
-        knob than the space has, and multiplied the reported combinations by
-        the alias's own value count.
-        """
-        knobs = {
-            "model": ["a", "b"],
-            "temperature": [0.0, 0.6],
-            "self_check": [False, True],
-        }
-        values = ["direct", "structured", "criteria_first"]
-
-        def score(space: dict) -> tuple:
-            pillar, _, _ = MODULE.score_agent(
-                MODULE.agent_facts_from_config_space(
-                    {
-                        "agent_type": "general",
-                        "knobs": space,
-                        "wired": sorted(space),
-                    }
-                )
-            )
-            count = next(s for s in pillar.subscores if s.name == "knob-count")
-            return pillar.score, count.evidence
-
-        style = score(dict(knobs, prompt_style=values))
-        policy = score(dict(knobs, prompt_policy=values))
-        both = score(dict(knobs, prompt_style=values, prompt_policy=values))
-        self.assertEqual(style, policy, "either spelling must score identically")
-        self.assertEqual(
-            both,
-            style,
-            "both spellings name one dimension, so declaring both must not "
-            "add a knob, add variation credit, or multiply the space size",
-        )
-        self.assertIn("4 of 4 wired knobs actually vary; 24 combinations", style[1])
-
-    def test_two_spellings_with_different_values_are_refused(self) -> None:
-        """One dimension cannot have two answers, and picking one silently is
-        exactly the narrowing every other guard here exists to stop."""
-        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-            MODULE.agent_facts_from_config_space(
-                {
-                    "knobs": {
-                        "prompt_style": ["direct", "structured"],
-                        "prompt_policy": ["direct", "criteria_first"],
-                    }
-                }
-            )
-        self.assertIn("prompt_policy", str(raised.exception))
-        self.assertIn("prompt_style", str(raised.exception))
-
-    def test_a_boolean_domain_is_not_the_same_domain_as_its_numbers(self) -> None:
-        """`True == 1` in Python, so the conflict check could not see one.
-
-        `{"prompt_style": [true, false], "prompt_policy": [1, 0]}` are two
-        spellings of one dimension over two different candidate lists, and the
-        list comparison read them as identical: the second was dropped silently
-        and the space was scored as if the author had written one of them - the
-        narrowing the refusal exists to stop, arriving through Python's own
-        equality. `dict.fromkeys` collapsed the pair the same way beforehand.
-        """
-        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-            MODULE.agent_facts_from_config_space(
-                {"knobs": {"prompt_style": [True, False], "prompt_policy": [1, 0]}}
-            )
-        self.assertIn("prompt_style", str(raised.exception))
-        self.assertIn("prompt_policy", str(raised.exception))
-
-        # The key is bool-aware, not `repr`-based: `1` and `1.0` are one
-        # candidate to `knob_variation` and to the combination count, so two
-        # spellings that differ only in how JSON spelled the same number are
-        # still one dimension and must not become a hard refusal.
-        merged = MODULE.agent_facts_from_config_space(
-            {"knobs": {"prompt_style": [1, 2], "prompt_policy": [1.0, 2.0]}}
-        )
-        self.assertEqual(list(merged.knobs), ["prompt_style"])
-        self.assertEqual(
-            MODULE.candidate_domain([True, False]),
-            [(True, True), (True, False)],
-        )
-        self.assertNotEqual(
-            MODULE.candidate_domain([True, False]), MODULE.candidate_domain([1, 0])
-        )
-        self.assertEqual(
-            MODULE.candidate_domain([1, 2]), MODULE.candidate_domain([1.0, 2.0])
-        )
 
     def test_the_combination_count_uses_the_same_values_the_card_counts(
         self,

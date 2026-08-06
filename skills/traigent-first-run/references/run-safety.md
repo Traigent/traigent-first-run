@@ -378,12 +378,6 @@ reaching the comparison as an unhashable value, and a non-finite number (`Infini
 refused rather than scored - a knob is measured against the span its values cover, and an infinite
 or undefined span is not a sweep.
 
-`prompt_policy` and `prompt_style` are two spellings of one search dimension. The scorer collapses
-them onto the canonical `prompt_style` before it counts anything, so either spelling scores
-identically, and reports the dimension under the canonical name. Declaring **both** over different
-candidate lists is refused: that is two names for one dimension with two answers, and scoring it
-counted one dimension twice and multiplied the reported size of the space.
-
 `agent-no-varying-knobs` clears as soon as one wired knob carries two effective values. What counts
 as "effective" depends on whether the knob has a range at all:
 

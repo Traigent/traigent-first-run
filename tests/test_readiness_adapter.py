@@ -222,9 +222,9 @@ HEALTHY_CALIBRATION = {
 HEALTHY_SPACE = {
     "knobs": {
         "temperature": [0.0, 0.5, 1.0],
-        "prompt_policy": ["direct", "structured", "criteria_first"],
+        "prompt_style": ["direct", "structured", "criteria_first"],
     },
-    "wired": ["temperature", "prompt_policy"],
+    "wired": ["temperature", "prompt_style"],
     "max_trials": 12,
 }
 
