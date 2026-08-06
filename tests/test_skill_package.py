@@ -2381,13 +2381,17 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(document="run-safety", phrase=phrase):
                 self.assertIn(phrase, safety)
 
-    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_headroom(self) -> None:
-        """A reasoning-tier model rejects sampled temperature and needs headroom.
+    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_no_cap(self) -> None:
+        """A reasoning-tier model rejects sampled temperature, and gets no cap.
 
         Executes the fence's call path shape: the strong tier at a declared
         reasoning effort must send reasoning kwargs instead of temperature,
-        with at least the 4096-token answer headroom the safety reference
-        requires, while ordinary tiers keep the swept temperature.
+        and no `max_tokens` at all, while ordinary tiers keep the swept
+        temperature. Both tiers are bounded by the wall clock instead.
+
+        The name said "and headroom" while the wrapper sent `max_tokens` 4096.
+        Renamed with the change, because a test whose name states the opposite
+        of what it asserts is read instead of run.
         """
         text = SDK_EXECUTION.read_text()
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
