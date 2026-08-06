@@ -1791,6 +1791,94 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
         self.assertIn("</dev/null >/dev/null 2>&1 &", rules)
 
+    # The two rungs the credential handoff actually has, each matched by the
+    # thing that makes it distinguishable rather than by a whole sentence: a
+    # wording test would pass against a third rung inserted between them, which
+    # is the failure this pair exists to prevent.
+    _HANDOFF_RUNGS = (
+        ("open it with the available graphical handler", "graphical session"),
+        ("print the absolute path and stop", "print the absolute path as the fallback"),
+    )
+    # The removed middle rung, matched by every spelling the repository has
+    # actually carried plus the general shape. Anchored on "IDE or editor" and
+    # on the association with the project directory, because those are what the
+    # rung claimed and neither is a mechanism anything here implements.
+    _MIDDLE_RUNG = re.compile(
+        r"fall back to the ide|"
+        r"(?:ide|editor)[^.]{0,60}?associated with the[^.]{0,30}?project directory"
+    )
+
+    def test_the_credential_handoff_has_two_rungs_and_exactly_one_home(self) -> None:
+        """The middle rung named a mechanism nothing in this repository has.
+
+        The chain read: graphical handler, else the IDE or editor associated
+        with the project directory, else print the path. Nothing resolves a
+        project directory to an IDE - not `run-safety.md`, which owns the
+        handoff and states the two rungs it can actually perform, and not any
+        script here. So the middle rung was an instruction the assistant could
+        only guess at, in the one step where guessing means a secret is entered
+        somewhere nobody named. It was removed rather than implemented: the
+        owner's call, and the honest one, since the graphical handler already
+        covers every case an IDE would have.
+
+        The second half of the check is why it was three rungs in two places to
+        begin with. `GUIDE.md` and `SKILL.md` each restated the chain that
+        `run-safety.md` owns - the same rule in three documents for one
+        audience - so removing the rung from two of them would have left the
+        next editor free to put it back in either. CLAUDE.md's "one decision,
+        one home" is the rule; this asserts it for this rule: the mechanism is
+        stated where it is performed, `SKILL.md` points at that reference, and
+        `GUIDE.md` says nothing about how the file gets opened.
+        """
+        documents = {
+            path.relative_to(ROOT).as_posix(): " ".join(
+                path.read_text().casefold().split()
+            )
+            for path in assistant_facing_documents()
+        }
+        owner = RUN_SAFETY.relative_to(ROOT).as_posix()
+
+        # 1. The middle rung is gone, everywhere - including from the owner.
+        reintroduced = sorted(
+            name for name, text in documents.items() if self._MIDDLE_RUNG.search(text)
+        )
+        self.assertEqual(
+            reintroduced,
+            [],
+            "the credential handoff's middle rung is back: an IDE or editor "
+            "resolved from the project directory, which nothing here can do",
+        )
+
+        # 2. Each surviving rung is stated once, in the document that owns it.
+        for label, phrase in self._HANDOFF_RUNGS:
+            with self.subTest(rung=label):
+                homes = sorted(
+                    name for name, text in documents.items() if phrase in text
+                )
+                self.assertEqual(
+                    homes,
+                    [owner],
+                    f"the '{label}' rung is stated in {homes} - it belongs only "
+                    "in the reference that performs the handoff",
+                )
+
+        # 3. And the owner really does carry both, in order, so "one home"
+        # cannot be satisfied by the rule having no home at all.
+        rules = documents[owner]
+        positions = [rules.index(phrase) for _label, phrase in self._HANDOFF_RUNGS]
+        self.assertEqual(positions, sorted(positions))
+
+        # 4. SKILL.md carries a pointer, not the mechanism; GUIDE.md carries
+        # neither. GUIDE.md is checked over the opener's whole vocabulary
+        # because it states no rule SKILL.md does not, and the mechanism is not
+        # in SKILL.md either.
+        skill = documents[SKILL.relative_to(ROOT).as_posix()]
+        self.assertIn("follow that reference's single ordered handoff", skill)
+        guide = documents["GUIDE.md"]
+        for word in ("gui editor", "graphical", "headless", "xdg-open", "opener"):
+            with self.subTest(word=word):
+                self.assertNotIn(word, guide)
+
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")

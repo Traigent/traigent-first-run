@@ -541,13 +541,10 @@ access rather than the read-only default, because a read-only key can leave a pa
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
 handoff and have the user enter credentials locally, never in chat. Use the same selected
-credential file: the target-project `.env`, or the user-named external source already used for
-the baseline. Open that exact absolute path once, using the first available GUI editor; if that is
-unavailable, fall back to the IDE or editor already associated with the selected project directory,
-and if headless, print the full path and stop. Open it only so the user can add
-`TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same file so the new line is
-visible, and follow
-`references/run-safety.md` for which address each account state gets, and the two 10-day windows.
+credential file: the target-project `.env`, or the user-named external source already used for the
+baseline. Open that exact absolute path once, only so the user can add `TRAIGENT_API_KEY=` for the
+enhanced run. Then refresh/reopen that same file so the new line is visible, and follow that
+reference for which address each account state gets, and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a

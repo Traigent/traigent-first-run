@@ -59,10 +59,8 @@ Use the bundled tools:
 
 When a credential handoff is needed, use the selected credential source: normally the chosen
 project-root `.env`, or the external local file the user explicitly named for this run. Open that
-exact absolute path once, using the first available GUI editor; if that is unavailable, fall back
-to the IDE or editor associated with the chosen project directory, and if headless, print the full
-path and stop. Open it only for the missing key, never to duplicate one that is already available.
-For a new Traigent key after the baseline, refresh/reopen the same file so the new
+exact absolute path once, only for the missing key, never to duplicate one that is already
+available. For a new Traigent key after the baseline, refresh/reopen the same file so the new
 `TRAIGENT_API_KEY=` line is visible, then follow `references/run-safety.md` for which address each
 account state gets, and the two 10-day windows.
 
