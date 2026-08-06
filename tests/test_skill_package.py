@@ -980,6 +980,103 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("nothing enforces this one", text)
         self.assertIn("the advisory never changes the authored probes' pass", text)
 
+    # Every prose statement of the reasoning-headroom numbers, wherever it is
+    # written. Fences are stripped first: `"max_tokens": 4096` inside a code
+    # sample is the number being USED, not a claim about where it came from.
+    _FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+    _HEADROOM_NUMBER = re.compile(r"\b(?:2048|4096)\b")
+    # The vocabulary of a number that came from somewhere. This is the shape the
+    # deleted citation had - not its wording - so a differently phrased retelling
+    # ("the safety reference's measured minimum", "the derived high-effort
+    # bound") fails on the same rule.
+    _CLAIMS_A_DERIVATION = re.compile(
+        r"\b(?:bound|bounds|derived|derivation|measured|benchmark\w*|computed|"
+        r"calibrated|established|requirement|required)\b"
+    )
+
+    def test_the_reasoning_headroom_numbers_are_never_cited_as_derived(self) -> None:
+        """The `max_tokens` numbers are a judgement, and one file cited them as a result.
+
+        `run-safety.md` asserts `max_tokens` of at least 2048, and 4096 with
+        high reasoning effort, and derives neither from anything - no
+        measurement, no vendor limit, no trial. `sdk-execution.md` then cited
+        that assertion as "the safety reference's high-effort bound", which is
+        circular: the only support for the number was the sentence being cited,
+        and "bound" tells a reader it has support it does not have. The fix was
+        to stop claiming a derivation, not to invent one, so what has to hold
+        afterwards is that NO document reintroduces the claim - in any wording.
+
+        Pinned by shape rather than by the one phrase that was removed. A
+        sentence is checked if it states either number at all, so a future "the
+        measured 4096 floor" or "the derived headroom bound" fails here even
+        though neither contains the deleted words. The positive half is asserted
+        too: the owning statement must still say the numbers are unmeasured, so
+        the rule cannot be satisfied by deleting the honesty along with the
+        citation.
+        """
+        offenders: list[str] = []
+        for document in assistant_facing_documents():
+            body = self._FENCED_BLOCK.sub("", document.read_text())
+            for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
+                if not self._HEADROOM_NUMBER.search(sentence):
+                    continue
+                claimed = self._CLAIMS_A_DERIVATION.search(sentence.casefold())
+                if claimed:
+                    offenders.append(
+                        f"{document.relative_to(ROOT).as_posix()}: "
+                        f"{claimed.group(0)!r} in {sentence!r}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "a reasoning-headroom number is presented as derived from "
+            "something; it is an unmeasured defensive floor, and the only "
+            "support for it is the sentence asserting it",
+        )
+        owner = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("unmeasured defensive floor", owner)
+
+    # An authoring label: the artifact ordinal and template letter a drafter
+    # uses to say which block this is, which is not a thing the reader knows
+    # about. Matched by shape, because the one that leaked ("Artifact-2
+    # template A:") is one of a family, and the next will carry a different
+    # ordinal or letter.
+    _AUTHORING_LABEL = re.compile(
+        r"\bartifact[\s-]?\d+\b|\btemplate\s+[A-Z]\b\s*:", re.IGNORECASE
+    )
+
+    def test_no_document_carries_an_authoring_label_into_what_the_user_sees(
+        self,
+    ) -> None:
+        """`Artifact-2 template A:` was a drafting marker, printed as guidance.
+
+        It sat at the head of a paragraph telling the assistant what to show
+        after portal registration, so the passage the user is quoted began with
+        an internal ordinal naming a template nothing in this repository
+        defines. There is no artifact numbering here to resolve it against; it
+        was residue from how the passage was written, and it was removed rather
+        than explained.
+
+        Checked over the whole corpus and by shape, for the reason the deletion
+        exists: the label is not wrong about anything, so nothing else fails
+        when one reappears, and the next one will be `Artifact-3` or `template
+        B`. Both spellings of the family are refused, in every document that can
+        reach a user.
+        """
+        labelled: list[str] = []
+        for document in conversation_contract_documents():
+            for match in self._AUTHORING_LABEL.finditer(document.read_text()):
+                labelled.append(
+                    f"{document.relative_to(ROOT).as_posix()}: {match.group(0)!r}"
+                )
+        self.assertEqual(
+            labelled,
+            [],
+            "a drafting label naming an artifact ordinal or template letter is "
+            "in prose the assistant reads out; nothing here defines that "
+            "numbering, so it names a thing the reader cannot look up",
+        )
+
     def test_the_card_labels_the_readme_documents_are_the_ones_it_prints(
         self,
     ) -> None:
