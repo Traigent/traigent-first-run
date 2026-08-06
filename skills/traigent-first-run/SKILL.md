@@ -378,17 +378,17 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select; `evaluator-timeout` means calibration ran and did not finish, so nothing about
-this evaluator is established and a paid run would buy the same wait per row - raise the budget,
-bound the evaluator's cost, or replace it, then re-calibrate before any paid work. `agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
+create or select. After any repair or substitute creation, re-run the affected checks, the
+applicable calibration, and the score, then update the latest recorded result without overwriting
+the opening one.
+
+`agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
 provided to the score: before the enhanced run there is no document to score, and afterwards a
 missing one is that run's own outcome to report, not a defect in the project. Where a document
 exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
 excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
 that by its reason, and mark the settings the agent actually uses or give one of them a second
-value. After any repair or substitute creation, re-run the
-affected checks, the applicable calibration, and the score, then update the latest recorded result
-without overwriting the opening one.
+value.
 
 ### 5. Prepare the environment and finish free checks
 

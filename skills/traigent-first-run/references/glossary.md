@@ -243,8 +243,8 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   alone does not stop a safe walkthrough, but a blocking cap does stop paid
   optimization when the current components or evidence cannot support a
   trustworthy comparison. `agent-no-varying-knobs` is advisory whenever no
-  settings document was provided - see that entry above for why one usually is
-  not - so it bounds the score at 45 and stops nothing.
+  settings document was provided - see that entry above for why one never is at
+  the opening score - so it bounds the score at 45 and stops nothing.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

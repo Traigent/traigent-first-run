@@ -1077,6 +1077,17 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)
+        # The cross-reference this branch adds points at the settings-document
+        # entry for why no document was provided, and that entry's answer is
+        # unconditional, not usual: SKILL.md mandates omitting every
+        # config-space file found before this run's enhanced search on every
+        # guided run, so `score_agent` takes the no-document branch at every
+        # opening score there is. Measured on a 60-row production-sourced
+        # dataset with a passing deterministic evaluator, the opening card
+        # still reads `1 of 3 checks measured`. "Usually" sends a reader who
+        # cannot find their document looking for a mistake they did not make.
+        self.assertIn("see that entry above for why one never is", glossary)
+        self.assertNotIn("for why one usually is", glossary)
 
     def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
         """#61: a stub agent satisfied the trigger and anchored nothing.
@@ -3240,27 +3251,48 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{safety} {sdk}")
 
-    def test_every_condition_the_scorer_can_raise_has_a_documented_branch(
-        self,
-    ) -> None:
-        """The sibling below covers the dataset caps; nothing covered the rest.
+    def test_every_agent_cap_condition_has_a_documented_branch(self) -> None:
+        """The sibling below covers the dataset caps; nothing covered the agent one.
 
         SKILL.md's own sentence says "evaluator and agent caps route through the
-        rules that already own them" and then named three of the four evaluator
-        conditions. `evaluator-timeout` blocks the paid run and appeared nowhere
-        in the package - not in SKILL.md, not in a reference, not in the
-        glossary - while SKILL.md separately forbids showing a condition id to
-        the user. So the assistant met a stop it could not explain and could not
-        name, and a sentence claiming completeness is exactly what stops anyone
-        checking.
+        rules that already own them" and then routed no agent condition at all,
+        while SKILL.md separately forbids showing a condition id to the user. So
+        the assistant met the one cap that fires on every single run with no
+        branch to take and no words to say, and a sentence claiming completeness
+        is exactly what stops anyone checking.
 
-        Read off `ACTION_FOR_CONDITION`, which is already the single home for
-        "every condition this scorer can emit" - a hand-kept list here would go
-        stale the same way the prose did.
+        Scoped to the agent conditions, not to all of `ACTION_FOR_CONDITION`.
+        The first draft here checked every condition the scorer can emit, which
+        made this branch's guard depend on a sentence a different branch owns -
+        `evaluator-timeout`'s route, which three open pull requests each wrote
+        differently and which the owner settled into #151. A guard that can only
+        pass after someone else's merge is not a guard on this change. Three
+        sibling checks - dataset, evaluator, agent - each live with the branch
+        that owns that rule, and together they still cover every condition.
+
+        Enumerated from the module rather than listed here, for the same reason
+        the dataset check pins its count: a second agent cap must be routed too.
         """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("agent-")
+        }
+        self.assertEqual(conditions, {"agent-no-varying-knobs"})
         normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split("route every active dataset cap", 1)[1]
-        for condition in sorted(READINESS.ACTION_FOR_CONDITION):
+        # Split at the evaluator/agent sentence, not at the dataset one. This
+        # branch also teaches the dataset intro the blocks-vs-advisory rule in
+        # the same words ("an advisory ceiling, never a repair to route"), so a
+        # search from the dataset anchor finds that sentence first and the
+        # ordering assertion below reads a phrase 1_600 bytes before the
+        # condition it is supposed to be routing.
+        routing = normalized.split(
+            "evaluator and agent caps route through the rules that already own them", 1
+        )[1]
+        for condition, branch in (
+            ("agent-no-varying-knobs", "that run's own outcome to report"),
+        ):
             with self.subTest(condition=condition):
                 self.assertIn(
                     condition,
@@ -3269,6 +3301,7 @@ class SkillPackageTests(unittest.TestCase):
                     "never names it, so the assistant has no branch to take "
                     "and no words to say - condition ids stay internal",
                 )
+                self.assertLess(routing.index(condition), routing.index(branch))
 
     def test_the_advisory_claim_matches_which_branches_actually_block(
         self,
@@ -4686,25 +4719,40 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # the human explanation, not an instruction the assistant carries.
         # That sentence alone measures RESIDENT 61_505.
         #
-        # A second sentence, 259 bytes, in the same paragraph: `evaluator-timeout`
-        # blocks the paid run, and the sentence introducing that list claims
-        # evaluator caps "route through the rules that already own them" while
-        # naming only three of the four. Nothing anywhere in the package named
-        # this condition or its remedy, and SKILL.md forbids showing a condition
-        # id to the user - so the assistant met a stop it could not explain and
-        # could not name. A blocking cap with no route is the same defect as a
-        # route the scorer contradicts, from the other end, and it is this
-        # paragraph's job either way. It is longer than the rule above because
-        # it is the whole route, not a pointer to one: what the timeout
-        # establishes (nothing), what a paid run would then buy, and the three
-        # things that clear it.
+        # A second sentence, 259 bytes, in the same paragraph, carried this
+        # branch's route for `evaluator-timeout` - and has been dropped. It was
+        # one of three incompatible routes for that one condition, written into
+        # this one paragraph by three open pull requests: raise the budget
+        # (here), ask the one five-option question (#151), route to the
+        # invalid-evaluator paragraph (#156). The owner settled it by placing
+        # the question at "fill gaps", before any spend, which is #151's
+        # placement, so the route now has exactly one home and this branch is
+        # not a second one. What stays here is the `agent-no-varying-knobs`
+        # sentence, whose condition no other branch routes.
         #
-        # RESIDENT measures 61_764, +411 over the 61_353 this branch already
-        # disclosed. 62_150 leaves 386, over the 371 floor and not banking a
-        # rounder number nobody weighed.
+        # Removing it recovers 61_505 - the figure this branch's own rule
+        # sentence already disclosed above. The agent sentence that stays then
+        # spends 364 of that back, on the half of this cap the first draft got
+        # wrong: it is advisory only where its reason says no document reached
+        # the score, and blocking where a document exists with nothing varying
+        # in it, so the route has to be read off the reason rather than off the
+        # condition id. Two states, two routes, one condition - which cannot be
+        # said in the length of "this cap is advisory".
+        #
+        # It also moves to its own paragraph, which is not cosmetic. #151 owns
+        # the evaluator-timeout route in the same four lines this sentence used
+        # to share, and two branches rewriting one paragraph is a guaranteed
+        # conflict however compatible the two rules are: verified by merging
+        # them, which conflicts inline and is clean once the agent rule sits in
+        # a paragraph of its own.
+        #
+        # RESIDENT measures 61_869, which leaves 31 bytes under 61_900 - the
+        # tripwire this ledger has now rejected five times. 62_250 is that
+        # measurement plus the same 371-byte headroom, rounded up to the next
+        # 50.
         self.assertLess(
             resident,
-            62_150,
+            62_250,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
