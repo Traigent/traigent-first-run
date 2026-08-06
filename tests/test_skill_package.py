@@ -2929,6 +2929,59 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_the_two_ten_day_periods_are_never_conflated(self) -> None:
+        """Two different 10-day periods exist, and a customer meets both.
+
+        One bounds the access code: from the moment it is issued it authorizes
+        one registration for 10 days, and after that it is dead and a fresh one
+        has to be requested. The other starts when that code is spent: 10 days
+        of portal access, at the end of which a perfectly valid API key is
+        still refused and only a purchase restores it. Same number, different
+        clock, different remedy - so a reader who merges them will wait out the
+        wrong one.
+
+        Pinned by shape rather than by a sentence, because the wording is free
+        to change and the distinction is not. Every mention of a 10-day period
+        has to name which clock it is, and any mention that speaks of both at
+        once has to name both. "The two 10-day windows" satisfies neither: it
+        counts them without distinguishing them, which is the phrasing this
+        test exists to refuse.
+        """
+        mention = re.compile(r"10[- ]days?\b", re.IGNORECASE)
+        collective = re.compile(r"\b(?:two|both)\s+10[- ]day", re.IGNORECASE)
+        registration_clock = re.compile(r"registrat|register|access code", re.I)
+        portal_clock = re.compile(r"portal access", re.IGNORECASE)
+
+        found = 0
+        for path in assistant_facing_documents():
+            for block in re.split(r"\n\s*\n", path.read_text()):
+                for sentence in re.split(r"(?<=[.!?])\s+", " ".join(block.split())):
+                    if not mention.search(sentence):
+                        continue
+                    found += 1
+                    names_registration = bool(registration_clock.search(sentence))
+                    names_portal = bool(portal_clock.search(sentence))
+                    with self.subTest(document=path.name, sentence=sentence):
+                        self.assertTrue(
+                            names_registration or names_portal,
+                            "a 10-day period is named without saying which one "
+                            "it is: the code's 10 days to register, or the 10 "
+                            "days of portal access that registering starts",
+                        )
+                        if collective.search(sentence):
+                            self.assertTrue(
+                                names_registration and names_portal,
+                                "both 10-day periods are referred to at once "
+                                "without naming either, so the reader is told "
+                                "there are two and left to guess what "
+                                "distinguishes them",
+                            )
+        # A pass has to mean the corpus was actually read. The funnel prose,
+        # the four account states, the access period, the artifact template,
+        # and both glossary entries all carry one, so a count this low means
+        # the scan stopped finding them rather than that they were all clean.
+        self.assertGreaterEqual(found, 6, "the 10-day scan found almost nothing")
+
     def test_retired_lead_funnel_vocabulary_is_absent(self) -> None:
         """`lead_token` and the two-path framing are gone, not renamed.
 
