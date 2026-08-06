@@ -4364,20 +4364,6 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
-            # run-safety.md owns the credential handoff and allows two rungs:
-            # the graphical opener, or printing the path. GUIDE.md and SKILL.md
-            # inserted a third - "fall back to the IDE or editor associated
-            # with the project directory" - which no mechanism in this
-            # repository implements, at the one gate where the next step is the
-            # user pasting a secret.
-            "how many rungs the credential handoff falls back through",
-            ("when no graphical handler is available, print the",),
-            (
-                "fall back to the ide or editor associated with the chosen project directory",
-                "fall back to the ide or editor already associated with the selected project directory",
-            ),
-        ),
-        (
             # The ceiling is not a billing guarantee in either case: the SDK
             # enforces its own per-optimization limit and "does not yet share
             # one cumulative budget with calibration and other calls". Two

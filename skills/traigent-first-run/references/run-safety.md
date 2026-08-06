@@ -520,8 +520,7 @@ optimization-call limit, but it does not yet share one cumulative budget with ca
 calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
 cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
-Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not: it bounds
-what this run executes, not what the provider bills.
+Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
