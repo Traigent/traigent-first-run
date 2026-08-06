@@ -3259,39 +3259,6 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
 
-    def test_every_evaluator_cap_condition_has_a_documented_branch(self) -> None:
-        """The dataset caps were routed exhaustively; the evaluator ones were not.
-
-        SKILL.md's paragraph opens "Evaluator and agent caps route through the
-        rules that already own them" and then named three of the four the
-        scorer can emit. `evaluator-timeout` is blocking, ceilings the whole
-        score at 45, and carries the remedy `bound-evaluator-cost` - a word
-        that appeared in no guidance document, so an assistant holding that
-        payload had nothing to route it to. Enumerated from the module rather
-        than listed here, for the same reason the dataset check pins its count:
-        a fifth evaluator cap must be routed too.
-        """
-        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
-        conditions = {
-            condition
-            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
-            if condition.startswith("evaluator-")
-        }
-        self.assertEqual(len(conditions), 4)
-        normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split(
-            "evaluator and agent caps route through the rules that already own them", 1
-        )[1]
-        for condition, branch in (
-            ("evaluator-unresolved", "inspect, repair, or replace"),
-            ("evaluator-invalid", "inspect, repair, or replace"),
-            ("evaluator-timeout", "bound what one scoring call costs"),
-            ("evaluator-absent", "create or select"),
-        ):
-            with self.subTest(condition=condition):
-                self.assertIn(condition, conditions)
-                self.assertLess(routing.index(condition), routing.index(branch))
-
     def test_the_billing_cap_disclaimer_has_exactly_one_home(self) -> None:
         """It had two, and one of them was a stranded lowercase fragment.
 

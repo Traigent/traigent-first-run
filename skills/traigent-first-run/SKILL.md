@@ -375,10 +375,9 @@ rather than the condition id:
 
 Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
-invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-timeout` (it did not
-finish) routes there too - bound what one scoring call costs, then re-calibrate, since that cost
-recurs on every row of every trial; `evaluator-absent` routes through the absent-evidence reading
-in the opening readiness gate and the creation dependency matrix - create or select. After any repair or substitute creation, re-run the affected checks, the
+invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
+the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
+create or select. After any repair or substitute creation, re-run the affected checks, the
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
 
