@@ -145,7 +145,7 @@ setting the other models were never given on equal terms, and no report footnote
 when every model faces exactly the same variations, the winner is clear and the enhanced run's
 insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
 identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
-least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
+least 4096 (the safety reference's defensive floor, applied flat here), and no sampling
 parameters such a model rejects - and, since temperature is then
 inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the

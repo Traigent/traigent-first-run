@@ -120,7 +120,7 @@ Examples:
   - `✅ Agent - existing customer-support answer function validated.`
   - `❗ Dataset - no reviewed real examples connected.`
   - `❗ Evaluation - no product grading policy connected.`
-  - `🛠️ Walkthrough dataset - 24 varied synthetic cases prepared.`
+  - `🛠️ Walkthrough dataset - 18 varied synthetic cases prepared.`
   - `🛠️ Walkthrough evaluation - normalized label scorer calibrated.`
 - Generated agent + real dataset/evaluator:
   - Keep Agent `❗`; show the generated adapter/function as `🛠️`.

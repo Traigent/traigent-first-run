@@ -2966,17 +2966,26 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
         return KNOB_ALIASES.get(name, name)
 
     knobs: dict[str, list[Any]] = {}
+    # Both names as the author wrote them. Reporting `canonical` for the first
+    # one printed "declares both 'prompt_style' and 'prompt_style'" whenever the
+    # alias was declared first - a message that names one spelling twice cannot
+    # be acted on, and it contradicts this module's own rule, stated at
+    # `_reject_phantom_names`, of judging the canonical name and reporting the
+    # written one.
+    written: dict[str, str] = {}
     for name, values in facts.knobs.items():
         canonical = _canonical(name)
         held = knobs.get(canonical)
         if held is not None and candidate_domain(held) != candidate_domain(values):
             raise ConfigSpaceInputError(
-                f"config-space declares both '{name}' and '{canonical}' over "
-                "different candidate values, but they are two spellings of one "
-                "search dimension: declare it once, under either name"
+                f"config-space declares both '{written[canonical]}' and "
+                f"'{name}' over different candidate values, but they are two "
+                "spellings of one search dimension: declare it once, under "
+                "either name"
             )
         if held is None:
             knobs[canonical] = list(values)
+            written[canonical] = name
 
     bounds: dict[str, dict[str, float]] = {}
     for name, spec in facts.bounds.items():

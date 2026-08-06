@@ -744,6 +744,31 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], [])
         self.assertEqual(pillar.score, 76)
 
+    def test_the_two_spellings_refusal_names_both_written_spellings(self) -> None:
+        """It named one spelling twice whenever the alias came first.
+
+        The message reported `canonical` for the knob already held and the
+        written name for the second, so a document declaring `prompt_policy`
+        before `prompt_style` produced "declares both 'prompt_style' and
+        'prompt_style'" - which names no second thing to remove. It also
+        contradicted this module's own rule at `_reject_phantom_names`: judge
+        the canonical name, report the written one.
+        """
+        for order, expected in (
+            (["prompt_policy", "prompt_style"], ("'prompt_policy'", "'prompt_style'")),
+            (["prompt_style", "prompt_policy"], ("'prompt_style'", "'prompt_policy'")),
+        ):
+            values = {"prompt_policy": ["a", "b"], "prompt_style": ["c", "d", "e"]}
+            document = {
+                "knobs": {name: values[name] for name in order},
+                "wired": [order[0]],
+            }
+            with self.subTest(order=order):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(document)
+                message = str(raised.exception)
+                self.assertIn(f"declares both {expected[0]} and {expected[1]}", message)
+
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
             {

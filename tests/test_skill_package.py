@@ -852,6 +852,144 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
         self.assertIn("is not silently demoted", dataset_text)
 
+    def test_the_provenance_vocabulary_is_read_from_preflight_not_retyped(
+        self,
+    ) -> None:
+        """A hand-typed roster drifted, and drifted in the silent direction.
+
+        The prose listed 13 synthesised words against the module's 20, 10
+        collected against 16, and framed the classification as binary - while
+        `preflight.py` has a third class, `UNDECLARED_SOURCE_TOKENS`. A row
+        declaring `provenance: "n/a"` therefore scored 6.0/10 with no vocabulary
+        warning, which the documented two-list rule cannot account for. So the
+        prose now names the three declarations and quotes no roster, and this
+        checks the naming is real rather than decorative - the same weld
+        `test_the_documented_schema_table_is_read_from_the_declaration` applies
+        to the config-space table, which is the one prose table that never
+        drifted.
+        """
+        spec = importlib.util.spec_from_file_location(
+            "first_run_preflight_for_prose", SKILL_ROOT / "scripts" / "preflight.py"
+        )
+        preflight = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = preflight
+        spec.loader.exec_module(preflight)
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        text = " ".join(source.casefold().split())
+
+        for constant in (
+            "SYNTHESISED_SOURCE_PREFIXES",
+            "COLLECTED_SOURCE_PREFIXES",
+            "UNDECLARED_SOURCE_TOKENS",
+        ):
+            with self.subTest(constant=constant):
+                self.assertIn(constant, source, "the prose names no such constant")
+                self.assertTrue(
+                    hasattr(preflight, constant),
+                    "the prose names a declaration preflight.py does not have",
+                )
+        # The third class is what the two-list framing hid, so the example
+        # tokens must really belong to it.
+        for token in ("n/a", "tbd"):
+            self.assertIn(token, preflight.UNDECLARED_SOURCE_TOKENS)
+        self.assertIn("raises no vocabulary warning", text)
+        self.assertNotIn("a word on neither list", text)
+        # The glossary is what the assistant phrases from, and it defined an
+        # undeclared row as one that "does not record where it came from" -
+        # false of the row that records `n/a`, which the card then prints as
+        # `declared sources: n/a` beside that very word.
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        entry = glossary.split("undeclared row -", 1)[1].split(" - ", 1)[0]
+        self.assertIn("`n/a`", entry)
+        self.assertNotIn("a row that does not record where it came from", glossary)
+        # A retyped roster is what drifted; refuse its return. Counted over the
+        # section, since one or two examples are explanation and a dozen is a
+        # copy.
+        section = source.split("### Declaring provenance", 1)[1].split("###", 1)[0]
+        quoted = set(re.findall(r"`([a-z0-9/_-]+)`", section.casefold()))
+        declared = set(preflight.SYNTHESISED_SOURCE_PREFIXES) | set(
+            preflight.COLLECTED_SOURCE_PREFIXES
+        )
+        self.assertLessEqual(
+            len(quoted & declared),
+            3,
+            "the vocabulary is being retyped here again; preflight.py declares it",
+        )
+
+    def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
+        """`component-creation.md`'s example is a line the customer sees.
+
+        It showed "24 varied synthetic cases prepared" against the 18 every
+        other document states, so an assistant copying the model announced a
+        dataset size the run does not build. Read from the construction rule
+        rather than pinned here, so the two cannot drift apart again.
+        """
+        dataset_text = (
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        ).read_text()
+        default = re.search(r"create (\d+) tuning examples by default", dataset_text)
+        self.assertIsNotNone(default, "the generated dataset size is no longer stated")
+        example = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        shown = re.search(
+            r"Walkthrough dataset - (\d+) varied synthetic cases", example
+        )
+        self.assertIsNotNone(shown, "the modelled dataset status line is gone")
+        self.assertEqual(shown.group(1), default.group(1))
+
+    def test_the_calibration_reject_list_states_what_actually_rejects(self) -> None:
+        """Two of its items did not describe the helper that runs them.
+
+        `binary` partial was written as "receiving a passing score", while the
+        check is `partial <= --bad-maximum`: a binary partial at 0.50 is below
+        the passing score and still exits 1, and the same file tells authors not
+        to rely on unstated CLI defaults. And the exception item said "reject",
+        twenty lines above the paragraph saying the advisory "never changes the
+        authored probes' PASS" - which is what the helper does: a scorer with
+        `except Exception: return 0.0` returns `"passed": true` and exit 0.
+        """
+        spec = importlib.util.spec_from_file_location(
+            "first_run_calibrate_for_prose",
+            SKILL_ROOT / "scripts" / "calibrate_evaluator.py",
+        )
+        calibrate = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = calibrate
+        spec.loader.exec_module(calibrate)
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            f"partial output above `--bad-maximum` (`{calibrate.BAD_MAXIMUM}`)", text
+        )
+        self.assertNotIn("in `binary` mode, partial output receiving a passing", text)
+        self.assertIn("nothing enforces this one", text)
+        self.assertIn("the advisory never changes the authored probes' pass", text)
+
+    def test_the_card_labels_the_readme_documents_are_the_ones_it_prints(
+        self,
+    ) -> None:
+        """README named three labels; the code prints four.
+
+        `PAID RUN BLOCKED` is the headline flag, and every blocking condition
+        beneath it prints `FIX BEFORE PAID RUN` - the line that actually tells
+        the reader what to do, and the only one the public explanation omitted.
+        """
+        readme = (ROOT / "README.md").read_text()
+        card_source = _READINESS.read_text()
+        for label in (
+            "PAID RUN BLOCKED",
+            "FIX BEFORE PAID RUN",
+            "LIMITED TO",
+            "WOULD LIMIT TO",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(label, card_source)
+                self.assertIn(label, readme)
+
     def test_progress_promises_are_observable(self) -> None:
         """A synchronous run cannot promise a checkpoint it cannot expose."""
         normalized = " ".join(SKILL.read_text().casefold().split())
@@ -4272,6 +4410,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 visible enhanced rows",
                 "10-12 configurations",
             ),
+        ),
+        (
+            # The reject list said the helper rejects a swallowed exception;
+            # twenty lines below, the advisory paragraph says it never changes
+            # PASS - and the helper agrees with the second: a scorer with
+            # `except Exception: return 0.0` returns `"passed": true`, exit 0.
+            "whether a swallowed evaluator exception fails calibration",
+            ("nothing enforces this one",),
+            ("an ordinary zero. for deterministic calibration",),
+        ),
+        (
+            # Binary partial is held to `--bad-maximum`, not to "not passing":
+            # a partial at 0.50 is below the passing score and still exits 1.
+            "what a binary partial probe has to score",
+            ("partial output above `--bad-maximum`",),
+            ("in `binary` mode, partial output receiving a passing score",),
         ),
     )
 

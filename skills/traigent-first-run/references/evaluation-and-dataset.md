@@ -198,9 +198,11 @@ The exact thresholds depend on the metric, but reject all of these:
 - Equivalent-good output penalized only for wording/order/format that the product accepts.
 - In `graded` mode, partial output ranked at or above a fully correct output or at or below a bad
   output.
-- In `binary` mode, partial output receiving a passing score.
+- In `binary` mode, partial output above `--bad-maximum` (`0.2`), the threshold `bad` must clear -
+  not merely below the passing score: a binary partial at `0.50` fails.
 - Bad output receiving a passing score.
-- Parse/evaluator exceptions converted silently to an ordinary zero.
+- Parse/evaluator exceptions converted silently to an ordinary zero. Nothing enforces this one:
+  `exception_probe_advisory` reports it and leaves PASS alone - reject it yourself.
 
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
@@ -334,13 +336,14 @@ generated one score 9.93, not 3. What a mixture cannot do is escape a ceiling - 
 below.
 
 Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough` both land where you
-would expect. `synthetic`, `generated`, `llm`, `gpt`, `claude`, `model-written`, `ai-`,
-`walkthrough`, `mock`, `fake`, `placeholder`, `simulated` and `template` all mean the same thing - nobody
-observed this - and are not different classes. `production`, `real`, `collected`, `logged`,
-`customer`, `human`, `curated`, `annotated`, `benchmark` and `gold` mean it was.
+would expect. `scripts/preflight.py` declares the three classes once and is the only copy:
+`SYNTHESISED_SOURCE_PREFIXES` (nobody observed this), `COLLECTED_SOURCE_PREFIXES` (somebody did),
+and `UNDECLARED_SOURCE_TOKENS`, matched whole not by prefix - a row saying `n/a` or `tbd` declines
+to answer, scores 6 like a row with no field, raises no vocabulary warning, and prints as
+`declared sources: n/a` under a card line calling it undeclared.
 
-A word on neither list keeps the collected score, so a project's own vocabulary (`crm-export`) is
-not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
+A word on none of the three keeps the collected score, so a project's own vocabulary (`crm-export`)
+is not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
 unknown word quietly earning the production band is the failure that check exists to prevent. If the
 data is generated, say so with a word from the first list.
 

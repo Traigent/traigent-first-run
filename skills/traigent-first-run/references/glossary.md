@@ -220,11 +220,11 @@ The lines under each pillar on the card
                                  any improvement the run reports could sit
                                  inside the evaluator's own noise. They come
                                  from calibration, later in the run.
-    undeclared row             - a row that does not record where it came from.
-                                 It is not counted against you, but it cannot be
-                                 counted for you either: nothing says whether it
-                                 reflects real use, so it cannot be evidence
-                                 about real traffic.
+    undeclared row             - a row that does not say where it came from: no
+                                 field, or a non-answer like `n/a` the card
+                                 still prints as the source it read. Not counted
+                                 against you, nor for you: nothing says it
+                                 reflects real use.
 
   Why two of them are usually blank at the start: "checked on known-good and
   known-bad" and "separates good answers from bad" both come from calibrating
