@@ -666,6 +666,134 @@ class StaticPreflightTests(unittest.TestCase):
         ]
         self.assertIn("dataset-duplicates", failures)
 
+    @staticmethod
+    def _pairwise_near_duplicates(
+        token_sets: list[set[str]], threshold: float = 0.9
+    ) -> list[tuple[int, int]]:
+        """The full O(n^2) scan, kept here as the oracle for the indexed join.
+
+        This is the code the indexed join replaced. It stays in the tests
+        because a similarity index that quietly misses pairs would be the same
+        defect the index was written to remove - a check that reports clean
+        without having looked - one layer further down.
+        """
+        pairs = []
+        for left in range(len(token_sets)):
+            for right in range(left + 1, len(token_sets)):
+                union = token_sets[left] | token_sets[right]
+                similarity = (
+                    len(token_sets[left] & token_sets[right]) / len(union)
+                    if union
+                    else 1.0
+                )
+                if similarity >= threshold:
+                    pairs.append((left + 1, right + 1))
+        return pairs
+
+    def test_indexed_near_duplicate_join_matches_the_pairwise_scan(self) -> None:
+        """Exactness, on the shapes that break naive similarity indexes."""
+        import random
+
+        random.seed(20260806)
+        vocabulary = [f"word{index}" for index in range(40)]
+        for _ in range(200):
+            token_sets = [
+                set(random.sample(vocabulary, size))
+                for size in (random.randint(0, 8) for _ in range(random.randint(0, 40)))
+            ]
+            pairs, complete = MODULE.near_duplicate_pairs(token_sets)
+            self.assertTrue(complete)
+            self.assertEqual(
+                pairs,
+                sorted(self._pairwise_near_duplicates(token_sets)),
+                f"indexed join disagrees with the pairwise scan on {token_sets}",
+            )
+
+    def test_near_duplicates_are_still_checked_above_five_hundred_rows(self) -> None:
+        """The check must not stop running as the dataset gets big.
+
+        A 500-row ceiling used to turn this into SKIP, and nothing downstream
+        told a SKIP from a pass - so a 5,000-row dataset silently lost
+        duplicate detection at exactly the size where duplicates become likely.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"question {index} about topic {index} number {index}",
+                "output": f"answer {index % 7}",
+                "source": "production",
+            }
+            for index in range(900)
+        ]
+        # Row 2 repeats nine of row 1's ten tokens: Jaccard 9/10, at threshold.
+        rows[0]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+        rows[1]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota"
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.WARN, near.detail)
+        self.assertIn("(1, 2)", near.detail)
+
+    def test_an_incomplete_near_duplicate_scan_is_skip_and_never_pass(self) -> None:
+        """Out of budget with nothing found is unchecked, not clean."""
+        token_sets = [{"a", "b", "c"} for _ in range(50)]
+        pairs, complete = MODULE.near_duplicate_pairs(
+            token_sets, max_comparisons=0, limit=10
+        )
+        self.assertEqual(pairs, [])
+        self.assertFalse(complete)
+
+    def test_a_truncated_near_duplicate_scan_still_reports_its_findings(self) -> None:
+        """Pairs found before the budget ran out are a finding, not a SKIP."""
+        token_sets = [{"a", "b", "c"} for _ in range(50)]
+        pairs, complete = MODULE.near_duplicate_pairs(
+            token_sets, max_comparisons=5, limit=10
+        )
+        self.assertTrue(pairs)
+        self.assertFalse(complete)
+
+    def test_an_exhausted_budget_emits_skip_rather_than_a_clean_result(self) -> None:
+        """The one remaining way this check can fail to run must say so.
+
+        Driven through `check_dataset` and not just the join, because the
+        defect being guarded lived in the emit: the old ceiling produced a SKIP
+        that nothing downstream distinguished from a pass. The budget is
+        patched down rather than a pathological dataset built, so the test
+        states the contract instead of the size at which it triggers.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                # A shared vocabulary, so the filter admits candidate pairs and
+                # the budget is actually consulted. The rows are not similar
+                # enough to BE near-duplicates: the scan finds nothing, runs
+                # out of budget, and must not call that clean.
+                "input": f"alpha beta gamma delta token{index}",
+                "output": f"answer {index % 4}",
+                "source": "production",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with mock.patch.object(MODULE, "MAX_NEAR_DUPLICATE_COMPARISONS", 0):
+                MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertIn("UNCHECKED", near.detail)
+        self.assertNotIn("no high-similarity", near.detail)
+
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [
             {"input": f"case {index}", "output": f"answer {index}"}

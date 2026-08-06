@@ -209,6 +209,94 @@ class DatasetScoringTests(unittest.TestCase):
             next(s.value for s in pillar.subscores if s.name == "provenance"), 5
         )
 
+    def _diversity(self, **facts) -> object:
+        pillar, _caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=200, labelled_rows=200, **facts)
+        )
+        return next(sub for sub in pillar.subscores if sub.name == "diversity")
+
+    def test_a_skipped_check_is_never_scored_as_a_passed_check(self) -> None:
+        """The rule, over every diversity check and every not-run spelling.
+
+        A check that did not run used to keep its full points and the sentence
+        "no repeated questions, and no single answer used by most rows" - a
+        clean result nobody established. Parameterised over all three checks so
+        a fourth cannot be added with the old behaviour, and over SKIP as well
+        as an absent record because both mean the same thing.
+        """
+        clean = {
+            "duplicate_status": "PASS",
+            "near_duplicate_status": "PASS",
+            "answer_dominance_status": "PASS",
+        }
+        full = self._diversity(**clean)
+        self.assertTrue(full.measured)
+        self.assertEqual(full.value, 20.0)
+
+        for attribute, _found, looking_for, _points in MODULE.DIVERSITY_CHECKS:
+            for not_run in ("SKIP", None):
+                with self.subTest(check=attribute, status=not_run):
+                    sub = self._diversity(**{**clean, attribute: not_run})
+                    self.assertFalse(
+                        sub.measured,
+                        f"{attribute}={not_run!r} still reads as a measured, "
+                        f"clean result: {sub.evidence}",
+                    )
+                    self.assertNotIn("no repeated questions", sub.evidence)
+                    self.assertIn(looking_for, sub.evidence)
+
+    def test_an_unrun_check_cannot_raise_the_pillar_above_a_run_one(self) -> None:
+        """Unmeasured must never pay better than measured-and-clean.
+
+        `combine` renormalizes over the measured sub-scores, so dropping one
+        can RAISE a pillar. This pins the direction: a dataset whose duplicate
+        check did not run can never score above the identical dataset whose
+        check ran and found nothing.
+        """
+        measured = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=100,
+                holdout_rows=100,
+                duplicate_status="PASS",
+                near_duplicate_status="PASS",
+                answer_dominance_status="PASS",
+            )
+        )[0]
+        unmeasured = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=100,
+                holdout_rows=100,
+                duplicate_status="PASS",
+                near_duplicate_status="SKIP",
+                answer_dominance_status="PASS",
+            )
+        )[0]
+        self.assertLessEqual(unmeasured.score, measured.score)
+        self.assertLess(unmeasured.confidence, measured.confidence)
+
+    def test_a_real_finding_survives_a_skip_beside_it(self) -> None:
+        """A skipped sibling must not erase a check that did find something.
+
+        The tempting fix - mark the whole sub-score unmeasured whenever
+        anything did not run - would delete the finding AND raise the pillar,
+        because unmeasured sub-scores are renormalized out.
+        """
+        sub = self._diversity(
+            duplicate_status="FAIL",
+            near_duplicate_status="SKIP",
+            answer_dominance_status="PASS",
+        )
+        self.assertTrue(sub.measured)
+        self.assertEqual(sub.value, 13.0)
+        self.assertIn("duplicate inputs", sub.evidence)
+        self.assertIn("not checked", sub.evidence)
+
     def test_power_is_driven_by_the_smaller_split_not_total_rows(self) -> None:
         wide = MODULE.score_dataset(
             MODULE.DatasetFacts(

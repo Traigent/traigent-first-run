@@ -27,8 +27,24 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 SUPPORTED_TRAIGENT_VERSION = "0.25.0"
-MAX_NEAR_DUPLICATE_ROWS = 500
 NEAR_DUPLICATE_THRESHOLD = 0.9
+# How many near-duplicate pairs the scan will collect before it stops. A display
+# bound, not a limit on what is checked: the emit prints ten, and a dataset with
+# a thousand near-duplicate pairs has already answered the only question this
+# check asks. Bounded so one very repetitive dataset cannot materialize millions
+# of tuples.
+MAX_NEAR_DUPLICATE_PAIRS = 1000
+# A ceiling on the WORK the near-duplicate join may do - never on the number of
+# rows it will look at. The join below is exact, so this bounds a pathological
+# dataset (every row drawn from one tiny vocabulary, so the filter admits
+# everything), not the ordinary path. Reaching it cannot produce a clean result:
+# the caller emits SKIP, and readiness reads a SKIP as unchecked.
+#
+# This replaced a 500-row ceiling above which the check emitted SKIP and stopped
+# running. Nothing downstream distinguished that SKIP from a pass, so every
+# dataset over 500 rows silently lost near-duplicate detection - precisely the
+# size at which duplicates become likely (traigent-first-run#151).
+MAX_NEAR_DUPLICATE_COMPARISONS = 5_000_000
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
@@ -457,6 +473,108 @@ def normalized_identity(value: Any) -> str:
 
 def token_set(value: Any) -> set[str]:
     return set(normalized_text(value).split())
+
+
+def near_duplicate_prefix(
+    tokens: set[str], rank: dict[str, int], threshold: float
+) -> list[str]:
+    """The tokens of one row that must be indexed for an exact threshold join.
+
+    Prefix filtering (Chaudhuri et al.): order every token by a global ranking,
+    and two sets whose Jaccard similarity is at least `threshold` must share a
+    token inside their prefixes. Suppose they do not, and let `w` be the
+    lowest-ranked token they have in common. `w` sits outside at least one of
+    the two prefixes, so every shared token sits in that set's suffix and the
+    intersection is at most `size - prefix`, which is below `threshold * size` -
+    contradicting the similarity. So a candidate pair can never be missed by
+    looking only at prefixes, and the join stays exact rather than sampled.
+
+    The length uses floor where the derivation uses ceil. Floor is never
+    shorter, and a longer prefix only admits extra candidates that the exact
+    Jaccard check then rejects - whereas a prefix one token too short drops real
+    pairs silently. Binary floating point puts `0.9 * 10` at 9.000000000000002,
+    so the rounding direction has to be the one that cannot lose a pair.
+
+    Ranking rarest-first is what makes this cheap: the indexed tokens are the
+    ones that share a bucket with almost nothing.
+    """
+    size = len(tokens)
+    length = max(1, min(size, size - int(threshold * size) + 1))
+    return sorted(tokens, key=lambda token: rank[token])[:length]
+
+
+def near_duplicate_pairs(
+    token_sets: Sequence[set[str]],
+    threshold: float = NEAR_DUPLICATE_THRESHOLD,
+    *,
+    limit: int | None = None,
+    max_comparisons: int | None = None,
+) -> tuple[list[tuple[int, int]], bool]:
+    """Find every pair of rows at or above `threshold` Jaccard similarity.
+
+    Returns `(pairs, complete)` as 1-based row numbers. `complete` says whether
+    the scan examined every candidate it needed to; it is the honest half of the
+    answer, because an empty `pairs` means "no near-duplicates" only when the
+    scan finished. The caller must not report an incomplete empty scan as a pass.
+
+    Replaces a full pairwise scan that ran only below 500 rows. This one runs at
+    any size and returns the same pairs - `tests/test_preflight.py` checks that
+    against the pairwise scan on random datasets, because an index that silently
+    misses pairs would be the same defect one layer down.
+
+    The two bounds resolve from the module constants at call time rather than in
+    the signature's defaults, which bind once at import and cannot then be moved.
+    """
+    limit = MAX_NEAR_DUPLICATE_PAIRS if limit is None else limit
+    max_comparisons = (
+        MAX_NEAR_DUPLICATE_COMPARISONS if max_comparisons is None else max_comparisons
+    )
+    pairs: list[tuple[int, int]] = []
+
+    # Rows whose input has no word characters at all ("?", "-", "..."). Their
+    # union is empty, which the pairwise scan scored as similarity 1.0, so they
+    # were all near-duplicates of each other. Kept, and computed directly rather
+    # than through the index, because they share no token to be indexed under.
+    empty = [index + 1 for index, tokens in enumerate(token_sets) if not tokens]
+    for left in range(len(empty)):
+        for right in range(left + 1, len(empty)):
+            if len(pairs) >= limit:
+                return pairs, False
+            pairs.append((empty[left], empty[right]))
+
+    frequency: Counter[str] = Counter()
+    for tokens in token_sets:
+        frequency.update(tokens)
+    rank = {
+        token: position
+        for position, (token, _count) in enumerate(
+            sorted(frequency.items(), key=lambda item: (item[1], item[0]))
+        )
+    }
+
+    index_by_token: dict[str, list[int]] = {}
+    comparisons = 0
+    for position, tokens in enumerate(token_sets):
+        if not tokens:
+            continue
+        prefix = near_duplicate_prefix(tokens, rank, threshold)
+        seen: set[int] = set()
+        for token in prefix:
+            for other in index_by_token.get(token, ()):
+                if other in seen:
+                    continue
+                seen.add(other)
+                comparisons += 1
+                if comparisons > max_comparisons:
+                    return sorted(pairs), False
+                union = tokens | token_sets[other]
+                if len(tokens & token_sets[other]) / len(union) >= threshold:
+                    if len(pairs) >= limit:
+                        return sorted(pairs), False
+                    pairs.append((other + 1, position + 1))
+        for token in prefix:
+            index_by_token.setdefault(token, []).append(position)
+    return sorted(pairs), True
 
 
 # One question, two answers: was this written, or was it collected? Every token
@@ -1026,30 +1144,31 @@ def check_dataset(
     else:
         emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
 
-    if len(rows) <= MAX_NEAR_DUPLICATE_ROWS:
-        near_pairs: list[tuple[int, int]] = []
-        sets = [token_set(row["input"]) for row in rows]
-        for left in range(len(sets)):
-            for right in range(left + 1, len(sets)):
-                union = sets[left] | sets[right]
-                similarity = (
-                    len(sets[left] & sets[right]) / len(union) if union else 1.0
-                )
-                if similarity >= NEAR_DUPLICATE_THRESHOLD:
-                    near_pairs.append((left + 1, right + 1))
-        if near_pairs:
-            emit(
-                "dataset-near-duplicates",
-                FAIL if synthetic else WARN,
-                f"near-duplicate input pairs: {near_pairs[:10]}",
-            )
-        else:
-            emit("dataset-near-duplicates", PASS, "no high-similarity input pairs")
+    near_pairs, near_complete = near_duplicate_pairs(
+        [token_set(row["input"]) for row in rows]
+    )
+    if near_pairs:
+        # A truncated scan still answered the question - there ARE
+        # near-duplicates - so it stays a finding rather than becoming a SKIP.
+        # What it cannot claim is that these are all of them.
+        more = "" if near_complete else "; the scan stopped early, so there may be more"
+        emit(
+            "dataset-near-duplicates",
+            FAIL if synthetic else WARN,
+            f"near-duplicate input pairs: {near_pairs[:10]}{more}",
+        )
+    elif near_complete:
+        emit("dataset-near-duplicates", PASS, "no high-similarity input pairs")
     else:
+        # Found nothing AND did not finish, which is not the same statement as
+        # "found nothing". The only way here is a dataset so repetitive that the
+        # filter admits everything; say that this is unchecked, never clean.
         emit(
             "dataset-near-duplicates",
             SKIP,
-            f"{len(rows)} rows exceeds the local pairwise-check limit of {MAX_NEAR_DUPLICATE_ROWS}",
+            f"the near-duplicate scan passed its {MAX_NEAR_DUPLICATE_COMPARISONS} "
+            "comparison budget before examining every candidate pair, so this "
+            "dataset is UNCHECKED for near-duplicates - not clean",
         )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
