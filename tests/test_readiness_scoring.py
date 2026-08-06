@@ -2367,6 +2367,56 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 f"one that produced nothing usable",
             )
 
+    def test_every_tie_in_the_order_was_broken_on_purpose(self) -> None:
+        """Equal ceilings are allowed; equal ceilings in arbitrary ORDER are not.
+
+        The non-decreasing assertion above cannot see a tie: swapping two
+        conditions that carry the same number leaves it green. So each tie is
+        recorded here with the reason it was broken the way it was, which is
+        the whole point of the block in the module - the failure it exists to
+        stop is "ranked by whichever author wrote each one".
+
+        Two of the three ties are the same rule: where two conditions bound
+        the claim by the same amount, the one that was COUNTED is ranked as the
+        worse of the two and the one that was inferred follows it.
+        `evaluator-absent` is a fact about the input; `evaluator-unresolved` is
+        what this scorer concluded after failing to read a file.
+        `dataset-mostly-synthetic` is a provenance count;
+        `dataset-unsound-expected-outputs` is the assistant's reading of a
+        customer's domain, which on collected data can be wrong.
+
+        The third is ordered by its band instead, and the module says so where
+        it is defined: `evaluator-timeout` opens "answers the wrong question"
+        and `agent-no-varying-knobs` is equal to it because neither is broken
+        and neither compares anything. Both are read off the input, so the
+        counted-before-inferred rule has nothing to separate them with.
+        """
+        ranked = [
+            condition
+            for _group, entries in MODULE.CAP_SEVERITY_ORDER
+            for condition, _ceiling in entries
+        ]
+        ties = {}
+        for condition in ranked:
+            ties.setdefault(MODULE.CAP_CEILING[condition], []).append(condition)
+        self.assertEqual(
+            {
+                ceiling: conditions
+                for ceiling, conditions in ties.items()
+                if len(conditions) > 1
+            },
+            {
+                40: ["evaluator-absent", "evaluator-unresolved"],
+                45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                70: [
+                    "dataset-mostly-synthetic",
+                    "dataset-unsound-expected-outputs",
+                ],
+            },
+            "a tie in the ceiling order is a decision; record it here with its "
+            "reason rather than leaving the sequence to whoever edited last",
+        )
+
     def test_a_narrower_condition_never_outranks_the_one_it_implies(self) -> None:
         """The #144 shape, generalised.
 

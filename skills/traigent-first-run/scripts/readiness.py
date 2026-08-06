@@ -482,6 +482,31 @@ MOSTLY_SYNTHETIC_CEILING = 70
 # invented, so strictly less capped. This pair is the clearest case of the
 # ordering rule: the condition below implies this one, so its ceiling may never
 # be the higher of the two.
+UNSOUND_ANSWER_CEILING = 70
+# Equal to `mostly-synthetic`, and ranked AFTER it - the tie is broken, not
+# left to whichever author wrote each line, which is the failure this whole
+# block exists to stop.
+#
+# The number first. It sits below `generated-answer-key` (75) because it is the
+# stronger finding about the same thing: that condition says nobody observed
+# these answers, this one says somebody read them and they disagree with their
+# own questions. It sits above the structural dataset conditions (overlap 50,
+# unreadable rows 35) because those are measured and this is an opinion, and an
+# opinion may not be the harshest number on the card. What 70 buys is one
+# thing: the run cannot present as STRONG while a material share of what it
+# grades against is believed wrong.
+#
+# Now the tie. `mostly-synthetic` is a COUNT - preflight read the provenance
+# field on every row and divided. This is the assistant's reading of a
+# customer's domain, and on collected data it can simply be wrong. Where two
+# conditions bound the claim by the same amount, the measured one is ranked as
+# the worse of the two, because a severity you counted outranks a severity you
+# inferred. That is the same reason `evaluator-absent` precedes
+# `evaluator-unresolved` at their shared 40.
+#
+# Both belong to "bounded claim" and neither implies the other, so there is no
+# `CAP_IMPLICATIONS` entry: a dataset can be mostly generated with a sound
+# answer key, or fully collected with a wrong one.
 WIRING_CHECK_CEILING = 74
 # One below the STRONG boundary at 75, which is the only derived number in this
 # block: the claim is about what the result may PRESENT as, and under ten
@@ -522,6 +547,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         (
             ("dataset-fully-synthetic", FULLY_SYNTHETIC_CEILING),
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-unsound-expected-outputs", UNSOUND_ANSWER_CEILING),
             ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
             ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
             ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
@@ -1205,17 +1231,11 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
-# The row-level sanity check's one ceiling.
+# The row-level sanity check's ceiling lives with every other ceiling in
+# `CAP_SEVERITY_ORDER`, because its ORDER against the rest is a rule and a
+# number defined beside its own threshold is a number nothing ranks. Only the
+# share that triggers it lives here.
 #
-# Below `GENERATED_ANSWER_KEY_CEILING` because it is the stronger finding about
-# the same thing: that cap says nobody observed these answers, this one says
-# somebody read them and they disagree with their own questions. Above the
-# structural dataset caps (overlap 50, unreadable rows 35) because those are
-# measured and this is an opinion, and an opinion should not be the harshest
-# number on the card. What it buys is exactly one thing: the run cannot present
-# as STRONG or EXCELLENT while a material share of what it grades against is
-# believed wrong.
-UNSOUND_ANSWER_CEILING = 70
 # One row in ten. Grounded in what the run does with these rows rather than
 # picked for roundness: the recommended configuration is reported on ten
 # held-out rows, so one wrong answer there moves the reported number by ten
