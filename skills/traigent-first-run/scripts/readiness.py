@@ -31,6 +31,7 @@ import json
 import math
 import os
 import sys
+import textwrap
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
@@ -2073,6 +2074,57 @@ def marker(sub: SubScore, unicode_ok: bool) -> str:
     return "!!" if not unicode_ok else "❗"
 
 
+BLOCKER_KEYWORD = "BLOCKER"
+# The BODY column, not the whole line: the keyword and its gutter are added
+# on top, so a rendered line is this plus eleven characters.
+BLOCKER_BODY_WIDTH = 76
+
+
+def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
+    """The sentence that joins the band to the block, when one is in force.
+
+    The two say different things about different questions. The band grades the
+    EVIDENCE - how good what you brought is. The block answers whether the paid
+    run may START. Both can be true at once, and routinely are: the walkthrough
+    that generates its own dataset scores 65/100 WORKABLE and is blocked by
+    `dataset-fully-synthetic`, which is the ordinary case rather than an edge.
+
+    Printed adjacent with no connective - `65/100  WORKABLE  (PAID RUN
+    BLOCKED)` - they read as one self-contradicting verdict, and a reader who
+    resolves it in either direction gets it wrong: either the score is fake, or
+    the block is pedantry. Neither is true, and neither is fixable by changing
+    which caps block or where the bands sit. What was missing was the sentence
+    between the two claims, so that is what this adds.
+
+    The keyword is the point. `BLOCKER` is one word a reader can hold, and it
+    is followed by the only three facts they need: the score stands, one named
+    thing is in the way, and here is what happens after it is cleared. The
+    thing itself is not repeated here - it is on the FIX BEFORE PAID RUN line
+    below, and printing a reason twice reads as two problems, which is the
+    defect this whole card keeps having to fix.
+    """
+    blocking = [cap for cap in score.caps if cap.blocks]
+    if not blocking:
+        return []
+    if len(blocking) == 1:
+        count, pronoun, marked = "one thing has", "it", "marked"
+    else:
+        count = f"{len(blocking)} things have"
+        pronoun, marked = "them", "each marked"
+    body = (
+        f"{score.overall}/100 {score.band} is what your evidence supports, and "
+        f"that stands. Whether the paid run may start is a separate question: "
+        f"{count} to be cleared first, {marked} FIX BEFORE PAID RUN below. Fix "
+        f"{pronoun}, run this score again, and the paid comparison can start."
+    )
+    wrapped = textwrap.wrap(body, width=BLOCKER_BODY_WIDTH)
+    indent = " " * (2 + len(BLOCKER_KEYWORD) + 2)
+    lines = [f"  {palette.bad}{BLOCKER_KEYWORD}{palette.reset}  {wrapped[0]}"]
+    lines.extend(f"{indent}{line}" for line in wrapped[1:])
+    lines.append("")
+    return lines
+
+
 def render_card(
     score: ReadinessScore, *, palette: Palette = PLAIN, unicode_ok: bool = True
 ) -> str:
@@ -2083,11 +2135,14 @@ def render_card(
     offline harness runs every scenario twice and compares the evidence.
     """
     lines: list[str] = []
+    # The headline carries the band and nothing else. It used to append
+    # "(PAID RUN BLOCKED)" here, which put a grade and a gate in one breath -
+    # `blocker_lines` above owns why that reads as a contradiction and what
+    # replaces it.
     headline = f"{score.overall}/100  {score.band}"
-    if score.status == "BLOCKED":
-        headline += "  (PAID RUN BLOCKED)"
     lines.append(f"TRAIGENT OPTIMIZATION READINESS{' ' * 8}{headline}")
     lines.append("")
+    lines.extend(blocker_lines(score, palette))
     for pillar in score.pillars:
         colour = band_color(palette, pillar.score)
         headline_suffix = f"  {pillar.score}/100"
@@ -2193,9 +2248,26 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         lines.extend([f"Generated: {timestamp}", ""])
     lines.extend(
         [
-            f"**{score.overall}/100 - {score.band}**"
-            + ("  ·  status: PAID RUN BLOCKED" if score.status == "BLOCKED" else ""),
+            f"**{score.overall}/100 - {score.band}**",
             "",
+            # Same separation the card makes, in the durable artifact: the band
+            # grades the evidence, the status answers whether the paid run may
+            # start, and putting them in one line made a grade look like a
+            # refusal. The status token stays, because this file is read by
+            # machines too - what changes is that it now arrives with the
+            # sentence that says what it is about.
+            *(
+                [
+                    "Status: PAID RUN BLOCKED. The band above describes how good "
+                    "this evidence is; this describes whether the paid run may "
+                    "start. Both can be true at once. See "
+                    '"What is blocking a trustworthy result" below for what has '
+                    "to clear first, then re-run this score.",
+                    "",
+                ]
+                if score.status == "BLOCKED"
+                else []
+            ),
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",

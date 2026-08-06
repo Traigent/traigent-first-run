@@ -137,14 +137,21 @@ evaluator is usually what moves it.
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
 shares examples with validation, a dataset that is mostly or entirely generated, or simply too few
-comparable examples for a stable comparison. A cap is a ceiling on the result, not a
+comparable examples for a stable comparison.
+
+Some of those also stop the paid run, and the card says so on its own `BLOCKER` line under the
+score rather than as a tag beside the band. The two are answers to different questions: the band
+grades how good the evidence is, the blocker says whether the paid comparison may start yet. A
+generated walkthrough dataset scoring `65/100 WORKABLE` while blocked is the ordinary case, not a
+self-contradiction - the score stands, one named thing has to clear first, and the line says which
+and what happens after. A cap is a ceiling on the result, not a
 deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
 number simply cannot claim more than the evidence supports.
 
-The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
-means the current components or evidence cannot yet support a trustworthy paid comparison - either
-something is missing or invalid, or too little comparable evidence exists. Follow the named repair
-or evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the
+The card labels the two kinds differently, and the label is the whole message. `FIX BEFORE PAID
+RUN` means the current components or evidence cannot yet support a trustworthy paid comparison -
+either something is missing or invalid, or too little comparable evidence exists. Follow the named
+repair or evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the
 available evidence bounds what the result may claim; it names the number so "why is this 89" has an
 answer on the same line.
 

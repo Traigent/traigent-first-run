@@ -2185,9 +2185,84 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertNotIn("BLOCKED", advisory)
 
         blocking = rendered(MODULE.power_ceiling(3))
-        self.assertIn("PAID RUN BLOCKED", blocking)
+        self.assertIn("BLOCKER", blocking)
         self.assertIn("FIX BEFORE PAID RUN", blocking)
         self.assertNotIn("LIMITED TO", blocking)
+
+    def test_the_band_and_the_block_are_not_printed_as_one_verdict(self) -> None:
+        """A grade and a gate answer different questions, so they get two lines.
+
+        `65/100  WORKABLE  (PAID RUN BLOCKED)` put them adjacent with nothing
+        joining them, and it is the ordinary walkthrough card - a generated
+        dataset scores in the WORKABLE band and is blocked by
+        `dataset-fully-synthetic`. Read as one verdict it contradicts itself,
+        and a reader resolving it either way is wrong: the score is real and
+        the block is real.
+
+        Semantics are unchanged - which caps block and every ceiling stay
+        exactly as they were - so this pins presentation only: the headline
+        carries the band alone, and one BLOCKER line says the score stands,
+        that something has to clear first, and what happens once it does.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        cap = MODULE.Cap(
+            "dataset-fully-synthetic",
+            65,
+            "Every row was written by a model.",
+        )
+        score = MODULE.aggregate(
+            pillars, caps=[cap], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.overall, 65)
+        self.assertEqual(score.band, "WORKABLE")
+        self.assertEqual(score.status, "BLOCKED")
+
+        card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
+        headline = card.splitlines()[0]
+        self.assertIn("65/100  WORKABLE", headline)
+        self.assertNotIn("BLOCK", headline)
+
+        blocker = next(line for line in card.splitlines() if "BLOCKER" in line)
+        self.assertIn("65/100 WORKABLE is what your evidence supports", blocker)
+        # Names what happens next, or the keyword is only a louder tag.
+        self.assertIn("run this score again", card)
+        self.assertIn("the paid comparison can start", card)
+        # The reason itself is not repeated up here; one problem, one statement.
+        self.assertEqual(card.count("Every row was written by a model."), 1)
+
+    def test_a_blocked_report_separates_the_band_from_the_gate(self) -> None:
+        """The durable artifact carries the same separation as the card."""
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            caps=[MODULE.Cap("dataset-fully-synthetic", 65, "Model-written rows.")],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        report = MODULE.render_markdown(score)
+        self.assertIn("**65/100 - WORKABLE**\n", report)
+        self.assertNotIn("**65/100 - WORKABLE**  ·", report)
+        self.assertIn("Status: PAID RUN BLOCKED.", report)
+        self.assertIn("Both can be true at once.", report)
+
+    def test_an_unblocked_card_says_nothing_about_a_blocker(self) -> None:
+        """The line appears only when something actually blocks."""
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars, caps=[], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.status, "OK")
+        card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
+        self.assertNotIn("BLOCK", card)
 
     def test_a_ceiling_that_is_not_the_limit_is_not_printed_as_one(self) -> None:
         """A cap line may not state a number that describes nothing.
