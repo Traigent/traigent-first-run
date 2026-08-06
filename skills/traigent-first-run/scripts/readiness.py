@@ -1197,30 +1197,69 @@ def scores_without_a_reference(method: str | None) -> bool:
     return method in REFERENCE_FREE_METHODS
 
 
-# The three preflight checks the diversity sub-score speaks for, each with the
-# points it is worth and the words the card uses when it found a problem.
+NEAR_DUPLICATE_PERCENT = 90
+
+
+@dataclass(frozen=True)
+class DiversityCheck:
+    """One question the diversity sub-score asks, and what answering it costs.
+
+    `detectors` are every preflight record that can raise this question's
+    finding. `certifier` is the single record allowed to CLEAR it. The two
+    differ because a detector can be cheaper than the question it serves: it
+    can say "there is a problem" without being able to say "there is none".
+    """
+
+    detectors: tuple[str, ...]
+    certifier: str
+    # Two labels, because the same question needs a different noun in the two
+    # sentences: what it FOUND ("one expected output dominates") is not what it
+    # was LOOKING FOR ("whether one expected output dominates"), and reusing the
+    # first in the unchecked line reads as a finding the check never made.
+    found_label: str
+    looking_for_label: str
+    points: float
+
+
+# The questions the diversity sub-score speaks for, each with the points it is
+# worth and the words the card uses.
 #
 # They are listed rather than inlined because the rule below has to hold for all
-# three identically, and the defect this table exists to prevent was one of them
-# being handled by a test the other two did not get.
+# of them identically, and the defect this table exists to prevent was one of
+# them being handled by a test the others did not get.
 #
-# Two labels each, because the same check needs a different noun in the two
-# sentences: what it FOUND ("one expected output dominates") is not what it was
-# LOOKING FOR ("whether one expected output dominates"), and reusing the first
-# in the unchecked line reads as a finding the check never made.
-DIVERSITY_CHECKS: tuple[tuple[str, str, str, float], ...] = (
-    ("duplicate_status", "duplicate inputs", "repeated inputs", 7.0),
-    (
-        "near_duplicate_status",
-        "near-duplicate inputs",
-        "near-duplicate inputs",
-        7.0,
+# ONE deduction for repetition, not two. `dataset-duplicates` (byte-identical
+# after normalization) and `dataset-near-duplicates` (Jaccard >= 0.9) both fire
+# on the same duplicated row, because two identical token sets have similarity
+# exactly 1.0 - so a single copied row used to cost 7 + 7 of the 20 diversity
+# points for one defect described twice. The owner's decision is that the
+# near-duplicate check subsumes the exact one for scoring: >= 90% similar is
+# already the finding, and 100% needs no second one (traigent-first-run#158).
+#
+# The exact check is kept as a DETECTOR rather than deleted, because it can
+# answer where the near scan cannot. It is a hash bucket - O(n), always
+# complete - while the near scan is a bounded join that emits SKIP when it
+# passes its comparison budget. On that dataset the exact check is the only
+# thing still able to raise repetition at all, so it feeds the same single
+# deduction. What it may never do is CLEAR the question: "no byte-identical
+# rows" is not "no rows 90% alike", so `certifier` is the near check alone.
+DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
+    DiversityCheck(
+        detectors=("near_duplicate_status", "duplicate_status"),
+        certifier="near_duplicate_status",
+        found_label=(f"rows at least {NEAR_DUPLICATE_PERCENT}% similar to another row"),
+        looking_for_label=(
+            f"whether rows repeat each other at {NEAR_DUPLICATE_PERCENT}% "
+            "similarity or more"
+        ),
+        points=7.0,
     ),
-    (
-        "answer_dominance_status",
-        "one expected output dominates",
-        "whether one expected output dominates",
-        6.0,
+    DiversityCheck(
+        detectors=("answer_dominance_status",),
+        certifier="answer_dominance_status",
+        found_label="one expected output dominates",
+        looking_for_label="whether one expected output dominates",
+        points=6.0,
     ),
 )
 # A preflight status only counts as evidence when it is one of these. Everything
@@ -1242,6 +1281,13 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
     that way: near-duplicates above 500 rows, and answer dominance under a
     reference-free evaluator (traigent-first-run#151).
 
+    A question is answered by its `certifier` and only by it. Its other
+    detectors can raise a finding but cannot pronounce it clean, which is what
+    lets the exact-duplicate check keep earning its place after the
+    near-duplicate check took over the scoring: on a dataset where the near
+    scan ran out of budget, an exact duplicate is still a found problem, while
+    an exact PASS leaves the 90%-similarity question genuinely unasked.
+
     So there are three outcomes, not two:
 
     * A problem was found. Deduct for it, stay measured, and name the checks
@@ -1260,13 +1306,18 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
     problems: list[str] = []
     unchecked: list[str] = []
     earned = 20.0
-    for attribute, found_label, looking_for_label, points in DIVERSITY_CHECKS:
-        status = getattr(facts, attribute)
-        if status not in MEASURED_STATUSES:
-            unchecked.append(looking_for_label)
-        elif status in ("FAIL", "WARN"):
-            earned -= points
-            problems.append(found_label)
+    for check in DIVERSITY_CHECKS:
+        statuses = [getattr(facts, name) for name in check.detectors]
+        if any(status in ("FAIL", "WARN") for status in statuses):
+            # Deduct once, however many detectors saw it. Naming each of them
+            # would print one defect as a list of findings, which is the
+            # arithmetic this table exists to stop.
+            earned -= check.points
+            problems.append(check.found_label)
+        elif getattr(facts, check.certifier) in MEASURED_STATUSES:
+            continue
+        else:
+            unchecked.append(check.looking_for_label)
 
     not_checked = f"not checked: {', '.join(unchecked)}"
     if len(unchecked) == len(DIVERSITY_CHECKS):
@@ -1290,7 +1341,8 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
         20.0,
         20.0,
         True,
-        "no repeated questions, and no single answer used by most rows",
+        f"no repeated questions at {NEAR_DUPLICATE_PERCENT}% similarity or "
+        "more, and no single answer used by most rows",
     )
 
 

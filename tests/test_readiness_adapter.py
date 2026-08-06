@@ -1548,7 +1548,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 if sub["name"] == "diversity"
             )
             self.assertTrue(diversity["measured"])
-            self.assertIn("near-duplicate inputs", diversity["evidence"])
+            self.assertIn("90% similar", diversity["evidence"])
 
     def test_split_labels_exceeding_the_aggregate_are_refused(self) -> None:
         """#69: the guard checked four split counts and no aggregate.

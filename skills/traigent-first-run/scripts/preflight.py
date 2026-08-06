@@ -1135,6 +1135,12 @@ def check_dataset(
     exact_duplicates = [
         positions for positions in normalized_inputs.values() if len(positions) > 1
     ]
+    # Both records describe repetition, and the readiness score deducts for it
+    # once - `dataset-near-duplicates` is what it deducts on, because identical
+    # rows are 100% similar and so are already inside "at least 90% similar".
+    # This one is kept because it is a hash bucket: O(n), always complete, and
+    # therefore still able to report repetition on a dataset where the bounded
+    # near-duplicate join gave up. It detects; it does not score twice.
     if exact_duplicates:
         emit(
             "dataset-duplicates",
@@ -1144,6 +1150,7 @@ def check_dataset(
     else:
         emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
 
+    threshold_percent = f"{NEAR_DUPLICATE_THRESHOLD:.0%}"
     near_pairs, near_complete = near_duplicate_pairs(
         [token_set(row["input"]) for row in rows]
     )
@@ -1155,10 +1162,15 @@ def check_dataset(
         emit(
             "dataset-near-duplicates",
             FAIL if synthetic else WARN,
-            f"near-duplicate input pairs: {near_pairs[:10]}{more}",
+            f"input pairs at least {threshold_percent} similar (shared words "
+            f"over total words), identical rows included: {near_pairs[:10]}{more}",
         )
     elif near_complete:
-        emit("dataset-near-duplicates", PASS, "no high-similarity input pairs")
+        emit(
+            "dataset-near-duplicates",
+            PASS,
+            f"no input pair reaches {threshold_percent} similarity",
+        )
     else:
         # Found nothing AND did not finish, which is not the same statement as
         # "found nothing". The only way here is a dataset so repetitive that the

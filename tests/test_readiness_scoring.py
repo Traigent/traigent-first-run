@@ -233,17 +233,80 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertTrue(full.measured)
         self.assertEqual(full.value, 20.0)
 
-        for attribute, _found, looking_for, _points in MODULE.DIVERSITY_CHECKS:
+        for check in MODULE.DIVERSITY_CHECKS:
             for not_run in ("SKIP", None):
-                with self.subTest(check=attribute, status=not_run):
-                    sub = self._diversity(**{**clean, attribute: not_run})
+                with self.subTest(check=check.certifier, status=not_run):
+                    sub = self._diversity(**{**clean, check.certifier: not_run})
                     self.assertFalse(
                         sub.measured,
-                        f"{attribute}={not_run!r} still reads as a measured, "
-                        f"clean result: {sub.evidence}",
+                        f"{check.certifier}={not_run!r} still reads as a "
+                        f"measured, clean result: {sub.evidence}",
                     )
                     self.assertNotIn("no repeated questions", sub.evidence)
-                    self.assertIn(looking_for, sub.evidence)
+                    self.assertIn(check.looking_for_label, sub.evidence)
+
+    def test_one_duplicated_row_is_one_deduction_not_two(self) -> None:
+        """The exact and near checks describe one defect, so they cost once.
+
+        Identical token sets have Jaccard similarity 1.0, so a single copied
+        row fires `dataset-duplicates` AND `dataset-near-duplicates`. Scoring
+        both took 14 of the 20 diversity points for one duplicated row
+        (traigent-first-run#158). The owner's decision is one deduction of 7,
+        taken on the near-duplicate check, which already covers 100%.
+        """
+        clean = {
+            "duplicate_status": "PASS",
+            "near_duplicate_status": "PASS",
+            "answer_dominance_status": "PASS",
+        }
+        both = self._diversity(
+            **{**clean, "duplicate_status": "WARN", "near_duplicate_status": "WARN"}
+        )
+        self.assertTrue(both.measured)
+        self.assertEqual(both.value, 13.0, both.evidence)
+        self.assertEqual(
+            both.value,
+            self._diversity(**{**clean, "near_duplicate_status": "WARN"}).value,
+        )
+        # Named once, and named with the threshold the customer is being
+        # judged against - not as two findings.
+        self.assertEqual(both.evidence.count(";"), 0, both.evidence)
+        self.assertIn("90%", both.evidence)
+
+    def test_the_exact_check_can_still_report_what_the_near_scan_missed(self) -> None:
+        """Why the exact check is kept as a detector rather than deleted.
+
+        It is a hash bucket - O(n), always complete - while the near-duplicate
+        join is bounded and emits SKIP when it exhausts its budget. On that
+        dataset the exact check is the only thing that can still say
+        "there is repetition", so it feeds the same single deduction.
+        """
+        clean = {
+            "duplicate_status": "PASS",
+            "near_duplicate_status": "PASS",
+            "answer_dominance_status": "PASS",
+        }
+        found = self._diversity(
+            **{**clean, "duplicate_status": "WARN", "near_duplicate_status": "SKIP"}
+        )
+        self.assertTrue(found.measured, found.evidence)
+        self.assertEqual(found.value, 13.0, found.evidence)
+
+    def test_no_exact_duplicates_cannot_clear_the_similarity_question(self) -> None:
+        """A detector may raise a finding; only the certifier may clear one.
+
+        "No byte-identical rows" is not "no rows 90% alike", so an exact PASS
+        beside an unfinished near scan leaves the question unasked - which is
+        the same rule the class above pins, applied to the check that was
+        demoted rather than deleted.
+        """
+        sub = self._diversity(
+            duplicate_status="PASS",
+            near_duplicate_status="SKIP",
+            answer_dominance_status="PASS",
+        )
+        self.assertFalse(sub.measured, sub.evidence)
+        self.assertIn("90%", sub.evidence)
 
     def test_an_unrun_check_cannot_raise_the_pillar_above_a_run_one(self) -> None:
         """Unmeasured must never pay better than measured-and-clean.
@@ -330,12 +393,12 @@ class DatasetScoringTests(unittest.TestCase):
         """
         sub = self._diversity(
             duplicate_status="FAIL",
-            near_duplicate_status="SKIP",
-            answer_dominance_status="PASS",
+            near_duplicate_status="FAIL",
+            answer_dominance_status="SKIP",
         )
         self.assertTrue(sub.measured)
         self.assertEqual(sub.value, 13.0)
-        self.assertIn("duplicate inputs", sub.evidence)
+        self.assertIn("90% similar", sub.evidence)
         self.assertIn("not checked", sub.evidence)
 
     def test_power_is_driven_by_the_smaller_split_not_total_rows(self) -> None:

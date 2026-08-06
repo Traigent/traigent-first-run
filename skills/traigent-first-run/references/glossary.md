@@ -165,7 +165,11 @@ The lines under each pillar on the card
                                  good.
     repeated or dominant answers - whether the same input or the same expected
                                  answer keeps recurring, which lets a lazy
-                                 configuration score well by guessing it.
+                                 configuration score well by guessing it. Rows
+                                 repeat when 90% or more of their words match,
+                                 identical rows included; charged once. 90% is
+                                 a chosen line, not a discovered one - 89%
+                                 alike is below it, not thereby far apart.
     where the rows came from   - whether the data was collected or written by a
                                  model. Both are usable; only one is evidence
                                  about production.
