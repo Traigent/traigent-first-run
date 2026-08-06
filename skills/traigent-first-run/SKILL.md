@@ -380,9 +380,13 @@ invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-abse
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
 create or select; `evaluator-timeout` means calibration ran and did not finish, so nothing about
 this evaluator is established and a paid run would buy the same wait per row - raise the budget,
-bound the evaluator's cost, or replace it, then re-calibrate before any paid work. `agent-no-varying-knobs` is an advisory ceiling, never a repair to route: before
-the enhanced run there is no document to score, and afterwards a missing one is that run's own
-outcome to report, not a defect in the project. After any repair or substitute creation, re-run the
+bound the evaluator's cost, or replace it, then re-calibrate before any paid work. `agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
+provided to the score: before the enhanced run there is no document to score, and afterwards a
+missing one is that run's own outcome to report, not a defect in the project. Where a document
+exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
+excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
+that by its reason, and mark the settings the agent actually uses or give one of them a second
+value. After any repair or substitute creation, re-run the
 affected checks, the applicable calibration, and the score, then update the latest recorded result
 without overwriting the opening one.
 

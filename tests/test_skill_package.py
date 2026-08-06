@@ -3270,6 +3270,42 @@ class SkillPackageTests(unittest.TestCase):
                     "and no words to say - condition ids stay internal",
                 )
 
+    def test_the_advisory_claim_matches_which_branches_actually_block(
+        self,
+    ) -> None:
+        """SKILL.md routes by condition id, so a claim about one branch is a
+        claim about every branch sharing that id.
+
+        `agent-no-varying-knobs` was described as "an advisory ceiling, never a
+        repair to route", justified by the branch where no settings document
+        was provided - which is genuinely advisory (`blocks=False`). But the
+        condition has five other construction sites and every one of them
+        blocks, printing `FIX BEFORE PAID RUN` on the card while the routing
+        bullet an assistant reads by id says the opposite.
+
+        Read off the module rather than pinned: a sixth branch must be
+        classified too.
+        """
+        both = {True: [], False: []}
+        for name, value in vars(READINESS).items():
+            if isinstance(value, READINESS.Cap) and (
+                value.condition == "agent-no-varying-knobs"
+            ):
+                both[value.blocks].append(name)
+        self.assertTrue(both[False], "no advisory branch left to justify the claim")
+        self.assertTrue(both[True], "no blocking branch left; rewrite this check")
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split("evaluator and agent caps route through", 1)[1]
+        # The claim must be scoped, not stated of the condition as a whole.
+        self.assertNotIn(
+            "`agent-no-varying-knobs` is an advisory ceiling, never a repair to route",
+            routing,
+        )
+        self.assertIn("is an advisory ceiling only where", routing)
+        # And the blocking half must be stated, since that is what the card
+        # prints for five of the six branches.
+        self.assertIn("the same condition blocks", routing)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
