@@ -3384,6 +3384,81 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
 
+    def test_every_evaluator_cap_condition_has_a_documented_branch(self) -> None:
+        """The dataset caps were routed exhaustively; the evaluator ones were not.
+
+        SKILL.md's paragraph opens "Evaluator and agent caps route through the
+        rules that already own them" and then named three of the four the
+        scorer can emit. `evaluator-timeout` ceilings the whole score at 45 and
+        carries the remedy `bound-evaluator-cost` - a word that appeared in no
+        guidance document, so an assistant holding that payload had nothing to
+        route it to.
+
+        Three open branches then wrote three incompatible routes into this one
+        paragraph - ask the one question, raise the budget, route to the
+        invalid-evaluator paragraph - which is the "five documents close the
+        stop set five ways" defect reproduced inside a single file. The owner
+        settled it by placing the question at "fill gaps", before any spend, so
+        the route lives here with the stage that asks it and nowhere else. This
+        check is what keeps it single: it fails if the condition loses its
+        branch, and the sibling `test_the_timeout_route_has_exactly_one_home`
+        fails if a second branch appears.
+
+        Enumerated from the module rather than listed here, for the same reason
+        the dataset check pins its count: a fifth evaluator cap must be routed
+        too.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("evaluator-")
+        }
+        self.assertEqual(len(conditions), 4)
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split(
+            "evaluator and agent caps route through the rules that already own them", 1
+        )[1]
+        for condition, branch in (
+            ("evaluator-unresolved", "inspect, repair, or replace"),
+            ("evaluator-invalid", "inspect, repair, or replace"),
+            ("evaluator-timeout", "five-option question"),
+            ("evaluator-absent", "create or select"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, conditions)
+                self.assertLess(routing.index(condition), routing.index(branch))
+
+    def test_the_timeout_route_has_exactly_one_home(self) -> None:
+        """Three branches wrote three routes; only one of them may survive.
+
+        The rule is CLAUDE.md's "one decision, one home", and this condition is
+        the instance that proved it: a rule stated in two documents is a rule
+        that can be changed in one, and three pull requests each rewrote this
+        paragraph into a route the other two contradict. So `evaluator-timeout`
+        is named in exactly one assistant-facing document - SKILL.md, which
+        owns routing - and the depth behind it (what to say before the wait,
+        the five options to offer after it) sits in the evaluation reference
+        without restating the route.
+
+        Counted over occurrences rather than files: the previous three drafts
+        would each have passed a per-file check, because each put its whole
+        route in one place. What they could not survive together is a count.
+        """
+        occurrences = {
+            path.name: " ".join(path.read_text().casefold().split()).count(
+                "evaluator-timeout"
+            )
+            for path in assistant_facing_documents()
+        }
+        self.assertEqual(
+            {name: count for name, count in occurrences.items() if count},
+            {"SKILL.md": 1},
+            "the timeout route must be stated once, in the document that owns "
+            "routing - a second statement is the defect this condition's own "
+            "history is made of",
+        )
+
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
@@ -4671,9 +4746,27 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # unreachable from the stage that had to apply it. The depth stayed in
         # evaluation-and-dataset.md. 61_900 is the measured 61_489 plus that
         # 371-byte headroom, rounded up to the next 50.
+        #
+        # The three-way reconciliation then spends 405 of it. #149, #151 and
+        # #156 each rewrote this one paragraph into a route the other two
+        # contradict - ask the one question, raise the budget, route to the
+        # invalid-evaluator paragraph - so the sentence here is not three
+        # sentences merged but the single route the owner settled, placed where
+        # they placed the question: at "fill gaps", before the baseline spends
+        # anything. It costs more than any one of the three because it has to
+        # say what the other two were each half-right about and now may not
+        # restate elsewhere - that a timeout establishes nothing, that it does
+        # not make the evaluator invalid, and that bounding one scoring call is
+        # an option inside the question rather than the route. The depth stayed
+        # in evaluation-and-dataset.md; what is bought here is the routing
+        # decision, which is the one thing SKILL.md alone owns.
+        #
+        # Measured 61_894, which leaves 6 bytes - the tripwire the paragraph
+        # above rejects by name. 62_300 is that measurement plus the same
+        # 371-byte headroom, rounded up to the next 50.
         self.assertLess(
             resident,
-            61_900,
+            62_300,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "

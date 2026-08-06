@@ -500,8 +500,9 @@ one question carrying every option that applies, never one question per option:
 
 - **Wait**, if the evaluator is normally this slow.
 - **Take a named fix**, when the cause is certain.
-- **Score it differently**: a different judge model, or a deterministic comparison - an exact or
-  normalized match against the expected answer, no model call - where the task allows one.
+- **Score it differently**, bounding what one scoring call costs: a cheaper judge model, or a
+  deterministic comparison - an exact or normalized match against the expected answer, no model
+  call - where the task allows one.
 - **Retry**, since a provider call that has stalled looks the same from here.
 - **Build a new evaluation method** together.
 
