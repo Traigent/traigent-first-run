@@ -8,8 +8,10 @@ backend, optimization, or portal work and cannot produce a customer result.
 from __future__ import annotations
 
 import argparse
+import ast
 import errno
 import fnmatch
+import functools
 import hashlib
 import json
 import os
@@ -55,6 +57,38 @@ FORBIDDEN_ACTIONS = {
 ALLOWED_SCRIPTS = {path.resolve() for path in (READINESS, PREFLIGHT, CALIBRATE)}
 CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|\x1b")
 MAX_CAPTURE = 100_000
+# The bound for an allowlisted command whose runtime this repository controls.
+# `readiness.py` and `preflight.py` are local, pure computation over a handful
+# of small files and return in well under a second, so thirty seconds is
+# already three orders of magnitude of headroom and anything past it is a hang
+# worth failing fast on. This one is deliberately kept short.
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 30
+# `calibrate_evaluator.py` is the one allowlisted command whose runtime is a
+# property of the *user's* evaluator rather than of this repository: it calls a
+# scorer that may be a local model, a heavy normalisation, or a network lookup,
+# and it already budgets that wait for itself. Bounding it here with the same
+# flat thirty seconds meant the harness killed the child an order of magnitude
+# before the child's own budget could fire, so no scenario could ever reach the
+# slow-evaluator behaviour - the timeout record, the pre-cap warning, the
+# `evaluator-timeout` cap - and that whole path had no end-to-end coverage.
+#
+# So this bound is derived from the calibrator's own ceiling rather than
+# written down twice. The ceiling is the largest budget the script can ever
+# give itself, so a harness bound above it can never be the thing that kills
+# first, and changing the ceiling moves this bound with it. The constant is
+# matched by SUFFIX, not by exact name, because the calibrator owns that name
+# and has already renamed it once; a rename that keeps the suffix is absorbed,
+# and a rename that drops it raises rather than silently reverting to a guess.
+CALIBRATION_CEILING_SUFFIX = "_TIMEOUT_CEILING_SECONDS"
+# Added to the calibrator's own budget, never subtracted from it: interpreter
+# start-up, the parent's own kill-and-collect of a hung worker, and writing the
+# timeout payload all happen *after* the budget is spent, and the harness must
+# still be waiting when they do.
+CALIBRATION_TIMEOUT_HEADROOM_SECONDS = 60
+# How much of a killed command's output the timeout diagnostic carries. Enough
+# to hold a traceback or the last progress lines; short enough that a runaway
+# printer cannot bury the message that names the command.
+TIMEOUT_CAPTURE_LIMIT = 4_000
 
 
 class ContractError(RuntimeError):
@@ -452,6 +486,107 @@ def validate_command(argv: list[str]) -> None:
         raise ContractError(f"command is not allowlisted: {argv!r}")
 
 
+@functools.lru_cache(maxsize=None)
+def calibration_budget_ceiling_seconds(script: Path = CALIBRATE) -> int:
+    """Read the largest budget `calibrate_evaluator.py` can give itself.
+
+    Read from the script's source rather than imported, matching how
+    `tests/test_calibrate_evaluator.py` reaches the same constants: importing
+    the script executes its argument parser at module scope in some entry
+    paths, and a test harness must not depend on that staying safe.
+
+    Matching by suffix keeps the two numbers coupled across the rename the
+    calibrator has already made once (`LLM_JUDGE_TIMEOUT_CEILING_SECONDS` ->
+    `CALIBRATION_TIMEOUT_CEILING_SECONDS`) without this file having to be
+    edited in the same commit. If the calibrator ever declares more than one
+    ceiling, the largest is the one that bounds the wait.
+    """
+    try:
+        source = script.read_text()
+    except OSError as error:
+        raise ContractError(f"cannot read the calibrator: {error}") from error
+    ceilings: dict[str, int] = {}
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not target.id.endswith(
+            CALIBRATION_CEILING_SUFFIX
+        ):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except ValueError as error:
+            raise ContractError(
+                f"{script.name} declares {target.id} as a non-literal: {error}"
+            ) from error
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ContractError(
+                f"{script.name} declares {target.id} = {value!r}, "
+                "which is not a positive number of seconds"
+            )
+        ceilings[target.id] = value
+    if not ceilings:
+        raise ContractError(
+            f"{script.name} declares no module-level "
+            f"*{CALIBRATION_CEILING_SUFFIX} constant, so this harness cannot "
+            "derive its calibration bound from the calibrator's own ceiling. "
+            "Refusing to fall back to a hardcoded number: that is the drift "
+            "this derivation exists to prevent."
+        )
+    return max(ceilings.values())
+
+
+def explicit_timeout_seconds(argv: list[str]) -> int | None:
+    """The `--timeout` an invocation asked for, or None if it asked for none.
+
+    Both spellings argparse accepts, because a membership test on the list
+    misses `--timeout=<n>` entirely - the same way `writes_a_report` has to
+    scan for `--report=` rather than `--report`.
+
+    This matters because an explicit `--timeout` is exactly how a user with a
+    slow evaluator is told to answer the timeout question, so it is also the
+    invocation a scenario needs to be able to exercise. The ceiling does not
+    bound it, so neither can the ceiling-derived harness bound.
+    """
+    for index, argument in enumerate(argv):
+        if argument == "--timeout":
+            if index + 1 >= len(argv):
+                raise ContractError(f"--timeout has no value: {argv!r}")
+            raw = argv[index + 1]
+        elif argument.startswith("--timeout="):
+            raw = argument.split("=", 1)[1]
+        else:
+            continue
+        try:
+            value = int(raw)
+        except ValueError as error:
+            raise ContractError(
+                f"--timeout is not an integer number of seconds: {raw!r}"
+            ) from error
+        if value <= 0:
+            raise ContractError(f"--timeout must be positive: {value}")
+        return value
+    return None
+
+
+def command_timeout_seconds(argv: list[str]) -> int:
+    """The wall-clock bound for one allowlisted command.
+
+    Per command rather than one number for the harness, because the two kinds
+    of allowlisted command need opposite things: `readiness.py` and
+    `preflight.py` are local computation that should fail fast, and
+    `calibrate_evaluator.py` is a wait on the user's own evaluator that must be
+    allowed to reach its own verdict. Only the calibration bound is derived.
+    """
+    if Path(argv[1]).resolve() != CALIBRATE:
+        return DEFAULT_COMMAND_TIMEOUT_SECONDS
+    budget = explicit_timeout_seconds(argv)
+    if budget is None:
+        budget = calibration_budget_ceiling_seconds()
+    return budget + CALIBRATION_TIMEOUT_HEADROOM_SECONDS
+
+
 def clean_capture(value: str) -> str:
     if len(value.encode()) > MAX_CAPTURE:
         raise ContractError("command output exceeded the evidence limit")
@@ -464,6 +599,26 @@ def normalize_text(value: str, project: Path) -> str:
     return value.replace(str(project), "<PROJECT>").replace(str(ROOT), "<REPO>")
 
 
+def timeout_capture(value: str | None, project: Path) -> str:
+    """Render what a killed command had already written. Never raises.
+
+    `clean_capture` is the wrong tool on this path: it *raises* on oversized or
+    control-character output, so using it here would replace the timeout
+    diagnostic with a different error and lose the very bytes that explain the
+    hang. This truncates and escapes instead.
+
+    `None` means the collection itself failed and says so, rather than
+    rendering as the empty string a silent command would also produce.
+    """
+    if value is None:
+        return "<unavailable: the killed process group still held its pipes open>"
+    text = normalize_text(value, project)
+    if len(text) <= TIMEOUT_CAPTURE_LIMIT:
+        return repr(text)
+    dropped = len(text) - TIMEOUT_CAPTURE_LIMIT
+    return f"{text[:TIMEOUT_CAPTURE_LIMIT]!r} [+{dropped} characters dropped]"
+
+
 def run_command(
     argv: list[str],
     project: Path,
@@ -471,6 +626,7 @@ def run_command(
     stdin_text: str | None = None,
 ) -> dict[str, Any]:
     validate_command(argv)
+    timeout_seconds = command_timeout_seconds(argv)
     process = subprocess.Popen(
         argv,
         cwd=project,
@@ -484,11 +640,25 @@ def run_command(
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(input=stdin_text, timeout=30)
+        stdout, stderr = process.communicate(input=stdin_text, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
         os.killpg(process.pid, signal.SIGKILL)
-        process.communicate()
-        raise ContractError(f"allowlisted command timed out: {argv[1]}") from error
+        # Whatever the child managed to write before the kill is the only
+        # evidence of *why* it hung, and `communicate()` after the kill returns
+        # everything read so far, including the bytes already buffered when the
+        # timeout fired. Discarding that return value made every timeout
+        # undiagnosable: the failure named the script and nothing else.
+        try:
+            partial_stdout, partial_stderr = process.communicate(
+                timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired:
+            partial_stdout = partial_stderr = None
+        raise ContractError(
+            f"allowlisted command timed out after {timeout_seconds}s: {argv[1]}; "
+            f"partial stdout: {timeout_capture(partial_stdout, project)}; "
+            f"partial stderr: {timeout_capture(partial_stderr, project)}"
+        ) from error
     stdout = normalize_text(clean_capture(stdout), project)
     stderr = normalize_text(clean_capture(stderr), project)
     record = {

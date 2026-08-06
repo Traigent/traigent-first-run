@@ -7,6 +7,13 @@ on:
 jobs:
   offline-contract:
     runs-on: ubuntu-latest
+    # Measured, not guessed: 40 successful runs of this job on `first-run-guide`
+    # ran 26s (min) / 30s (p50) / 35s (p95) / 42s (max). Five minutes is a little
+    # over seven times the slowest one ever observed - enough that a degraded
+    # registry serving the pinned digest slowly still passes, and short enough
+    # that a hang fails in five minutes instead of inheriting GitHub's undeclared
+    # 360-minute default and holding the pull request for six hours.
+    timeout-minutes: 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -51,6 +58,15 @@ jobs:
   validate:
     needs: offline-contract
     runs-on: ubuntu-latest
+    # Same 40 runs: 84s (min) / 95s (p50) / 110s (p95) / 110s (max), plus the
+    # ~34 seconds the new slow-evaluator end-to-end test spends in `time.sleep`
+    # inside a local scorer - so about 145s projected worst case. Ten minutes is
+    # roughly four times that. The wider factor is deliberate and is the one
+    # difference from `offline-contract`: this job makes three `pip install`
+    # calls against live PyPI, the only step in either job whose duration
+    # depends on a third party, and a slow index must not be reported as a
+    # broken pull request.
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

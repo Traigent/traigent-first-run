@@ -2583,6 +2583,62 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install", offline_job)
         self.assertNotIn("setup-python", offline_job)
 
+    def test_every_ci_job_declares_its_own_timeout(self) -> None:
+        """An undeclared job inherits GitHub's 360-minute default.
+
+        Six hours of runner time for a job whose slowest observed run is under
+        two minutes, and the pull request stays blocked for all six. The bound
+        is asserted per job rather than per workflow because the default is
+        applied per job: adding one without a `timeout-minutes` silently
+        reintroduces the whole defect.
+
+        Parsed by indentation rather than with PyYAML: the CI job that runs this
+        test installs `ruff`, `black` and the three pinned first-run
+        dependencies, none of which declares PyYAML, so importing it here would
+        be relying on a transitive dependency to stay transitive.
+        """
+        workflows = sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+        self.assertTrue(workflows, "no workflow files found")
+        for workflow in workflows:
+            lines = workflow.read_text().splitlines()
+            in_jobs = False
+            jobs: dict[str, list[str]] = {}
+            current: str | None = None
+            for line in lines:
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if indent == 0:
+                    in_jobs = line.startswith("jobs:")
+                    current = None
+                    continue
+                if in_jobs and indent == 2 and line.rstrip().endswith(":"):
+                    current = line.strip().rstrip(":")
+                    jobs[current] = []
+                elif in_jobs and current is not None and indent >= 4:
+                    jobs[current].append(line)
+            with self.subTest(workflow=workflow.name):
+                self.assertTrue(jobs, f"{workflow.name} declares no jobs")
+                for job, body in jobs.items():
+                    with self.subTest(job=job):
+                        declared = [
+                            line.strip()
+                            for line in body
+                            if len(line) - len(line.lstrip()) == 4
+                            and line.strip().startswith("timeout-minutes:")
+                        ]
+                        self.assertEqual(
+                            len(declared),
+                            1,
+                            f"{workflow.name}:{job} must declare exactly one "
+                            "job-level timeout-minutes",
+                        )
+                        minutes = int(declared[0].split(":", 1)[1])
+                        self.assertGreater(minutes, 0)
+                        # Anything at or above GitHub's own default is not a
+                        # bound, it is the default written down.
+                        self.assertLess(minutes, 360)
+
     def test_baseline_pins_grid_and_warns_about_the_auto_fallback(self) -> None:
         """Verified against installed traigent 0.25.0.
 
