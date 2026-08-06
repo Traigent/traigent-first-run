@@ -428,6 +428,12 @@ the user asks for it.
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
+Any check that judges whether a row's expected output follows from its input runs on rows the
+customer brought and skips rows this run generated. The synthetic ceiling already bounds what a
+generated corpus may claim, so re-judging those rows buys no claim they could make anyway, and it
+is the model marking its own homework. That check exists for the other case, where a human wrote
+the pairing and can have got it wrong. Stated once, here.
+
 ### Choosing rows when difficulty is not labelled
 
 Every pick this file asks for - the bounded subset below, the reserved split after it - wants
@@ -649,6 +655,19 @@ Both are derived: their dataset was read and rows were copied out of it. Nothing
 nothing has to be put back - the original was never modified, lost no row, and stays the canonical
 copy - so deleting either derived file loses nothing. This is housekeeping, so it goes below the
 outcome and the recommendation, never beside them.
+
+Those two are not the only files this run wrote, and a user who wants to know where everything
+went should not have to ask twice. In the same layer, list the rest under
+`<project root>/traigent-runs/`: `run-plan.md`, `config-space.json`, `calibration-cases.json`,
+`calibration-results.json`, plus any `walkthrough_agent.py`, `evaluator.py`, readiness report, and
+SDK run logs that exist. Name only what was actually written. The sentence above covers all of
+them - every one is derived, and that whole folder is git-ignored and can be deleted without
+losing anything. Two writes sit outside the folder and are not covered by it: the
+`/traigent-runs/` line added to the project `.gitignore`, and the provider key line in `.env`.
+
+Skills installed during this run are the one item the list cannot hand over ready to use. Skills
+load when a session starts, so a skill installed here is inert in the session that installed it.
+Say it plainly: start a new session, or refresh this one, and they are available.
 
 One thing does have to travel back, and only the user can carry it: a repair made under "Quality
 diagnosis and repair choice" above lives in the working copy, so their own dataset still has the

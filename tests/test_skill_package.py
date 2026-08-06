@@ -3446,6 +3446,97 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
+    def test_the_close_lists_every_file_this_run_wrote(self) -> None:
+        """Two of the files were disclosed; the rest were not written by nobody.
+
+        The disclosure above named the two dataset splits, which is the pair a
+        reader is most likely to worry about - but the run also writes a run
+        plan, a config-space document, two calibration files, sometimes a
+        substitute agent or evaluator, sometimes a readiness report, and the
+        SDK's own logs. A user who wants to know where everything went, to keep
+        it or to delete it, should not have to ask a second time.
+
+        The list is read off what the guidance actually instructs the run to
+        write, not off memory, so it names those paths and nothing invented.
+        The two writes OUTSIDE `traigent-runs/` are named separately, because
+        "delete the folder and nothing is lost" is true of the folder and false
+        of the `.gitignore` line and the `.env` key.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "those two are not the only files this run wrote",
+            "`run-plan.md`, `config-space.json`, `calibration-cases.json`, "
+            "`calibration-results.json`",
+            "`walkthrough_agent.py`, `evaluator.py`, readiness report, and sdk run logs",
+            # Only what exists - the run does not write all of these every time.
+            "name only what was actually written",
+            "that whole folder is git-ignored and can be deleted without losing anything",
+            # The two that survive deleting the folder.
+            "two writes sit outside the folder and are not covered by it",
+            "the `/traigent-runs/` line added to the project `.gitignore`",
+            "the provider key line in `.env`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+    def test_an_installed_skill_is_disclosed_as_needing_a_fresh_session(self) -> None:
+        """A skill installed mid-run is not usable in the run that installed it.
+
+        Skills load when a session starts, so the handoff hands over something
+        that does nothing until the user restarts - and "installed" reads as
+        "ready" to everyone who has not been told otherwise. It sits with the
+        file list because that is where the user is already asking what this
+        run left behind and what to do with it.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "skills load when a session starts",
+            "inert in the session that installed it",
+            "start a new session, or refresh this one, and they are available",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+    def test_generated_rows_are_not_re_judged_against_their_own_inputs(self) -> None:
+        """The logical row check is for rows a human wrote, not rows we wrote.
+
+        Re-judging a generated row asks the model to grade its own homework,
+        and it buys no claim the corpus could make anyway: the synthetic
+        ceiling already bounds what a generated dataset may be quoted for, so
+        a second model judgement on top of it changes nothing and can only add
+        a false sense of having verified something.
+
+        Scoped in exactly one place, because a rule repeated as a caveat in
+        several is the drift these tests exist to catch.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "runs on rows the customer brought and skips rows this run generated",
+            "the synthetic ceiling already bounds what a generated corpus may claim",
+            "the model marking its own homework",
+            # Named positively too, so the scope reads as a purpose rather than
+            # as an exemption someone can argue back out of.
+            "that check exists for the other case, where a human wrote the pairing",
+            "stated once, here",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
     def test_the_close_says_what_a_full_capability_run_would_do(self) -> None:
         """The ten rows are a teaching choice, said forwards rather than implied.
 
@@ -5624,7 +5715,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #     restating it.
         #
         # Measured at 246_909, so 247_250 - 341 bytes, inside the same band.
-        budget = 247_250
+        #
+        # Raised to 248_500 for the close's file disclosure. Two of the files
+        # this run writes were disclosed; the other six-plus were not, and the
+        # question the disclosure exists to answer - "what did this leave on my
+        # disk, and what can I delete?" - is not answered by a partial list. So
+        # the paths are enumerated, the two writes OUTSIDE the ignored folder
+        # are named separately because "delete it and nothing is lost" is false
+        # of them, and the installed-skills line says a skill added mid-run does
+        # not load until a new session. The same edit carries the scope rule for
+        # the input-to-expected-output check, which is a rule that REMOVES work
+        # (generated rows are not re-judged) and pays for itself by making one
+        # sentence load-bearing instead of leaving the scope to be inferred.
+        #
+        # Enumeration is the one thing a reference cannot compress: a list of
+        # eight paths is eight paths. Measured at 248_359, rounded up to the
+        # next 250. RESIDENT is unchanged - none of this is a mandate, so none
+        # of it went to SKILL.md.
+        budget = 248_500
         self.assertLess(
             total,
             budget,
