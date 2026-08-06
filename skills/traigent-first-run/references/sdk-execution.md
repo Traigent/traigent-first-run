@@ -135,7 +135,7 @@ evidence about two levers rather than one. The user approves the doubled number 
 Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
 wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
 walkthrough conditional, dropping temperature in that branch alone and silently giving the enhanced
-space a second size nothing wrote down. Pinning it always makes both branches identical, 6 and 48
+space a second size nothing wrote down. Pinning it always makes both branches identical, 12 and 48
 whether the strong tier reasons or not.
 
 The four behaviour knobs are **prompt style**, **pre-action reflect**, **thinking shape** (direct or
@@ -232,7 +232,7 @@ accurate. So when the strong tier is a reasoning model, pin its calling conventi
 both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling parameters such a
 model rejects. Nothing else changes: temperature is already pinned for every space, and the four
 behaviour knobs are real for a reasoning model and a sampling model alike, so both branches run the
-same 6 and 48.
+same 12 and 48.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
@@ -931,7 +931,7 @@ configurations per allowed trial - grid would only ever reach a corner of it; us
 instead and say why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
-truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
+truncate the grid. Normally verify all twelve distinct points executed and that `BASELINE_CONFIG`
 appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's
@@ -1100,7 +1100,7 @@ assert optimized_results.cloud_url is not None, "optimization is not available i
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
-returned all six intended distinct rows including its initial configuration. For an explicitly
+returned all twelve intended distinct rows including its initial configuration. For an explicitly
 approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
 failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
 as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from
