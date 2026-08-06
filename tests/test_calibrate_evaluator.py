@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -1874,6 +1876,185 @@ class TimeoutIsReportableTests(unittest.TestCase):
         self.assertGreater(budget(2, "llm-judge"), budget(2, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), budget(500, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), ceiling)
+
+    # Every case-set size the budget can be asked about. `--cases` requires at
+    # least two and one is the smallest the function itself accepts, so this
+    # range covers every input a clamp could bind on, with a wide margin above.
+    LEGAL_CASE_COUNTS = range(0, 501)
+    KINDS = ("deterministic", "llm-judge")
+    _NAMES_A_CLAMP = re.compile(r"_(?:FLOOR|CEILING|MINIMUM|MAXIMUM)_SECONDS$")
+
+    def _budget_source(self) -> ast.FunctionDef:
+        """`calibration_timeout_seconds`, as source rather than as a callable."""
+        for node in ast.parse(SCRIPT.read_text()).body:
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "calibration_timeout_seconds"
+            ):
+                return node
+        self.fail("the module no longer defines calibration_timeout_seconds")
+
+    def test_every_clamp_this_module_declares_can_actually_bind(self) -> None:
+        """A clamp that cannot bind is a protection that is not there.
+
+        `LLM_JUDGE_TIMEOUT_FLOOR_SECONDS = 180` lived here and could never fire:
+        the smallest case set is one case, which is `PROBES_PER_CASE` probes,
+        which is already 300 seconds - so `max(180, ...)` returned its other
+        argument for every input the function can receive. It was removed rather
+        than raised, because a floor nobody reaches still reads to the next
+        person as "small case sets are protected", and they are not.
+
+        Nothing catches that by behaviour, and that is exactly why it needs a
+        test: putting the floor back changes no output, so every value-based
+        assertion in this file passes with it there. A deletion whose undo is
+        invisible is the one a merge undoes and nobody notices.
+
+        So the check is structural, and it is a rule rather than a list of the
+        names that have appeared so far. Two places are read: any module-level
+        constant whose name says it is a clamp, and any bound written inside the
+        budget function itself - because the floor's second, worse form is a
+        bare `max(180, ...)` with no constant to notice. Each must be a value
+        the budget actually returns for some legal case count. A ceiling
+        qualifies because the budget reaches it; a floor qualifies because the
+        budget rests on it; an unreachable number of either kind does not.
+        """
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        reachable = {
+            budget(count, kind)
+            for count in self.LEGAL_CASE_COUNTS
+            for kind in self.KINDS
+        }
+
+        declared = {
+            name: value
+            for name, value in module.items()
+            if isinstance(value, int)
+            and not isinstance(value, bool)
+            and self._NAMES_A_CLAMP.search(name)
+        }
+        self.assertTrue(declared, "this module declares no timeout clamp at all")
+
+        # Every argument of a `min`/`max` bounding the budget's RETURNED value
+        # that is a number this test can resolve - a literal, or a module
+        # constant by name. Scoped to the return because that is where a bound
+        # on the wait can be: `max(1, case_count)` further up guards a count,
+        # not a number of seconds, and is not a clamp on anything. An expression
+        # argument is left alone; it is the work, not a bound on it.
+        written: dict[str, int] = {}
+        returns = [
+            node.value
+            for node in ast.walk(self._budget_source())
+            if isinstance(node, ast.Return) and node.value is not None
+        ]
+        self.assertTrue(returns, "the budget function returns nothing")
+        for node in [child for tree in returns for child in ast.walk(tree)]:
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"min", "max"}
+            ):
+                continue
+            for argument in node.args:
+                if isinstance(argument, ast.Constant) and isinstance(
+                    argument.value, int
+                ):
+                    written[f"{node.func.id}({argument.value})"] = argument.value
+                elif isinstance(argument, ast.Name) and isinstance(
+                    module.get(argument.id), int
+                ):
+                    written[argument.id] = module[argument.id]
+
+        unreachable = sorted(
+            f"{where}={value}"
+            for where, value in {**declared, **written}.items()
+            if value not in reachable
+        )
+        self.assertEqual(
+            unreachable,
+            [],
+            "a clamp is declared or written that the budget never returns for "
+            "any legal case count, so it cannot bind - it reads as a protection "
+            "this module does not have",
+        )
+
+    def test_the_budget_is_the_work_and_never_a_flat_default(self) -> None:
+        """`DEFAULT_TIMEOUT_SECONDS = 30` was one number for every case set.
+
+        It killed a working evaluator that takes about a minute per call and
+        reported it as unverifiable - and a flat 300 would have done the same
+        thing one order of magnitude later, so the defect is the flatness and
+        not the value. What has to keep holding is that below the ceiling the
+        budget is exactly the work: probes times the per-probe allowance, with
+        nothing added, nothing floored and nothing substituted.
+
+        Asserting the identity rather than a table of numbers is what makes this
+        survive a re-tuning. Change `DETERMINISTIC_SECONDS_PER_PROBE` and it
+        still passes; add a rounding, a margin or a substituted constant and it
+        does not.
+        """
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        probes_per_case = module["PROBES_PER_CASE"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
+        per_probe = module["SECONDS_PER_PROBE"]
+
+        below_ceiling = 0
+        for kind in self.KINDS:
+            for count in self.LEGAL_CASE_COUNTS:
+                derived = max(1, count) * probes_per_case * per_probe[kind]
+                with self.subTest(kind=kind, cases=count):
+                    self.assertEqual(budget(count, kind), min(ceiling, derived))
+                if derived < ceiling:
+                    below_ceiling += 1
+        self.assertGreater(
+            below_ceiling,
+            0,
+            "the ceiling binds at every legal size, so this proves nothing "
+            "about the derivation it is meant to be checking",
+        )
+
+    def test_the_default_wait_is_derived_where_the_case_count_is_known(self) -> None:
+        """The derivation has to be the thing that is actually called.
+
+        The two tests above prove `calibration_timeout_seconds` is honest; they
+        say nothing about whether anyone uses it. A merge that restored the old
+        flat default would leave both of them passing and still hand every
+        calibration 30 seconds, because the constant and the caller are separate
+        lines - and the caller is the only one the user feels.
+
+        Read structurally, from the one branch that decides an unset `--timeout`:
+        whatever it assigns must be a call to the derivation. A literal there, a
+        module constant there, or no such branch at all, all fail. The case
+        count has to be in hand for the derivation to mean anything, which is
+        why this is checked at the call site and not at parse time.
+        """
+        assignments: list[str] = []
+        for node in ast.walk(ast.parse(SCRIPT.read_text())):
+            if not isinstance(node, ast.If):
+                continue
+            test = ast.unparse(node.test).replace(" ", "")
+            if test not in {"args.timeoutisNone", "args.timeoutis None"}:
+                continue
+            for statement in ast.walk(node):
+                if isinstance(statement, ast.Assign) and any(
+                    ast.unparse(target) == "args.timeout"
+                    for target in statement.targets
+                ):
+                    assignments.append(ast.unparse(statement.value))
+        self.assertEqual(
+            len(assignments),
+            1,
+            "the branch that fills in an unset --timeout is gone, or there is "
+            f"more than one of it: {assignments}",
+        )
+        self.assertRegex(
+            assignments[0],
+            r"^calibration_timeout_seconds\(",
+            "an unset --timeout is filled in with something other than the "
+            "derived budget, so the work-scaled number this branch computes is "
+            "not the number anyone waits",
+        )
 
     def test_one_timeout_is_the_whole_calibration_not_one_per_phase(self) -> None:
         """`--timeout N` must be the wait, not half of it.
