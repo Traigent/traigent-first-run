@@ -1110,6 +1110,21 @@ class SkillPackageTests(unittest.TestCase):
         # URL, where a trailing slash leads to `/blob/...` rather than into a
         # package. So: a trailing slash means "package path" only when no host
         # precedes it.
+        # That shape is a HOLE, and it is the one #160 asks be closed. A trailing
+        # slash is exactly what a source-path citation has - the reference this
+        # guard most needs to catch is a private repository followed by the file
+        # inside it - so the exemption let every one of those through. The
+        # CamelCase rule below caught the concatenated names by accident and the
+        # rest passed clean: an owner segment, a private repository, then a file
+        # path was silent whenever that repository was named in
+        # lowercase-and-hyphens or in snake_case, which several of ours are.
+        # So the exemption is inverted the same way the repository rule already
+        # is: an ALLOWLIST of the package roots this package genuinely cites,
+        # rather than a shape that lets an unbounded class through. It has one
+        # member because exactly one is cited - readiness.py's vendored preset
+        # path - and anything else fails closed. Adding to it is a decision
+        # someone has to make, which is the property the shape rule never had.
+        package_roots = {"config_generator"}
         # Kept separate from public_repos on purpose: these are not
         # repositories at all, they are slash-joined product phrases ("the
         # Traigent/LiteLLM import path"). Calling them public would be a
@@ -1200,8 +1215,12 @@ class SkillPackageTests(unittest.TestCase):
             for name in sorted(leaked):
                 found.append(f"{where}: {name!r}")
             for match in repo_reference.finditer(text):
-                if match.group("tail") and not match.group("host"):
-                    continue  # a package path continuing on, not a repository
+                if (
+                    match.group("tail")
+                    and not match.group("host")
+                    and match.group("repo").casefold() in package_roots
+                ):
+                    continue  # a cited package path, not a repository
                 # `foo.git` and a sentence-final `foo.` are the same repository
                 # as `foo`. Without this, the canonical clone URL of a PUBLIC
                 # repo fails the check, and the failure message invites the
@@ -1251,6 +1270,26 @@ class SkillPackageTests(unittest.TestCase):
                 continue  # binary or deleted-but-tracked; no prose to leak
             offenders.extend(scan(raw, name))
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
+
+        # The tree being clean proves nothing about what the guard can SEE, and
+        # the source-path exemption is where it saw nothing. Each string below
+        # is a shape that shipped through the old rule: an owner segment, a
+        # private repository, then the file inside it - the single most likely
+        # way one of ours gets cited, and silent whenever the repository name
+        # carried no capital letter for the CamelCase rule to catch.
+        for shape in (
+            "traigent/{}/docs/index.md",
+            "Traigent/{}/README.md",
+            "github.com/traigent/{}/blob/main/x.py",
+        ):
+            for invented in ("not-a-real-repo", "not_a_real_repo", "notarealrepo"):
+                probe = shape.format(invented)
+                with self.subTest(probe=probe):
+                    self.assertNotEqual(scan(probe, "probe"), [])
+        # And the one path the exemption exists for still passes, or the guard
+        # has been tightened into a false red that teaches authors to route
+        # around it - which is how the exemption was born.
+        self.assertEqual(scan("traigent/config_generator/presets/x.py", "probe"), [])
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
         """The user-facing definition has to follow the code that changed.
