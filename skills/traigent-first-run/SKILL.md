@@ -372,8 +372,10 @@ rather than the condition id:
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
-- `dataset-unsound-expected-outputs` - put each flagged row to the user as one approval-gated
-  question, as your reading rather than a finding; never edit an expected answer on it yourself.
+- `dataset-unsound-expected-outputs` - the run is bounded, not stopped. Put the flagged rows to the
+  user in one approval-gated question - id, quoted content, reason, and which of them the run will
+  actually use - then repair a working copy and re-score on agreement, or proceed and report what
+  the run was tuned on. Never edit an expected answer yourself.
 - `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.

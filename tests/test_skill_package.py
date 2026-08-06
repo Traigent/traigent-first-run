@@ -3977,18 +3977,48 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn("marking its own homework", normalized)
-        # 3. The direction rule, and no credit for a clean pass.
-        self.assertIn("lower the score and can never raise it", normalized)
+        # 3. The direction rule, no credit for a clean pass - and the bound,
+        #    which is a ceiling and never a stop. A judgement that can cancel a
+        #    paid run is the same defect as one that can raise a score, read
+        #    from the other end: on collected data it can be wrong, and the run
+        #    only reads the rows it draws.
+        self.assertIn("bounds the run and never stops it", normalized)
         self.assertIn("may withhold a claim; it may not manufacture one", normalized)
+        self.assertIn("may not cancel a paid run", normalized)
         self.assertIn(
             "a clean pass earns no points, no band, and no credit of any kind",
             normalized,
         )
         self.assertIn("sentence in the readiness evidence line", normalized)
-        # 4. A finding is a question, never an edit.
-        self.assertIn("never a silent edit", normalized)
+        # 4. A finding is a question, never an edit - and the question has a
+        #    shape: every flagged row's id, its quoted content, the reason, and
+        #    whether the run will actually read it. Then the user's answer
+        #    decides, in both directions.
+        self.assertIn("never a silent edit, and it opens a conversation", normalized)
         self.assertIn(
-            "approval-gated question the action table already requires", normalized
+            "I suspect this dataset has rows that need fixing before the run",
+            normalized,
+        )
+        self.assertIn("do you agree or disagree?", normalized)
+        self.assertIn("the id, the quoted content, and the reason", normalized)
+        self.assertIn(
+            "Say which of them are inside the rows this run will actually use",
+            normalized,
+        )
+        self.assertIn("repair the rows in the working copy", normalized)
+        self.assertIn("say in the run's own report what it was tuned on", normalized)
+        # And the route says the same thing where routes live. A ceiling this
+        # module calls advisory and a route that reads as a stop is the one
+        # contradiction a reader hits first, because the route is what they
+        # act on.
+        self.assertIn(
+            "`dataset-unsound-expected-outputs` - the run is bounded, not stopped.",
+            skill,
+        )
+        self.assertFalse(
+            READINESS.unsound_answer_cap(
+                READINESS.RowReview(supplied=True, reviewed=10, unsound=5)
+            ).blocks
         )
         # 5. Declared as the assistant's judgement, never as the user's.
         self.assertIn("never as the user's ground truth", normalized)
@@ -5721,7 +5751,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # None of that can be shortened into the cap's own reason string: a
         # rule that only appears on a card fires once and is never read again.
         # Measured at 251_670, so 252_000 - 330 bytes, inside the same band.
-        budget = 252_000
+        #
+        # Turning that cap from a stop into a bound adds 2_303, all of it the
+        # conversation the bound is only honest with. A ceiling that lowers a
+        # number and says nothing is worse than the block it replaced: the
+        # customer sees 70 instead of 89 and is told to review an answer key,
+        # with no way to find which rows or to disagree. So the bytes are the
+        # question itself - the row id, the quoted content and the reason for
+        # each flagged row, whether the run will actually read that row, and
+        # both branches of the answer. The alternative was leaving it as prose
+        # nobody wrote down and letting each run improvise the wording, which
+        # is how a "question" becomes a silent edit.
+        # Measured at 253_973, so 254_300 - 327 bytes, inside the same band.
+        budget = 254_300
         self.assertLess(
             total,
             budget,

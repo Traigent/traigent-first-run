@@ -611,6 +611,20 @@ class RowReview:
     # believed: a review cannot say it read more collected rows than exist.
     reviewed_collected: int = 0
     reviewed_undeclared: int = 0
+    # How many of the `unsound` rows are among the rows this run will actually
+    # tune and check on. The run reads 28 rows - 18 tuning and 10 held out - so
+    # a wrong answer outside them changes nothing that happens, and a wrong
+    # answer inside them is what the search is about to be graded against.
+    # Those are two different sentences to a customer, and the card can only
+    # tell them apart if the review says which rows it is talking about.
+    #
+    # Optional, and absent is not zero. At the opening gate on a large dataset
+    # the subset has not been drawn yet, so nothing can honestly claim
+    # membership; `None` is that state and the card then says only that the
+    # file has bad rows. On a dataset at or under the subset size, every
+    # provided row is a row the run uses, which is the case where this is worth
+    # saying and the case where it is knowable.
+    unsound_in_run: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1274,7 +1288,22 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     return line
 
 
-def unsound_answer_cap(review: RowReview) -> Cap | None:
+def run_rows(facts: DatasetFacts) -> int | None:
+    """How many rows this run will actually tune and check on, when it is known.
+
+    Read from the declared split rather than from the guide's default 28,
+    because the two are not the same claim: 28 is what this walkthrough creates
+    when it has to create a dataset, and a customer who brought their own split
+    has whatever they brought. `None` when no split has been declared yet -
+    which is the ordinary opening state on one undivided file, and the state in
+    which the card may not put a number on it.
+    """
+    if facts.tuning_rows is None or facts.holdout_rows is None:
+        return None
+    return facts.tuning_rows + facts.holdout_rows
+
+
+def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | None:
     """The one ceiling this judgement may set, and never a point of credit.
 
     Fires on the share of what was actually read, which is the only population
@@ -1296,14 +1325,64 @@ def unsound_answer_cap(review: RowReview) -> Cap | None:
         if review.unsound == 1
         else f"{review.unsound} answers do not answer their own question"
     )
+    # Two different findings, and the reader has to be told which one this is.
+    # The run reads a bounded subset - the tuning rows plus the held-out ten -
+    # so a wrong answer outside it costs nothing: the file has a bad row and
+    # the run never opens it. A wrong answer inside it is the run being graded
+    # against something believed wrong, which is the whole reason to say any of
+    # this before the paid search rather than after.
+    if review.unsound_in_run is None:
+        consequence = (
+            "somewhere in the file this run draws from. Whether the search "
+            "reads them depends on which rows are drawn"
+        )
+    elif review.unsound_in_run == 0:
+        consequence = (
+            "outside the rows this run tunes and checks on, so the search does "
+            "not read them"
+        )
+    else:
+        scope = f"the {run_rows} rows" if run_rows else "the rows"
+        consequence = (
+            f"{review.unsound_in_run} of them among {scope} this run tunes and "
+            "checks on, so the search is about to be graded against them"
+        )
     return Cap(
         "dataset-unsound-expected-outputs",
         UNSOUND_ANSWER_CEILING,
         f"Reading each row's input beside its expected answer, {subject} "
-        f"(of {review.reviewed} read) - so a configuration is rewarded for "
-        "getting those rows wrong. This is the coding assistant's reading, not "
-        "a measurement, and each one is a question for you rather than an edit "
-        "it may make.",
+        f"(of {review.reviewed} read) - {consequence}. This is the coding "
+        "assistant's reading, not a measurement, so it is put to you as a "
+        "question with the row and the reason, and nothing is edited until you "
+        "answer. The run is not stopped; what it may claim is bounded until "
+        "the answer key is agreed.",
+        # Bounds, never blocks - and the reason is not a preference about
+        # severity. Three things decide it, and they point the same way.
+        #
+        # The run only ever reads 28 rows (18 tuning, 10 held out). A customer
+        # with 28 sound rows has a run worth making whatever else is in the
+        # file; a broken row the search never opens stops nothing, and the
+        # `unsound_in_run` clause above is what lets the card say which case
+        # this is instead of asserting the worse one.
+        #
+        # On collected data this judgement can simply be wrong. A row that
+        # reads as contradictory to a model can be correct in the customer's
+        # domain - a refund approved outside the policy window because their
+        # goodwill rule says so - and an opinion that can be wrong may bound a
+        # claim and may not cancel the customer's run. (On model-generated rows
+        # the judgement is far more likely right, and those rows are refused by
+        # this input and bounded by the synthetic ceiling anyway.)
+        #
+        # And the remedy decides it, under the rule on `Cap.blocks`: a route
+        # that asks for a creation or a repair blocks, a route that scopes what
+        # the result may claim is advisory. `review-answer-key` is a question
+        # put to the customer - not a creation, not a repair.
+        # `dataset-generated-answer-key` carries that identical slug and is
+        # advisory for the same reason, and one remedy may not mean "stop" on
+        # one card and "proceed" on the next. Whether each provenance cap
+        # blocks is decided once, beside those caps; this one is decided here,
+        # and the two decisions have to agree.
+        blocks=False,
     )
 
 
@@ -1550,7 +1629,7 @@ def score_dataset(
     # outputs at all needs no guard - it already carries a ceiling of 30, well
     # below this one, so this cap could never be the binding number there.
     if not reference_free:
-        unsound = unsound_answer_cap(review)
+        unsound = unsound_answer_cap(review, run_rows(facts))
         if unsound is not None:
             caps.append(unsound)
 
@@ -2531,6 +2610,13 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
       the user said something is refused here instead of being scored as if
       they had. Their answer arrives through the approval gate, not this file.
 
+    * It may say which rows the run actually reads, and is checked when it
+      does. `in_run` is optional because at the opening gate on a large dataset
+      the subset has not been drawn; it is all-or-nothing across the entries
+      because a half-answered file would let the unanswered rows read as
+      "outside the run", which understates the finding in the direction that
+      favours proceeding.
+
     A per-row sentence is required for the same reason: it is what makes a
     verdict inspectable, and what stops a blanket "all fine" being emitted by
     something that never read a row.
@@ -2558,6 +2644,12 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
     seen: set[str] = set()
     counts = {verdict: 0 for verdict in ROW_REVIEW_VERDICTS}
     origins = {origin: 0 for origin in ROW_REVIEW_ORIGINS}
+    # Three states, not two. Every entry says whether the run reads that row,
+    # or none of them does; a review where some entries answer and some do not
+    # is refused rather than read as "the silent ones are outside", because
+    # that reading is the one that would understate the finding.
+    in_run_declared: set[bool] = set()
+    unsound_in_run = 0
     for index, entry in enumerate(rows):
         where = f"row review entry {index}"
         if not isinstance(entry, dict):
@@ -2600,8 +2692,25 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 f"{where} carries no 'note'; each verdict states in one sentence "
                 "why, which is what makes it a read rather than a tally"
             )
+        in_run = entry.get("in_run")
+        if in_run is not None and not isinstance(in_run, bool):
+            raise RowReviewInputError(
+                f"{where} has in_run {in_run!r}; it says whether this run reads "
+                "that row, so it is true or false or absent - and absent means "
+                "the rows have not been drawn yet, never 'no'"
+            )
+        in_run_declared.add(in_run is not None)
         counts[verdict] += 1
         origins[origin] += 1
+        if verdict == "no" and in_run:
+            unsound_in_run += 1
+
+    if len(in_run_declared) > 1:
+        raise RowReviewInputError(
+            "row review answers 'in_run' for some rows and not others; the "
+            "card reports how many flagged rows the run actually reads, and a "
+            "partial answer would count the unanswered ones as outside it"
+        )
 
     for origin, available in (
         ("collected", facts.collected_rows),
@@ -2614,6 +2723,19 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 "claims to describe are not the same dataset"
             )
 
+    # Checked against the split for the same reason the origin counts are
+    # checked against preflight: this is the one input that lowers a score on
+    # nothing but its own word, so a coverage claim it makes about the run's
+    # own rows is verified where a fact exists to verify it against.
+    declared = run_rows(facts)
+    marked_in_run = sum(1 for entry in rows if entry.get("in_run"))
+    if declared is not None and marked_in_run > declared:
+        raise RowReviewInputError(
+            f"row review marks {marked_in_run} rows as ones this run reads, "
+            f"but the declared split holds {declared}; a review cannot place "
+            "more rows in the run than the run has"
+        )
+
     return RowReview(
         supplied=True,
         reviewed=len(rows),
@@ -2621,6 +2743,7 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         unsure=counts["unsure"],
         reviewed_collected=origins["collected"],
         reviewed_undeclared=origins["undeclared"],
+        unsound_in_run=unsound_in_run if in_run_declared == {True} else None,
     )
 
 
