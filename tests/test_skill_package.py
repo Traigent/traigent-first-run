@@ -55,6 +55,50 @@ def conversation_contract_documents() -> list[Path]:
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
+# Two different 10-day periods exist and a customer meets both, so every mention
+# of one has to say which. Spelled out as well as in digits: "the two ten-day
+# windows" is the same sentence with the same defect, and a digits-only pattern
+# reads it as clean.
+TEN_DAY_MENTION = re.compile(r"\b(?:10|ten)[- ]days?\b", re.IGNORECASE)
+TEN_DAY_COLLECTIVE = re.compile(r"\b(?:two|both)\s+(?:10|ten)[- ]day", re.IGNORECASE)
+# A clock is named by the thing it is a property of. Registering is the event
+# that ends one and starts the other, so "register"/"registration" appears in
+# sentences about both and identifies neither - which is why it is not here.
+_REGISTRATION_CLOCK = re.compile(r"access code", re.IGNORECASE)
+_PORTAL_CLOCK = re.compile(r"portal access", re.IGNORECASE)
+
+
+def ten_day_clocks_named(sentence: str) -> set[str]:
+    """Which of the two 10-day clocks a sentence actually names.
+
+    `"registration"` is the access code's clock: the code authorizes one portal
+    registration for 10 days from issue, and afterwards it is dead. `"portal"`
+    is the portal access period: 10 days of product use that *start* when that
+    code is spent. Same number, different clock, different remedy.
+
+    Returning a set rather than a boolean is the point. A sentence naming
+    neither and a sentence naming the wrong one are different defects, and an
+    "either will do" check cannot tell them apart - it accepts a sentence about
+    the portal period because it happens to contain the word "registers".
+    """
+    named = set()
+    if _REGISTRATION_CLOCK.search(sentence):
+        named.add("registration")
+    if _PORTAL_CLOCK.search(sentence):
+        named.add("portal")
+    return named
+
+
+def ten_day_sentences(text: str) -> list[str]:
+    """Every sentence in a document that mentions a 10-day period."""
+    sentences = []
+    for block in re.split(r"\n\s*\n", text):
+        for sentence in re.split(r"(?<=[.!?])\s+", " ".join(block.split())):
+            if TEN_DAY_MENTION.search(sentence):
+                sentences.append(sentence)
+    return sentences
+
+
 # The config-space document is a contract between prose the assistant follows and
 # code that reads it, so these tests weld the documented shape to the real
 # consumer rather than re-describing it.
@@ -2929,6 +2973,59 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_a_ten_day_sentence_is_classified_by_which_clock_it_names(self) -> None:
+        """The classifier is checked against invented sentences, not the guide.
+
+        This is the half the corpus scan below cannot check itself. Fed only
+        sentences the documents already contain, a classifier that answers "yes,
+        some clock is named" passes forever - including for a sentence about the
+        portal period that qualifies on the word "registers", which is the event
+        that *ends* the other clock. So the inputs here are written to separate
+        those cases, and none of them is a quotation.
+
+        The rule they pin: a clock is named by the thing it is a property of -
+        the access code for the registration window, the portal access period
+        for the portal one. "Register" belongs to both sentences and settles
+        neither.
+        """
+        cases = {
+            # The clock is named: this is the portal period, and it says so.
+            "The portal access period lasts 10 days from the moment the user "
+            "registers.": {"portal"},
+            # The same sentence with the clock's name stripped. "Registers" is
+            # still there, and it must not be enough - this is exactly the
+            # mutation the or-either form of this check accepted.
+            "The period lasts 10 days from the moment the user registers.": set(),
+            "A single-use access code is valid for 10 days.": {"registration"},
+            # Spelled out, and collective: both clocks, both named.
+            "The two ten-day windows: the access code, then portal access.": {
+                "portal",
+                "registration",
+            },
+            # Counting them is not naming them, in either spelling.
+            "Read the reference for the two 10-day windows.": set(),
+            "There are two ten-day windows: registration, then registration "
+            "expiry.": set(),
+        }
+        for sentence, expected in cases.items():
+            with self.subTest(sentence=sentence):
+                self.assertEqual(ten_day_clocks_named(sentence), expected)
+
+        # The scan has to see the sentence before it can classify it, so the
+        # spelling is pinned too: "ten-day" is the wording of this very branch's
+        # own title, and a digits-only pattern skips it silently.
+        for spelling in ("10 days", "10-day", "ten days", "ten-day", "TEN-DAY"):
+            with self.subTest(spelling=spelling):
+                self.assertTrue(TEN_DAY_MENTION.search(f"within {spelling} of that"))
+        for spelling in ("two 10-day", "both ten-day", "two ten day"):
+            with self.subTest(collective=spelling):
+                self.assertTrue(TEN_DAY_COLLECTIVE.search(f"the {spelling} windows"))
+        # Not every "ten" starts a period, and a false positive here would force
+        # unrelated prose to name a clock it is not talking about.
+        for innocent in ("often days go by", "the written days", "ten weeks"):
+            with self.subTest(innocent=innocent):
+                self.assertIsNone(TEN_DAY_MENTION.search(innocent))
+
     def test_the_two_ten_day_periods_are_never_conflated(self) -> None:
         """Two different 10-day periods exist, and a customer meets both.
 
@@ -2942,45 +3039,65 @@ class SkillPackageTests(unittest.TestCase):
 
         Pinned by shape rather than by a sentence, because the wording is free
         to change and the distinction is not. Every mention of a 10-day period
-        has to name which clock it is, and any mention that speaks of both at
-        once has to name both. "The two 10-day windows" satisfies neither: it
-        counts them without distinguishing them, which is the phrasing this
-        test exists to refuse.
-        """
-        mention = re.compile(r"10[- ]days?\b", re.IGNORECASE)
-        collective = re.compile(r"\b(?:two|both)\s+10[- ]day", re.IGNORECASE)
-        registration_clock = re.compile(r"registrat|register|access code", re.I)
-        portal_clock = re.compile(r"portal access", re.IGNORECASE)
+        names exactly one clock - naming neither leaves the reader guessing, and
+        naming both in one breath is the conflation itself - and a mention that
+        speaks of the pair has to name both. "The two 10-day windows" fails on
+        both counts: it counts them without distinguishing them.
 
-        found = 0
+        Which clock is named is decided by `ten_day_clocks_named`, tested above
+        against invented sentences. The scan here only applies that decision to
+        the corpus; it cannot vouch for it, which is why that test is separate.
+        """
+        carrying = set()
         for path in assistant_facing_documents():
-            for block in re.split(r"\n\s*\n", path.read_text()):
-                for sentence in re.split(r"(?<=[.!?])\s+", " ".join(block.split())):
-                    if not mention.search(sentence):
-                        continue
-                    found += 1
-                    names_registration = bool(registration_clock.search(sentence))
-                    names_portal = bool(portal_clock.search(sentence))
-                    with self.subTest(document=path.name, sentence=sentence):
-                        self.assertTrue(
-                            names_registration or names_portal,
-                            "a 10-day period is named without saying which one "
-                            "it is: the code's 10 days to register, or the 10 "
-                            "days of portal access that registering starts",
+            for sentence in ten_day_sentences(path.read_text()):
+                carrying.add(path.name)
+                named = ten_day_clocks_named(sentence)
+                with self.subTest(document=path.name, sentence=sentence):
+                    if TEN_DAY_COLLECTIVE.search(sentence):
+                        self.assertEqual(
+                            named,
+                            {"registration", "portal"},
+                            "both 10-day periods are referred to at once "
+                            "without naming both, so the reader is told there "
+                            "are two and left to guess what distinguishes them",
                         )
-                        if collective.search(sentence):
-                            self.assertTrue(
-                                names_registration and names_portal,
-                                "both 10-day periods are referred to at once "
-                                "without naming either, so the reader is told "
-                                "there are two and left to guess what "
-                                "distinguishes them",
-                            )
-        # A pass has to mean the corpus was actually read. The funnel prose,
-        # the four account states, the access period, the artifact template,
-        # and both glossary entries all carry one, so a count this low means
-        # the scan stopped finding them rather than that they were all clean.
-        self.assertGreaterEqual(found, 6, "the 10-day scan found almost nothing")
+                    else:
+                        self.assertEqual(
+                            len(named),
+                            1,
+                            "a 10-day period must name exactly one clock - the "
+                            "access code's 10 days to register, or the 10 days "
+                            "of portal access that registering starts - and "
+                            f"this sentence names {sorted(named) or 'neither'}",
+                        )
+
+        # A pass has to mean the corpus was actually read, and the pointers that
+        # carry the distinction are part of what is pinned: deleting them
+        # outright would otherwise satisfy every assertion above by leaving
+        # nothing to check. Superset, not equality - a sibling change that adds
+        # a mention to another document is not a regression here.
+        self.assertEqual(
+            {"GUIDE.md", "SKILL.md", "glossary.md", "run-safety.md"} - carrying,
+            set(),
+            "a document that told the reader about a 10-day period has stopped "
+            "mentioning one; the distinction was removed rather than corrected",
+        )
+        # The two entry documents are where a reader meets the pair, so each has
+        # to keep a mention that names both clocks, not just any mention.
+        for path in (ROOT / "GUIDE.md", SKILL):
+            pair = [
+                sentence
+                for sentence in ten_day_sentences(path.read_text())
+                if TEN_DAY_COLLECTIVE.search(sentence)
+            ]
+            with self.subTest(entry_document=path.name):
+                self.assertTrue(
+                    pair,
+                    f"{path.name} no longer tells the reader there are two "
+                    "10-day windows at all, so nothing points at the "
+                    "difference between them",
+                )
 
     def test_retired_lead_funnel_vocabulary_is_absent(self) -> None:
         """`lead_token` and the two-path framing are gone, not renamed.
@@ -4908,7 +5025,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #175 names which 10-day window is which wherever a customer meets one
+        # and hardens the check that pins it. Its own guidance cost is 19 bytes
+        # - MEASURED TOTAL 228_603, which the previous 228_750 already covered,
+        # so on this branch alone the number below would not move. It moves for
+        # the merge, and this is the first entry that can say so before the
+        # merge instead of after it. #171 (`ow/blocked-card-wording`) adds a
+        # MEASURED +227 bytes to the same corpus, entirely in glossary.md, and
+        # touches no line #175 touches - so the two land with zero textual
+        # conflict and their bytes simply add: 228_603 + 227 = 228_830. That is
+        # a computed projection, not a measured merge: it is the sum of two
+        # measured figures, which is the arithmetic the four entries above show
+        # nobody doing. 228_830 is over 228_750, so the merge would have failed
+        # CI on a line neither branch had a reason to edit. The number below is
+        # that projection rounded up to the next 250. Re-measure after the
+        # merge; if the two ever do overlap textually the real total is lower
+        # than this, and the ceiling is generous rather than wrong.
+        budget = 229_000
         self.assertLess(
             total,
             budget,
