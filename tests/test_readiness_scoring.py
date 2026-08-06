@@ -280,6 +280,47 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertLessEqual(unmeasured.score, measured.score)
         self.assertLess(unmeasured.confidence, measured.confidence)
 
+    def test_total_answer_dominance_is_measured_not_unchecked(self) -> None:
+        """The sibling of the check above, at the source rather than the score.
+
+        `answer_dominance_status` is `None` when preflight raised no dominance
+        record, and preflight raised none for the one input that is maximum
+        dominance: at 100% identical expected outputs it took the degenerate
+        branch, emitted `dataset-outputs` WARN, and never reached the arm where
+        `dataset-ceiling-risk` lives. The witness readiness reads for "the
+        spread was examined" is a PASS on `dataset-outputs`, so total dominance
+        arrived here as absence.
+
+        Combined with the renormalization this class already pins, that
+        inverted the score: the dataset whose every answer is identical
+        outscored the one where 90% are. `tests/test_preflight.py` holds the
+        emit; this holds the consequence, so neither half can be removed
+        believing the other still covers it.
+        """
+
+        def facts(dominance):
+            return MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=100,
+                holdout_rows=100,
+                duplicate_status="PASS",
+                near_duplicate_status="PASS",
+                answer_dominance_status=dominance,
+            )
+
+        dominant = MODULE.score_dataset(facts("WARN"))[0]
+        unchecked = MODULE.score_dataset(facts(None))[0]
+        sub = self._diversity(
+            duplicate_status="PASS",
+            near_duplicate_status="PASS",
+            answer_dominance_status="WARN",
+        )
+        self.assertTrue(sub.measured)
+        self.assertLess(sub.value, 20.0)
+        self.assertLessEqual(dominant.score, unchecked.score)
+
     def test_a_real_finding_survives_a_skip_beside_it(self) -> None:
         """A skipped sibling must not erase a check that did find something.
 

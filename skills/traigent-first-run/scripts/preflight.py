@@ -1209,6 +1209,29 @@ def check_dataset(
                 FAIL if synthetic else WARN,
                 "every expected output is identical; evaluator discrimination is likely degenerate",
             )
+            # And say it in the dominance vocabulary too, because this IS the
+            # dominance finding at its maximum - one answer holding 100% of the
+            # rows. Without this, the branch below is the only place
+            # `dataset-ceiling-risk` is raised, and it is unreachable here: it
+            # lives under the PASS arm. `_answer_dominance_status` in
+            # readiness.py reads a PASS on `dataset-outputs` as its witness that
+            # the spread was examined, so the WARN above left it with no record
+            # at all and it reported answer dominance as NEVER CHECKED.
+            #
+            # The consequence was a scoring inversion, which is what makes this
+            # worth an extra record rather than a comment: an unmeasured
+            # sub-score drops out of the pillar average, so a dataset where
+            # every answer is identical scored HIGHER than one where 90% are.
+            # A skipped check is not a passed check - and a check that ran and
+            # found the worst possible answer must not read as one that never
+            # ran.
+            emit(
+                "dataset-ceiling-risk",
+                WARN,
+                f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
+                "outputs (100.0%) are identical; a majority-only strategy "
+                "could hide meaningful failures",
+            )
         else:
             emit(
                 "dataset-outputs",

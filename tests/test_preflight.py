@@ -864,6 +864,52 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_total_answer_dominance_is_a_finding_not_an_unchecked_gap(self) -> None:
+        """100% is the dominance check's worst case, not its absent case.
+
+        `dataset-ceiling-risk` was raised only inside the `else` arm that runs
+        when there is more than one distinct expected output. A dataset where
+        EVERY answer is identical took the `len(output_counts) == 1` arm, which
+        emitted `dataset-outputs` WARN and nothing else - so the one check that
+        measures answer spread produced no record at the exact input it exists
+        to catch.
+
+        readiness.py reads a PASS on `dataset-outputs` as its witness that the
+        spread was examined, so a WARN there left answer dominance reported as
+        NEVER CHECKED, and an unmeasured sub-score drops out of the pillar
+        average instead of deducting from it. The dataset with the worst
+        possible answer spread therefore scored HIGHER than one with 90%
+        dominance. Both records are asserted here, because either alone is
+        satisfied by the shape that produced the inversion.
+        """
+        rows = [
+            {"id": f"real-{index}", "input": f"case {index}", "output": "same"}
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        self.assertTrue(
+            any(
+                result.check == "dataset-outputs"
+                and "every expected output is identical" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            "the degenerate-outputs finding is gone",
+        )
+        self.assertTrue(
+            any(
+                result.check == "dataset-ceiling-risk"
+                and result.status == MODULE.WARN
+                and "10/10" in result.detail
+                and "100.0%" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            "total answer dominance raised no dominance record, so the score "
+            "will report it as a check that never ran",
+        )
+
     def test_dominant_structured_label_is_not_hidden_by_unique_reasons(self) -> None:
         rows = [
             {
