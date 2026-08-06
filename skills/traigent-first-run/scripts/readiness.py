@@ -391,6 +391,178 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
 
+# Every ceiling, in one ordered place, with the basis for each number beside it.
+#
+# TWO THINGS ARE RECORDED HERE, and they are different claims.
+#
+# The ORDER is a rule: a worse condition gets a lower ceiling. That was always
+# the evident intent and it was nowhere written and nothing checked it, so it
+# had already gone wrong once - before #144 two overlapping unreadable-dataset
+# conditions were ranked by whichever author wrote each one, with nothing
+# comparing them. The order is therefore asserted, in
+# `tests/test_readiness_scoring.py`, so a new cap cannot be inserted out of
+# sequence and an existing ceiling cannot be moved past its neighbours.
+#
+# The NUMBERS are not a rule and this comment does not pretend otherwise. Each
+# is a position on a 0-100 scale, chosen so that a run carrying the condition
+# cannot present as better than it is. Where a number has a derivation it is
+# given below; where the honest basis is "it sits between these two neighbours
+# on a scale", that is what is written, because inventing a derivation for it
+# would be worse than admitting the ranking is a judgment. Changing a value is
+# the owner's call; changing the ORDER breaks the test.
+#
+# The groups are the part that IS derived from something real - what the
+# condition destroys - and the ceilings of one group may not reach into
+# another's:
+#
+#   NO RESULT TO BOUND   A component the score is computed FROM is missing, or
+#                        is present and actively wrong. There is no number to
+#                        put a ceiling on; the ceiling exists to say so.
+#   ANSWERS THE WRONG    Every component is present and valid, and the run still
+#   QUESTION             does not answer what was asked - every configuration is
+#                        identical, the evaluator never finished, or the set held
+#                        back to check the winner was already tuned on.
+#   BOUNDED CLAIM        Nothing is broken. The run produces a real comparison,
+#                        and only what it may CLAIM is limited - by whose data it
+#                        ran on, or by how much of it there was.
+#
+# #149 draws the stop/ceiling line through the same material from the other
+# side: a route asking for creation or repair is a stop, a route that only
+# scopes the claim is a ceiling. That is the `blocks` flag and it is not
+# restated here - one decision, one home. This file owns how far the number may
+# rise; #149 owns whether the run may proceed at all.
+#
+# Note for whoever revisits the values: `ACTION_FOR_CONDITION` does NOT give
+# this grouping for free, and it was checked. `get-data` is the remedy for
+# `dataset-absent` (20), `dataset-below-measurable-size` (74) and
+# `dataset-coarse-resolution` (89), which span the whole range - the remedy
+# vocabulary answers "what should the user do", not "how much of the result
+# survives", and those are different questions about the same condition.
+DATASET_ABSENT_CEILING = 20
+# Nothing was measured at all, so this is the floor of the scale: the lowest
+# ceiling any condition carries, and NOT READY however good the rest looks.
+EVALUATOR_INVALID_CEILING = 25
+# Just above an absent dataset and below every other condition. A ruler that
+# scores a wrong answer as well as a right one is worse than a missing one,
+# because it produces believable numbers; it sits above 20 only because the
+# dataset it would measure is still there.
+DATASET_NO_EXPECTED_OUTPUTS_CEILING = 30
+# The bottom of PARTIAL. Rows exist and are readable - real material, and the
+# gap is one addition away - but nothing can be scored until it is made.
+DATASET_INTEGRITY_CEILING = 35
+# Above 30 because only SOME rows are unusable: what is left is scoreable, and
+# the remedy is a repair rather than a collection effort.
+EVALUATOR_ABSENT_CEILING = 40
+# Above the dataset conditions below it because the dataset - the expensive
+# half - is intact; choosing an evaluation method is the cheapest of these gaps
+# to close.
+EVALUATOR_UNRESOLVED_CEILING = 40
+# Deliberately equal to `evaluator-absent`. The user has the same problem
+# either way - no evaluation this run can trust - and only the remedy differs
+# (inspect and repair the file, rather than select a method). Equal ceilings are
+# allowed; the order asserts non-decreasing, not strictly increasing.
+EVALUATOR_TIMEOUT_CEILING = 45
+# First of the "answers the wrong question" band, so above every ceiling in the
+# band below it. Everything is connected and valid; this run simply did not
+# finish, and re-running within a bound is all that is asked.
+AGENT_NO_VARYING_KNOBS_CEILING = 45
+# Equal to the timeout for the same reason: nothing is broken, and the run
+# compares nothing. An optimization with one configuration is a single
+# measurement wearing a search's clothes.
+SPLIT_OVERLAP_CEILING = 50
+# Top of that band. Worse than the two above it because the result is not
+# merely absent or uninformative - it is flattered, and a believable wrong
+# number is the most expensive failure on this list.
+FULLY_SYNTHETIC_CEILING = 65
+# First of the "bounded claim" band. Nothing here was observed, so the run
+# measures the walkthrough; it clears 50 because the comparison it performs is
+# a real one, and it stays in WORKABLE because what it compares is invented.
+MOSTLY_SYNTHETIC_CEILING = 70
+# Above `fully-synthetic` because some of the data IS real - strictly less
+# invented, so strictly less capped. This pair is the clearest case of the
+# ordering rule: the condition below implies this one, so its ceiling may never
+# be the higher of the two.
+WIRING_CHECK_CEILING = 74
+# One below the STRONG boundary at 75, which is the only derived number in this
+# block: the claim is about what the result may PRESENT as, and under ten
+# comparable examples it may not present as STRONG. See
+# `WIRING_CHECK_EXAMPLES`.
+GENERATED_ANSWER_KEY_CEILING = 75
+# The questions are real and there are enough of them; only the answer key was
+# written by a model, so the score reports agreement with that model. Above
+# both synthetic ceilings because strictly more of the data was observed.
+COARSE_RESOLUTION_CEILING = 89
+# One below the EXCELLENT boundary at 90, derived the same way as 74: under
+# thirty comparable examples a small difference may be chance, so the result
+# may not present as EXCELLENT. The highest ceiling here, because nothing is
+# wrong with this run at all. See `COARSE_RESOLUTION_EXAMPLES`.
+
+CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
+    (
+        "no result to bound",
+        (
+            ("dataset-absent", DATASET_ABSENT_CEILING),
+            ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
+            ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
+            ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
+            ("evaluator-absent", EVALUATOR_ABSENT_CEILING),
+            ("evaluator-unresolved", EVALUATOR_UNRESOLVED_CEILING),
+        ),
+    ),
+    (
+        "answers the wrong question",
+        (
+            ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
+            ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
+            ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
+        ),
+    ),
+    (
+        "bounded claim",
+        (
+            ("dataset-fully-synthetic", FULLY_SYNTHETIC_CEILING),
+            ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
+            ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
+            ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
+        ),
+    ),
+)
+
+# The one ceiling per condition, read off the order above so the two cannot
+# disagree. Every `Cap(...)` in this module passes the named constant, and a
+# test reads the source to prove it - a literal at a call site is how one
+# condition acquires two ceilings, which is the defect `action_kind` already
+# removed for remedies.
+CAP_CEILING: dict[str, int] = {
+    condition: ceiling
+    for _group, entries in CAP_SEVERITY_ORDER
+    for condition, ceiling in entries
+}
+
+# Where one condition's evidence STRICTLY IMPLIES another's, the stricter one
+# must not carry the higher ceiling. This is the ordering rule with a
+# derivation rather than a judgment behind it: a dataset where every row is
+# generated is also a dataset where most rows are, so it cannot be the less
+# capped of the two. It is also the exact shape that failed before #144, where
+# two overlapping unreadable-dataset conditions were ranked independently.
+#
+# `(stricter, looser)`. Asserted, not documented: adding a cap that narrows an
+# existing one and giving it a higher ceiling fails the suite.
+CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
+    # No dataset is also no expected outputs, and no comparable examples.
+    ("dataset-absent", "dataset-no-expected-outputs"),
+    ("dataset-absent", "dataset-below-measurable-size"),
+    ("dataset-absent", "dataset-coarse-resolution"),
+    # No labels is no comparable example either, under a reference-based method.
+    ("dataset-no-expected-outputs", "dataset-below-measurable-size"),
+    # All of it generated is also most of it generated.
+    ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
+    # Under ten comparable examples is also under thirty.
+    ("dataset-below-measurable-size", "dataset-coarse-resolution"),
+)
+
+
 @dataclass(frozen=True)
 class Cap:
     condition: str
@@ -424,6 +596,21 @@ class Cap:
                 "emitting a diagnosis a consumer cannot act on"
             ) from None
         object.__setattr__(self, "action_kind", kind)
+        # The same guard for the ordering. A cap with no place in
+        # `CAP_SEVERITY_ORDER` has an unranked ceiling, which is the state this
+        # module was in for every cap until now: the number was whatever its
+        # author picked, against neighbours nobody had compared it to. The
+        # VALUE is deliberately not checked here - `Cap(condition, 50, ...)` is
+        # a legitimate way to build a probe - so the value is pinned instead by
+        # the source-reading test, which is where a wrong constant at a call
+        # site actually shows up.
+        if self.condition not in CAP_CEILING:
+            raise ValueError(
+                f"cap {self.condition!r} has no place in CAP_SEVERITY_ORDER; "
+                "every cap is ranked against the others, so add it to the "
+                "group its condition belongs to rather than choosing a "
+                "ceiling that nothing compares"
+            )
 
 
 # What each check is called on the card.
@@ -923,10 +1110,13 @@ def knob_variation(
 # calculate paired uncertainty or a minimum detectable effect before outcomes
 # exist. The ceilings sit one point below a band edge because the claim is about
 # what the result may *present as*, not about the arithmetic.
+#
+# The two ceilings themselves live with every other ceiling in
+# `CAP_SEVERITY_ORDER`, because their ORDER against the rest is a rule and a
+# number defined beside its own threshold is a number nothing ranks. The
+# thresholds stay here, where they are read.
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
-WIRING_CHECK_CEILING = 74  # cannot present as STRONG
-COARSE_RESOLUTION_CEILING = 89  # cannot present as EXCELLENT
 
 
 def power_ceiling(effective_n: int | None) -> Cap | None:
@@ -1009,9 +1199,9 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # 10-point sub-score inside a 40%-weighted pillar moves the overall score by
 # 2.8, so a fully generated dataset that was perfect everywhere else still
 # reported 93 and read as production-ready.
-FULLY_SYNTHETIC_CEILING = 65  # nothing here was observed
-MOSTLY_SYNTHETIC_CEILING = 70  # more invented than observed
-GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a model's
+#
+# The three ceilings these shares raise are defined with every other ceiling in
+# `CAP_SEVERITY_ORDER`; only the shares that trigger them live here.
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
@@ -1410,7 +1600,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-absent",
-                20,
+                DATASET_ABSENT_CEILING,
                 "No dataset is connected, so nothing can be measured.",
             )
         )
@@ -1452,7 +1642,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-no-expected-outputs",
-                30,
+                DATASET_NO_EXPECTED_OUTPUTS_CEILING,
                 "Rows have inputs but no expected outputs, so there is nothing to "
                 "score a configuration against.",
             )
@@ -1637,7 +1827,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-tune-holdout-overlap",
-                50,
+                SPLIT_OVERLAP_CEILING,
                 "The same examples appear in both the set the search tunes on "
                 "and the set held back to check it, so the final score is "
                 "flattered - a believable wrong number.",
@@ -1647,7 +1837,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-integrity-fail",
-                35,
+                DATASET_INTEGRITY_CEILING,
                 "Some rows could not be read as data - malformed lines, or missing "
                 "the input or expected-answer field.",
             )
@@ -1663,7 +1853,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-absent",
-                40,
+                EVALUATOR_ABSENT_CEILING,
                 "No evaluation method is connected, so no result can be trusted.",
             )
         )
@@ -1706,7 +1896,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "can be trusted - inspect it and repair or replace it."
             )
             evidence = "evaluator present, method not resolved"
-        caps.append(Cap("evaluator-unresolved", 40, reason))
+        caps.append(Cap("evaluator-unresolved", EVALUATOR_UNRESOLVED_CEILING, reason))
         subs.append(SubScore("calibration", 0.0, 40.0, True, evidence))
         subs.append(SubScore("task-fit", 0.0, 25.0, False, evidence))
         subs.append(SubScore("reproducibility", 0.0, 20.0, False, evidence))
@@ -1738,7 +1928,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             caps.append(
                 Cap(
                     "evaluator-invalid",
-                    25,
+                    EVALUATOR_INVALID_CEILING,
                     "The evaluator scores a wrong answer as well as a right one, "
                     "or returns a constant. Every number below it is unreliable.",
                 )
@@ -1846,7 +2036,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-timeout",
-                45,
+                EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
             )
         )
@@ -1880,14 +2070,14 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
 
 NOTHING_WIRED_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Nothing is marked as a setting the agent actually uses, so there is "
     "nothing to search.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Settings are listed, but none is marked as one the agent uses - marking "
     "them is what makes them searchable.",
 )
@@ -2014,7 +2204,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         caps.append(
             Cap(
                 "agent-no-varying-knobs",
-                45,
+                AGENT_NO_VARYING_KNOBS_CEILING,
                 "Every setting has only one value to try, so every configuration "
                 "would be identical.",
             )
