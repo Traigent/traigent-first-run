@@ -159,6 +159,11 @@ class SkillPackageTests(unittest.TestCase):
         urls = re.findall(r"https?://[^`\s)]+", combined)
         allowed_hosts = {
             "portal.traigent.ai",
+            # The public site is the ONLY destination for a user who holds no
+            # access code yet - the portal's register page refuses them, so
+            # without this the guide names the one address it must not give and
+            # no address it may.
+            "traigent.ai",
             "openrouter.ai",
             "platform.openai.com",
             "console.anthropic.com",
@@ -166,6 +171,16 @@ class SkillPackageTests(unittest.TestCase):
         for url in urls:
             host = url.split("/", 3)[2]
             self.assertIn(host, allowed_hosts)
+            # Host granularity is enough for the provider links, and not enough
+            # for this one: `traigent.ai/register` is a page that does not exist
+            # and is the exact shape run-safety forbids handing to a user with
+            # no access code. The public site is only ever given bare.
+            if host == "traigent.ai":
+                self.assertEqual(
+                    url.rstrip(").,"),
+                    "https://traigent.ai",
+                    "the public site is handed over bare, never with a path",
+                )
 
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
         skill_text = SKILL.read_text().casefold()
@@ -2633,7 +2648,15 @@ class SkillPackageTests(unittest.TestCase):
             "already registered, no key in hand",
             "not registered, holding an access code still inside its 10 days",
             "not registered, with no usable access code",
-            "those four are exclusive and cover every user",
+            # The destination itself, so the branch cannot silently go back to
+            # naming a site it never gives an address for.
+            "https://traigent.ai",
+            # The four branches partition what the user *holds*. They cannot
+            # also partition how long ago it happened - a customer who
+            # registered five weeks ago and saved their key classifies as
+            # "key in hand" and is still refused once the access period is
+            # spent - so the list must not claim to cover every user.
+            "those four are exclusive on what the user holds",
             "registering is not the same as holding a key",
             "the key is created in the portal, not issued by registering",
             "top-bar key control",
@@ -2644,6 +2667,17 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+        # A present-substring pin cannot see a residual. The unnamed form said
+        # "start at the Traigent site" in three places; one substitution left
+        # two of them behind and this file still passed, twice. The negative is
+        # the half that fails on a leftover.
+        self.assertNotIn("at the traigent site", normalized)
+        # The other half of the same over-claim. The "key in hand" branch is
+        # the one a long-registered customer reads, and the access-period
+        # paragraph below says a valid key is still refused once the period is
+        # spent - so this branch must not close the question either.
+        self.assertNotIn("nothing else is required", normalized)
 
     def test_both_emailed_codes_are_handled_as_credentials(self) -> None:
         """The two emailed codes are bearer credentials; the link is not.
