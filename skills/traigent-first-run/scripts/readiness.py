@@ -1137,9 +1137,18 @@ def provenance_evidence(
         # the word "collected" on a line about undeclared inputs, because a
         # reader skimming it takes the word for a claim that the rows are real -
         # which is the misreading this whole sub-score exists to prevent.
+        # "does not record where it came from" was false of exactly the row
+        # this line most often describes. A row carrying `provenance: "n/a"`
+        # DID record something - `n/a` is in `UNDECLARED_SOURCE_TOKENS` - and
+        # the same line then prints `declared sources: n/a`, so the card told
+        # the reader the row recorded nothing directly beside what it recorded.
+        # The glossary's entry was corrected for this; the card, which is what
+        # the customer actually reads, kept the sentence. Say what is true of
+        # both rows that reach here: no field at all, and a non-answer in one.
         mixture += (
-            " (undeclared means the row does not record where it came from, so "
-            "it cannot count as evidence about real traffic)"
+            " (undeclared means the row names no real source - either no "
+            "provenance field, or a non-answer such as n/a in it - so it "
+            "cannot count as evidence about real traffic)"
         )
     if facts.generated_answer_rows:
         if not uses_expected_outputs:

@@ -904,6 +904,17 @@ class SkillPackageTests(unittest.TestCase):
         entry = glossary.split("undeclared row -", 1)[1].split(" - ", 1)[0]
         self.assertIn("`n/a`", entry)
         self.assertNotIn("a row that does not record where it came from", glossary)
+        # And the same sentence in the CARD, which is the artifact the customer
+        # actually reads. The glossary was corrected for this and readiness.py
+        # kept the false wording, so the fix reached the document a reader has
+        # to go and look up and not the line printed in front of them: the card
+        # said the row "does not record where it came from" and then printed
+        # `declared sources: n/a` - what the row recorded - in the same
+        # sentence. Pinned against readiness.py rather than a rendered card so
+        # this cannot pass by the phrase merely moving.
+        card_source = _READINESS.read_text()
+        self.assertNotIn("the row does not record where it came from", card_source)
+        self.assertIn("the row names no real source", card_source)
         # A retyped roster is what drifted; refuse its return. Counted over the
         # section, since one or two examples are explanation and a dozen is a
         # copy.
