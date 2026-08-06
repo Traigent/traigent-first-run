@@ -390,13 +390,19 @@ class CommandTimeoutDerivationTests(unittest.TestCase):
         )
 
     def test_the_ceiling_read_here_is_the_one_the_calibrator_declares(self) -> None:
-        """Reading the source, not restating the number, is the whole point."""
+        """Reading the source, not restating the number, is the whole point.
+
+        Matched on the suffix alone. An allowlist of name PREFIXES would have
+        quietly undone the reason the suffix is the key: a rename to a prefix
+        nobody listed would drop out of `declared`, and the test would then be
+        asserting nothing while looking green.
+        """
         source = (harness.CALIBRATE).read_text()
         declared = [
             line
             for line in source.splitlines()
-            if line.startswith(("CALIBRATION", "LLM_JUDGE", "DETERMINISTIC"))
-            and harness.CALIBRATION_CEILING_SUFFIX in line.split("=", 1)[0]
+            if harness.CALIBRATION_CEILING_SUFFIX in line.split("=", 1)[0]
+            and not line.startswith((" ", "\t", "#"))
         ]
         self.assertTrue(declared, "the calibrator declares no ceiling constant")
         self.assertIn(
@@ -405,10 +411,14 @@ class CommandTimeoutDerivationTests(unittest.TestCase):
         )
 
     def test_a_renamed_ceiling_that_keeps_the_suffix_is_absorbed(self) -> None:
-        """`calibrate_evaluator.py` has already renamed this constant once.
+        """A rename of the calibrator's constant must not need an edit here.
 
-        The harness must follow that rename without being edited in the same
-        commit, or the coupling is a comment rather than a mechanism.
+        Forward cover, not history: the calibrator declares
+        `LLM_JUDGE_TIMEOUT_CEILING_SECONDS` today, and the rename to
+        `CALIBRATION_TIMEOUT_CEILING_SECONDS` is proposed on an open branch and
+        has not landed. The harness must follow it whichever way it goes,
+        without being edited in the same commit, or the coupling is a comment
+        rather than a mechanism.
         """
         with tempfile.TemporaryDirectory() as raw:
             script = Path(raw) / "renamed_calibrator.py"
@@ -441,6 +451,39 @@ class CommandTimeoutDerivationTests(unittest.TestCase):
             script = Path(raw) / "zero_ceiling.py"
             script.write_text("CALIBRATION_TIMEOUT_CEILING_SECONDS = 0\n")
             with self.assertRaisesRegex(harness.ContractError, "positive number"):
+                harness.calibration_budget_ceiling_seconds(script)
+
+    def test_an_annotated_ceiling_is_read_like_any_other(self) -> None:
+        """`NAME: int = 600` is the same decision as `NAME = 600`.
+
+        Reading only the unannotated form reported a constant that is plainly
+        in the file as absent, with the message that says the harness "cannot
+        derive its calibration bound". Loud, and false about the file it just
+        read - the worst of the two ways to be wrong here, because it sends the
+        next reader to fix a calibrator that is not broken.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            script = Path(raw) / "annotated_calibrator.py"
+            script.write_text(
+                "PROBES_PER_CASE: int = 4\n"
+                "LLM_JUDGE_TIMEOUT_CEILING_SECONDS: int = 600\n"
+                # A bare annotation declares a type and no number, so there is
+                # nothing to read from it and it must not be mistaken for one.
+                "CALIBRATION_TIMEOUT_CEILING_SECONDS: int\n"
+            )
+            self.assertEqual(harness.calibration_budget_ceiling_seconds(script), 600)
+
+    def test_a_calibrator_that_does_not_parse_raises_a_contract_error(self) -> None:
+        """One question, one exception type.
+
+        `ast.parse` sat outside the wrapping, so a calibrator that could not be
+        READ raised `ContractError` while a calibrator that could not be PARSED
+        escaped as a bare `SyntaxError`, and every caller had to know both.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            script = Path(raw) / "unparseable_calibrator.py"
+            script.write_text("CALIBRATION_TIMEOUT_CEILING_SECONDS = (900\n")
+            with self.assertRaisesRegex(harness.ContractError, "cannot parse"):
                 harness.calibration_budget_ceiling_seconds(script)
 
     def test_local_scripts_keep_the_short_fail_fast_bound(self) -> None:
@@ -534,16 +577,86 @@ class TimeoutEvidenceTests(unittest.TestCase):
         self.assertIn("unavailable", harness.timeout_capture(None, Path("/nowhere")))
 
 
+FAST_SCORER = '''
+"""An exact local scorer. No provider, no network, no wait."""
+
+
+def normalize(value):
+    return " ".join(str(value).split()).casefold()
+
+
+def score(*, output, expected, input_data, metadata):
+    return 1.0 if normalize(output) == normalize(expected) else 0.0
+'''
+
+
+class DerivedBoundEndToEndTests(unittest.TestCase):
+    """One real run whose bound comes from the derivation, not from `--timeout`.
+
+    The slow test below passes `--timeout 300`, so it routes through
+    `explicit_timeout_seconds` and returns before the AST derivation is ever
+    reached. Measured: with `calibration_budget_ceiling_seconds` replaced by an
+    unconditional raise, that test still passed in 34.2s. So the derivation had
+    no end-to-end exercise at all - a silent fallback in it would have been
+    invisible outside the unit tests that call it directly.
+
+    This one is deliberately fast (about a second) because the point is the
+    ROUTE, not the wait: it asserts the invocation genuinely takes the derived
+    branch, and then runs it for real through the same `run_command` the
+    scenarios use.
+    """
+
+    def test_a_calibration_without_a_timeout_flag_runs_on_the_derived_bound(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "scorer.py").write_text(FAST_SCORER)
+            (project / "cases.json").write_text(json.dumps(SLOW_CASES))
+            argv = [
+                sys.executable,
+                str(harness.CALIBRATE),
+                "--scorer",
+                "scorer.py:score",
+                "--cases",
+                "@cases.json",
+                "--allow-execution",
+                "--json",
+            ]
+            # The decision this test exists to hold: no `--timeout` here. Adding
+            # one back would route around the derivation again and leave the
+            # rest of this test passing for the wrong reason.
+            self.assertIsNone(
+                harness.explicit_timeout_seconds(argv),
+                "this end-to-end case must reach the derivation, so it may not "
+                "pass --timeout",
+            )
+            self.assertEqual(
+                harness.command_timeout_seconds(argv),
+                harness.calibration_budget_ceiling_seconds()
+                + harness.CALIBRATION_TIMEOUT_HEADROOM_SECONDS,
+            )
+            record = harness.run_command(argv, project, project / "audit.jsonl")
+
+        payload = json.loads(record["stdout"])
+        self.assertTrue(payload["passed"])
+        self.assertFalse(payload.get("timed_out", False))
+
+
 class SlowEvaluatorEndToEndTests(unittest.TestCase):
     """The scenario the flat 30-second bound made impossible to write.
 
-    This is the only end-to-end exercise of a calibration that outlives the old
+    This is the only end-to-end exercise of a calibration that OUTLIVES the old
     bound: everything else about the slow path is unit-tested against a
     controlled clock, which cannot catch a harness that kills the real child.
+    It is not an exercise of the derivation - it passes `--timeout`, so it takes
+    the explicit branch; `DerivedBoundEndToEndTests` above covers the other one.
 
-    It costs real wall time on purpose - about thirty-three seconds, spent in
-    `time.sleep` inside a LOCAL scorer. No provider is called and no key is
-    read, so the cost is runner seconds and nothing else.
+    It costs real wall time on purpose - thirty-three seconds, spent in
+    `time.sleep` inside a LOCAL scorer - 33s by construction, and 34.2s wall
+    for the test measured on a developer machine, not on a runner. No
+    provider is called and no key is read, so the cost is runner seconds and
+    nothing else, and `.github/workflows/validate.yml` budgets for it.
     """
 
     def test_a_calibration_slower_than_the_old_flat_bound_now_completes(self) -> None:

@@ -77,8 +77,12 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = 30
 # give itself, so a harness bound above it can never be the thing that kills
 # first, and changing the ceiling moves this bound with it. The constant is
 # matched by SUFFIX, not by exact name, because the calibrator owns that name
-# and has already renamed it once; a rename that keeps the suffix is absorbed,
-# and a rename that drops it raises rather than silently reverting to a guess.
+# and a rename is foreseeable rather than hypothetical: the calibrator declares
+# `LLM_JUDGE_TIMEOUT_CEILING_SECONDS` today, and an open branch renames it to
+# `CALIBRATION_TIMEOUT_CEILING_SECONDS` because the budget stopped being
+# LLM-judge-only. Both end in the suffix, so whichever lands, this file needs no
+# edit in that commit. A rename that DROPS the suffix raises rather than
+# silently reverting to a guess.
 CALIBRATION_CEILING_SUFFIX = "_TIMEOUT_CEILING_SECONDS"
 # Added to the calibrator's own budget, never subtracted from it: interpreter
 # start-up, the parent's own kill-and-collect of a hung worker, and writing the
@@ -495,28 +499,55 @@ def calibration_budget_ceiling_seconds(script: Path = CALIBRATE) -> int:
     the script executes its argument parser at module scope in some entry
     paths, and a test harness must not depend on that staying safe.
 
-    Matching by suffix keeps the two numbers coupled across the rename the
-    calibrator has already made once (`LLM_JUDGE_TIMEOUT_CEILING_SECONDS` ->
-    `CALIBRATION_TIMEOUT_CEILING_SECONDS`) without this file having to be
-    edited in the same commit. If the calibrator ever declares more than one
-    ceiling, the largest is the one that bounds the wait.
+    Matching by suffix keeps the two numbers coupled across a rename of the
+    calibrator's own constant without this file having to be edited in the same
+    commit. That is forward cover, not a record of something that has happened:
+    the calibrator declares `LLM_JUDGE_TIMEOUT_CEILING_SECONDS` today, and the
+    rename to `CALIBRATION_TIMEOUT_CEILING_SECONDS` is proposed on an open
+    branch, not landed.
+
+    Annotated declarations count. `NAME: int = 600` states the same decision as
+    `NAME = 600`, and reading only one of the two forms would report a constant
+    that is plainly there as missing - a loud failure with a false reason, which
+    is worse than a quiet one.
+
+    If the calibrator ever declares more than one ceiling, the largest is the
+    one that bounds the wait.
     """
     try:
         source = script.read_text()
     except OSError as error:
         raise ContractError(f"cannot read the calibrator: {error}") from error
+    # Inside the wrapping, like every other failure on this path. Left outside
+    # it, a calibrator that does not parse escaped as a bare `SyntaxError`
+    # while a calibrator that could not be READ raised `ContractError`, so the
+    # caller had to handle two exception types for one question.
+    try:
+        module = ast.parse(source)
+    except SyntaxError as error:
+        raise ContractError(
+            f"cannot parse {script.name} to read its ceiling: {error}"
+        ) from error
     ceilings: dict[str, int] = {}
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+    for node in module.body:
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is None:
+                # `NAME: int` declares a type and no number. Nothing to read.
+                continue
+            target = node.target
+        else:
             continue
-        target = node.targets[0]
         if not isinstance(target, ast.Name) or not target.id.endswith(
             CALIBRATION_CEILING_SUFFIX
         ):
             continue
         try:
             value = ast.literal_eval(node.value)
-        except ValueError as error:
+        except (ValueError, TypeError, SyntaxError) as error:
             raise ContractError(
                 f"{script.name} declares {target.id} as a non-literal: {error}"
             ) from error
