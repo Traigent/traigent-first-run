@@ -27,6 +27,13 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 SUPPORTED_TRAIGENT_VERSION = "0.25.0"
+# Jaccard similarity over normalized word sets. This is the only number the
+# repetition deduction now rests on (traigent-first-run#158), and nothing
+# derives it: it is order-blind, so a reordered sentence scores 1.0, and it is
+# length-sensitive, so one changed word clears 0.9 at 19 tokens and never does
+# below that. What it should be is an open owner question
+# (traigent-first-run#170); until it is answered the user-facing text calls it
+# a chosen line rather than a discovered one.
 NEAR_DUPLICATE_THRESHOLD = 0.9
 # How many near-duplicate pairs the scan will collect before it stops. A display
 # bound, not a limit on what is checked: the emit prints ten, and a dataset with
