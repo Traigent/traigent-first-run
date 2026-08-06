@@ -96,6 +96,34 @@ def _run_readiness(records: list[dict]) -> subprocess.CompletedProcess:
     )
 
 
+def _readiness_records(
+    records: list[dict], extra: tuple[str, ...], *rendering: str
+) -> str:
+    """Score hand-built preflight records, asserting the run succeeded.
+
+    Separate from `_score`, which starts at a JSONL file and lets the real
+    preflight write the records: a payload shape preflight no longer emits -
+    one written before a field existed - can only be built by hand, and that is
+    exactly the shape worth replaying.
+    """
+    process = subprocess.run(
+        [sys.executable, str(READINESS), "--preflight", "-", *rendering, *extra],
+        input=json.dumps(records),
+        capture_output=True,
+        text=True,
+    )
+    assert process.returncode == 0, process.stderr
+    return process.stdout
+
+
+def _score_records(records: list[dict], extra: tuple[str, ...] = ()) -> dict:
+    return json.loads(_readiness_records(records, extra, "--json"))
+
+
+def _card_records(records: list[dict], extra: tuple[str, ...] = ()) -> str:
+    return _readiness_records(records, extra, "--color", "never", "--ascii")
+
+
 def _declared_split_records(
     tuning_metrics: dict | None,
     holdout_metrics: dict | None,
@@ -1948,6 +1976,160 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
                 if record["check"] == "dataset-provenance"
             )
             self.assertEqual(passing["status"], "PASS")
+
+    def test_a_silent_minority_does_not_take_the_remedy_from_a_generated_majority(
+        self,
+    ) -> None:
+        """50 collected / 260 declared generated / 90 silent - who owns the ceiling.
+
+        The shape the other cases here do not have: 100/100 and 120/80 both put
+        silence at or above half the unobserved mass, so the minority case was
+        untested and a bare `undeclared_rows > 0` passed every one of them.
+
+        Measured end to end on this corpus before the share test: the reader was
+        told to declare the rows that were collected, declared all 90, scored
+        the identical 70, stayed BLOCKED, and only then received
+        `connect-real-data` - the instruction they needed first. That is the
+        wrong-remedy harm the undeclared conditions exist to prevent, handed out
+        by the fix for it. So the decision under test is which remedy this
+        corpus gets, and the declared-generated majority is what decides it.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            silent_minority = _rows(50, "production") + _rows(
+                260, "synthetic-walkthrough", offset=50
+            )
+            before = _write_jsonl(
+                directory,
+                "silent-minority.jsonl",
+                silent_minority + _rows(90, None, offset=310),
+            )
+            complied = _write_jsonl(
+                directory,
+                "declared.jsonl",
+                silent_minority + _rows(90, "production", offset=310),
+            )
+
+            score = _score(before, extra)
+            self.assertEqual(score["recommended_action"], "connect-real-data")
+            conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertIn("dataset-mostly-synthetic", conditions)
+            self.assertNotIn("dataset-mostly-undeclared", conditions)
+            self.assertNotIn("dataset-undeclared-provenance", conditions)
+
+            # Why that is the right remedy and the other one was not: doing what
+            # `declare-data-provenance` asks moves nothing here, because the 260
+            # declared generated rows hold the ceiling down by themselves.
+            self.assertEqual(_score(complied, extra)["overall"], score["overall"])
+            self.assertEqual(_score(complied, extra)["status"], score["status"])
+
+            # Nothing about the 90 is hidden by routing the remedy elsewhere.
+            self.assertIn(
+                "90 undeclared", _dataset_subscore(score, "provenance")["evidence"]
+            )
+
+    def test_two_equal_grades_are_not_offered_as_a_choice(self) -> None:
+        """A disclosure that repeats the score is noise where it costs most.
+
+        The sentence exists to say the headline rests on an assumption and to
+        carry the number the reader would get instead. When the two numbers are
+        equal there is no number instead - "scores 70/100 ... the same evidence
+        scores 70/100" spends the reader's attention, at the moment they are
+        deciding whether to pay, to tell them nothing changes.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            dataset = _write_jsonl(
+                directory,
+                "silent-minority.jsonl",
+                _rows(50, "production")
+                + _rows(260, "synthetic-walkthrough", offset=50)
+                + _rows(90, None, offset=310),
+            )
+            score = _score(dataset, extra)
+            self.assertIsNone(score["provenance_assumption"])
+            self.assertNotIn("ASSUMED GENERATED", self._card(dataset, extra))
+            # Still stated where it is a fact rather than a choice.
+            self.assertIn(
+                "scores it as generated",
+                _dataset_subscore(score, "provenance")["evidence"],
+            )
+
+    def test_a_pre_count_payload_that_declared_nothing_gets_both_grades_too(
+        self,
+    ) -> None:
+        """The shape the promise is most about, and the one it skipped.
+
+        A preflight JSON written before the row counts existed carries no counts
+        at all: `sources: ["unknown"]` IS that payload's statement that no row
+        said where it came from. The scorer reads it exactly that way - 3 points
+        and a blocking 65 - and then tells the reader to declare. The disclosure
+        gated on `undeclared_rows`, which is 0 on this path, so this reader got
+        a blocked run and an instruction to declare with no second number
+        anywhere: both grades promised, one grade delivered, on the payload
+        shape that carries nothing but the silence.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            records = [
+                {
+                    "check": "dataset-provenance",
+                    "status": "WARN",
+                    "detail": "no row records a provenance",
+                    "metrics": {
+                        "rows": 200,
+                        "labelled_rows": 200,
+                        "synthetic": False,
+                        "sources": ["unknown"],
+                    },
+                },
+                {
+                    "check": "dataset-split",
+                    "status": "PASS",
+                    "detail": "tuning and holdout inputs are disjoint",
+                    "metrics": {},
+                },
+                {
+                    "check": "dataset-tuning-size",
+                    "status": "PASS",
+                    "detail": "100 tuning rows",
+                    "metrics": {"tuning_rows": 100, "tuning_labelled_rows": 100},
+                },
+                {
+                    "check": "dataset-holdout-resolution",
+                    "status": "PASS",
+                    "detail": "100 holdout rows",
+                    "metrics": {"holdout_rows": 100, "holdout_labelled_rows": 100},
+                },
+            ]
+            score = _score_records(records, extra)
+            self.assertEqual(score["recommended_action"], "declare-data-provenance")
+            self.assertEqual(score["status"], "BLOCKED")
+
+            assumption = score["provenance_assumption"]
+            self.assertIsNotNone(assumption)
+            self.assertEqual(assumption["undeclared_rows"], 200)
+            self.assertEqual(assumption["scored_rows"], 200)
+            self.assertEqual(assumption["scored_as_generated"], score["overall"])
+            self.assertGreater(
+                assumption["if_declared_collected"], assumption["scored_as_generated"]
+            )
+            # Computed from the same payload with a source declared, not a
+            # figure written down: the reader gets what they would get.
+            declared = [dict(record) for record in records]
+            declared[0]["metrics"] = dict(declared[0]["metrics"], sources=["collected"])
+            self.assertEqual(
+                assumption["if_declared_collected"],
+                _score_records(declared, extra)["overall"],
+            )
+
+            card = _card_records(records, extra)
+            self.assertIn("ASSUMED GENERATED", card)
+            self.assertIn(f"{assumption['scored_as_generated']}/100", card)
+            self.assertIn(f"{assumption['if_declared_collected']}/100", card)
 
 
 if __name__ == "__main__":

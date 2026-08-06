@@ -587,8 +587,12 @@ class DatasetFacts:
     synthetic: bool = False
     generated_outputs: bool = False
     # Row counts by provenance class. All zero means the preflight JSON predates
-    # them, and `score_provenance` falls back to the pre-count behaviour rather
-    # than reading the absence as an empty dataset.
+    # them, and `score_provenance` reads `sources` instead rather than taking
+    # the absence for an empty dataset. That fallback reaches the same verdict
+    # the counted path reaches, NOT the one the older payload used to get: a
+    # payload declaring `unknown` scored 6.0 under no ceiling and now scores 3.0
+    # under a blocking 65, because the rule is about what silence means and not
+    # about which payload shape carried it.
     collected_rows: int = 0
     synthesised_rows: int = 0
     undeclared_rows: int = 0
@@ -994,6 +998,12 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # reads what they scored under the assumption and what declaring would earn.
 UNDECLARED_ROW_POINTS = SYNTHESISED_ROW_POINTS
 
+# The source the pre-count counterfactual declares, when there are no row counts
+# to move and `sources` is the only place the silence lives. A word from the
+# guide's own collected vocabulary rather than a marker, so the second grade is
+# the one a reader would get by writing this token into their own rows.
+COUNTERFACTUAL_SOURCE = "collected"
+
 # A cap is a ceiling on the whole run, not a deduction. It exists because a
 # points deduction cannot stop an average from hiding a fatal flaw: 10 -> 3 on a
 # 10-point sub-score inside a 40%-weighted pillar moves the overall score by
@@ -1016,15 +1026,25 @@ GENERATED_ANSWER_KEY_SHARE = 1.0
 # below, rather than splatting one tuple: two separate guards read the condition
 # strings straight out of this file's source, and a cap built from a variable is
 # a cap they stop seeing.
+#
+# Both reasons describe a corpus that HAS declared-generated rows in it as well,
+# so neither claims the dataset declared nothing at all, and neither asks for a
+# declaration on rows that may not exist. "Declare the rows that were collected"
+# was both: it read as "nothing here is declared" beside a corpus that was
+# largely declared generated, and it instructed a reader with no collected rows
+# to declare rows they do not have. The instruction is conditional instead,
+# because whether any silent row was collected is the one thing this scorer
+# cannot see and the reader can.
 UNDECLARED_ALL_REASON = (
-    "No row of this dataset is declared as collected, and a row that records "
-    "nothing is scored as generated. Declare the rows that were collected to "
-    "score them as collected."
+    "No row of this dataset was observed - every row is either declared "
+    "generated or records nothing, and a row that records nothing is scored as "
+    "generated. Declare the source on any silent row that was collected; if "
+    "none was, this dataset is generated."
 )
 UNDECLARED_MOST_REASON = (
-    "Most rows are generated or do not record where they came from, and a row "
-    "that does not record it is scored as generated. Declare the rows that were "
-    "collected to score them as collected."
+    "More than half of these rows were never observed: they are declared "
+    "generated, or record nothing and are scored as generated. Declare the "
+    "source on any silent row that was collected."
 )
 
 
@@ -1032,8 +1052,11 @@ def _row_count(value: Any, name: str) -> int:
     """Read one provenance row count, refusing a present-but-impossible one.
 
     An absent key means the preflight JSON predates the field, and falls back to
-    0 so an older payload keeps scoring as it did. A key that IS present and
-    carries a negative or non-integer count is a different thing: it reaches the
+    0 so the absence stays a payload shape rather than becoming a declared count
+    of zero rows - `score_provenance` reads `sources` instead when every count is
+    0, and reaches the current verdict there, not the one that payload used to
+    get. A key that IS present and carries a negative or non-integer count is a
+    different thing: it reaches the
     arithmetic, shifts the denominator every share is computed over, and can
     push the sub-score past its own 10-point maximum (`-1` synthesised rows
     against 50 collected scores 10.14). Refused for the same reason, and with
@@ -1053,6 +1076,18 @@ def _row_count(value: Any, name: str) -> int:
     return value
 
 
+def declares_no_provenance(facts: DatasetFacts) -> bool:
+    """True when a count-free payload says no row declared where it came from.
+
+    The pre-count fallback, named once because two callers have to agree on it:
+    the scorer, which caps for this state, and the disclosure, which must fire
+    on exactly the runs the scorer capped. A preflight JSON written before the
+    row counts existed carries only `sources`, so `unknown` there - or nothing
+    at all - IS that payload's statement that no row said.
+    """
+    return not facts.synthetic and ("unknown" in facts.sources or not facts.sources)
+
+
 def score_provenance(
     facts: DatasetFacts, *, uses_expected_outputs: bool = True
 ) -> tuple[float, str, list[Cap]]:
@@ -1064,9 +1099,12 @@ def score_provenance(
     detail line claiming every row was generated. Mixtures are the normal case
     once a user tops up real data with examples, so they get a real answer.
 
-    Falls back to the pre-count behaviour when the counts are absent, which is
-    what a preflight JSON written before this field looks like - an older
-    payload keeps scoring exactly as it did rather than silently reading 0 rows.
+    Reads `sources` instead when the counts are absent, which is what a preflight
+    JSON written before this field looks like - the absence is a payload shape,
+    not an empty dataset. That path reaches the same verdict as the counted one
+    and NOT the verdict it used to reach: `unknown` scored 6.0 under no ceiling
+    and now scores 3.0 under a blocking 65, because the rule is about what
+    silence means rather than about which payload carried it.
     """
     caps: list[Cap] = []
     counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
@@ -1084,7 +1122,7 @@ def score_provenance(
                     )
                 ],
             )
-        if "unknown" in facts.sources or not facts.sources:
+        if declares_no_provenance(facts):
             return (
                 UNDECLARED_ROW_POINTS,
                 "no row says whether it was collected or generated, so this run "
@@ -1121,16 +1159,37 @@ def score_provenance(
 
     # The ladder runs on how much of the corpus was never observed, and an
     # undeclared row counts there: it is scored as generated, so it is capped as
-    # generated. Which of the two conditions fires is decided by whether any row
-    # is silent, because that is the only thing the remedy turns on - and it is
-    # what makes the partial case answerable rather than an all-or-nothing rule.
-    # Half declared-collected and half silent is 50%, under the threshold, so it
-    # is not capped at all: it loses points per row like any mixture. Half
-    # declared-generated and half silent is 100% unobserved and IS capped, at 65,
-    # even though neither half reaches 100% on its own - which is the case the
-    # two shares could not see separately.
+    # generated. Half declared-collected and half silent is 50%, under the
+    # threshold, so it is not capped at all: it loses points per row like any
+    # mixture. Half declared-generated and half silent is 100% unobserved and IS
+    # capped, at 65, even though neither half reaches 100% on its own - which is
+    # the case the two shares could not see separately.
     unobserved = facts.synthesised_rows + facts.undeclared_rows
-    silent = facts.undeclared_rows > 0
+
+    # WHICH of the two remedies that ceiling carries is a share too, not the
+    # existence of a silent row. `undeclared_rows > 0` handed "declare the rows
+    # that were collected" to any corpus with one silent row in it, including a
+    # corpus that is overwhelmingly DECLARED generated - which is the wrong
+    # remedy this pair of conditions exists to prevent, in mirror image.
+    # Measured on 50 collected / 260 declared-generated / 90 silent: the reader
+    # was told to declare, declared all 90, scored the same 70, stayed BLOCKED,
+    # and was only then handed `connect-real-data` - the instruction they needed
+    # first.
+    #
+    # The threshold is the ceiling's own, and it is chosen because it is exactly
+    # the condition under which declaring changes the answer. Moving every
+    # silent row into the collected count leaves `synthesised_rows` as the whole
+    # unobserved mass, so declaring clears both rungs if and only if the
+    # DECLARED generated rows are at most `MOSTLY_SYNTHETIC_SHARE` of the
+    # corpus. Past that they hold the ceiling down on their own, no declaration
+    # can lift it, and the honest first instruction is to connect real data -
+    # while the silent rows stay named in the evidence line and in the
+    # disclosure sentence, so nothing about them is hidden by routing the
+    # remedy at the mass that actually binds.
+    silent = (
+        facts.undeclared_rows > 0
+        and facts.synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
+    )
     if unobserved == counted:
         caps.append(
             Cap(
@@ -1169,12 +1228,21 @@ def score_provenance(
     # with that model's opinion, not correctness - believable, and unfalsifiable
     # from inside the run. The questions are still real, so this ceiling sits
     # above both synthetic ones.
+    #
+    # And when they are NOT real, it is not raised at all: `unobserved !=
+    # counted` refuses it for a corpus where no row was observed, because "the
+    # questions are still real" is its whole premise. That is the recorded
+    # decision about which ceiling governs an all-undeclared corpus whose answer
+    # key is a model's - the 65 does, and the 75 said nothing the 65 did not, in
+    # weaker words, on a card where a reader is counting ceilings. It used to
+    # read `synthesised_rows != counted`, which refused it for the DECLARED
+    # version of that state and let the undeclared one raise both.
     if (
         facts.answerable_rows
         and uses_expected_outputs
         and facts.generated_answer_rows
         >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
-        and facts.synthesised_rows != counted
+        and unobserved != counted
     ):
         caps.append(
             Cap(
@@ -2100,32 +2168,65 @@ def provenance_assumption(
     Returns `None` when every row declared a source - there is then no
     assumption, and a disclosure line about one would be noise.
 
-    The counterfactual moves the silent rows into the collected count and scores
-    the same evidence again. It deliberately does not touch `sources`,
-    `synthetic`, or the answer-key counts: this answers exactly one question -
-    "what if these rows are collected data nobody labelled" - and a second edit
-    would make it answer a different one.
+    The counterfactual scores the same evidence again with the silent rows read
+    as collected. It deliberately does not touch `synthetic` or the answer-key
+    counts: this answers exactly one question - "what if these rows are
+    collected data nobody labelled" - and a second edit would make it answer a
+    different one.
+
+    Two payload shapes carry that silence and both have to disclose it. A
+    counted payload names the silent rows, and the counterfactual moves them
+    into the collected count. A pre-count payload carries no counts at all, and
+    `sources` is where its silence lives (`declares_no_provenance`), so the
+    counterfactual declares a source there instead. Gating on `undeclared_rows`
+    alone left the second shape scored as generated, capped at 65, told to
+    declare - and shown no second number at all, which is this function's whole
+    promise missing on the shape it is most about.
     """
-    undeclared = dataset_facts.undeclared_rows
+    if not dataset_facts.exists or not dataset_facts.rows:
+        # `score_dataset` scores no provenance for these at all - it reports
+        # "no dataset" and caps at 20 - so there is no assumption behind the
+        # number to disclose. Restated here because `main` calls this beside
+        # that guard rather than from inside it.
+        return None
     counted = (
         dataset_facts.collected_rows
         + dataset_facts.synthesised_rows
         + dataset_facts.undeclared_rows
     )
-    if not undeclared or not counted:
+    if counted:
+        undeclared = dataset_facts.undeclared_rows
+        if not undeclared:
+            return None
+        declared = replace(
+            dataset_facts,
+            collected_rows=dataset_facts.collected_rows + undeclared,
+            undeclared_rows=0,
+        )
+    else:
+        if not declares_no_provenance(dataset_facts):
+            return None
+        # Every row on this path is silent, and `rows` is the only size the
+        # payload carries - the guard at the top of this function refuses a
+        # payload without one, exactly as `score_dataset` does.
+        counted = dataset_facts.rows
+        undeclared = counted
+        declared = replace(dataset_facts, sources=(COUNTERFACTUAL_SOURCE,))
+    if_declared = score_run(declared, evaluation_facts, agent_facts, weights).overall
+    if if_declared == score.overall:
+        # Two identical grades are a repetition, not a disclosure: "scores
+        # 77/100 ... the same evidence scores 77/100" spends the reader's
+        # attention, at the moment they are deciding whether to pay, to tell
+        # them nothing changes. It happens when something else binds the run at
+        # or below where provenance does - and the silent rows are still counted
+        # in the provenance evidence line, which says what they scored as, so
+        # suppressing the sentence hides no fact.
         return None
-    declared = replace(
-        dataset_facts,
-        collected_rows=dataset_facts.collected_rows + undeclared,
-        undeclared_rows=0,
-    )
     return ProvenanceAssumption(
         undeclared_rows=undeclared,
         scored_rows=counted,
         scored_as_generated=score.overall,
-        if_declared_collected=score_run(
-            declared, evaluation_facts, agent_facts, weights
-        ).overall,
+        if_declared_collected=if_declared,
     )
 
 

@@ -268,6 +268,47 @@ class DatasetScoringTests(unittest.TestCase):
         # already hold real data and simply never have labelled it.
         self.assertEqual(cap.action_kind, "declare-data-provenance")
 
+    def test_an_unobserved_corpus_raises_one_ceiling_and_not_two(self) -> None:
+        """Which ceiling governs an unobserved corpus with a model's answer key.
+
+        The 65 does, and the answer-key 75 is not raised at all: its premise is
+        that the questions are still real, which is exactly what a corpus where
+        no row was observed cannot say. It used to be refused only for the
+        DECLARED version of that state (`synthesised_rows != counted`), so the
+        undeclared one raised both and the card listed two ceilings for one
+        fact, the higher of them resting on a premise the lower one denies.
+        """
+        _, _, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=30,
+                labelled_rows=30,
+                undeclared_rows=30,
+                answerable_rows=30,
+                generated_answer_rows=30,
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.ceiling) for cap in caps],
+            [("dataset-undeclared-provenance", MODULE.FULLY_SYNTHETIC_CEILING)],
+        )
+        # The ceiling is still raised where its premise holds: observed
+        # questions whose every answer a model wrote.
+        _, _, observed = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=30,
+                labelled_rows=30,
+                collected_rows=30,
+                answerable_rows=30,
+                generated_answer_rows=30,
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.ceiling) for cap in observed],
+            [("dataset-generated-answer-key", MODULE.GENERATED_ANSWER_KEY_CEILING)],
+        )
+
     def test_power_uses_labelled_rows_when_no_split_is_declared(self) -> None:
         """90 of the 100 rows cannot be scored, so they buy no precision."""
         pillar, _ = MODULE.score_dataset(

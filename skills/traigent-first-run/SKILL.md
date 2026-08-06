@@ -368,7 +368,7 @@ rather than the condition id:
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
-  scores, offer declaring the real source rather than collecting new data, and meanwhile apply the
+  scores when shown, offer declaring the real source rather than new data, and meanwhile apply the
   rules above.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.

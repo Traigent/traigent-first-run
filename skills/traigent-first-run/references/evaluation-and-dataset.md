@@ -361,9 +361,10 @@ ceiling on the entire run:
 | More than half generated or undeclared | 70 |
 | Real questions, but every expected answer written by a model | 75 |
 
-An undeclared corpus reaches the first two rungs exactly as a generated one does, and asks for a
-declaration rather than for new data. Half declared collected and half silent is 50%, under the
-threshold, and is capped by neither.
+An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
+declaration rather than new data unless over half the corpus is declared generated - a ceiling no
+declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
+capped by neither.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last rung is the
 highest because the questions are still real, and nothing inside the run can falsify an answer key a
