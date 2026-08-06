@@ -384,6 +384,36 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertLess(sub.value, 20.0)
         self.assertLessEqual(dominant.score, unchecked.score)
 
+    def test_the_adapter_reports_the_dominance_status_preflight_emitted(self) -> None:
+        """The adapter translates preflight; it does not re-rank it.
+
+        `_answer_dominance_status` returned the literal "WARN" whenever a
+        `dataset-ceiling-risk` record was present, discarding the status the
+        record carried. Every sibling dataset check already raises FAIL rather
+        than WARN on a synthetic dataset, so the first time dominance is ranked
+        that way the scorer would have been handed a warning about a failure -
+        a downgrade invented by the reader of a status, which is the defect
+        that reading SKIP as PASS already cost this package once.
+        """
+        for status in ("WARN", "FAIL"):
+            with self.subTest(status=status):
+                facts = MODULE.dataset_facts_from_preflight(
+                    [
+                        {
+                            "check": "dataset-provenance",
+                            "status": "PASS",
+                            "metrics": {"rows": 40, "labelled_rows": 40},
+                        },
+                        {"check": "dataset-outputs", "status": "PASS", "metrics": {}},
+                        {
+                            "check": "dataset-ceiling-risk",
+                            "status": status,
+                            "metrics": {},
+                        },
+                    ]
+                )
+                self.assertEqual(facts.answer_dominance_status, status)
+
     def test_a_real_finding_survives_a_skip_beside_it(self) -> None:
         """A skipped sibling must not erase a check that did find something.
 

@@ -793,6 +793,13 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(near.status, MODULE.SKIP, near.detail)
         self.assertIn("UNCHECKED", near.detail)
         self.assertNotIn("no high-similarity", near.detail)
+        # And it must account for the wait. This is the one slow path in the
+        # script - 5000 rows over a 60-word vocabulary measured 12.5 s to reach
+        # this emit, against 0.04 s for ordinary wording - so the user has just
+        # waited and is then told the check did not run. The detail has to name
+        # both the cost and what causes it, or the pause reads as a hang.
+        self.assertIn("take several seconds", near.detail)
+        self.assertIn("vocabulary", near.detail)
 
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [

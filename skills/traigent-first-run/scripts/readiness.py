@@ -2453,9 +2453,14 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
     scored on a structured outcome field can carry a dominant `output` and a
     healthy `result.label`, and preflight raises `dataset-ceiling-risk` from
     both branches.
+
+    When that record is present its own status is returned unchanged rather
+    than re-labelled. This is a translation, not a judgement: preflight decides
+    how severe a dominant answer is - today WARN, FAIL if it ever ranks one
+    that way - and a literal here would silently downgrade whatever it decided.
     """
     if "dataset-ceiling-risk" in statuses:
-        return "WARN"
+        return statuses["dataset-ceiling-risk"]
     if "PASS" in (
         statuses.get("dataset-outputs"),
         statuses.get("dataset-outcome-field"),

@@ -1182,12 +1182,22 @@ def check_dataset(
         # Found nothing AND did not finish, which is not the same statement as
         # "found nothing". The only way here is a dataset so repetitive that the
         # filter admits everything; say that this is unchecked, never clean.
+        #
+        # And say why it took so long. Getting here is the one slow path in
+        # this script: 5000 rows drawn from a 60-word vocabulary measured 12.5 s
+        # to reach this emit, against 0.04 s for the same 5000 rows with
+        # ordinary wording. So the user has just waited, and is then told the
+        # check did not run. Without the second sentence that reads as the
+        # script having hung and given up on their dataset.
         emit(
             "dataset-near-duplicates",
             SKIP,
             f"the near-duplicate scan passed its {MAX_NEAR_DUPLICATE_COMPARISONS} "
             "comparison budget before examining every candidate pair, so this "
-            "dataset is UNCHECKED for near-duplicates - not clean",
+            "dataset is UNCHECKED for near-duplicates - not clean. Reaching that "
+            "budget can take several seconds, and only a dataset whose rows are "
+            "drawn from a vocabulary small enough to make nearly every pair a "
+            "candidate can exhaust it",
         )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
