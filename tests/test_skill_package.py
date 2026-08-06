@@ -1903,10 +1903,17 @@ class SkillPackageTests(unittest.TestCase):
         Nothing held that. #148's own checks are on `run-safety.md`, where the
         addresses live, so the GUIDE.md half was pinned by nothing - verified by
         restoring the old sentence on trunk, where the full suite stays green.
-        That matters here because this branch rewrites exactly that sentence,
-        and every pull request whose base predates #148 still carries the old
-        wording: whichever way one of those conflicts is resolved, the promise
-        of a single clickable link can come back and no check would notice.
+
+        The branch that made that concrete has since moved, and the record
+        should say so rather than keep claiming a conflict that no longer
+        happens. #154 was based on 6316067, before #148, so its copy of this
+        file still carried the promise and genuinely collided with the sentence
+        this branch rewrites. #154 has since been rebased onto this trunk; at
+        the current heads `git merge-tree` auto-merges GUIDE.md and SKILL.md in
+        both directions, and the only conflict is the generated behaviour lock,
+        which `tools/relock.py` rewrites. So the hazard is not live today. That
+        is the argument for a check rather than a narrative: a rebase retired it
+        without anyone deciding to, and a rebase can bring it back the same way.
 
         So the shape is asserted rather than the sentence: GUIDE.md names no
         address, of any form, and keeps the pointer that replaced the promise.
@@ -1924,6 +1931,78 @@ class SkillPackageTests(unittest.TestCase):
             "is wrong for three of the four (#148)",
         )
         self.assertIn("for which address each account state gets", guide)
+
+    # When the credential file may be opened at all: once, and only for a key
+    # that is genuinely missing. Matched as a shape - an opening or stopping
+    # verb, scoped by "only"/"never"/"not", against a key described as missing,
+    # already held, or a duplicate - rather than by any one sentence. This
+    # repository has spelled the rule at least three ways, so a check on one
+    # spelling would pass while a second document carried another.
+    _WHEN_THE_FILE_IS_OPENED = re.compile(
+        r"\b(?:open|reopen|stop)\w*\b[^.]{0,120}?\b(?:only|never|not)\b[^.]{0,80}?"
+        r"\b(?:missing|already|duplicate)\b"
+        r"|"
+        r"\b(?:only|never|do not|not)\b[^.]{0,60}?\b(?:open|reopen|stop)\w*\b"
+        r"[^.]{0,80}?\b(?:missing|already|duplicate)\b"
+    )
+
+    def test_when_the_credential_file_may_be_opened_is_stated_in_one_place(
+        self,
+    ) -> None:
+        """The third rule in this paragraph, and it had no home of its own.
+
+        The rung check above settled *how* the file is opened and the address
+        check settled *where the user is then sent*. This is the remaining
+        clause: *whether to open it at all*. GUIDE.md stated it - "open it only
+        for the missing key, never to duplicate one that is already available" -
+        in the one document CLAUDE.md says states no rule SKILL.md does not, and
+        SKILL.md does not state it. `run-safety.md` does, as "stop once only
+        when a key is truly missing", inside the ordered handoff it performs.
+
+        So the clause was a mandate sitting away from its own mandate document
+        while the reference that owns the step already carried it: a second
+        statement of an existing rule, which CLAUDE.md calls a defect rather
+        than emphasis. It is removed from GUIDE.md, which now names the selected
+        source and points at the reference for the handoff itself.
+
+        The assertion is the placement, not the wording, and it fails in both
+        directions - which is the point. Delete the rule from `run-safety.md`
+        and there are no homes, so the rule cannot quietly lose the one it has.
+        Restate it in GUIDE.md or SKILL.md and there are two, so it cannot
+        quietly gain a second. Neither failure needs anyone to remember that
+        this paragraph was ever a problem.
+        """
+        documents = {
+            path.relative_to(ROOT).as_posix(): " ".join(
+                path.read_text().casefold().split()
+            )
+            for path in assistant_facing_documents()
+        }
+        owner = RUN_SAFETY.relative_to(ROOT).as_posix()
+
+        homes = sorted(
+            name
+            for name, text in documents.items()
+            if self._WHEN_THE_FILE_IS_OPENED.search(text)
+        )
+        self.assertEqual(
+            homes,
+            [owner],
+            "when the credential file may be opened is stated in "
+            f"{homes or 'no document at all'} - it belongs once, in the "
+            "reference that performs the handoff",
+        )
+
+        # And the surviving statement is the rule, not some other sentence that
+        # happens to fit the shape: opened once, and only for a missing key.
+        stated = self._WHEN_THE_FILE_IS_OPENED.search(documents[owner]).group(0)
+        for element in ("once", "key", "missing"):
+            with self.subTest(element=element):
+                self.assertIn(element, stated)
+
+        # GUIDE.md keeps the pointer that replaced it, so "no rule here" is not
+        # satisfied by the entry point simply dropping the subject.
+        self.assertIn("`references/run-safety.md`", documents["GUIDE.md"])
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(

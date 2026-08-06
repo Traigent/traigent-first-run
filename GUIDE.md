@@ -58,11 +58,9 @@ Use the bundled tools:
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
 When a credential handoff is needed, use the selected credential source: normally the chosen
-project-root `.env`, or the external local file the user explicitly named for this run. Open that
-exact absolute path once, only for the missing key, never to duplicate one that is already
-available. For a new Traigent key after the baseline, refresh/reopen the same file so the new
-`TRAIGENT_API_KEY=` line is visible, then follow the skill's `references/run-safety.md` for which
-address each account state gets, and the two 10-day windows.
+project-root `.env`, or the external local file the user explicitly named for this run - the same
+file for the Traigent key after the baseline. Follow the skill's `references/run-safety.md` for
+the handoff itself, for which address each account state gets, and the two 10-day windows.
 
 ## User-facing promise
 

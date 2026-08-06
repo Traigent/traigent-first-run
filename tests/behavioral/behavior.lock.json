@@ -1,7 +1,7 @@
 {
-  "digest": "f0078f17c18e1d658cb851fb6ab0be105a27584368ad45cf26fab4ddd13999a0",
+  "digest": "e4428578795d7a332bc1ccaa70094466f61e69713f7233d70c41b09863c8aed8",
   "paths": [
-    {"path": "GUIDE.md", "sha256": "7012d90624adc7eb22e4959d31f0eee23adb7b1d5f973194c1d6343a53c23f20", "size": 9434},
+    {"path": "GUIDE.md", "sha256": "e153b7284f9367a4893a6bb387a6e2e1cb201353bd5b775fd375c0ade1a30794", "size": 9277},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "0fce6b8100ef521bf8328c032530a77c3afbc9473c82a2ef13ec040e061ff189", "size": 51311},
     {"path": "skills/traigent-first-run/agents/openai.yaml", "sha256": "87331cf2d8ccefc92ebb0501e4a52229ddef7667a1ee94dcaa13d1dfe7139bbc", "size": 249},
     {"path": "skills/traigent-first-run/assets/requirements-first-run.txt", "sha256": "d8508c0a91aa3360fb4742fe360c64700411805f398fb682c98831424eb3de45", "size": 54},
