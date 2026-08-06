@@ -644,20 +644,30 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(matrix.probe_scores, single.probe_scores)
 
 
-# The document the walkthrough's generated wrapper writes: the enhanced space
-# after the placeholder temperature is replaced with a neighbor of the
-# baseline's winner, with the template's placeholder model ids. Kept here so the
-# consumer contract is pinned to the shape the producer actually emits.
+# The document the walkthrough's generated wrapper writes: the enhanced space,
+# with the template's placeholder model ids. Kept here so the consumer contract
+# is pinned to the shape the producer actually emits. There is no longer a
+# placeholder value to substitute first - the four behaviour knobs are binary
+# and temperature is pinned, so the space is fixed before either run.
 WALKTHROUGH_CONFIG_SPACE = {
     "agent_type": "general",
     "knobs": {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
-        "prompt_style": ["direct", "structured", "criteria_first"],
+        "prompt_style": ["plain", "structured"],
+        "thinking_shape": ["direct", "chain_of_thought"],
+        "reflect": [False, True],
         "self_check": [False, True],
-        "temperature": [0.0, 0.2, 0.1],
+        "temperature": [0.0],
     },
     "max_trials": 12,
-    "wired": ["model", "temperature", "prompt_style", "self_check"],
+    "wired": [
+        "model",
+        "temperature",
+        "prompt_style",
+        "thinking_shape",
+        "reflect",
+        "self_check",
+    ],
 }
 
 
@@ -722,27 +732,35 @@ class AgentScoringTests(unittest.TestCase):
         facts = MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
-        # 35/35 knob-count + 30.4/40 variation + 25/25 coverage. Was 78 while
-        # the `general` catalog spelled the prompt dimension `prompt_policy`
-        # and listed `max_tokens`; see the catalog comment in readiness.py.
-        self.assertEqual(pillar.score, 90)
+        # 35/35 knob-count + 20/40 variation + 25/25 coverage. Was 90 while the
+        # space swept three prompt values and three temperatures: a BINARY knob
+        # tops out at half marks on variation, `(distinct - 1) / 2`, so four of
+        # them plus a pinned temperature average 0.5. That is the cost of an
+        # exactly predictable 48, paid in the one sub-score that measures
+        # breadth of values rather than usefulness of knobs.
+        self.assertEqual(pillar.score, 80)
         self.assertEqual(pillar.confidence, 1.0)
 
-    def test_reasoning_branch_document_still_clears_the_cap(self) -> None:
-        """A reasoning model pins temperature to one value; three knobs remain.
+    def test_the_reasoning_branch_is_the_same_document(self) -> None:
+        """There is no longer a second document for a reasoning strong tier.
 
-        The branch loses knob-count and variation points but must still search,
-        so a change that re-caps it is visible here rather than in a run.
+        This used to pin a DIFFERENT score, because temperature was pinned only
+        in that branch: the ordinary space was 54 configurations and the
+        reasoning one 18, and only this test recorded the second number
+        anywhere. Temperature is now pinned in both, so the branch produces a
+        byte-identical document and the same 80. Asserted rather than deleted,
+        because "the two branches agree" is the claim that replaced it.
         """
-        document = dict(
+        reasoning = dict(
             WALKTHROUGH_CONFIG_SPACE,
             knobs=dict(WALKTHROUGH_CONFIG_SPACE["knobs"], temperature=[0.0]),
         )
+        self.assertEqual(reasoning, WALKTHROUGH_CONFIG_SPACE)
         pillar, caps, _ = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space(document)
+            MODULE.agent_facts_from_config_space(reasoning)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 76)
+        self.assertEqual(pillar.score, 80)
 
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
@@ -1092,7 +1110,9 @@ class AgentScoringTests(unittest.TestCase):
         self.assertIsInstance(integral.max_trials, int)
         pillar, caps, _ = MODULE.score_agent(integral)
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 90)
+        # The walkthrough document's own score; the point here is that the
+        # float spelling reaches it rather than exiting 2.
+        self.assertEqual(pillar.score, 80)
         self.assertEqual(
             pillar.score,
             MODULE.score_agent(
@@ -1610,17 +1630,20 @@ class DocumentedSchemaTests(unittest.TestCase):
         """The pin the alias change could have moved, measured rather than assumed.
 
         The shipped space declares only `prompt_style`, so collapsing the alias
-        leaves its four dimensions and 54 combinations untouched and the 90
-        stands.
+        leaves its six dimensions and 48 combinations untouched and the 80
+        stands. 80 rather than the old 90 because four BINARY behaviour knobs
+        cap the variation sub-score at half marks - `(distinct - 1) / 2` for a
+        categorical knob - where three-valued knobs and a temperature sweep
+        scored it higher without buying a search the owner wanted.
         """
         pillar, caps, _ = MODULE.score_agent(
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 90)
+        self.assertEqual(pillar.score, 80)
         count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
-            count.evidence, "4 of 4 wired knobs actually vary; 54 combinations"
+            count.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
         )
 
     def test_absent_wired_attests_nothing_rather_than_everything(self) -> None:
@@ -1935,7 +1958,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 90)
+        self.assertEqual(agent["score"], 80)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )

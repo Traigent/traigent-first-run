@@ -120,36 +120,42 @@ itself. Omitting it bounds generated-walkthrough cost and latency; do not imply 
 State that in the plan and price any flagship comparison separately. Every selected model runs in
 the baseline grid and must fit the approved time and cost envelope.
 
-Both generated spaces use the same three models. Keep the baseline small: at most three models and
-at most three swept knobs, with no swept knob taking more than two values. In the walkthrough that
-usually becomes a six-row sweep the user could credibly run by hand: three models × two
-evaluator-safe temperatures, with `prompt_style` and `self_check` fixed to one value each so the
-only varying dimensions are model and temperature. If the strong tier is a reasoning model,
-temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
-reasoning calling convention pinned; either way, the baseline stays at six rows and the first
-result stays quick and cheap. The synthesized walkthrough dataset contains 18 tuning rows: 3 easy,
-5 medium, 5 hard, and 5 very hard. The enhanced space keeps the identical model list and expands beyond
-the baseline: once the baseline result is in, refine the swept values around its top rows - the
-one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
-rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced
-run is therefore strictly larger than the baseline search. The coding assistant performs this
-refinement itself between the two runs; the user is never asked to pick values or edit the
-wrapper. Because the enhanced run never gets a model the baseline did not measure, a measured
+Both generated spaces use the same three models and both have an exact size. State them exactly,
+never as "roughly" or "about"; the asserts beside the spaces below enforce both:
+
+- baseline: **3 models × 2 prompt styles = 6 configurations**, a sweep the user could run by hand.
+- enhanced: **3 models × 4 binary behaviour knobs = 48 configurations**, a quarter of it reachable
+  within the 12-trial cap and inside the 4-6 varying knobs the readiness scorer pays full marks for.
+
+Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
+wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
+walkthrough conditional, dropping temperature in that branch alone and silently giving the enhanced
+space a second size nothing wrote down. Pinning it always makes both branches identical, 6 and 48
+whether the strong tier reasons or not.
+
+The four behaviour knobs are **prompt style**, **thinking shape** (direct or chain-of-thought),
+**reflect**, and **self-check**, two values each. They shape behaviour rather than sampling, and
+each intervenes at a different point, so none is another spelling of its neighbour.
+
+The synthesized walkthrough dataset contains 18 tuning rows: 3 easy, 5 medium, 5 hard, and 5 very
+hard. The baseline's second axis is `prompt_style` because the enhanced space carries it too: a
+baseline that ranks a lever the enhanced run will not use has measured nothing usable, which is
+what temperature became once it was pinned. Every baseline value is kept, so the baseline is a
+strict subset and the enhanced run never gets a model the baseline did not measure, so a measured
 difference cannot be explained by quietly upgrading the model. The assistant adds the disclosed
 controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
 in the report.
 
 Sweep only knobs that are real for every model in the space. When one model ignores a knob the
-others honor, the winner comparison is confounded - a configuration can win on a prompt or
-setting the other models were never given on equal terms, and no report footnote untangles that;
-when every model faces exactly the same variations, the winner is clear and the enhanced run's
-insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
-identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
-least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
-parameters such a model rejects - and, since temperature is then
-inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
-the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
-prompt-policy plus self-check controls in the enhanced space.
+others honor, the winner comparison is confounded - a configuration can win on a prompt or setting
+the other models were never given on equal terms, and no report footnote untangles that; when every
+model faces exactly the same variations, the winner is clear and the enhanced run's insight is
+accurate. So when the strong tier is a reasoning model, pin its calling convention identically in
+both runs - a chosen reasoning effort with answer headroom of `max_tokens` at least 4096 (the
+safety reference's high-effort bound, applied flat here), and no sampling parameters such a model
+rejects. Nothing else changes: temperature is already pinned for every space, and the four
+behaviour knobs are real for a reasoning model and a sampling model alike, so both branches run the
+same 6 and 48.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
@@ -308,8 +314,15 @@ def require_current_route_credential() -> None:
 
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
+    # Pinned, never swept, in both phases: it adds surface noise an exact
+    # match punishes, and pinning it always retires the branch that used to
+    # give the enhanced space a second, undocumented size.
     "temperature": 0.0,
-    "prompt_style": "direct",
+    # `prompt_style`'s first value was "direct" until `thinking_shape` arrived
+    # and took that word for the thing it actually describes.
+    "prompt_style": "plain",
+    "thinking_shape": "direct",
+    "reflect": False,
     "self_check": False,
 }
 BASELINE_SPACE = {
@@ -320,23 +333,22 @@ BASELINE_SPACE = {
         SELECTED_ALTERNATIVE_MODEL,
         SELECTED_STRONG_MODEL,
     ],
-    # Nonzero values are safe only when the evaluator tolerates valid surface variation.
-    # Otherwise pin 0.0 and substitute other real controls to retain the planned row count.
-    "temperature": [BASELINE_CONFIG["temperature"], 0.2],
-    "prompt_style": [BASELINE_CONFIG["prompt_style"]],
+    "temperature": [BASELINE_CONFIG["temperature"]],
+    # The baseline's only second axis, and it must be a knob the enhanced space
+    # carries too - otherwise the baseline ranks a lever that run will not use.
+    "prompt_style": [BASELINE_CONFIG["prompt_style"], "structured"],
+    "thinking_shape": [BASELINE_CONFIG["thinking_shape"]],
+    "reflect": [BASELINE_CONFIG["reflect"]],
     "self_check": [BASELINE_CONFIG["self_check"]],
 }
 ENHANCED_SPACE = {
     "model": BASELINE_SPACE["model"],
-    # 0.4 is the pre-baseline placeholder: after the baseline, replace it with
-    # one close neighbor of the winning temperature (0.1 or 0.3 for a 0.2
-    # winner), keeping both baseline values.
-    "temperature": [*BASELINE_SPACE["temperature"], 0.4],
-    "prompt_style": [
-        BASELINE_CONFIG["prompt_style"],
-        "structured",
-        "criteria_first",
-    ],
+    "temperature": BASELINE_SPACE["temperature"],
+    # Four behaviour knobs, two values each, keeping every baseline value: the
+    # baseline space is a strict subset of this one.
+    "prompt_style": BASELINE_SPACE["prompt_style"],
+    "thinking_shape": [BASELINE_CONFIG["thinking_shape"], "chain_of_thought"],
+    "reflect": [False, True],
     "self_check": [False, True],
 }
 # Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
@@ -345,7 +357,14 @@ ENHANCED_SPACE = {
 # is a false claim about the search space. The scorer cannot check that claim,
 # so the assert under `demonstrably_wired` below checks it here at load time.
 AGENT_TYPE = "general"
-WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
+WIRED_KNOBS = [
+    "model",
+    "temperature",
+    "prompt_style",
+    "thinking_shape",
+    "reflect",
+    "self_check",
+]
 # Inputs the wiring probe below re-builds requests over. A knob that acts only
 # on some inputs - a `sql_mode` applied when the message starts "SQL:", say -
 # produces identical requests under a single literal, so probing one string
@@ -372,14 +391,25 @@ def config_space_document(space: dict[str, list]) -> dict:
     }
 
 
+# Every count this walkthrough claims is pinned here, so "48 configurations"
+# is a fact the file refuses to contradict rather than a number in a paragraph.
+BEHAVIOUR_KNOBS = ["prompt_style", "thinking_shape", "reflect", "self_check"]
 assert len(set(BASELINE_SPACE["model"])) == 3
 assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
-assert set(BASELINE_SPACE["temperature"]) <= set(ENHANCED_SPACE["temperature"])
-assert not STRONG_REASONING_EFFORT or (
-    len(BASELINE_SPACE["temperature"]) == 1
-    and len(ENHANCED_SPACE["temperature"]) == 1
-), "pin temperature when the strong tier runs at a reasoning effort"
+assert all(
+    set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) for knob in BASELINE_SPACE
+), "the baseline must be a subset, or it ranks levers the enhanced run will not use"
+# Unconditional, where it used to fire only under a reasoning strong tier: the
+# rule got simpler, not stricter, and the branch that gave the enhanced space a
+# second size is gone with it.
+assert (
+    len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
+), "temperature is pinned, never swept - behaviour knobs carry the search"
+assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
+# 3 models x 2 prompt styles, and 3 models x 4 binary behaviour knobs - the
+# second holding whether or not the strong tier reasons.
 assert configuration_count(BASELINE_SPACE) == 6
+assert configuration_count(ENHANCED_SPACE) == 48
 assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
 assert set(WIRED_KNOBS) <= set(ENHANCED_SPACE), (
@@ -396,21 +426,40 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 )
 
 
-def build_prompt(message: str, *, style: str, self_check: bool) -> str:
-    if style == "direct":
+def build_prompt(
+    message: str,
+    *,
+    style: str,
+    thinking_shape: str,
+    reflect: bool,
+    self_check: bool,
+) -> str:
+    """Four knobs, four different moments - two knobs with one effect are one
+    dimension counted twice. `style` frames the task, `thinking_shape` decides
+    whether reasoning happens BEFORE the answer, `reflect` reconsiders its
+    CORRECTNESS afterwards, `self_check` verifies it against the task's stated
+    OUTPUT CONSTRAINTS."""
+    if style == "plain":
         prompt = message
     elif style == "structured":
         prompt = (
             "Complete the task below. Follow every requested output constraint and return only "
             f"the requested result.\n\nTask:\n{message}"
         )
-    elif style == "criteria_first":
-        prompt = (
-            "Identify the task's decision criteria, apply each criterion carefully, and return "
-            f"only the requested result.\n\nTask:\n{message}"
-        )
     else:
         raise ValueError(f"unsupported prompt style: {style}")
+    if thinking_shape == "chain_of_thought":
+        prompt += (
+            "\n\nReason through the task step by step before you answer, then return only the "
+            "requested result."
+        )
+    elif thinking_shape != "direct":
+        raise ValueError(f"unsupported thinking shape: {thinking_shape}")
+    if reflect:
+        prompt += (
+            "\n\nAfter reaching an answer, reconsider whether it is actually correct, and "
+            "revise it if it is not. Return only the final answer."
+        )
     if self_check:
         prompt += (
             "\n\nBefore returning the result, silently check it against the task constraints "
@@ -515,6 +564,8 @@ def build_request(message: str, config: dict) -> dict:
                 "content": build_prompt(
                     message,
                     style=config["prompt_style"],
+                    thinking_shape=config["thinking_shape"],
+                    reflect=config["reflect"],
                     self_check=config["self_check"],
                 ),
             }
@@ -700,17 +751,15 @@ requires revised data-egress approval. In the generated default, every search
 variable must affect the actual agent call for every model in the space. A preserved conditional
 dimension may affect only the models that support it, but the request probe must report that
 partial coverage and the run record must name those models. When the strong tier runs as a
-reasoning model, temperature is inert for it - follow the ladder section above and sweep uniform
-knobs instead of making the generated comparison conditional.
+reasoning model, temperature is inert for it - which costs the comparison nothing, because
+temperature is pinned in both spaces and every swept knob is uniform across the ladder.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
-template to force onto every real agent. Its baseline performs a credible six-point standard
-sweep: the three ladder models by two evaluator-safe temperatures, with the added prompt controls
-pinned to the current behavior. The enhanced space keeps all of those values - the same three
-models - extends the temperature range around the baseline's winner,
-and adds two real one-call controls: three prompt policies and a native
-boolean self-check branch. That creates 54 possible
-configurations, so a 12-trial managed run has meaningful choices to make.
+template to force onto every real agent. Its baseline is a credible six-point sweep: the three
+ladder models by two prompt styles, with the remaining controls pinned to the current behavior.
+The enhanced space keeps every one of those values, the same three models, and adds three real
+one-call controls: thinking shape, reflect, and self-check. That is exactly 48 configurations, so a 12-trial managed run has meaningful
+choices to make and reaches a quarter of the space.
 
 When the user already has a baseline or fixed current configuration, preserve that baseline space
 and its row count exactly; do not expand it to six. Add task-relevant controls only to the enhanced
@@ -845,13 +894,14 @@ Traigent/Traigent issue 2020.
 
 ## Broader optimization
 
-Before this call, the coding assistant replaces the enhanced space's placeholder temperature with
-the winner-bracketing neighbor chosen from the baseline result per the ladder section, so the
-search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
-internal step - never a user task, an edit the user is asked to make, or another question.
+The enhanced space carries no pre-baseline placeholder to replace. Every value in it is fixed
+before either run, because the four behaviour knobs are binary and temperature is pinned - there is
+no swept range to re-centre on the baseline's winner, and so no between-runs edit for anything to
+get wrong. What the baseline result decides is which knobs a customer's own space keeps, not which
+values this one sweeps.
 
-The config-space document is serialized after that replacement, so it records the space the search
-actually receives rather than the pre-baseline guess - but nothing is on disk while the search runs.
+The config-space document is serialized from the space this call receives, so it records what the
+search actually got - but nothing is on disk while the search runs.
 Three steps in order give the file one meaning and no other, *this is the space the search that just
 completed received*:
 

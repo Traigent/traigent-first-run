@@ -446,20 +446,24 @@ Three honesty rules govern the file:
   survive the next one failing, the wrapper deletes it before each search rather than relying on
   the next write to replace it - staleness is removed by the run, not by the reader noticing.
 
-The walkthrough's document, after the placeholder temperature is replaced by the winner-bracketing
-neighbor:
+The walkthrough's document - 3 models x 4 binary behaviour knobs, with temperature declared at its
+one pinned value because the agent does consume it:
 
 ```json
 {
   "agent_type": "general",
   "knobs": {
     "model": ["provider/current", "provider/alternative", "provider/strong"],
-    "prompt_style": ["direct", "structured", "criteria_first"],
+    "prompt_style": ["plain", "structured"],
+    "thinking_shape": ["direct", "chain_of_thought"],
+    "reflect": [false, true],
     "self_check": [false, true],
-    "temperature": [0.0, 0.2, 0.1]
+    "temperature": [0.0]
   },
   "max_trials": 12,
-  "wired": ["model", "temperature", "prompt_style", "self_check"]
+  "wired": [
+    "model", "temperature", "prompt_style", "thinking_shape", "reflect", "self_check"
+  ]
 }
 ```
 
@@ -587,18 +591,20 @@ Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoin
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
-space unchanged, even when it contains one row. For a generated walkthrough, the default small
-space is three credible models by two safe temperature values, with prompt policy and self-check
-fixed to ordinary/off values; the models are the fast, mid, and strong rungs of the walkthrough
-model ladder from the selected route - the strong rung one step below the vendor's newest
-flagship, at a pinned effort in both runs when it is a reasoning model, and never the flagship
-itself. A reasoning-model strong rung also drops temperature as a swept knob for the whole
-walkthrough - two prompt styles form the baseline's second axis instead, so every knob stays real
-for every model. The enhanced space keeps the identical model list, extends swept ranges around
-the baseline's top rows while retaining every baseline value, and adds multiple prompt
-policies plus a native boolean self-check branch, keeping the space materially larger than the
-12 configurations Traigent may test by default - so an enhanced win is attributable to knobs and
-the managed search, never to a model the baseline did not measure. Explain this generated-only
+space unchanged, even when it contains one row. The generated walkthrough's two spaces have exact
+sizes, stated as exact numbers and never as "roughly": the baseline is **3 models x 2 prompt
+styles = 6 configurations** and the enhanced space is **3 models x 4 binary behaviour knobs = 48
+configurations**, both holding whether or not the strong rung reasons.
+`references/sdk-execution.md` owns the spaces, the derivation, and the asserts.
+
+The four behaviour knobs are prompt style, thinking shape (direct or chain-of-thought), reflect,
+and self-check; temperature is pinned at 0, so every swept knob is real for every model. The
+models are the fast, mid, and strong rungs of the walkthrough model
+ladder from the selected route - the strong rung one step below the vendor's newest flagship, at a
+pinned effort in both runs when it is a reasoning model, and never the flagship itself. The
+enhanced space keeps the identical model list and every baseline value, so the baseline is a strict
+subset of it and an enhanced win is attributable to knobs and the managed search, never to a model
+the baseline did not measure. Explain this generated-only
 ladder in one line before the
 approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
 available for a separately disclosed later comparison if the evidence supports one. A preserved
@@ -608,17 +614,48 @@ agents, add task-relevant non-model controls only to the enhanced space by defau
 format, retrieval depth, few-shot count, tool policy, or repair behavior; do not force the
 generated example's controls onto an unrelated task.
 
-This is a getting-familiar first run: keep it to a few of the most relevant knobs - the three or four
-levers that target the agent's real failure modes - not an exhaustive knob set. The space still spans
-more configurations than the trial cap, but from a handful of meaningful levers, never a wall of
-knobs added just to manufacture a visible improvement. Present it that way too: a deliberately small
-enhancement for the first look, a small slice of what Traigent can drive rather than its full
-capability.
+**The baseline result chooses the enhanced space's values, not only its knobs.** Which knobs fill
+the four slots is decided by the baseline-evidence selection above. Which *two values* each slot
+carries is decided here, from the same 6 rows, by reading the combination that scored **lowest**:
+the values distinguishing it are the ones the baseline showed least for, and re-testing them spends
+trials on territory already measured as poor. The gap between that lowest score and the best one
+picks between two moves, measured with the **0.05 normalized separation margin** that calibration
+already uses for "meaningfully different" - shared deliberately, not by coincidence, because a
+second threshold invented here would drift from the first.
+
+- **Gap within the margin** - the loser scored about as well as the winner, so the knob that
+  distinguished them evidently did not decide the run. **Replace that knob** with one whose
+  evidence is better, or with a lever aimed at an observed failure mode.
+- **Gap beyond the margin** - that knob clearly mattered. **Keep it and narrow its values**, moving
+  them toward the winning configuration's rather than re-testing the value that lost.
+
+Neither move changes the size. The space stays 3 models x 4 binary knobs = 48; this decides which
+knobs and which two values each, never how many. Neither is a search either: the managed run does
+the searching, and this only decides what space it is handed.
+
+Six trials split across a knob's values is at most three observations a side, so state it as `the
+baseline's best combination used X` and never as `X is better`, and never as proof that a replaced
+knob does nothing. Where the evidence ties, the customer's own knob wins over one of this guide's
+suggestions.
+
+**The same 48 whatever the customer brings.** A customer who arrives with twenty of their own
+knobs gets a 48-configuration enhanced space too, not a larger one. The reduction is not a
+judgement about their knobs, and their knobs are not replaced by this guide's: the four slots are
+filled from what they brought, and baseline evidence decides which four. Every knob replaced and
+every value narrowed is named on the enhanced run's approval card with what the baseline showed -
+the one moment the customer can object before paying for a space that excluded it.
+
+Say plainly what that is and is not. The knobs are reduced to demonstrate the principle cheaply -
+a first run has to finish, cost little, and be readable - and Traigent knows tens of knobs it can
+recommend once the principle is shown. This is a demonstration, not the ceiling of what Traigent
+can do, and no result here should be read as the best the system could reach. Never present the
+smaller space as though the improvement were bought by shrinking the search.
 
 A knob that does not influence the agent code is not a real optimization variable. Native boolean
-knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
-sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
-controls to keep an assistant-prepared baseline meaningful in that case. Preserve a user-owned
+knobs use `[True, False]`, never string encodings. A generated walkthrough pins temperature at 0
+unconditionally and carries the search on behaviour knobs instead - a frail exact or case-sensitive
+metric punishes the surface variation a temperature sweep buys, and a reasoning rung ignores the
+knob entirely, so pinning it always is both safer and simpler than pinning it sometimes. Preserve a user-owned
 baseline's temperature behavior exactly, including an unset provider default; record resulting
 nondeterminism as a limitation rather than silently changing the baseline. Multi-call composite
 controls multiply
