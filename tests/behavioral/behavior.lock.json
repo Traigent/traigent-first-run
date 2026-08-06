@@ -1,5 +1,5 @@
 {
-  "digest": "b6572d7aa08dab6c2a3bb3e551125b554b761eeda93f87fd7ecfb668fb39daa7",
+  "digest": "b576672bc50126deb89d4025bb2fa4b06e9c67814dbdc0995f7f937678462e88",
   "paths": [
     {"path": "GUIDE.md", "sha256": "f1e26ebcaab3f2c7478c7287326de85052c5eb7f8f51f31d1e5ce7c7fda8e549", "size": 9616},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "1160b12d596b34415194e6349d2f7b8526864818695172766517ee729db50540", "size": 51527},
@@ -9,11 +9,11 @@
     {"path": "skills/traigent-first-run/references/component-creation.md", "sha256": "3d5faab08e65965c304930cc7724a32ac7222c09069b66209b4d39f972930c95", "size": 7035},
     {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "b844f5c16c351cb106f0e79c9d4ae6bde9edde9b2f4e45e6207460a5ed0a77a9", "size": 29207},
     {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "91c5006f74f5a2b77c51d7ff0c9a2c382593e85f72d41426aa43e31cdc195428", "size": 19030},
-    {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "19afd3cc12b8d221e9156844c5337d58f4f59a6e9cd5c051dd1db75a1204ab7b", "size": 59734},
+    {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "6bf00ed29fd8c6b5356b434fa12439c4c6ba7a3b580a65218c9231d51cda3168", "size": 59826},
     {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "ee65ae1ca0ffaddd9653fd2e4cd4046311d42d31d557c3e87be01b2e13cbe28f", "size": 49838},
     {"path": "skills/traigent-first-run/scripts/calibrate_evaluator.py", "sha256": "da410a20054d849eb20a1b90cfd22c346fddef5071ef8e94ce556a299345f4aa", "size": 50599},
     {"path": "skills/traigent-first-run/scripts/preflight.py", "sha256": "21698c479ee377ae3870365fc0c00c0edcb6d8b7fe76e456661b4a81ff994260", "size": 53881},
-    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "fdc45ea642ca8088da244569fa648eb9a725cf128970660a89503e03f02e541b", "size": 140477}
+    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "d5b047fbaafc601fd4c62dc8d8bf568cd7e8ef02e509da6f5bc14c52ba90499d", "size": 144327}
   ],
   "schema_version": 1
 }

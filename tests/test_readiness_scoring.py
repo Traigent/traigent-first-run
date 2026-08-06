@@ -1024,6 +1024,69 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(aliased.wired, ("temperature",))
 
+    def test_a_max_tokens_sweep_below_the_answer_floor_is_refused(self) -> None:
+        """The safety rule paid negative until it was enforced.
+
+        `references/run-safety.md` says to pin `max_tokens` at or above 2048 and
+        never to sweep below it, because a cap that truncates makes the trial
+        score 0 rather than low - the search reads a cut-off answer as a bad
+        one. But `max_tokens` is also one of `CANONICAL_RANGES`, so sweeping it
+        earned variation and knob-count credit like any other numeric knob:
+        measured on this scorer, `[256, 512]` beside `o3-mini` scored the agent
+        pillar 83, against 77 for the same space with the knob dropped. Obeying
+        the rule cost six points, and nothing anywhere said so.
+
+        The refusal drops the rule's "in any space that contains a reasoning
+        model" precondition on purpose, because a config-space document cannot
+        answer it - model values are opaque strings and the canonical model list
+        is OpenAI-only. Dropping it is safe in one direction only, and this is
+        that direction: the repair is free (nothing docks a space for leaving
+        the knob out), and the miss crowns a weaker model the winner.
+        """
+        swept = {"model": ["o3-mini"], "max_tokens": [256, 512]}
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space({"knobs": swept})
+        message = str(raised.exception)
+        self.assertIn("max_tokens", message)
+        self.assertIn(str(MODULE.MAX_TOKENS_ANSWER_FLOOR), message)
+        self.assertIn("256", message)
+
+        # Numbers written as strings sweep the same range. `knob_variation`
+        # scores them as a categorical knob, so a quoted document would
+        # otherwise walk straight past a check that only read `int` and `float`.
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE.agent_facts_from_config_space(
+                {"knobs": {"max_tokens": ["256", "512"]}}
+            )
+
+        # Refused off the DECLARED space, not off `wired`. `wired` gates credit;
+        # it does not gate what the search runs, and an unattested sweep
+        # truncates the same answers as an attested one.
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE.agent_facts_from_config_space({"knobs": swept, "wired": []})
+
+        # One pinned low cap is a declared budget for an agent whose answers are
+        # short, not a search told to go looking. Refusing it would be wrong for
+        # a short-answer task this guide otherwise supports.
+        pinned = MODULE.agent_facts_from_config_space(
+            {"knobs": {"model": ["a", "b"], "max_tokens": [512]}}
+        )
+        self.assertEqual(pinned.knobs["max_tokens"], [512])
+
+        # A sweep that stays at or above the floor is a legal space. The rule
+        # is about the floor, not about the knob appearing at all.
+        above = MODULE.agent_facts_from_config_space(
+            {"knobs": {"max_tokens": [2048, 4096]}}
+        )
+        self.assertEqual(above.knobs["max_tokens"], [2048, 4096])
+
+        # And the floor itself is not off by one: exactly 2048 is headroom the
+        # document grants, so only what falls under it is refused.
+        edge = MODULE.agent_facts_from_config_space(
+            {"knobs": {"max_tokens": [MODULE.MAX_TOKENS_ANSWER_FLOOR, 4096]}}
+        )
+        self.assertEqual(len(edge.knobs["max_tokens"]), 2)
+
     def test_an_alias_spelling_is_a_declared_name_not_a_phantom(self) -> None:
         """The phantom check ran before the names were collapsed, and refused
         a spelling this module itself defines as legal.

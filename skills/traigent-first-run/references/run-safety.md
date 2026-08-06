@@ -396,6 +396,10 @@ as "effective" depends on whether the knob has a range at all:
   no range to measure a noise floor against, so nothing collapses them.
 - A categorical or boolean knob needs two distinct values.
 - `seed` never counts, however many values it lists.
+- `max_tokens` is a capacity guard, not a lever: never clear this cap with it. Pin it to one value
+  at or above 2048, or 4096 at high reasoning effort. Sweeping it through anything below 2048 is
+  refused - the search drives the cap down until the answer truncates, and a truncated answer
+  scores 0 rather than low. Leaving it out costs nothing: no sub-score docks a space for it.
 
 Three honesty rules govern the file:
 
@@ -641,13 +645,10 @@ connected `auto` with a default cap of 12 for the enhanced space, then report th
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
 silently present a two-row generated run as the intended comparison.
 
-Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
-(at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
-answer text, so a tight cap truncates the answer to `finish_reason == "length"`, scores it 0, and
-silently crowns a weaker model the winner. Scan every trial for `finish_reason == "length"`, and do
-not sweep low `max_tokens` values in any space that contains a reasoning model.
-Composite patterns multiply calls and cost. Use them only when the agent shape and observed
-failure mode justify them.
+Reasoning models spend hidden reasoning tokens before the answer text, so they need every byte of
+that headroom and more of it at high effort - which is where the floor above comes from, and why a
+tight cap silently crowns a weaker model the winner. Scan every trial for `finish_reason ==
+"length"`.
 
 ## Post-run verification
 

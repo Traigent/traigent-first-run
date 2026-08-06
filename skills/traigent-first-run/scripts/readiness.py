@@ -228,6 +228,23 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # the answer to `finish_reason == "length"`, scores it 0, and silently crowns a
 # weaker model the winner. That makes it a capacity guard, not a quality lever -
 # so a space that obeys the safety rule must not be docked for not sweeping it.
+#
+# Not being docked was not enough, because the same knob is one of the canonical
+# ranges above, so a space that sweeps it DOWNWARD was paid for it: measured on
+# this scorer, `max_tokens: [256, 512]` beside a reasoning model scored the agent
+# pillar 83, against 77 for the same space with the knob removed. Obeying the
+# rule cost six points and nothing said so - which is why the sweep is refused
+# below rather than warned about.
+#
+# 2048 and not 4096: the higher floor is conditional on high reasoning effort,
+# and effort is not declared in a config-space document. Neither is whether any
+# model in the space reasons at all - the `model` values are opaque strings, and
+# `OPEN_CATEGORICAL_KNOBS` already records that the canonical model list is
+# OpenAI-only and overlaps a user on OpenRouter or Bedrock at zero. So the rule's
+# own precondition cannot be evaluated here, and the refusal drops it rather than
+# guessing it: the repair costs nothing, and the false negative crowns a winner.
+MAX_TOKENS_ANSWER_FLOOR = 2048
+
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -3038,12 +3055,59 @@ def _reject_phantom_names(
         )
 
 
+def _reject_low_max_tokens_sweep(knobs: dict[str, list[Any]], knobs_key: str) -> None:
+    """Refuse a `max_tokens` sweep that reaches below the answer-headroom floor.
+
+    A search over `max_tokens` is a search for the smallest cap that still
+    scores, and the scoring function cannot tell "answered badly" from "was cut
+    off" - a truncated answer is `finish_reason == "length"` and scores 0. So the
+    knob does not behave like the other canonical ranges: driving it down does
+    not trade quality for cost, it manufactures zeros, and the model those zeros
+    land on loses a comparison it may have won.
+
+    A SWEEP, not a low value. One pinned low cap is a declared budget for an
+    agent whose answers are short, and refusing that would be wrong for a
+    short-answer task the guide otherwise supports. Two or more values is the
+    search being told to go looking, which is the case run-safety.md names.
+
+    Values are read as numbers whether they were written as numbers or as
+    numeric strings. `knob_variation` scores `["256", "512"]` as a categorical
+    knob, so a document that quotes its numbers would otherwise sweep exactly
+    the same range past exactly this check.
+    """
+    values = knobs.get("max_tokens")
+    if not values or len(candidate_domain(values)) < 2:
+        return
+    below: list[Any] = []
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number < MAX_TOKENS_ANSWER_FLOOR:
+            below.append(value)
+    if not below:
+        return
+    listed = ", ".join(repr(value) for value in dict.fromkeys(below))
+    raise ConfigSpaceInputError(
+        f"config-space '{knobs_key}' sweeps 'max_tokens' through {listed}, "
+        f"below the {MAX_TOKENS_ANSWER_FLOOR}-token answer headroom "
+        "run-safety.md requires: a cap that truncates scores the trial 0 rather "
+        "than scoring it low, so the search reads the truncation as a bad "
+        "answer and can crown a weaker model. Pin 'max_tokens' to one value at "
+        "or above the floor instead - it is a capacity guard, not a quality "
+        "lever, and no sub-score docks a space for leaving it out"
+    )
+
+
 def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     """Read a config-space document, or refuse it naming the field at fault.
 
     Every field is read by its own entry in `CONFIG_SPACE_FIELDS` and by
     nothing else, so this function holds only what is genuinely *cross*-field.
-    There are three such rules, and they run in this order because a rule that
+    There are four such rules, and they run in this order because a rule that
     reads a name must read the name the scorer will use:
 
     1. **Which space spelling is read.** `knobs` wins over its
@@ -3057,6 +3121,11 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     3. **A `wired` or `bounds` name must be a knob of the declared space**
        (`_reject_phantom_names`, applied to each field). Such a name is not a
        narrower space, it is a typo, and it is refused rather than dropped.
+
+    4. **A `max_tokens` sweep must stay at or above the answer-headroom floor**
+       (`_reject_low_max_tokens_sweep`). Cross-field because it reads the
+       collapsed space, and because it is the one knob whose *values* carry a
+       safety meaning rather than a search meaning.
 
     Rule 3 runs on the output of rule 2 and never the other way round: an alias
     spelling is a legal name for a declared knob, so checking names before they
@@ -3123,6 +3192,10 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     if wired is not None:
         _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
     _reject_phantom_names("bounds", bounds, facts.knobs, knobs_key)
+    # Against the declared space and NOT against `wired`. `wired` gates credit;
+    # it does not gate what the search runs. An unattested sweep truncates the
+    # same answers as an attested one.
+    _reject_low_max_tokens_sweep(facts.knobs, knobs_key)
     return facts
 
 

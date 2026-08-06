@@ -446,6 +446,52 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("inventory presence—not values", skill_text)
         self.assertIn("never rewrite a route merely to match a key", skill_text)
 
+    def test_the_max_tokens_floor_is_stated_where_the_space_is_composed(
+        self,
+    ) -> None:
+        """The rule existed and was unreachable from where it applies.
+
+        It was one clause at the end of a paragraph about reasoning models, 250
+        lines below the section an author actually reads while deciding what to
+        put in a space - and that section names `max_tokens` among the scorer's
+        canonical numeric knobs that "need two values", which reads as an
+        invitation to sweep it. So the document invited the thing it forbade,
+        and said so in a place nobody composing a space would be reading.
+
+        This asserts the rule is inside that section, not merely somewhere in
+        the file, and that the number it prints is the number the scorer
+        enforces - two homes for one floor is how they drift apart.
+        """
+        text = RUN_SAFETY.read_text()
+        start = text.index("`agent-no-varying-knobs` clears as soon as")
+        section = " ".join(
+            text[start : text.index("Three honesty rules", start)].split()
+        )
+
+        for phrase in (
+            "`max_tokens` is a capacity guard, not a lever",
+            "never clear this cap with it",
+            "Pin it to one value at or above 2048",
+            "Sweeping it through anything below 2048 is refused",
+            "a truncated answer scores 0 rather than low",
+            "Leaving it out costs nothing",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+        scripts = str(SKILL_ROOT / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        readiness = importlib.import_module("readiness")
+        self.assertIn(f"above {readiness.MAX_TOKENS_ANSWER_FLOOR}", section)
+        # And the old unreachable clause is gone rather than left beside the
+        # new one: a rule stated twice is a rule that can be edited once.
+        # Casefolded, because a restatement that differs only in its first
+        # letter is still the same rule in a second place.
+        self.assertNotIn(
+            "sweep low `max_tokens` values", " ".join(text.casefold().split())
+        )
+
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -4855,6 +4901,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
+        #
+        # The `max_tokens` sweep floor then moves this number NOT AT ALL, which
+        # is recorded because 234 bytes of headroom is a ceiling nobody knows
+        # the size of unless each branch says. The rule was stated in one place
+        # nobody composing a space reads and is now stated in the place they do,
+        # so the paragraph it left was cut back to its derivation, and the
+        # composite-pattern sentence beside it - a verbatim second statement of
+        # the multi-call cost rule twenty lines above - was deleted outright.
+        # Measured 228_608: +92 net for a rule that is now reachable AND
+        # enforced, paid for out of duplication rather than out of the ceiling.
         budget = 228_750
         self.assertLess(
             total,
