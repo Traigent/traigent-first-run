@@ -3456,33 +3456,99 @@ class SkillPackageTests(unittest.TestCase):
         SDK's own logs. A user who wants to know where everything went, to keep
         it or to delete it, should not have to ask a second time.
 
-        The list is read off what the guidance actually instructs the run to
-        write, not off memory, so it names those paths and nothing invented.
-        The two writes OUTSIDE `traigent-runs/` are named separately, because
-        "delete the folder and nothing is lost" is true of the folder and false
-        of the `.gitignore` line and the `.env` key.
+        The writes OUTSIDE `traigent-runs/` are the half that needs a guard
+        rather than a phrase, because "delete the folder and nothing is lost"
+        is true of the folder and false of every one of them, and an omission
+        there reads exactly like completeness. So this test carries the set
+        itself: for each artifact, SKILL.md has to still instruct the run to
+        create it, and the close has to still disclose it. Dropping one from
+        the sentence fails here whatever wording the sentence is written in -
+        which is what the earlier version of this test, pinning the phrase
+        "two writes", could not do while the largest of them (the virtual
+        environment at the project root) went unlisted.
         """
-        dataset = " ".join(
+        # What this run leaves at the project root, outside the folder it just
+        # told the user is safe to delete. Kept as data, in the order the close
+        # names them: the SKILL.md instruction that creates each one, and what
+        # the disclosure has to say about it.
+        root_artifacts_outside_the_run_folder = (
+            (
+                "the /traigent-runs/ ignore line",
+                "add `/traigent-runs/` to the project-root `.gitignore`",
+                ("`.gitignore`",),
+            ),
+            (
+                "the provider key in .env",
+                # Stage 6. When the file did not exist, the run wrote all of
+                # it, so the disclosure owes the stronger true statement.
+                "create or minimally update `.env`",
+                ("`.env`", "whole file"),
+            ),
+            (
+                "the virtual environment",
+                "create the conventional `.venv`",
+                ("`.venv`",),
+            ),
+        )
+        counts = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+
+        text = (
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .casefold()
-            .split()
         )
-        for phrase in (
-            "those two are not the only files this run wrote",
-            "`run-plan.md`, `config-space.json`, `calibration-cases.json`, "
+        paragraphs = [" ".join(block.split()) for block in text.split("\n\n")]
+        disclosures = [
+            p for p in paragraphs if "not the only files this run wrote" in p
+        ]
+        self.assertEqual(len(disclosures), 1, "the file disclosure has one home")
+        disclosure = disclosures[0]
+
+        # Inside the folder: every path the guidance instructs the run to write.
+        for path in (
+            "`run-plan.md`",
+            "`config-space.json`",
+            "`calibration-cases.json`",
             "`calibration-results.json`",
-            "`walkthrough_agent.py`, `evaluator.py`, readiness report, and sdk run logs",
+            "`walkthrough_agent.py`",
+            "`evaluator.py`",
+            "readiness report",
+            "sdk run logs",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, disclosure)
+        for phrase in (
             # Only what exists - the run does not write all of these every time.
             "name only what was actually written",
             "that whole folder is git-ignored and can be deleted without losing anything",
-            # The two that survive deleting the folder.
-            "two writes sit outside the folder and are not covered by it",
-            "the `/traigent-runs/` line added to the project `.gitignore`",
-            "the provider key line in `.env`",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, dataset)
+                self.assertIn(phrase, disclosure)
+
+        # Outside the folder: the artifacts deleting it does not remove.
+        head, _, outside = disclosure.partition("writes sit outside the folder")
+        self.assertTrue(
+            outside, "the close must still say what survives deleting `traigent-runs/`"
+        )
+        skill = " ".join(SKILL.read_text().casefold().split())
+        for artifact, instruction, disclosed in root_artifacts_outside_the_run_folder:
+            with self.subTest(artifact=artifact):
+                self.assertIn(
+                    instruction,
+                    skill,
+                    f"SKILL.md no longer creates {artifact}; drop it from this set",
+                )
+                for token in disclosed:
+                    self.assertIn(
+                        token, outside, f"the close does not disclose {artifact}"
+                    )
+        stated = head.split()[-1]
+        self.assertIn(stated, counts, f"the count of outside writes reads {stated!r}")
+        self.assertEqual(
+            counts[stated],
+            len(root_artifacts_outside_the_run_folder),
+            "the stated count and the list disagree",
+        )
 
     def test_an_installed_skill_is_disclosed_as_needing_a_fresh_session(self) -> None:
         """A skill installed mid-run is not usable in the run that installed it.
@@ -3491,21 +3557,44 @@ class SkillPackageTests(unittest.TestCase):
         that does nothing until the user restarts - and "installed" reads as
         "ready" to everyone who has not been told otherwise. It sits with the
         file list because that is where the user is already asking what this
-        run left behind and what to do with it.
+        run left behind and what to do with it - which is also why it has to
+        say where the install landed and that removing it means deleting that
+        directory: it is the one artifact that lands outside the project.
+
+        Where it lands is the assistant's to read off the install, not this
+        repository's to state: no document here records an install path, so a
+        literal one in the guidance would be invented. That is asserted as an
+        absence, because a fabricated path is indistinguishable from a real
+        one to every reader who has not gone looking.
         """
-        dataset = " ".join(
+        text = (
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .casefold()
-            .split()
         )
+        paragraphs = [" ".join(block.split()) for block in text.split("\n\n")]
+        handoffs = [
+            p for p in paragraphs if "inert in the session that installed it" in p
+        ]
+        self.assertEqual(
+            len(handoffs), 1, "the installed-skill disclosure has one home"
+        )
+        handoff = handoffs[0]
         for phrase in (
             "skills load when a session starts",
-            "inert in the session that installed it",
             "start a new session, or refresh this one, and they are available",
+            # Located, and removable - not just discussed.
+            "name the absolute directory the install wrote to",
+            "it is outside the project",
+            "removing a skill means deleting that directory",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, dataset)
+                self.assertIn(phrase, handoff)
+        invented = re.search(r"[~/][\w.\-/]*skills", handoff)
+        self.assertIsNone(
+            invented,
+            f"the close names an install path this repository never documents: {invented}",
+        )
 
     def test_generated_rows_are_not_re_judged_against_their_own_inputs(self) -> None:
         """The logical row check is for rows a human wrote, not rows we wrote.
@@ -5729,10 +5818,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # sentence load-bearing instead of leaving the scope to be inferred.
         #
         # Enumeration is the one thing a reference cannot compress: a list of
-        # eight paths is eight paths. Measured at 248_359, rounded up to the
-        # next 250. RESIDENT is unchanged - none of this is a mandate, so none
-        # of it went to SKILL.md.
-        budget = 248_500
+        # eight paths is eight paths.
+        #
+        # Raised again to 248_750, for 363 more bytes that finish that same
+        # disclosure. Two of its gaps were the kind an omission hides best,
+        # because a list that names something reads as a list that names
+        # everything:
+        #
+        #   * There are three writes outside the folder, not two. SKILL.md
+        #     stage 2 creates a virtual environment at the project root; it is
+        #     not covered by the `/traigent-runs/` ignore line, it is the
+        #     largest thing this run leaves on disk, and "delete the folder and
+        #     nothing is lost" is exactly as false of it as of the other two.
+        #   * An installed skill was discussed but never located. It is the one
+        #     artifact that lands outside the project entirely, so the section's
+        #     own question was half-answered for the item it answers least well
+        #     by default. The guidance says to name the directory the install
+        #     actually wrote to and that removing the skill means deleting it -
+        #     it does not name a path, because this repository documents none
+        #     and inventing one is the defect this close exists to avoid.
+        #
+        # The `.env` line got the stronger true statement in the same sentence
+        # for 44 of those bytes: the run creates the whole file when it was
+        # absent, and "the provider key line" understated that.
+        #
+        # Measured at 248_722, rounded up to the next 250. RESIDENT is
+        # unchanged - none of this is a mandate, so none of it went to SKILL.md.
+        budget = 248_750
         self.assertLess(
             total,
             budget,
