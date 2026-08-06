@@ -3064,9 +3064,19 @@ class RowLevelSanityTests(unittest.TestCase):
         self.assertIn("9 undecided", labels.evidence)
 
     def test_the_review_never_moves_a_score_upwards(self) -> None:
-        """Swept over every verdict mixture, at the sub-score and cap level."""
-        facts = _brought(30, tuning_rows=20, holdout_rows=10)
+        """Swept over every verdict mixture, at the sub-score and cap level.
+
+        The cap-set assertion is not decoration. "Cannot raise the score" has a
+        second reading that a ceiling check alone misses entirely: a review that
+        DELETES a cap someone else raised lifts the score without ever adding a
+        point. So the fixture deliberately carries a cap the review has no
+        business touching - the tuning/held-out overlap, which is measured from
+        the user's files - and every mixture must keep it.
+        """
+        facts = _brought(30, tuning_rows=20, holdout_rows=10, split_overlap=True)
         baseline, baseline_caps = MODULE.score_dataset(facts, "normalized-exact")
+        base_conditions = {cap.condition for cap in baseline_caps}
+        self.assertIn("dataset-tune-holdout-overlap", base_conditions)
         base_ceiling = min([c.ceiling for c in baseline_caps], default=100)
         for unsound in range(0, 31):
             for unsure in range(0, 31 - unsound):
@@ -3079,6 +3089,9 @@ class RowLevelSanityTests(unittest.TestCase):
                     self.assertEqual(pillar.score, baseline.score)
                     self.assertLessEqual(
                         min([c.ceiling for c in caps], default=100), base_ceiling
+                    )
+                    self.assertLessEqual(
+                        base_conditions, {cap.condition for cap in caps}
                     )
 
     def test_the_evidence_line_says_how_much_of_the_dataset_was_read(self) -> None:
