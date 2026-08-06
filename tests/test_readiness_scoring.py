@@ -2264,6 +2264,81 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
         self.assertNotIn("BLOCK", card)
 
+    def test_the_blocker_line_counts_what_actually_blocks(self) -> None:
+        """The sentence agrees in number with the things it is counting.
+
+        The line promises the reader an inventory: this many things stand
+        between you and the paid run, each one marked below. That promise is
+        the decision under test, so it is driven over several counts rather
+        than pinned once - a card that says "one thing has to be cleared" over
+        three marked lines is misinforming the reader about the size of the
+        job ahead, and a reader who trusts it clears one and re-runs.
+
+        Only blocking caps count. An advisory ceiling rides along in every
+        case here precisely because it must not be counted: it lowers what the
+        result may claim, it does not stand in the way of the run.
+        """
+
+        def announcement(card: str) -> str:
+            """The BLOCKER paragraph as one line, wrapping undone."""
+            lines = card.splitlines()
+            start = next(i for i, line in enumerate(lines) if "BLOCKER" in line)
+            body = []
+            for line in lines[start:]:
+                if not line.strip():
+                    break
+                body.append(line.strip())
+            return " ".join(body)
+
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        # Distinct real conditions, so nothing is deduplicated away and the
+        # count the card renders is the count the caller asked for.
+        blockers = [
+            MODULE.Cap("dataset-fully-synthetic", 65, "Every row came from a model."),
+            MODULE.Cap("evaluator-invalid", 60, "It scores a wrong answer as right."),
+            MODULE.Cap("dataset-tune-holdout-overlap", 55, "The splits share rows."),
+        ]
+        advisory = MODULE.power_ceiling(15)
+        self.assertFalse(advisory.blocks)
+
+        for count in (1, 2, 3):
+            with self.subTest(blocking=count):
+                score = MODULE.aggregate(
+                    pillars,
+                    caps=[*blockers[:count], advisory],
+                    knobs=(),
+                    weights=dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                self.assertEqual(score.status, "BLOCKED")
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                said = announcement(card)
+
+                # What the reader is sent to find: one marked line per thing.
+                marked = [
+                    line
+                    for line in card.splitlines()
+                    if line.strip().startswith("FIX BEFORE PAID RUN")
+                ]
+                self.assertEqual(len(marked), count)
+
+                if count == 1:
+                    self.assertIn("one thing has to be cleared", said)
+                    self.assertIn("Fix it,", said)
+                    self.assertNotIn("things have", said)
+                    self.assertNotIn("each marked", said)
+                    self.assertNotIn("Fix them,", said)
+                else:
+                    self.assertIn(f"{count} things have to be cleared", said)
+                    self.assertIn("Fix them,", said)
+                    self.assertIn("each marked", said)
+                    self.assertNotIn("one thing has", said)
+                    self.assertNotIn("Fix it,", said)
+
     def test_a_ceiling_that_is_not_the_limit_is_not_printed_as_one(self) -> None:
         """A cap line may not state a number that describes nothing.
 
