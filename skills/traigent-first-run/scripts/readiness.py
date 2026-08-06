@@ -252,7 +252,9 @@ MODEL_BREADTH_FULL = 3
 #
 # A third sub-score, `coverage`, scored `1.0 - missing/len(HIGH_IMPACT_KNOBS[
 # agent_type])` out of 25 and is gone. Two things were wrong with it and only
-# the first was noticed at the time.
+# the first was noticed at the time. The `agent_type` document field went with
+# it: selecting that catalog was the only thing it ever did, so once coverage
+# was removed the field was read by nothing and is no longer declared.
 #
 # It restated `knob-count`. The line beside it already reads "4 of 4 wired
 # knobs actually vary", so a pillar carrying both charged twice for one fact.
@@ -305,6 +307,17 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
+# Which knobs are worth searching, by kind of agent. Nothing in this scorer
+# selects among these keys any more: `coverage` was the only sub-score that
+# read one, and the `agent_type` field that chose it went with it. The catalog
+# stays because it is not a scoring input - it is the list the enhanced run
+# picks the customer's knobs from, and a human or an assistant reading this
+# file chooses the row. That is also why the keys are kept as three separate
+# rows rather than flattened into one list: a RAG agent and a code-generation
+# agent genuinely want different levers, and the distinction is still true
+# even though no code branches on it. Anything reintroducing a *scoring* use
+# of these keys needs a document field to select one, which no longer exists.
+#
 # `max_tokens` is deliberately absent from every catalog. It exists so the model
 # is not cut off mid-answer: references/run-safety.md requires at least 2048
 # (4096 at high reasoning effort) and says not to "sweep low `max_tokens` values
@@ -693,7 +706,6 @@ class EvaluationFacts:
 
 @dataclass(frozen=True)
 class AgentFacts:
-    agent_type: str | None = None
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
     # None means the document never named the knobs the agent consumes, so
@@ -2985,24 +2997,6 @@ def _read_trial_budget(field: str, value: Any) -> int:
     )
 
 
-def _read_agent_type(field: str, value: Any) -> str:
-    """`agent_type`: which high-impact catalog coverage is scored against.
-
-    An unrecognized *string* stays legal: it names an agent this scorer has no
-    catalog for, which is a real situation and not a typo the scorer can
-    detect. Coverage then goes unmeasured, and because `combine` renormalizes
-    over the measured sub-scores that *raises* the pillar's score while
-    dropping its confidence - the "agent type not recognized" gap line is what
-    carries the news, not the number. A non-string cannot even be looked up.
-    """
-    if not isinstance(value, str):
-        raise ConfigSpaceInputError(
-            f"config-space '{field}' must be a string naming the agent type "
-            f"('general', 'rag', or 'code_gen'), not {value!r}"
-        )
-    return value
-
-
 @dataclass(frozen=True)
 class ConfigSpaceField:
     """One field of the config-space document, and how it is read.
@@ -3030,12 +3024,6 @@ CONFIG_SPACE_FIELDS: tuple[ConfigSpaceField, ...] = (
         "same shape",
         "accepted alias",
         _read_knob_space,
-    ),
-    ConfigSpaceField(
-        "agent_type",
-        '`"general"`, `"rag"`, or `"code_gen"`',
-        "no",
-        _read_agent_type,
     ),
     ConfigSpaceField(
         "max_trials",
@@ -3131,7 +3119,6 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
             bounds[canonical] = dict(spec)
 
     return AgentFacts(
-        agent_type=facts.agent_type,
         max_trials=facts.max_trials,
         knobs=knobs,
         wired=(
@@ -3248,7 +3235,6 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # searches; enforce it here too, because the document is read long after.
     facts = canonical_alias_names(
         AgentFacts(
-            agent_type=read.get("agent_type"),
             max_trials=read.get("max_trials"),
             knobs=knobs,
             wired=wired,

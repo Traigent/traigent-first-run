@@ -2144,7 +2144,6 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
-            "AGENT_TYPE",
             "WIRED_KNOBS",
             "BEHAVIOUR_KNOBS",
             "PROBE_INPUTS",
@@ -2237,7 +2236,7 @@ class SkillPackageTests(unittest.TestCase):
         document = namespace["config_space_document"](namespace["ENHANCED_SPACE"])
         self.assertEqual(document["knobs"], namespace["ENHANCED_SPACE"])
         self.assertEqual(document["wired"], namespace["WIRED_KNOBS"])
-        self.assertEqual(document["agent_type"], namespace["AGENT_TYPE"])
+        self.assertNotIn("agent_type", document)
         self.assertEqual(document["max_trials"], namespace["ENHANCED_MAX_TRIALS"])
         self.assertNotIn("configuration_space", document)
         _pillar, conditions = score_config_space(document)
@@ -3977,7 +3976,6 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
-            "AGENT_TYPE",
             "WIRED_KNOBS",
         }
         selected = [
@@ -4152,23 +4150,13 @@ class SkillPackageTests(unittest.TestCase):
             "SKILL.md must not instruct producing the file before the search",
         )
 
-    def test_template_agent_type_names_a_catalog_the_scorer_recognizes(self) -> None:
-        """An unrecognized `AGENT_TYPE` is not caught by anything else.
+    def test_the_templates_own_document_measures_every_agent_subscore(self) -> None:
+        """The walkthrough's own evidence must not score anything unmeasured.
 
-        The scorer accepts any string, and an unrecognized one leaves coverage
-        unmeasured - which, because the pillar renormalizes over what it
-        measured, *raises* the score by about 9 points while lowering its
-        confidence. Mutating this constant to `"bogus_type"` passed every other
-        semantic test in this file, because the producer test only compares the
-        document's field to the constant that produced it.
+        Run through the real scorer rather than a hand-written document, so a
+        template edit that leaves a sub-score unmeasured fails here.
         """
         namespace = self._template_producer_namespace()
-        self.assertIn(
-            namespace["AGENT_TYPE"],
-            READINESS.HIGH_IMPACT_KNOBS,
-            "AGENT_TYPE must name a catalog the scorer has, or the walkthrough's "
-            "own document scores its coverage as unmeasured",
-        )
         pillar, _ = score_config_space(
             namespace["config_space_document"](namespace["ENHANCED_SPACE"])
         )
@@ -4178,58 +4166,52 @@ class SkillPackageTests(unittest.TestCase):
             "every agent sub-score must be measured for the template's own document",
         )
 
-    def test_agent_type_moves_no_score_and_the_contract_says_so(self) -> None:
-        """`agent_type` selected a catalog for a sub-score that no longer exists.
+    def test_the_guidance_no_longer_documents_agent_type(self) -> None:
+        """`agent_type` is removed, and the guidance must not re-grow it.
 
-        Two halves, and only together are they worth anything. The behaviour:
-        the same space scored under every accepted `agent_type` - and under an
-        unrecognised one - must produce the identical pillar, sub-scores and
-        confidence, because nothing in the scorer reads the field any more.
-        The contract: `run-safety.md` has to say so, since a reader deciding
-        what to put in the document is owed the fact that it costs nothing to
-        get wrong.
+        The field selected the `HIGH_IMPACT_KNOBS` catalog for the `coverage`
+        sub-score. Coverage was removed, which left the field read by nothing,
+        so it is no longer declared, no longer produced by the template, and no
+        longer documented. Documenting a field the scorer does not read is the
+        specific failure this guards: a reader would put it in a document and
+        reasonably expect it to do something.
 
-        Written this way round on purpose. Asserting only the sentence would
-        pass while the field silently regained an effect, and asserting only
-        the behaviour would leave a field-table row that still promises one.
+        A document that still carries it is still accepted - unknown keys are
+        ignored whole - and
+        `test_declaring_agent_type_changes_nothing_the_run_emits` in
+        tests/test_readiness_scoring.py pins that. Removal is not a break for
+        anyone's existing document; it only stops asking for it.
         """
-        space = {
-            "knobs": {
-                "model": ["a", "b", "c"],
-                "retrieval_k": [1, 5],
-                "prompt_style": ["direct", "structured"],
-            },
-            "max_trials": 12,
-            "wired": ["model", "retrieval_k", "prompt_style"],
-        }
-
-        def scored(agent_type):
-            document = dict(space)
-            if agent_type is not None:
-                document["agent_type"] = agent_type
-            pillar, _ = score_config_space(document)
-            return (
-                pillar.score,
-                pillar.confidence,
-                tuple(
-                    (s.name, s.value, s.maximum, s.measured) for s in pillar.subscores
-                ),
-            )
-
-        # `rag` names `retrieval_k` and `context_format`; `general` and
-        # `code_gen` do not. Under the old sub-score those three answers
-        # differed by design, which is what makes them the probe.
-        baseline = scored("general")
-        for agent_type in ("rag", "code_gen", None, "", "a-type-no-catalog-has"):
-            with self.subTest(agent_type=agent_type):
-                self.assertEqual(scored(agent_type), baseline)
-
-        row = next(
-            line
-            for line in RUN_SAFETY.read_text().splitlines()
-            if line.startswith("| `agent_type` |")
+        self.assertNotIn(
+            "agent_type",
+            {spec.name for spec in READINESS.CONFIG_SPACE_FIELDS},
+            "agent_type must not be a declared config-space field",
         )
-        self.assertIn("changes no number", row.casefold())
+        for name, path in (("run-safety.md", RUN_SAFETY),):
+            with self.subTest(document=name):
+                text = path.read_text()
+                self.assertNotIn(
+                    "| `agent_type` |",
+                    text,
+                    f"{name} still has a field-table row for a removed field",
+                )
+                self.assertNotIn(
+                    '"agent_type"',
+                    text,
+                    f"{name} still emits agent_type in a worked example",
+                )
+
+        template = SDK_EXECUTION.read_text()
+        self.assertNotIn(
+            "AGENT_TYPE",
+            template,
+            "the walkthrough template must not produce a removed field",
+        )
+        # The SDK's own `recommend_configuration_space(agent_type)` is a
+        # different surface - a real parameter of a real library function - and
+        # is deliberately still documented. Removing our document field must
+        # not quietly delete somebody else's API from the reference table.
+        self.assertIn("recommend_configuration_space(agent_type)", template)
 
     def test_the_glossary_names_exactly_the_agent_lines_the_card_prints(self) -> None:
         """The card's Agent lines and the glossary's list are one decision.
@@ -4792,7 +4774,7 @@ class SkillPackageTests(unittest.TestCase):
         scored around. They are run through the real adapter so the promise
         cannot outlive the behaviour.
         """
-        base = {"agent_type": "general", "knobs": {"widget": [1, 50]}}
+        base = {"knobs": {"widget": [1, 50]}}
         for description, document in (
             ("a bare scalar knob", {"knobs": {"widget": 5}}),
             ("an empty candidate list", {"knobs": {"widget": []}}),
