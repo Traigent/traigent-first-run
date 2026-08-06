@@ -186,6 +186,14 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # scorer runs before any install, so it cannot import them; --verify-against-sdk
 # re-reads them when the SDK *is* importable and reports drift without ever
 # changing a score. The installed SDK is always authoritative.
+#
+# One preset is deliberately NOT vendored. `max_tokens` has a canonical range
+# upstream and no entry here, because an entry here is what makes a knob
+# sweepable: `knob_variation` measures a numeric knob against its range and pays
+# for the span. Sweeping `max_tokens` is not a thing this guide will ever ask
+# for, so the range it would be measured against is not a number this file
+# should hold. See `EXCLUDED_KNOB_REASONS` below for why, and the block above
+# `HIGH_IMPACT_KNOBS` for the rule that keeps it out of the generated wrapper.
 CANONICAL_RANGES: dict[str, dict[str, float]] = {
     "temperature": {"low": 0.0, "high": 1.0},
     "top_p": {"low": 0.1, "high": 1.0},
@@ -194,7 +202,6 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
     "similarity_threshold": {"low": 0.0, "high": 1.0},
     "mmr_lambda": {"low": 0.0, "high": 1.0},
     "chunk_overlap_ratio": {"low": 0.0, "high": 0.5},
-    "max_tokens": {"low": 256, "high": 4096},
     "k": {"low": 1, "high": 10},
     "retrieval_k": {"low": 1, "high": 5},
     "chunk_size": {"low": 100, "high": 1000},
@@ -215,12 +222,14 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
 #
 # `seed` measures run-to-run variance, not configuration quality.
 #
-# `max_tokens` is a resource limit rather than a behaviour setting: varying it
-# measures how much room the answer had, not how well the agent answered. It is
-# the same shape as `seed` in the only way that matters here - the search reads
-# it as a quality lever and it is not one - and it is worse in one way `seed` is
-# not, because driving it down does not merely fail to inform the comparison, it
-# corrupts it. A cap that cuts the answer off returns `finish_reason ==
+# `max_tokens` earns nothing for a different reason, and saying `seed`'s reason
+# beside it would be false: sweeping `max_tokens` does not measure variance, it
+# measures whether the answer FIT. Every value of it asks the same question of
+# the same agent and differs only in whether the reply survived to be read. That
+# is not a behaviour lever - it decides whether an answer exists, not whether it
+# is good - and it is worse than uninformative, because driving it down does not
+# merely fail to inform the comparison, it corrupts it. A cap that cuts the
+# answer off returns `finish_reason ==
 # "length"`, which scores 0 rather than low, so the model that truncated loses a
 # comparison it may have won. See `references/run-safety.md`, which owns why a
 # low cap is dangerous and requires the generated wrapper to refuse a truncated
@@ -236,7 +245,8 @@ EXCLUDED_KNOB_REASONS: dict[str, str] = {
     "seed": "sweeping this measures run-to-run variance, not quality",
     "max_tokens": (
         "a resource limit, not a behaviour setting - sweeping it measures "
-        "capacity, and a cap that truncates scores 0 rather than low"
+        "whether the answer fit, not whether it was good, and a cap that "
+        "truncates scores 0 rather than low"
     ),
 }
 EXCLUDED_KNOBS = frozenset(EXCLUDED_KNOB_REASONS)
@@ -251,11 +261,13 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
-# `max_tokens` is deliberately absent from every catalog above: it is not a
-# high-impact quality knob for any agent type, and `EXCLUDED_KNOB_REASONS`
-# records why it earns no variety credit either. It keeps its `CANONICAL_RANGES`
-# entry because that range is still what a `bounds` reader and the SDK-drift
-# check compare against; the entry describes the knob, it does not credit it.
+# `max_tokens` is deliberately absent from every catalog in this file - the
+# high-impact catalogs below, `CANONICAL_RANGES` above, and `OPEN_CATEGORICAL_
+# KNOBS` - so no recommendation path can suggest it to an assistant composing a
+# space. `EXCLUDED_KNOB_REASONS` then refuses it credit if an author declares it
+# anyway. Absent from the catalogs, never refused in a document: the rule
+# constrains what this guide PROPOSES, never what the customer is allowed to
+# write.
 #
 # No floor is enforced here, and none can be. How much room an answer needs is
 # not predictable from a config-space document - hidden reasoning tokens are
@@ -265,6 +277,13 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # `b`, `c` or `d`. The honest instrument is detection, not prediction: the
 # generated wrapper refuses a trial the provider reports as truncated, which is
 # a fact rather than a forecast.
+#
+# Nor does any cap get introduced. `references/sdk-execution.md` owns that rule
+# and the generated wrapper sends no `max_tokens` at all; the danger it closes
+# is a cross-run one, which is why no single run could show it. A cap sized to
+# the baseline's medium model is a cap the enhanced run's stronger or reasoning
+# model can exceed, so the truncation would be introduced BY this guide, between
+# two runs, on a configuration the customer never chose.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),

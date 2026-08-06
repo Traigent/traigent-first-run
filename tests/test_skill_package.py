@@ -462,6 +462,15 @@ class SkillPackageTests(unittest.TestCase):
         reports `finish_reason == "length"` as a fact after the call, and the
         wrapper refuses that trial as a non-measurement rather than letting it
         be scored as a legitimate 0.
+
+        The rule then went one step further than "do not predict a safe cap",
+        to "do not set one". The hazard is a cross-run one and no single run
+        could have shown it: a cap sized against the baseline's medium model is
+        a cap the enhanced run's stronger or reasoning model can exceed, so the
+        truncation is introduced BY this guide, between two runs, on a
+        configuration the user never chose. So the wrapper sends no
+        `max_tokens`, at any tier, and the user keeps every bit of their own
+        ability to set one - the rule constrains us, not them.
         """
         text = RUN_SAFETY.read_text()
         start = text.index("`agent-no-varying-knobs` clears as soon as")
@@ -469,16 +478,41 @@ class SkillPackageTests(unittest.TestCase):
             text[start : text.index("Three honesty rules", start)].split()
         )
 
-        # 1. Composition point: no credit, no floor, and the danger still said.
+        # 1. Composition point: no credit, no cap of ours, no floor either, and
+        #    the danger still said.
         for phrase in (
             "`max_tokens` never counts either",
             "it is a resource limit, not a behaviour setting",
-            "**no floor is imposed and no value is refused**",
+            "**Never introduce a cap the user did not already have",
+            "carry it through verbatim",
+            "the generated wrapper sends no `max_tokens` at any tier",
+            "**No floor is imposed and no value is refused**",
+            "a user may cap it however they like",
             "a cut-off answer scores 0 rather than low",
             "`require_untruncated_completion`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
+
+        # 1b. The cross-run hazard is the reason OUR cap is worse than theirs,
+        #     and the wall-clock preference is the remedy. Both stated, because
+        #     a rule whose reason is unstated is a rule a later editor deletes.
+        for phrase in (
+            "it spans two runs",
+            "the enhanced run's stronger or reasoning model can exceed",
+            "**bound the clock or the trial count, never the tokens**",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # 1c. The wrapper carries no cap, and the prose beside it agrees. A
+        #     rule stated in guidance and contradicted by the generated code is
+        #     the contradiction class this repository keeps producing - and
+        #     this is exactly where it was: the wrapper set `max_tokens` 4096
+        #     while the guidance explained why caps are dangerous.
+        sdk_text = SDK_EXECUTION.read_text()
+        self.assertNotIn('"max_tokens"', sdk_text)
+        self.assertIn("no `max_tokens` at all", sdk_text)
 
         # 2. The refusal is gone from the guidance, not merely unenforced -
         # a rule stated in prose and absent from the code is the contradiction
@@ -2404,8 +2438,14 @@ class SkillPackageTests(unittest.TestCase):
         )
         strong_call = calls[-1]
         self.assertEqual(strong_call["reasoning_effort"], "high")
-        self.assertGreaterEqual(strong_call["max_tokens"], 4096)
         self.assertNotIn("temperature", strong_call)
+        # And no cap of ours, on the tier that used to carry one. This asserted
+        # `max_tokens >= 4096` until the cross-run hazard was named: a number
+        # that fits the baseline's medium model is a number this tier's
+        # reasoning model can exceed, so the cap would truncate a configuration
+        # the user never chose, between two runs, at our hand. The provider
+        # default is the bound their agent already lives with.
+        self.assertNotIn("max_tokens", strong_call)
 
         call_agent(
             "task",
@@ -2419,6 +2459,11 @@ class SkillPackageTests(unittest.TestCase):
         ordinary_call = calls[-1]
         self.assertEqual(ordinary_call["temperature"], 0.2)
         self.assertNotIn("reasoning_effort", ordinary_call)
+        self.assertNotIn("max_tokens", ordinary_call)
+        # The bound this request DOES carry is the wall clock, which is the
+        # distinction the rule turns on: a time limit stops the work, a token
+        # limit corrupts the answer and then scores the corruption.
+        self.assertEqual(ordinary_call["timeout"], 120.0)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -5040,7 +5085,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # 230_500 and not 230_400: 176 bytes is a ceiling that trips on a
         # typo fix rather than on a decision, and this file's own policy is
         # that the next raise should be a choice someone makes.
-        budget = 230_500
+        #
+        # The rule then went one step past "do not predict a safe cap" to "do
+        # not set one", and that is the raise to 231_250. Three statements are
+        # new, and none of them is a restatement of something already here:
+        # (1) never introduce a `max_tokens` cap the user did not already have,
+        # and carry theirs verbatim if they did; (2) WHY ours is worse than
+        # theirs - it spans two runs, so a cap that fits the baseline's medium
+        # model truncates the enhanced run's stronger model, on a configuration
+        # the user never chose; (3) where a bound is genuinely needed, bound
+        # the clock or the trial count, never the tokens, because a time limit
+        # stops work while a token limit corrupts an answer and then scores the
+        # corruption. The cross-run hazard is the load-bearing one: it is
+        # invisible inside either run, so a reader who is not told it will
+        # reintroduce a cap that looks locally reasonable.
+        #
+        # Paid down first, and recorded so the next branch does not re-hunt it:
+        # the generated wrapper's `"max_tokens": 4096` and the prose defending
+        # it are deleted outright, and `require_untruncated_completion`'s
+        # docstring stops restating the mandate the composition-point bullet
+        # owns end to end and points at it instead. sdk-execution.md therefore
+        # SHRINKS by 163 bytes, and the measured net is +565, not the +728 the
+        # bullet costs. Measured 230_889 after the paydown.
+        #
+        # 231_250 and not 231_000: 111 bytes is the trips-on-a-typo ceiling
+        # this comment already rejected once, and 361 is the same headroom the
+        # RESIDENT ceiling above settled on for the same reason.
+        budget = 231_250
         self.assertLess(
             total,
             budget,

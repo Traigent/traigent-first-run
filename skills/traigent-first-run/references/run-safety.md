@@ -398,14 +398,25 @@ as "effective" depends on whether the knob has a range at all:
 - `seed` never counts, however many values it lists, because sweeping it measures run-to-run
   variance rather than quality.
 - `max_tokens` never counts either, for the neighbouring reason: it is a resource limit, not a
-  behaviour setting, so sweeping it measures capacity. Set it to whatever the agent needs -
-  **no floor is imposed and no value is refused**. Reasoning headroom is not predictable, so a
-  floor is a guess, and a guess that refuses a configuration breaks a run that would have been
-  fine: `2048` is absurd when the expected answer is `a`, `b`, `c` or `d`. Know what a low cap
-  risks, though. The provider returns `finish_reason == "length"`, and a cut-off answer scores 0
-  rather than low, so the model it happened to loses a comparison it may have won. Detected, not
-  predicted: the wrapper's `require_untruncated_completion` refuses that trial as a
-  non-measurement, sending it to the failed-trial count instead of the leaderboard.
+  behaviour setting, so sweeping it measures whether the answer **fit**, not whether it was good.
+  **Never introduce a cap the user did not already have, and never sweep one.** If their agent
+  sets `max_tokens`, carry it through verbatim - it works in their daily life. If it sets none,
+  send none: the generated wrapper sends no `max_tokens` at any tier, reasoning models included,
+  and the provider default stands. **No floor is imposed and no value is refused** either - a user
+  may cap it however they like, and reasoning headroom is not predictable, so a floor is a guess
+  that breaks runs which would have been fine (`2048` is absurd when the answer is `a`, `b`, `c`
+  or `d`).
+
+  A cap of *ours* is worse than one of theirs because it spans two runs: a number that fits the
+  baseline's medium model is one the enhanced run's stronger or reasoning model can exceed, so the
+  truncation is introduced by this guide on a configuration the user never chose. Either way the
+  provider returns `finish_reason == "length"`, and a cut-off answer scores 0 rather than low, so
+  the model it happened to loses a comparison it may have won - detected, not predicted, by the
+  wrapper's `require_untruncated_completion`.
+
+  Where a bound is genuinely needed, **bound the clock or the trial count, never the tokens**: a
+  time limit stops the work and leaves what finished intact, while a token limit corrupts the
+  answer at the cut and then scores the corruption.
 
 Three honesty rules govern the file:
 
