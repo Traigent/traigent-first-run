@@ -27,6 +27,7 @@ that pillar reports nothing to search.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import math
 import os
@@ -2613,8 +2614,14 @@ def evaluation_facts_from_calibration(
 #
 # The question "is field X validated?" is therefore no longer answerable one
 # field at a time. A field is declared here and validated, or it is not a field:
-# an undeclared key is ignored whole, never half-read. Two rules hold across
-# every reader, in both directions:
+# an undeclared key is *refused*, never half-read and never quietly dropped.
+# Ignoring it was the earlier rule, and it reproduced the very defect above
+# through the schema's own front door - `max_trial` for `max_trials` is one
+# character, and the document that carried it scored 89 STRONG as 92 EXCELLENT
+# under a byte-identical evidence line, exit 0. A key this declaration does not
+# name cannot be told apart from a misspelling of one it does, so it is refused
+# by name (`_reject_undeclared_fields`). Two rules hold across every reader, in
+# both directions:
 #
 # * **Never coerce a value the field's documented type does not admit.**
 #   `document.get(field) or {}` reads `[]`, `null`, `0` and `""` as "absent", so
@@ -3038,14 +3045,63 @@ def _reject_phantom_names(
         )
 
 
+def _reject_undeclared_fields(document: dict[str, Any]) -> None:
+    """Refuse a document key that `CONFIG_SPACE_FIELDS` does not name.
+
+    Ignoring the key was the documented behaviour, and it produced exactly the
+    defect the declaration exists to stop. `max_trial` for `max_trials` is one
+    character, and it does not fail: the budget that dampens the knob-count
+    points simply is not there, so a 512-configuration space against a 3-trial
+    cap scored as though it had no cap at all - measured on the trunk this
+    replaces, 89 STRONG became 92 EXCELLENT under a byte-identical evidence
+    line ("6 of 6 wired knobs actually vary; 512 combinations"), exit 0, no
+    warning. `bound` for `bounds` drops the author's declared range the same
+    way, and the knob is then scored against the canonical one.
+
+    That is the same failure as a misspelled `wired` name, which this module
+    already refuses for the same reason: the misspelling is not a narrower
+    document, it is a typo, and reading the document around it scores a claim
+    the author did not make. "Ignored whole" was only ever safe for a key that
+    means nothing to the scorer, and no such key can be told apart from a
+    misspelling of one that means a great deal.
+
+    Nothing is lost by refusing: this repository has never published a config
+    space, and the one producer that emits the document
+    (`config_space_document` in references/sdk-execution.md) writes declared
+    fields only.
+    """
+    declared = {spec.name for spec in CONFIG_SPACE_FIELDS}
+    undeclared = sorted((key for key in document if key not in declared), key=repr)
+    if not undeclared:
+        return
+    described = []
+    for key in undeclared:
+        near = (
+            difflib.get_close_matches(key, sorted(declared), n=1, cutoff=0.6)
+            if isinstance(key, str)
+            else []
+        )
+        described.append(f"{key!r} (did you mean {near[0]!r}?)" if near else repr(key))
+    raise ConfigSpaceInputError(
+        f"config-space document has no field {', '.join(described)}; the "
+        f"fields it may declare are {', '.join(repr(n) for n in sorted(declared))}. "
+        "A key this schema does not name is a misspelling of one it does, and "
+        "reading the document without it scores a claim the document never made"
+    )
+
+
 def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     """Read a config-space document, or refuse it naming the field at fault.
 
     Every field is read by its own entry in `CONFIG_SPACE_FIELDS` and by
     nothing else, so this function holds only what is genuinely *cross*-field.
-    There are three such rules, and they run in this order because a rule that
+    There are four such rules, and they run in this order because a rule that
     reads a name must read the name the scorer will use:
 
+    0. **Every key of the document must be a declared field**
+       (`_reject_undeclared_fields`). A key the declaration does not name is a
+       misspelling of one that it does, and reading the document around it
+       scores a claim the author never made.
     1. **Which space spelling is read.** `knobs` wins over its
        `configuration_space` alias only when it is non-empty, and `knobs_key`
        names whichever was actually read, so no message points at a key the
@@ -3067,6 +3123,7 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
             "config-space document must be a JSON object with a 'knobs' key, "
             f"not {type(document).__name__}"
         )
+    _reject_undeclared_fields(document)
     # Presence with `in`, never truthiness: `[]`, `null`, `0` and `""` are
     # malformed values of a field that was written, not absent fields. Every
     # declared field present in the document is read, so a malformed alias

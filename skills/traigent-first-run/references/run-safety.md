@@ -350,8 +350,10 @@ writes `traigent-runs/config-space.json` only after the search returns nonzero t
 current-run file enters closing readiness. A stopped, failed, or zero-trial search emits none, so
 the agent pillar remains honestly scored from absent evidence and its cap stays binding.
 
-These are the only fields the scorer reads; anything else in the file is ignored whole, never
-half-read. A field that is present but malformed is refused with a message naming it (exit 2), never
+These are the only fields the scorer reads and the only keys it accepts: any other key is refused
+by name (exit 2) with the closest declared field, because it cannot be told from a misspelling of
+one - `max_trial` for `max_trials` is one character, and it raised the band. A field that is
+present but malformed is refused with a message naming it (exit 2), never
 scored around - a document the scorer cannot read is not a document it may guess at. Refusal turns
 on the *value*, not on how JSON spelled it: an empty list, a `null` and a `0` where an object
 belongs are malformed, not absent, and are refused rather than read as an empty object; conversely
