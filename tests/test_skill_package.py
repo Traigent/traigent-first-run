@@ -3226,6 +3226,43 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{safety} {sdk}")
 
+    def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
+        """The route has to say READ, not just "not creation".
+
+        Removing "do not enter the creation dependency matrix" is caught by the
+        branch table below. Replacing the rest of the sentence with the repair
+        instruction it used to carry is not: the branch still routes away from
+        creation, and the assistant is still told to fix a file nobody has
+        opened. Both halves are the fix, so both are asserted.
+
+        The obligation itself lives once, in the reference that owns the
+        dataset stage - re-run the check with the paths the file uses, or
+        convert a format the check does not read, and only then judge the data.
+        SKILL.md names the order and points at it. Deleting either leaves the
+        other stating half a route, which is why the two are pinned together.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        reference = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "re-map it per the dataset reference",
+            "repair, then create, only if mapping fails",
+        ):
+            with self.subTest(document="SKILL.md", phrase=phrase):
+                self.assertIn(phrase, skill)
+        for phrase in (
+            "correct the shape, not the data",
+            "re-run preflight with the field paths the file actually uses",
+            "convert a non-jsonl file into a jsonl working copy",
+            "only when mapped rows still yield no input and expected answer",
+        ):
+            with self.subTest(document="evaluation-and-dataset.md", phrase=phrase):
+                self.assertIn(phrase, reference)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
@@ -3244,10 +3281,15 @@ class SkillPackageTests(unittest.TestCase):
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
             ("dataset-absent", "creation dependency matrix"),
-            # Broken data routes to repair, and explicitly NOT to creation: the
-            # id it used to share sent a customer holding an unreadable file
-            # into the dataset-creation branch.
-            ("dataset-unreadable", "do not enter the creation dependency matrix"),
+            # An unrecognised shape routes to reading the file, and explicitly
+            # NOT to creation: the id it used to share sent a customer holding
+            # a perfectly good file into the dataset-creation branch. It does
+            # not route to repair either - most files that reach it are not
+            # broken, so the branch must not open by calling them invalid.
+            (
+                "dataset-shape-unrecognised",
+                "do not enter the creation dependency matrix",
+            ),
             ("dataset-no-expected-outputs", "repairing a labelled working copy"),
             ("dataset-integrity-fail", "repair and revalidate a working copy"),
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),
@@ -4356,6 +4398,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 visible trials",
                 "10-12 visible enhanced rows",
                 "10-12 configurations",
+            ),
+        ),
+        (
+            "whether a file no row could be read from is a defect in the data",
+            # This one was a contradiction inside a single pull request, across
+            # the two documents CLAUDE.md warns about by name. #144 added a
+            # worked example to the dataset reference whose punchline is "the
+            # rows are fine and the field selection is not", and in the same
+            # commit added a SKILL.md branch calling the identical state
+            # "broken data" and routing it to repair - each correct-looking on
+            # its own, opposite when read together.
+            #
+            # Settled by execution: every situation that produces the state was
+            # built and run through preflight and readiness. A `question` /
+            # `answer` file, a nested schema, a CSV, a JSON array and YAML all
+            # reach it with the rows intact, and re-reading the same bytes with
+            # the fields the file uses scores them with no dataset cap at all.
+            # So the score names its own reading, and whether the data is at
+            # fault is established after the file is opened, not before.
+            ("which is not a verdict on the data",),
+            (
+                "broken data, not missing data",
+                "treat it as invalid; repair a working copy from the",
+                "none of its rows could be read",
             ),
         ),
     )

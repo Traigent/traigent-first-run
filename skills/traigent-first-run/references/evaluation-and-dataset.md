@@ -271,6 +271,10 @@ the rows use against the field the run selected, and the malformation. So
 assistant has the file open and the user does not, so relaying a summary they could have read
 themselves is the one thing this stage must not do.
 
+Then act on it: correct the shape, not the data - re-run preflight with the field paths the file
+actually uses, or convert a non-JSONL file into a JSONL working copy, then re-score. The data is at
+fault only when mapped rows still yield no input and expected answer, as a truncated line never can.
+
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which
 decision boundaries, realistic noise, edge cases, or known failure modes are absent. If that
 cannot be established from project evidence, say difficulty is unverified rather than declaring

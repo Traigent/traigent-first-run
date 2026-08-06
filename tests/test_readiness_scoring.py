@@ -180,7 +180,7 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
         self.assertEqual(pillar.score, 0)
 
-    def test_a_supplied_but_unreadable_dataset_is_not_called_absent(self) -> None:
+    def test_a_supplied_but_unrecognised_dataset_is_not_called_absent(self) -> None:
         """A customer holding good rows must never be told to go and get data.
 
         `exists=False` used to carry two situations at once: no dataset reached
@@ -194,6 +194,15 @@ class DatasetScoringTests(unittest.TestCase):
         was provided" while `recommended_action` still said `get-data` and the
         guide still routed the id into dataset creation. The state needs its own
         condition, which is what carries the remedy.
+
+        The remedy is `read-dataset`, and that is the second half of the same
+        correction. `repair-dataset` also keeps the customer's file - but it
+        asserts the file is defective, and the run has no evidence for that: it
+        read the file with one assumed shape, nothing matched, and every
+        conclusion beyond "we did not recognise it" is a guess. See
+        `test_a_dataset_with_other_field_names_scores_clean_once_it_is_mapped`
+        in the adapter tests for what the same file scores once it is read
+        correctly.
         """
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -204,16 +213,20 @@ class DatasetScoringTests(unittest.TestCase):
                 "missing selected input field 'input'",
             )
         )
-        self.assertEqual([cap.condition for cap in caps], ["dataset-unreadable"])
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-shape-unrecognised"]
+        )
         cap = caps[0]
         # The routing, not just the prose. This is the assertion the reworded
         # sentence could not make.
-        self.assertEqual(cap.action_kind, "repair-dataset")
-        self.assertEqual(MODULE.recommended_action(caps), "repair-dataset")
+        self.assertEqual(cap.action_kind, "read-dataset")
+        self.assertEqual(MODULE.recommended_action(caps), "read-dataset")
         self.assertNotEqual(cap.action_kind, "get-data")
-        # Broken data still blocks, and still scores under every state that has
-        # a readable row in it (30 for no expected outputs, 35 for some rows
-        # unreadable) - but above 20, which means "no data at all".
+        # Neither of the two instructions that assert something about the data.
+        self.assertNotEqual(cap.action_kind, "repair-dataset")
+        # Still blocks - nothing here is measurable yet - and still scores under
+        # every state that has a readable row in it (30 for no expected
+        # outputs, 35 for some rows unreadable), but above 20, "no data at all".
         self.assertTrue(cap.blocks)
         self.assertEqual(cap.ceiling, 25)
         reason = cap.reason
@@ -221,6 +234,37 @@ class DatasetScoringTests(unittest.TestCase):
         # The old sentence claimed something about the project rather than
         # about this score's input; it must not come back.
         self.assertNotIn("No dataset is connected", reason)
+
+    def test_the_reason_names_the_reading_and_never_convicts_the_data(self) -> None:
+        """The sentence a customer reads on the opening card.
+
+        This cap is computed before the assistant has opened the file, so the
+        card can honestly report only that the run did not recognise what it
+        read. "None of its rows could be read, so nothing can be measured" is a
+        verdict on the customer's data, and on the files that actually produce
+        this state - a `question`/`answer` schema, a nested one, a CSV, a JSON
+        array, YAML - it is false. Two obligations follow, and both are asserted
+        here because prose is where this defect lives.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=12,
+                unreadable_detail="12/12 rows (100.0%) are unusable; line 1 "
+                "(+11 more): missing selected input field 'input'",
+            )
+        )
+        reason = caps[0].reason
+        # It says what the run could not do, not what the data is.
+        self.assertIn("matched the shape this score read it with", reason)
+        self.assertIn("not a defect in the data", reason)
+        # The old verdict, in the two forms it was written in.
+        self.assertNotIn("none of its rows could be read", reason.casefold())
+        self.assertNotIn("nothing can be measured", reason)
+        # And it names the next step, because the card fires at the opening
+        # gate and the state it describes can end one look at the file later.
+        self.assertIn("can clear on the next step", reason)
 
     def test_the_cause_is_preflights_to_state_and_is_never_invented(self) -> None:
         """The reason forwards the cause; it does not guess one and close it.
@@ -254,7 +298,7 @@ class DatasetScoringTests(unittest.TestCase):
             MODULE.DatasetFacts(exists=False, dataset_supplied=True, unreadable_rows=4)
         )
         reason = caps[0].reason
-        self.assertEqual(caps[0].condition, "dataset-unreadable")
+        self.assertEqual(caps[0].condition, "dataset-shape-unrecognised")
         for invented in ("malformed lines", "expected-answer field", "Check both"):
             with self.subTest(invented=invented):
                 self.assertNotIn(invented, reason)
@@ -292,7 +336,7 @@ class DatasetScoringTests(unittest.TestCase):
         """The two sentences must not be interchangeable, because the fixes are not.
 
         `dataset-absent` on a supplied path routes to `get-data` and
-        `dataset-unreadable` routes to `repair-dataset` - opposite
+        `dataset-shape-unrecognised` routes to `read-dataset` - opposite
         instructions - and the card used to state them as "nothing could be
         read from it" and "none of its rows could be read". A reader picking a
         branch off the prose cannot tell those apart, which is the same defect
@@ -305,7 +349,7 @@ class DatasetScoringTests(unittest.TestCase):
                 unreadable_detail="dataset has no usable rows",
             )
         )
-        _, unreadable = MODULE.score_dataset(
+        _, unrecognised = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=False,
                 dataset_supplied=True,
@@ -314,13 +358,16 @@ class DatasetScoringTests(unittest.TestCase):
             )
         )
         self.assertEqual(absent[0].action_kind, "get-data")
-        self.assertEqual(unreadable[0].action_kind, "repair-dataset")
+        self.assertEqual(unrecognised[0].action_kind, "read-dataset")
         # The prose has to carry the difference the action makes. `get-data` is
-        # the right instruction only because there is nothing here to repair,
-        # so the sentence says exactly that.
+        # the right instruction only because there is nothing here to open, so
+        # the sentence says exactly that - and the other one must not, because
+        # opening the file is the whole of what it asks for.
         self.assertIn("holds no rows at all", absent[0].reason)
         self.assertIn("nothing to repair", absent[0].reason)
-        self.assertNotIn("nothing to repair", unreadable[0].reason)
+        self.assertNotIn("nothing to repair", unrecognised[0].reason)
+        self.assertIn("open the file", unrecognised[0].reason)
+        self.assertNotIn("open the file", absent[0].reason)
         # Both still name what was given rather than what the customer has.
         self.assertIn("A dataset was provided to this score", absent[0].reason)
 
@@ -338,7 +385,7 @@ class DatasetScoringTests(unittest.TestCase):
         the power ceiling fired too: `dataset-below-measurable-size`, whose
         remedy is `get-data`. The card then carried two FIX lines for one fact
         and the second told a customer holding 500 usable inputs to go and
-        collect examples - the very instruction `dataset-unreadable` was added
+        collect examples - the very instruction `dataset-shape-unrecognised` was added
         to stop giving.
 
         `label-data` is the remedy that repairs what they already have, and the

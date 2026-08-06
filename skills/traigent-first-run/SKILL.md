@@ -359,9 +359,9 @@ Route every active dataset cap to the branch this flow already defines, and pres
 rather than the condition id:
 
 - `dataset-absent` - enter the creation dependency matrix.
-- `dataset-unreadable` - a file was named and no row could be read: broken data, not missing data.
-  Do not enter the creation dependency matrix. Treat it as invalid; repair a working copy from the
-  cause the reason names, then revalidate and re-score. Propose creating a dataset only if that fails.
+- `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
+  a verdict on the data: do not enter the creation dependency matrix or call it invalid. Read and
+  re-map it per the dataset reference, then re-score; repair, then create, only if mapping fails.
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
   copy, with approval for judgment-dependent labels. Do not use unchanged input-only data with a
   reference-requiring evaluator; disclose a reference-free method's absent independent answer key.

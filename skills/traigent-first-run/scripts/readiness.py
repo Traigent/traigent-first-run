@@ -369,15 +369,25 @@ class SubScore:
 PROCEED = "proceed"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
-    # A file was named and no row in it could be read. The remedy is the
-    # `dataset-integrity-fail` one, not the `dataset-absent` one: the customer
-    # has data, so sending them to collect more is the wrong instruction - and
-    # it was the instruction, because a condition id is what carries the remedy
-    # and this state borrowed `dataset-absent`'s. That produced a discontinuity
-    # in the same file: 90 of 100 rows unreadable routed to `repair-dataset`,
-    # 100 of 100 routed to `get-data`, so the more broken file was told to go
-    # and collect new data.
-    "dataset-unreadable": "repair-dataset",
+    # A file was named and no row in it matched the shape preflight read it
+    # with. It is not `get-data`: the customer has data, so sending them to
+    # collect more is the wrong instruction - and it was the instruction, from
+    # the id this state borrowed. It is not `repair-dataset` either, which is
+    # the correction this entry carries. `repair-dataset` asserts the file is
+    # defective, and on the inputs that actually reach here it usually is not:
+    # a fully labelled file whose rows say `question`/`answer` produces this
+    # exact state, and re-running preflight with `--input-field question
+    # --expected-field answer` scores it 31/PARTIAL with no dataset cap at all.
+    # So does a nested schema, a CSV, a JSON array, and YAML. What is true of
+    # every one of them is that no row confirmed the shape the run assumed -
+    # which is a reason to go and look, not a verdict on the data.
+    #
+    # `dataset-integrity-fail` keeps `repair-dataset` and that stays right,
+    # because it fires only when at least one row DID match: the shape
+    # assumption is confirmed by that row, so the rest are genuinely broken.
+    # Zero matched rows is the absence of that evidence, and the two conditions
+    # already sit exactly on that line.
+    "dataset-shape-unrecognised": "read-dataset",
     "dataset-below-measurable-size": "get-data",
     "dataset-coarse-resolution": "get-data",
     "dataset-no-expected-outputs": "label-data",
@@ -1238,28 +1248,44 @@ def score_dataset(
         unreadable = facts.unreadable_rows or 0
         detail = facts.unreadable_detail
         if facts.dataset_supplied and unreadable:
-            # Rows were counted and none survived. That is broken data, not
-            # missing data, and it is a different condition with a different
-            # remedy - `repair-dataset`, the one `dataset-integrity-fail`
-            # already carries for the same file with one readable row in it.
+            # Rows were counted and none matched the shape the run read them
+            # with. The earlier wording called that broken data. It is not, on
+            # most of the files that produce it - see `ACTION_FOR_CONDITION`
+            # for the reproductions - so this says what is true instead: what
+            # failed is the reading, and whether the data is at fault is not
+            # yet established.
             #
-            # Ceiling 25, chosen against the neighbours rather than inherited.
-            # 20 is "no data at all"; this customer has data, so it cannot be
-            # that. It is still below `dataset-no-expected-outputs` (30) and
-            # `dataset-integrity-fail` (35), both of which describe a file with
-            # at least one readable row - this one has none, so it must sit
-            # under them. Blocking, because nothing here is measurable.
+            # Ceiling 25, kept, and re-argued for the sentence it now carries.
+            # It is a bound on what has been DEMONSTRATED, and nothing has:
+            # the score may not present a file nobody has read as better than
+            # one that is measurable. 20 is "no data at all"; this customer has
+            # a file, so it cannot be that. It stays below
+            # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail`
+            # (35) because each of those has at least one row that confirmed
+            # the shape, which is positive evidence this state does not have.
+            #
+            # Blocking, because nothing here is measurable yet - but the route
+            # is `read-dataset`, so what it blocks on is one look at the file
+            # rather than a repair. The reason says so, because this cap is
+            # computed at the opening gate, before the assistant has had any
+            # chance to adapt, and a customer reading that card is owed the
+            # fact that it can clear on the very next step.
             #
             # The cause is preflight's to state, not this adapter's to guess:
             # every wording invented here was false for at least one of the
             # inputs that reach this branch.
             reason = (
-                "A dataset was provided and none of its rows could be read, so "
-                "nothing can be measured"
+                "A dataset was provided and no row in it matched the shape "
+                "this score read it with, so nothing could be measured yet"
             )
-            reason += f": {detail}" if detail else "."
-            evidence = "provided, no rows could be read"
-            caps.append(Cap("dataset-unreadable", 25, reason))
+            reason += f": {detail}." if detail else "."
+            reason += (
+                " That describes the reading, not a defect in the data - open "
+                "the file, select the fields it actually uses, and re-score; "
+                "this can clear on the next step."
+            )
+            evidence = "provided, no row matched the shape it was read with"
+            caps.append(Cap("dataset-shape-unrecognised", 25, reason))
         else:
             if facts.dataset_supplied:
                 # A dataset was named and preflight counted no rows to salvage
@@ -1268,14 +1294,15 @@ def score_dataset(
                 # says which; without it, this printed one sentence for both.
                 #
                 # "nothing could be read from it" was one word away from the
-                # `dataset-unreadable` sentence directly above, and the two
-                # route to opposite remedies: repair the file you have, or go
-                # and get data. A reader cannot pick a branch off two sentences
-                # that differ by "and none of its rows" versus "but nothing".
-                # So this one says the thing that makes `get-data` the right
-                # instruction - there are no rows here to repair - which is
-                # exactly what separates it from the state above, where there
-                # are rows and every one of them is broken.
+                # `dataset-shape-unrecognised` sentence directly above, and the
+                # two route to opposite remedies: go and get data, or go and
+                # read the file you have. A reader cannot pick a branch off two
+                # sentences that differ by "and none of its rows" versus "but
+                # nothing". So this one says the thing that makes `get-data`
+                # the right instruction - there are no rows here at all, so
+                # there is nothing to go and look at - which is exactly what
+                # separates it from the state above, where rows exist and none
+                # of them matched the shape they were read with.
                 reason = (
                     "A dataset was provided to this score and it holds no rows "
                     "at all, so there is nothing to measure and nothing to "
@@ -1430,7 +1457,8 @@ def score_dataset(
     # `dataset-below-measurable-size`, whose remedy is `get-data`: the card
     # carried two FIX lines for one fact, and the second told a customer with
     # 50 perfectly good inputs to go and collect examples. That is the defect
-    # this file already fixed for `dataset-unreadable`, one condition over.
+    # this file already fixed for `dataset-shape-unrecognised`, one condition
+    # over.
     #
     # Suppressing it moves no number: 30 is below the 74 ceiling, so the labels
     # cap is the operative one either way and the run stays blocked. When the

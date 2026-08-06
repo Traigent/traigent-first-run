@@ -379,13 +379,13 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
         caps = {cap["condition"]: cap for cap in score["caps"]}
         self.assertNotIn("dataset-absent", caps)
-        self.assertIn("dataset-unreadable", caps)
-        cap = caps["dataset-unreadable"]
+        self.assertIn("dataset-shape-unrecognised", caps)
+        cap = caps["dataset-shape-unrecognised"]
         # The routing is the fix. A reworded `dataset-absent` still recommended
         # `get-data` and still routed the guide into dataset creation, because
         # the remedy is keyed by condition id.
-        self.assertEqual(cap["action_kind"], "repair-dataset")
-        self.assertEqual(score["recommended_action"], "repair-dataset")
+        self.assertEqual(cap["action_kind"], "read-dataset")
+        self.assertEqual(score["recommended_action"], "read-dataset")
         reason = cap["reason"]
         # It must say a dataset WAS provided ...
         self.assertIn("A dataset was provided", reason)
@@ -395,14 +395,69 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         # The cause is preflight's, forwarded verbatim rather than guessed.
         self.assertIn("missing selected input field 'input'", reason)
 
+    def test_a_dataset_with_other_field_names_scores_clean_once_it_is_mapped(
+        self,
+    ) -> None:
+        """The other half of the same file, and the reason the cap is not a verdict.
+
+        The rows above are well-formed, fully labelled and entirely usable; the
+        only thing wrong is that the run read them with `input`/`output`. Read
+        with the fields the file actually uses, the identical bytes score with
+        no dataset cap of any kind - so what the opening card capped was the
+        reading, and calling it broken data was false about this file.
+
+        This is the assertion that makes the pair a pair. Without it the suite
+        could only say "the unreadable branch fires", which is exactly the
+        claim that was true and misleading at the same time. It also pins the
+        second half of the owner's rule: a successful re-map leaves no residue,
+        so nothing may persist a cap across it.
+        """
+        rows = [
+            {"id": str(index), "question": f"q{index}", "answer": f"a{index % 4}"}
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "customer.jsonl", rows)
+            unmapped = _score(dataset)
+            mapped = _score(
+                dataset,
+                preflight_extra=(
+                    "--input-field",
+                    "question",
+                    "--expected-field",
+                    "answer",
+                ),
+            )
+
+        self.assertIn(
+            "dataset-shape-unrecognised",
+            {cap["condition"] for cap in unmapped["caps"]},
+        )
+        # Same file, same bytes, read correctly: no dataset finding survives.
+        self.assertEqual(
+            [cap for cap in mapped["caps"] if cap["condition"].startswith("dataset-")],
+            [],
+        )
+        self.assertGreater(mapped["overall"], unmapped["overall"])
+        self.assertNotEqual(mapped["recommended_action"], "read-dataset")
+
     def test_the_more_broken_file_is_never_sent_to_collect_new_data(self) -> None:
         """The discontinuity, on one file, in one assertion.
 
         Ninety of a hundred rows unreadable fired `dataset-integrity-fail` and
         recommended `repair-dataset`. Making the file WORSE - all hundred
         unreadable - fired `dataset-absent` and recommended `get-data`, so the
-        more broken file was the one told to go and collect data. Both are
-        broken data; both repair.
+        more broken file was the one told to go and collect data. Neither may
+        route to collection: the customer has the file in both cases.
+
+        The two remedies are deliberately not the same, and the line between
+        them is evidence rather than severity. At 90 of 100, ten rows DID match
+        the shape the run assumed - that confirms the assumption, so the other
+        ninety are genuinely malformed and `repair-dataset` is a claim the run
+        can support. At 100 of 100 nothing confirmed it, so the only supportable
+        instruction is to go and read the file. Asserting both here keeps a
+        later edit from collapsing them back into one remedy in either
+        direction.
         """
         broken = "{not json at all"
         good = {"id": "1", "input": "q", "output": "a", "source": "collected"}
@@ -418,9 +473,12 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             everything_score = _score(everything)
 
         self.assertEqual(partial_score["recommended_action"], "repair-dataset")
-        self.assertEqual(everything_score["recommended_action"], "repair-dataset")
+        self.assertEqual(everything_score["recommended_action"], "read-dataset")
+        for score in (partial_score, everything_score):
+            with self.subTest(score=score["recommended_action"]):
+                self.assertNotEqual(score["recommended_action"], "get-data")
         conditions = {cap["condition"] for cap in everything_score["caps"]}
-        self.assertIn("dataset-unreadable", conditions)
+        self.assertIn("dataset-shape-unrecognised", conditions)
         self.assertNotIn("dataset-absent", conditions)
 
     def test_a_third_cause_is_reported_as_itself_not_as_the_other_two(self) -> None:
@@ -449,8 +507,8 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             )
 
         caps = {cap["condition"]: cap for cap in score["caps"]}
-        self.assertIn("dataset-unreadable", caps)
-        reason = caps["dataset-unreadable"]["reason"]
+        self.assertIn("dataset-shape-unrecognised", caps)
+        reason = caps["dataset-shape-unrecognised"]["reason"]
         self.assertIn("input and expected-output field paths must be different", reason)
         # None of the guessed causes, and no claim that the list was complete.
         for invented in ("malformed lines", "expected-answer field", "Check both"):
@@ -534,7 +592,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         conditions = {cap["condition"] for cap in json.loads(process.stdout)["caps"]}
         self.assertIn("dataset-absent", conditions)
-        self.assertNotIn("dataset-unreadable", conditions)
+        self.assertNotIn("dataset-shape-unrecognised", conditions)
 
     def test_a_payload_too_old_to_carry_malformed_rows_is_refused(self) -> None:
         """The refusal now covers the return that reads the same count.
