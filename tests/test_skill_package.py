@@ -446,21 +446,22 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("inventory presence—not values", skill_text)
         self.assertIn("never rewrite a route merely to match a key", skill_text)
 
-    def test_the_max_tokens_floor_is_stated_where_the_space_is_composed(
-        self,
-    ) -> None:
-        """The rule existed and was unreachable from where it applies.
+    def test_max_tokens_is_detected_not_predicted(self) -> None:
+        """Three statements, one rule, each in the document that owns it.
 
-        It was one clause at the end of a paragraph about reasoning models, 250
-        lines below the section an author actually reads while deciding what to
-        put in a space - and that section names `max_tokens` among the scorer's
-        canonical numeric knobs that "need two values", which reads as an
-        invitation to sweep it. So the document invited the thing it forbade,
-        and said so in a place nobody composing a space would be reading.
+        The rule this replaces was a 2048 floor that REFUSED a lower sweep. It
+        was wrong for one reason that no amount of tuning the number fixes:
+        reasoning headroom is not predictable - hidden thinking tokens are spent
+        before the answer text and nothing declares how many - so every floor is
+        a guess, and a guess that refuses breaks a configuration that would have
+        been fine. 2048 tokens for an agent answering `a`, `b`, `c` or `d` is
+        the reductio.
 
-        This asserts the rule is inside that section, not merely somewhere in
-        the file, and that the number it prints is the number the scorer
-        enforces - two homes for one floor is how they drift apart.
+        What is true and worth keeping is WHY a low cap is dangerous, so that
+        stays. Only the refusal goes, replaced by a detection: the provider
+        reports `finish_reason == "length"` as a fact after the call, and the
+        wrapper refuses that trial as a non-measurement rather than letting it
+        be scored as a legitimate 0.
         """
         text = RUN_SAFETY.read_text()
         start = text.index("`agent-no-varying-knobs` clears as soon as")
@@ -468,28 +469,131 @@ class SkillPackageTests(unittest.TestCase):
             text[start : text.index("Three honesty rules", start)].split()
         )
 
+        # 1. Composition point: no credit, no floor, and the danger still said.
         for phrase in (
-            "`max_tokens` is a capacity guard, not a lever",
-            "never clear this cap with it",
-            "Pin it to one value at or above 2048",
-            "Sweeping it through anything below 2048 is refused",
-            "a truncated answer scores 0 rather than low",
-            "Leaving it out costs nothing",
+            "`max_tokens` never counts either",
+            "it is a resource limit, not a behaviour setting",
+            "**no floor is imposed and no value is refused**",
+            "a cut-off answer scores 0 rather than low",
+            "`require_untruncated_completion`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
 
+        # 2. The refusal is gone from the guidance, not merely unenforced -
+        # a rule stated in prose and absent from the code is the contradiction
+        # class this repository keeps producing.
+        normalized = " ".join(text.casefold().split())
+        for gone in (
+            "sweep low `max_tokens` values",
+            "sweeping it through anything below 2048 is refused",
+            "pin it to one value at or above 2048",
+        ):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, normalized)
+
+        # 3. The scorer carries no floor to drift from.
         scripts = str(SKILL_ROOT / "scripts")
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
         readiness = importlib.import_module("readiness")
-        self.assertIn(f"above {readiness.MAX_TOKENS_ANSWER_FLOOR}", section)
-        # And the old unreachable clause is gone rather than left beside the
-        # new one: a rule stated twice is a rule that can be edited once.
-        # Casefolded, because a restatement that differs only in its first
-        # letter is still the same rule in a second place.
-        self.assertNotIn(
-            "sweep low `max_tokens` values", " ".join(text.casefold().split())
+        self.assertFalse(hasattr(readiness, "MAX_TOKENS_ANSWER_FLOOR"))
+        self.assertIn("max_tokens", readiness.EXCLUDED_KNOB_REASONS)
+        self.assertIn("seed", readiness.EXCLUDED_KNOB_REASONS)
+
+    def test_the_wrapper_refuses_a_truncated_trial_rather_than_scoring_it(
+        self,
+    ) -> None:
+        """The guard that actually prevents the original disaster.
+
+        A strong model truncated, scored 0, and a weaker model was crowned the
+        winner. Nothing enforced the "scan every trial for `finish_reason ==
+        'length'`" instruction - it was a sentence in a reference, and the
+        wrapper returned `response.choices[0].message.content or ""` whatever
+        the provider said about why it stopped. A cut-off answer therefore
+        entered the comparison as a legitimate 0.
+
+        This asserts the guard exists, is CALLED (an uncalled checker is the
+        same defect in a longer file), and raises rather than returning - the
+        repository's own rule is that a failure is raised, never defaulted.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef):
+                    functions[node.name] = node
+
+        # Run it, do not read it. A guard asserted by substring passes while
+        # comparing the wrong field.
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    functions["require_untruncated_completion"],
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        current = None
+        namespace = {
+            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "build_request": lambda message, config: {},
+            "require_nonzero_token_usage": lambda response: None,
+            "provider_reported_cost": lambda response: 0.01,
+        }
+        exec(compile(module, "<truncation-guard>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+        guard = namespace["require_untruncated_completion"]
+
+        def reply(finish_reason):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="a"),
+                        finish_reason=finish_reason,
+                    )
+                ]
+            )
+
+        # The whole point: `call_agent` raises instead of handing back a
+        # scoreable answer, so the trial cannot enter the comparison as a 0.
+        current = reply("length")
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            call_agent("task", {})
+        message = ""
+        try:
+            guard(current)
+        except RuntimeError as error:  # pragma: no cover - asserted below
+            message = str(error)
+        self.assertIn("not a measurement", message)
+        # A bare failure is not actionable; the repair is named.
+        self.assertIn("Raise this configuration's cap", message)
+
+        # Only truncation. Every other stop reason is a real measurement, and a
+        # guard that refused them would break the run it exists to protect.
+        for reason in ("stop", "tool_calls", "content_filter", None):
+            with self.subTest(finish_reason=reason):
+                current = reply(reason)
+                self.assertEqual(call_agent("task", {}), ("a", 0.01))
+
+        # Providers that expose the choice as a mapping report the same fact.
+        current = SimpleNamespace(
+            choices=[
+                {"message": SimpleNamespace(content="a"), "finish_reason": "length"}
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            guard(current)
+
+        # And the post-run checklist says how a truncated trial now appears, so
+        # the reader is not left checking for something that cannot arrive.
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn(
+            "`require_untruncated_completion` raises on `finish_reason == "
+            '"length"`, so a truncated trial arrives as a failed trial rather '
+            "than as a scored 0",
+            safety,
         )
 
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
@@ -2280,6 +2384,7 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": SimpleNamespace(completion=fake_completion),
             "provider_reported_cost": lambda response: 0.01,
             "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
             "build_prompt": lambda message, *, style, self_check: message,
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
@@ -2483,6 +2588,7 @@ class SkillPackageTests(unittest.TestCase):
                 body=[
                     functions["provider_reported_cost"],
                     functions["require_nonzero_token_usage"],
+                    functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
                 type_ignores=[],
@@ -2501,10 +2607,15 @@ class SkillPackageTests(unittest.TestCase):
         exec(compile(call_module, "<provider-call>", "exec"), call_namespace)
         call_agent = call_namespace["call_agent"]
 
-        def response(*, usage):
+        def response(*, usage, finish_reason="stop"):
             return SimpleNamespace(
                 usage=usage,
-                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="answer"),
+                        finish_reason=finish_reason,
+                    )
+                ],
             )
 
         current_response = response(usage=SimpleNamespace(total_tokens=3))
@@ -3940,6 +4051,7 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": _Stub,
             "provider_reported_cost": lambda response: 0.0,
             "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
@@ -4902,16 +5014,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
         #
-        # The `max_tokens` sweep floor then moves this number NOT AT ALL, which
-        # is recorded because 234 bytes of headroom is a ceiling nobody knows
-        # the size of unless each branch says. The rule was stated in one place
-        # nobody composing a space reads and is now stated in the place they do,
-        # so the paragraph it left was cut back to its derivation, and the
-        # composite-pattern sentence beside it - a verbatim second statement of
-        # the multi-call cost rule twenty lines above - was deleted outright.
-        # Measured 228_608: +92 net for a rule that is now reachable AND
-        # enforced, paid for out of duplication rather than out of the ceiling.
-        budget = 228_750
+        # The `max_tokens` rule then raises this to 230_500. Recorded, with the
+        # reason, because the previous ceiling left 234 bytes and this is a
+        # deliberate 1_750-byte raise rather than a rounding.
+        #
+        # An earlier draft of this branch refused a `max_tokens` sweep below a
+        # 2048 floor and cost +92, which looked like the cheap version. It was
+        # cheap because it was a guess: reasoning headroom is not predictable,
+        # so any floor is invented, and a floor that REFUSES breaks a
+        # configuration that would have run fine - 2048 tokens for an agent
+        # answering `a`, `b`, `c` or `d`. Replacing a prediction with a
+        # detection is what costs bytes: a guess is one constant, while
+        # detection is a guard function in the wrapper, its failure mode, and
+        # its repair.
+        #
+        # Paid down as far as it goes first, and the harvest is recorded so the
+        # next branch does not look for it again: the reasoning-model headroom
+        # paragraph was deleted outright (the composition-point bullet now owns
+        # that rule end to end), and `max_tokens` was struck from the list of
+        # canonical knobs that "need two values" - a knob that can no longer
+        # clear the cap does not belong in the list of knobs that clear it, and
+        # naming it there was the invitation that made the sweep look
+        # sanctioned. Measured 230_324 after both.
+        #
+        # 230_500 and not 230_400: 176 bytes is a ceiling that trips on a
+        # typo fix rather than on a decision, and this file's own policy is
+        # that the next raise should be a choice someone makes.
+        budget = 230_500
         self.assertLess(
             total,
             budget,

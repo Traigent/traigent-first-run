@@ -388,18 +388,24 @@ counted one dimension twice and multiplied the reported size of the space.
 as "effective" depends on whether the knob has a range at all:
 
 - A numeric knob **with** a range - one of the scorer's canonical knobs (`temperature`, `top_p`,
-  `retrieval_k`, `max_tokens`, and so on) or any knob given a `bounds` entry - needs two values
+  `retrieval_k`, and so on) or any knob given a `bounds` entry - needs two values
   separated by more than the noise floor: 0.05 for `temperature` and `top_p`, otherwise 2% of that
   range.
 - A numeric knob with **no** canonical range and no `bounds` entry is scored on breadth alone. Any
   two distinct values clear the cap, however close together they are - `[1, 1.01]` counts. There is
   no range to measure a noise floor against, so nothing collapses them.
 - A categorical or boolean knob needs two distinct values.
-- `seed` never counts, however many values it lists.
-- `max_tokens` is a capacity guard, not a lever: never clear this cap with it. Pin it to one value
-  at or above 2048, or 4096 at high reasoning effort. Sweeping it through anything below 2048 is
-  refused - the search drives the cap down until the answer truncates, and a truncated answer
-  scores 0 rather than low. Leaving it out costs nothing: no sub-score docks a space for it.
+- `seed` never counts, however many values it lists, because sweeping it measures run-to-run
+  variance rather than quality.
+- `max_tokens` never counts either, for the neighbouring reason: it is a resource limit, not a
+  behaviour setting, so sweeping it measures capacity. Set it to whatever the agent needs -
+  **no floor is imposed and no value is refused**. Reasoning headroom is not predictable, so a
+  floor is a guess, and a guess that refuses a configuration breaks a run that would have been
+  fine: `2048` is absurd when the expected answer is `a`, `b`, `c` or `d`. Know what a low cap
+  risks, though. The provider returns `finish_reason == "length"`, and a cut-off answer scores 0
+  rather than low, so the model it happened to loses a comparison it may have won. Detected, not
+  predicted: the wrapper's `require_untruncated_completion` refuses that trial as a
+  non-measurement, sending it to the failed-trial count instead of the leaderboard.
 
 Three honesty rules govern the file:
 
@@ -645,11 +651,6 @@ connected `auto` with a default cap of 12 for the enhanced space, then report th
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
 silently present a two-row generated run as the intended comparison.
 
-Reasoning models spend hidden reasoning tokens before the answer text, so they need every byte of
-that headroom and more of it at high effort - which is where the floor above comes from, and why a
-tight cap silently crowns a weaker model the winner. Scan every trial for `finish_reason ==
-"length"`.
-
 ## Post-run verification
 
 Before claiming success, verify:
@@ -661,7 +662,9 @@ Before claiming success, verify:
 5. Real calls do not show the mock's constant response pattern.
 6. Provider calls have nonzero token usage. Report `total_cost` as positive, provider-reported zero
    for a genuine free route, or untracked; cost alone does not prove whether a run was real.
-7. No output was truncated.
+7. No output was truncated. `require_untruncated_completion` raises on `finish_reason ==
+   "length"`, so a truncated trial arrives as a failed trial rather than as a scored 0; confirm
+   none reached the comparison.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to

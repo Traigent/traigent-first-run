@@ -1024,68 +1024,91 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(aliased.wired, ("temperature",))
 
-    def test_a_max_tokens_sweep_below_the_answer_floor_is_refused(self) -> None:
-        """The safety rule paid negative until it was enforced.
+    def test_a_max_tokens_sweep_earns_no_variety_credit_and_is_never_refused(
+        self,
+    ) -> None:
+        """The perverse incentive, measured before and after.
 
-        `references/run-safety.md` says to pin `max_tokens` at or above 2048 and
-        never to sweep below it, because a cap that truncates makes the trial
-        score 0 rather than low - the search reads a cut-off answer as a bad
-        one. But `max_tokens` is also one of `CANONICAL_RANGES`, so sweeping it
-        earned variation and knob-count credit like any other numeric knob:
-        measured on this scorer, `[256, 512]` beside `o3-mini` scored the agent
-        pillar 83, against 77 for the same space with the knob dropped. Obeying
-        the rule cost six points, and nothing anywhere said so.
+        `max_tokens` is one of `CANONICAL_RANGES`, so sweeping it earned
+        variation and knob-count credit like any other numeric knob - and it is
+        the one knob whose downward sweep can silently zero the best model, by
+        cutting its answer off into `finish_reason == "length"`, which scores 0
+        rather than low. Measured on this scorer: the space below scored the
+        agent pillar 77, and the identical space with `max_tokens: [256, 512]`
+        added scored 83. Sweeping it was worth six points.
 
-        The refusal drops the rule's "in any space that contains a reasoning
-        model" precondition on purpose, because a config-space document cannot
-        answer it - model values are opaque strings and the canonical model list
-        is OpenAI-only. Dropping it is safe in one direction only, and this is
-        that direction: the repair is free (nothing docks a space for leaving
-        the knob out), and the miss crowns a weaker model the winner.
+        The first repair tried was a refusal below a 2048 floor. That was wrong,
+        and this test pins why it will not come back: how much room an answer
+        needs is not predictable from a config-space document, so any floor is a
+        guess, and a guess that REFUSES breaks a configuration that would have
+        been fine - 2048 tokens for an agent answering `a`, `b`, `c` or `d`.
+
+        So nothing here predicts. The credit stops (this test), and the
+        truncation is DETECTED at the call, by the wrapper's
+        `require_untruncated_completion` (test_skill_package.py).
         """
-        swept = {"model": ["o3-mini"], "max_tokens": [256, 512]}
-        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-            MODULE.agent_facts_from_config_space({"knobs": swept})
-        message = str(raised.exception)
-        self.assertIn("max_tokens", message)
-        self.assertIn(str(MODULE.MAX_TOKENS_ANSWER_FLOOR), message)
-        self.assertIn("256", message)
+        base = {
+            "model": ["o3-mini", "gpt-4o-mini"],
+            "temperature": [0.0, 0.7],
+            "prompt_style": ["direct", "structured"],
+        }
 
-        # Numbers written as strings sweep the same range. `knob_variation`
-        # scores them as a categorical knob, so a quoted document would
-        # otherwise walk straight past a check that only read `int` and `float`.
-        with self.assertRaises(MODULE.ConfigSpaceInputError):
-            MODULE.agent_facts_from_config_space(
-                {"knobs": {"max_tokens": ["256", "512"]}}
+        def agent_score(knobs):
+            facts = MODULE.agent_facts_from_config_space(
+                {
+                    "agent_type": "general",
+                    "max_trials": 12,
+                    "knobs": knobs,
+                    "wired": list(knobs),
+                }
             )
+            pillar, _, _ = MODULE.score_agent(facts)
+            count = next(sub for sub in pillar.subscores if sub.name == "knob-count")
+            return pillar.score, count.evidence
 
-        # Refused off the DECLARED space, not off `wired`. `wired` gates credit;
-        # it does not gate what the search runs, and an unattested sweep
-        # truncates the same answers as an attested one.
-        with self.assertRaises(MODULE.ConfigSpaceInputError):
-            MODULE.agent_facts_from_config_space({"knobs": swept, "wired": []})
-
-        # One pinned low cap is a declared budget for an agent whose answers are
-        # short, not a search told to go looking. Refusing it would be wrong for
-        # a short-answer task this guide otherwise supports.
-        pinned = MODULE.agent_facts_from_config_space(
-            {"knobs": {"model": ["a", "b"], "max_tokens": [512]}}
+        without, _ = agent_score(dict(base))
+        swept, evidence = agent_score({**base, "max_tokens": [256, 512]})
+        self.assertEqual(without, 77)
+        self.assertEqual(
+            swept,
+            without,
+            "sweeping max_tokens must earn exactly nothing - it was worth +6",
         )
-        self.assertEqual(pinned.knobs["max_tokens"], [512])
 
-        # A sweep that stays at or above the floor is a legal space. The rule
-        # is about the floor, not about the knob appearing at all.
-        above = MODULE.agent_facts_from_config_space(
-            {"knobs": {"max_tokens": [2048, 4096]}}
-        )
-        self.assertEqual(above.knobs["max_tokens"], [2048, 4096])
+        # Not hidden, either. The runs really do double, and the line says so
+        # while staying addable: three varying knobs cannot make 16.
+        self.assertIn("8 combinations", evidence)
+        self.assertIn("max_tokens", evidence)
+        self.assertIn("16 runs", evidence)
+        # And not called "repeats". Two max_tokens values are two different
+        # requests, not one configuration run twice.
+        self.assertNotIn("repeats", evidence)
 
-        # And the floor itself is not off by one: exactly 2048 is headroom the
-        # document grants, so only what falls under it is refused.
-        edge = MODULE.agent_facts_from_config_space(
-            {"knobs": {"max_tokens": [MODULE.MAX_TOKENS_ANSWER_FLOOR, 4096]}}
+        # The note beside the knob is the knob's OWN reason. Telling an author
+        # their max_tokens sweep measures run-to-run variance would be false.
+        scored = MODULE.knob_variation("max_tokens", [256, 512])
+        self.assertEqual(scored.kind, "excluded")
+        self.assertEqual(scored.quality, 0.0)
+        self.assertIn("resource limit", " ".join(scored.notes))
+        self.assertNotIn(
+            "run-to-run", " ".join(MODULE.knob_variation("max_tokens", [1, 2]).notes)
         )
-        self.assertEqual(len(edge.knobs["max_tokens"]), 2)
+        self.assertIn(
+            "run-to-run", " ".join(MODULE.knob_variation("seed", [1, 2]).notes)
+        )
+
+        # NEVER refused. Every one of these was rejected by the floor this
+        # replaces, and every one of them is a legal space.
+        for knobs in (
+            {"model": ["o3-mini"], "max_tokens": [256, 512]},
+            {"max_tokens": ["256", "512"]},
+            {"max_tokens": [16, 32]},
+            {"max_tokens": [2048, 4096]},
+        ):
+            with self.subTest(knobs=knobs):
+                facts = MODULE.agent_facts_from_config_space({"knobs": knobs})
+                self.assertEqual(facts.knobs["max_tokens"], knobs["max_tokens"])
+        self.assertFalse(hasattr(MODULE, "MAX_TOKENS_ANSWER_FLOOR"))
 
     def test_an_alias_spelling_is_a_declared_name_not_a_phantom(self) -> None:
         """The phantom check ran before the names were collapsed, and refused
@@ -2473,8 +2496,16 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
         self.assertIn("4 combinations", with_seed.evidence)
         self.assertNotIn("24 combinations", with_seed.evidence)
         # Not hidden either: the run really is 24 trials, and the line says so
-        # in terms the knob count can account for.
-        self.assertIn("6 repeats", with_seed.evidence)
+        # in terms the knob count can account for - and it names the knob that
+        # caused the multiplier, which is the only way a reader can reconcile a
+        # budget penalty with knobs the multiplier is by construction not among.
+        #
+        # "6 repeats" was the wording until `max_tokens` joined the exclusion
+        # list. It was true of `seed` alone and false the moment a second,
+        # non-repeat knob could produce the same multiplier: two `max_tokens`
+        # values are two different requests, not one configuration run twice.
+        # One line cannot call both of them repeats, so it calls neither.
+        self.assertIn("6 uncredited values (seed)", with_seed.evidence)
         self.assertIn("24 runs", with_seed.evidence)
 
         # A space with nothing excluded says exactly what it said before.

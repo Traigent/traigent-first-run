@@ -144,8 +144,9 @@ others honor, the winner comparison is confounded - a configuration can win on a
 setting the other models were never given on equal terms, and no report footnote untangles that;
 when every model faces exactly the same variations, the winner is clear and the enhanced run's
 insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
-identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
-least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
+identically in both runs - a chosen reasoning effort with generous answer headroom, `max_tokens`
+4096 in the generated wrapper (a choice, not a floor: truncation is caught after the fact by
+`require_untruncated_completion`, never predicted), and no sampling
 parameters such a model rejects - and, since temperature is then
 inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
@@ -489,6 +490,30 @@ def require_nonzero_token_usage(response) -> None:
         )
 
 
+def require_untruncated_completion(response) -> None:
+    """A trial the provider cut off is not a measurement, so refuse it.
+
+    The evaluator cannot tell a cut-off answer from a wrong one, so it scores 0
+    rather than low and the model it happened to loses to one that had room -
+    a strong model truncated and a weaker winner crowned is the failure this
+    exists for. Raising sends it to the failed-trial count instead. Detection,
+    never prediction: no caller knows how many hidden reasoning tokens precede
+    the answer, so nothing here guesses a safe cap.
+    """
+    choice = response.choices[0]
+    finish_reason = getattr(choice, "finish_reason", None)
+    if finish_reason is None and isinstance(choice, dict):
+        finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        raise RuntimeError(
+            "The provider truncated this completion (finish_reason='length'). "
+            "It is not a measurement and must not be scored: a cut-off answer "
+            "scores 0 rather than low and can crown a weaker model. Raise this "
+            "configuration's cap and re-run it, or drop it and report it as "
+            "excluded"
+        )
+
+
 def build_request(message: str, config: dict) -> dict:
     """Build the provider request from one configuration. Pure: makes no call.
 
@@ -525,6 +550,7 @@ def build_request(message: str, config: dict) -> dict:
 def call_agent(message: str, config: dict) -> tuple[str, float | None]:
     response = litellm.completion(**build_request(message, config))
     require_nonzero_token_usage(response)
+    require_untruncated_completion(response)
     cost = provider_reported_cost(response)
     return response.choices[0].message.content or "", cost
 
