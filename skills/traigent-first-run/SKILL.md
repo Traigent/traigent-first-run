@@ -353,7 +353,7 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: `proceed` unless a blocking cap fires, otherwise the lowest-ceiling blocking
-remedy. Present reasons in user language; keep machine vocabulary and condition ids internal.
+remedy.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id:
@@ -367,6 +367,9 @@ rather than the condition id:
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
+- `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
+  scores, offer declaring the real source rather than collecting new data, and meanwhile apply the
+  rules above.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
 - `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.

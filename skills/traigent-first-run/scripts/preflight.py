@@ -721,9 +721,25 @@ def emit_dataset_provenance(
         )
     else:
         detail = f"declared sources: {sorted(declared_sources)}"
+    if counts[PROVENANCE_UNDECLARED]:
+        # Appended to whichever detail was built, so a mixture keeps its shares
+        # and still says what happens to the silent part of it.
+        detail += (
+            f"; {counts[PROVENANCE_UNDECLARED]} of {total} rows record no "
+            "provenance and are scored as generated"
+        )
     emit(
         "dataset-provenance",
-        WARN if counts[PROVENANCE_SYNTHESISED] else PASS,
+        # `unknown` used to PASS, which read as "checked, fine" for a dataset
+        # that had said nothing at all - the one state this check exists to
+        # surface. It is not a FAIL: the data may be entirely real and merely
+        # unlabelled, and the run continues either way. It is a WARN, for the
+        # same reason a declared-generated corpus is.
+        (
+            WARN
+            if counts[PROVENANCE_SYNTHESISED] or counts[PROVENANCE_UNDECLARED]
+            else PASS
+        ),
         detail,
         {
             "rows": total,

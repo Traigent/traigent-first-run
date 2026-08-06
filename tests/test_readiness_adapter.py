@@ -981,9 +981,10 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
     ) -> None:
         """The band asserts the INPUTS are real, so undeclared inputs lose it.
 
-        Same 6 points either way, but the reason differs, and reporting "real
-        inputs" about rows that never said where they came from would be the
-        card asserting something it cannot know.
+        Reporting "real inputs" about rows that never said where they came from
+        would be the card asserting something it cannot know. They score as
+        generated rows - 3, not the 6 a model-written answer over a collected
+        question earns - because the question's origin is unknown too.
         """
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -1000,9 +1001,13 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             score = _score(dataset)
             subscore = _dataset_subscore(score, "provenance")
-            self.assertEqual(subscore["value"], 6.0)
+            self.assertEqual(subscore["value"], 3.0)
             self.assertIn("30 undeclared", subscore["evidence"])
             self.assertNotIn("collected", subscore["evidence"])
+            self.assertIn(
+                "dataset-undeclared-provenance",
+                {cap["condition"] for cap in score["caps"]},
+            )
 
     def test_a_synthetic_row_stays_fully_synthetic_whatever_its_output_says(
         self,
@@ -1712,6 +1717,237 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
             {"evaluator-absent", "evaluator-unresolved", "evaluator-invalid"}
             & set(caps)
         )
+
+
+def _rows(count: int, provenance: str | None, *, offset: int = 0) -> list[dict]:
+    """`count` otherwise identical rows, differing only in what they declare.
+
+    `offset` keeps ids and inputs distinct when two blocks are concatenated
+    into one mixed corpus; without it the halves collide and the run is capped
+    for duplicate rows instead of for the thing under test.
+    """
+    rows = []
+    for index in range(offset, offset + count):
+        row = {
+            "id": f"row-{index}",
+            "input": f"customer message {index} token{index}",
+            "output": f"answer {index % 5}",
+        }
+        if provenance is not None:
+            row["metadata"] = {"provenance": provenance}
+        rows.append(row)
+    return rows
+
+
+class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
+    """Silence is an assumption, and the card makes it and states it.
+
+    Measured before this changed, on 200 rows differing only in whether
+    `provenance` was present: declared synthetic scored 65 and BLOCKED the paid
+    run; the same rows with the field removed scored 91 and OK. Telling the
+    truth cost twenty-six points and a block, which is a scoring rule that pays
+    for silence. It is fixed by reading silence as the pessimistic case - and
+    then by never letting the assumption be the part a customer finds out about
+    after paying.
+    """
+
+    def _context(self, directory: Path) -> tuple[str, ...]:
+        calibration = directory / "calibration.json"
+        space = directory / "space.json"
+        calibration.write_text(json.dumps(HEALTHY_CALIBRATION))
+        space.write_text(json.dumps(HEALTHY_SPACE))
+        return (
+            "--calibration",
+            str(calibration),
+            "--config-space",
+            str(space),
+            "--evaluator-method",
+            "normalized-exact",
+            "--task-kind",
+            "closed-label",
+        )
+
+    def _card(self, dataset: Path, extra: tuple[str, ...]) -> str:
+        preflight_json = json.dumps(_preflight_records(dataset))
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                "-",
+                "--color",
+                "never",
+                "--ascii",
+                *extra,
+            ],
+            input=preflight_json,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        return process.stdout
+
+    def test_declaring_synthetic_provenance_no_longer_costs_anything(self) -> None:
+        """The defect itself: same rows, one declares, one does not."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            declared = _write_jsonl(
+                directory, "declared.jsonl", _rows(200, "synthetic-walkthrough")
+            )
+            silent = _write_jsonl(directory, "silent.jsonl", _rows(200, None))
+
+            declared_score = _score(declared, extra)
+            silent_score = _score(silent, extra)
+
+            self.assertEqual(declared_score["overall"], silent_score["overall"])
+            self.assertEqual(declared_score["status"], silent_score["status"])
+            self.assertEqual(silent_score["status"], "BLOCKED")
+            # Same verdict, different instruction. Telling a customer to connect
+            # real data is wrong when the data may already be real and merely
+            # unlabelled, so the remedies deliberately do not match.
+            self.assertEqual(declared_score["recommended_action"], "connect-real-data")
+            self.assertEqual(
+                silent_score["recommended_action"], "declare-data-provenance"
+            )
+
+    def test_the_card_states_the_assumption_and_both_grades(self) -> None:
+        """The disclosure is on the card, and its second number is computed."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            silent = _write_jsonl(directory, "silent.jsonl", _rows(200, None))
+            collected = _write_jsonl(
+                directory, "collected.jsonl", _rows(200, "production")
+            )
+
+            score = _score(silent, extra)
+            assumption = score["provenance_assumption"]
+            self.assertEqual(assumption["undeclared_rows"], 200)
+            self.assertEqual(assumption["scored_rows"], 200)
+            self.assertEqual(assumption["scored_as_generated"], score["overall"])
+            # Not a hand-written figure: the same rows, declared as collected,
+            # really do score this. A quoted alternative a customer is invited
+            # to act on has to be the one they would actually get.
+            self.assertEqual(
+                assumption["if_declared_collected"],
+                _score(collected, extra)["overall"],
+            )
+            self.assertGreater(
+                assumption["if_declared_collected"], assumption["scored_as_generated"]
+            )
+
+            card = self._card(silent, extra)
+            self.assertIn("ASSUMED GENERATED", card)
+            self.assertIn(f"{assumption['scored_as_generated']}/100", card)
+            self.assertIn(f"{assumption['if_declared_collected']}/100", card)
+
+    def test_a_declared_corpus_carries_no_assumption_to_disclose(self) -> None:
+        """No silent row, no assumption - and therefore no line about one."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            collected = _write_jsonl(
+                directory, "collected.jsonl", _rows(200, "production")
+            )
+            self.assertIsNone(_score(collected, extra)["provenance_assumption"])
+            self.assertNotIn("ASSUMED GENERATED", self._card(collected, extra))
+
+    def test_a_half_undeclared_corpus_is_answered_rather_than_ignored(self) -> None:
+        """The partial cases, both of them, with the rule stated once.
+
+        The ladder runs on how much was never observed, so which half the
+        silent rows are mixed with decides the answer:
+
+        * half collected, half silent is 50% - under the threshold, so it is
+          capped by neither rung and simply loses points per row;
+        * half generated, half silent is 100% unobserved and IS capped, at 65,
+          even though neither half reaches 100% on its own.
+
+        Both still disclose the assumption, because both made one.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            with_real = _write_jsonl(
+                directory,
+                "half-real.jsonl",
+                _rows(100, "production") + _rows(100, None, offset=100),
+            )
+            with_generated = _write_jsonl(
+                directory,
+                "half-generated.jsonl",
+                _rows(100, "synthetic-walkthrough") + _rows(100, None, offset=100),
+            )
+
+            mixed_real = _score(with_real, extra)
+            self.assertEqual(
+                [cap["condition"] for cap in mixed_real["caps"]],
+                [],
+                "half a corpus saying nothing is not a majority",
+            )
+            self.assertEqual(mixed_real["status"], "OK")
+            self.assertEqual(_dataset_subscore(mixed_real, "provenance")["value"], 6.5)
+            self.assertEqual(
+                mixed_real["provenance_assumption"]["undeclared_rows"], 100
+            )
+
+            mixed_generated = _score(with_generated, extra)
+            capped = next(
+                cap
+                for cap in mixed_generated["caps"]
+                if cap["condition"] == "dataset-undeclared-provenance"
+            )
+            self.assertEqual(capped["ceiling"], 65)
+            self.assertEqual(capped["action_kind"], "declare-data-provenance")
+            # The silent half is what the customer can act on today, so the
+            # sentence names its share rather than claiming the whole corpus.
+            self.assertIn(
+                "100 of 200 rows do not record where they came from",
+                self._card(with_generated, extra),
+            )
+
+    def test_a_mostly_undeclared_corpus_reaches_the_lower_rung(self) -> None:
+        """Above half, under all: the 70 ceiling, with the same remedy."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            extra = self._context(directory)
+            dataset = _write_jsonl(
+                directory,
+                "mostly-silent.jsonl",
+                _rows(120, None) + _rows(80, "production", offset=120),
+            )
+            score = _score(dataset, extra)
+            cap = next(
+                cap
+                for cap in score["caps"]
+                if cap["condition"] == "dataset-mostly-undeclared"
+            )
+            self.assertEqual(cap["ceiling"], 70)
+            self.assertEqual(cap["action_kind"], "declare-data-provenance")
+
+    def test_preflight_no_longer_passes_a_dataset_that_declared_nothing(self) -> None:
+        """`unknown` used to PASS, which read as "checked, and fine"."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            silent = _write_jsonl(directory, "silent.jsonl", _rows(200, None))
+            record = next(
+                record
+                for record in _preflight_records(silent)
+                if record["check"] == "dataset-provenance"
+            )
+            self.assertEqual(record["status"], "WARN")
+            self.assertIn("scored as generated", record["detail"])
+
+            collected = _write_jsonl(
+                directory, "collected.jsonl", _rows(200, "production")
+            )
+            passing = next(
+                record
+                for record in _preflight_records(collected)
+                if record["check"] == "dataset-provenance"
+            )
+            self.assertEqual(passing["status"], "PASS")
 
 
 if __name__ == "__main__":

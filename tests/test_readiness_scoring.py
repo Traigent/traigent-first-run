@@ -247,14 +247,26 @@ class DatasetScoringTests(unittest.TestCase):
         )
         self.assertIn("dataset-tune-holdout-overlap", [cap.condition for cap in caps])
 
-    def test_undeclared_provenance_never_reaches_the_production_band(self) -> None:
-        pillar, _ = MODULE.score_dataset(
+    def test_undeclared_provenance_is_scored_as_generated(self) -> None:
+        """Silence is read as "generated", and says so rather than passing.
+
+        This is the pre-count fallback - a preflight JSON with no row counts,
+        which is what an older payload looks like. It reaches the same verdict
+        as the counted path, because the rule is about what silence means and
+        not about which payload carried it.
+        """
+        pillar, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True, rows=50, labelled_rows=50, sources=("unknown",)
             )
         )
         provenance = next(s for s in pillar.subscores if s.name == "provenance")
-        self.assertEqual(provenance.value, 6.0)
+        self.assertEqual(provenance.value, MODULE.SYNTHESISED_ROW_POINTS)
+        cap = next(c for c in caps if c.condition == "dataset-undeclared-provenance")
+        self.assertEqual(cap.ceiling, MODULE.FULLY_SYNTHETIC_CEILING)
+        # The remedy is the whole point of a separate condition: a customer may
+        # already hold real data and simply never have labelled it.
+        self.assertEqual(cap.action_kind, "declare-data-provenance")
 
     def test_power_uses_labelled_rows_when_no_split_is_declared(self) -> None:
         """90 of the 100 rows cannot be scored, so they buy no precision."""

@@ -221,10 +221,10 @@ The lines under each pillar on the card
                                  inside the evaluator's own noise. They come
                                  from calibration, later in the run.
     undeclared row             - a row that does not record where it came from.
-                                 It is not counted against you, but it cannot be
-                                 counted for you either: nothing says whether it
-                                 reflects real use, so it cannot be evidence
-                                 about real traffic.
+                                 Scored as a generated row, because silence
+                                 cannot be read as a claim that it is real. The
+                                 card says so, and gives the score the same rows
+                                 would earn declared as collected.
 
   Why two of them are usually blank at the start: "checked on known-good and
   known-bad" and "separates good answers from bad" both come from calibrating
@@ -248,20 +248,18 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
   Some caps block because something is missing or invalid, or because there is
   too little comparable evidence for a trustworthy paid comparison - a broken
-  evaluator, no dataset, or fewer than ten comparable examples. Others say only
-  that a small but measurable comparison set limits claim strength until the
-  completed paired outcomes support an uncertainty analysis. That limits what
-  the result may claim without saying anything is wrong with your setup.
+  evaluator, no dataset, or fewer than ten comparable examples. Another only
+  limits what the result may claim without saying anything is wrong with your
+  setup: a small but measurable comparison set bounds claim strength until the
+  completed paired outcomes support an uncertainty analysis.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
   limit to" is one that only starts to matter once something lower is cleared.
   Blocked: the flag the card shows when a blocking cap fired. It does not mean
-  every component is broken; it means the current state is missing, invalid, or
-  has too little comparable evidence for a trustworthy paid comparison. A cap
-  that only limits the claim does not set it, because the run is still worth
-  making. Either way the card names the specific thing rather than only lowering
-  a number.
+  every component is broken, and a cap that only limits the claim does not set
+  it. Either way the card names the specific thing rather than only lowering a
+  number.
 
   Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
   measures, the strongest evidence, the one limitation that most affects the next action, and that
