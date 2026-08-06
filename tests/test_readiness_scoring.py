@@ -955,6 +955,57 @@ class AgentScoringTests(unittest.TestCase):
                 with self.assertRaises(MODULE.ConfigSpaceInputError):
                     MODULE.agent_facts_from_config_space(document)
 
+    def _report_for(self, document: dict) -> str:
+        """The complete JSON report the CLI prints for one config-space document."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config-space.json"
+            path.write_text(json.dumps(document))
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = MODULE.main(["--config-space", str(path), "--json"])
+        self.assertEqual(exit_code, 0, stdout.getvalue())
+        return stdout.getvalue()
+
+    def test_declaring_agent_type_changes_nothing_the_run_emits(self) -> None:
+        """A document that declares `agent_type` scores as if it had not.
+
+        This is the evidence for removing the field, and it is deliberately
+        written over the *whole* emitted report rather than over the agent
+        pillar. A field that is read but never reaches any output is inert by
+        definition, so byte-identity of the full JSON across every accepted
+        value - and against a document that omits the key entirely - is a
+        stronger statement than "the pillar score matches": it says nothing in
+        the scorer reads it in any way a caller can observe.
+
+        `agent_type` used to select `HIGH_IMPACT_KNOBS[...]` for the `coverage`
+        sub-score, and `rag` names `retrieval_k` where `general` and `code_gen`
+        do not - so these three answers moved the score apart by design until
+        `coverage` was removed. That makes them the probe rather than an
+        arbitrary sample.
+
+        This test outlives the field. Once the declaration is gone, the same
+        assertion is the compatibility guarantee: a customer document written
+        against the old schema still parses and still scores identically,
+        because unknown keys are ignored whole.
+        """
+        space = {
+            "knobs": {
+                "model": ["a", "b", "c"],
+                "retrieval_k": [1, 5],
+                "prompt_style": ["direct", "structured"],
+            },
+            "max_trials": 12,
+            "wired": ["model", "retrieval_k", "prompt_style"],
+        }
+        baseline = self._report_for(space)
+        self.assertNotIn("agent_type", baseline)
+
+        for value in ("general", "rag", "code_gen", "", "a-type-no-catalog-has"):
+            with self.subTest(agent_type=value):
+                self.assertEqual(
+                    self._report_for({**space, "agent_type": value}), baseline
+                )
+
     def test_absent_and_unrecognized_optional_fields_still_score(self) -> None:
         """Validation must refuse bad *shapes*, not narrow the documented set.
 
