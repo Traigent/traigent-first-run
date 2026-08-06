@@ -151,9 +151,8 @@ others honor, the winner comparison is confounded - a configuration can win on a
 the other models were never given on equal terms, and no report footnote untangles that; when every
 model faces exactly the same variations, the winner is clear and the enhanced run's insight is
 accurate. So when the strong tier is a reasoning model, pin its calling convention identically in
-both runs - a chosen reasoning effort with answer headroom of `max_tokens` at least 4096 (the
-safety reference's high-effort bound, applied flat here), and no sampling parameters such a model
-rejects. Nothing else changes: temperature is already pinned for every space, and the four
+both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling parameters such a
+model rejects. Nothing else changes: temperature is already pinned for every space, and the four
 behaviour knobs are real for a reasoning model and a sampling model alike, so both branches run the
 same 6 and 48.
 
