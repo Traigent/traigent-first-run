@@ -190,6 +190,17 @@ effectively ignored when your project uses Git, asks for only the provider key b
 baseline, and activates a preserved Traigent key or asks you to add one after the checkpoint. Never
 paste secrets into chat.
 
+## SDK licensing
+
+The pinned requirements install `traigent==0.25.0`. The Traigent SDK is offered under the
+[GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.25.0/LICENSE)
+(`AGPL-3.0-only`) or, under a separate written agreement, a
+[Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.25.0/COMMERCIAL-LICENSE.md).
+Installing the package does not itself grant commercial terms. Organizations that need terms other
+than the AGPL must obtain a separate written commercial agreement from Traigent; contact
+`legal@traigent.ai`. This notice describes the SDK dependency and does not change the license terms
+for this guide repository.
+
 ## Privacy
 
 According to the

@@ -390,6 +390,30 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("never", text)
             self.assertIn("unversioned `pip install traigent`", text)
 
+    def test_readme_discloses_pinned_sdk_license_terms(self) -> None:
+        readme_source = (ROOT / "README.md").read_text()
+        readme = " ".join(readme_source.casefold().split())
+
+        for phrase in (
+            "the pinned requirements install `traigent==0.25.0`",
+            "`agpl-3.0-only`",
+            "installing the package does not itself grant commercial terms",
+            "separate written commercial agreement",
+            "legal@traigent.ai",
+            "does not change the license terms for this guide repository",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readme)
+        self.assertIn(
+            "https://github.com/Traigent/Traigent/blob/v0.25.0/LICENSE",
+            readme_source,
+        )
+        self.assertIn(
+            "https://github.com/Traigent/Traigent/blob/v0.25.0/"
+            "COMMERCIAL-LICENSE.md",
+            readme_source,
+        )
+
     def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
