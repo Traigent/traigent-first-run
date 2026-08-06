@@ -1941,22 +1941,103 @@ class SkillPackageTests(unittest.TestCase):
             text,
         )
 
+    def test_the_knob_catalog_offers_twelve_and_the_space_pays_for_four(self) -> None:
+        """The customer sees the breadth and pays for four - so both are here.
+
+        `batch_size` is absent for the same reason `max_tokens` is: it moves
+        throughput and cost without changing what the answer says. It was
+        replaced by `self_consistency`, which does change the answer and does
+        cost money to do it.
+        """
+        text = SDK_EXECUTION.read_text()
+        catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
+        for knob in (
+            "model",
+            "prompt_style",
+            "thinking_shape",
+            "pre_action_reflect",
+            "reflect",
+            "few_shot_count",
+            "task_decomposition",
+            "self_consistency",
+            "retrieval_k",
+            "context_format",
+            "tool_policy",
+            "temperature",
+        ):
+            with self.subTest(knob=knob):
+                self.assertIn(f"`{knob}`", catalog)
+        table = catalog.split("Two entries carry a precondition", 1)[0]
+        for out in ("batch_size", "max_tokens", "self_check"):
+            with self.subTest(out=out):
+                self.assertNotIn(f"`{out}`", table)
+        self.assertIn("`batch_size` and `max_tokens` are deliberately absent", catalog)
+        # `self_consistency` needs sampling diversity and this walkthrough pins
+        # temperature at 0, so it is offered only where it can do anything.
+        self.assertIn("only when the customer's own temperature is above 0", catalog)
+        # The waived detection: temperature's slot is decided by what the
+        # customer already has, never by guessing the task's type.
+        self.assertIn("do not build task-type detection", catalog)
+
+    def test_the_knob_explanations_cite_nothing(self) -> None:
+        """One plain sentence per knob, and nothing that reads as evidence.
+
+        A customer watching their run start wants to know what is being tried,
+        not to be handed reading. A percentage or a paper name in front of them
+        also reads as a promise about THEIR task, which no published result
+        about a technique ever is. So the published findings that justify the
+        catalog live in the catalog's own reasoning and in this repo's history,
+        never in the lines the customer sees.
+        """
+        text = SDK_EXECUTION.read_text()
+        section = text.split("### Say what is being tried", 1)[1].split("\n##", 1)[0]
+        # Rejoin wrapped bullets: two of them run past the file's line width,
+        # and reading only their first line would let a second sentence hide
+        # on the continuation.
+        bullets: list[str] = []
+        for line in section.splitlines():
+            if line.strip().startswith("- **"):
+                bullets.append(line.strip())
+            elif bullets and line.startswith("  ") and line.strip():
+                bullets[-1] += " " + line.strip()
+            elif not line.strip():
+                continue
+        self.assertEqual(len(bullets), 12, "one line per catalog knob")
+        for bullet in bullets:
+            with self.subTest(bullet=bullet[:40]):
+                explanation = bullet.split("** - ", 1)[1]
+                self.assertNotRegex(explanation, r"\d")
+                self.assertNotRegex(explanation, r"%")
+                self.assertNotRegex(explanation, r"https?://")
+                self.assertNotRegex(
+                    explanation,
+                    r"(?i)\b(research|study|studies|paper|published|reported|"
+                    r"benchmark|shows that|et al)\b",
+                )
+                # One sentence. Not two dressed as one.
+                self.assertEqual(explanation.rstrip().count("."), 1)
+        self.assertIn('no references, no "research shows"', section)
+
     def test_sdk_template_defines_prompt_builder(self) -> None:
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
         self.assertIn("def build_prompt(", text)
         self.assertIn('if style == "plain":', text)
         self.assertIn('elif style == "structured":', text)
-        # Four behaviour knobs, and each intervenes at a different point -
-        # `thinking_shape` before the answer, `reflect` on its correctness
-        # after, `self_check` on the output constraints. Two knobs that mean
-        # the same thing are one dimension counted twice.
+        # Four behaviour knobs, and each intervenes at a different moment -
+        # `pre_action_reflect` before any work, `thinking_shape` during the
+        # answer, `reflect` on the finished answer. Two knobs that mean the
+        # same thing are one dimension counted twice, which is why `self_check`
+        # is gone: it and `reflect` were both "look at your answer again",
+        # differing only in what the model was told to look at.
+        self.assertIn("if pre_action_reflect:", text)
         self.assertIn('if thinking_shape == "chain_of_thought":', text)
         self.assertIn("if reflect:", text)
-        self.assertIn("if self_check:", text)
+        self.assertNotIn("if self_check:", text)
+        self.assertNotIn('"self_check"', text)
         for pair in (
-            '"thinking_shape": [BASELINE_CONFIG["thinking_shape"], "chain_of_thought"]',
+            '"thinking_shape": BASELINE_SPACE["thinking_shape"]',
+            '"pre_action_reflect": [False, True]',
             '"reflect": [False, True]',
-            '"self_check": [False, True]',
         ):
             self.assertIn(pair, text)
         # `prompt_style`'s first value was renamed from "direct" when
@@ -1971,12 +2052,10 @@ class SkillPackageTests(unittest.TestCase):
 
         for phrase in (
             "BASELINE_TRIALS = positive_int(",
-            '"TRAIGENT_FIRST_RUN_BASELINE_TRIALS",',
-            "default=6,",
             "ENHANCED_MAX_TRIALS = positive_int(",
             '"TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS",',
             "default=12,",
-            "assert configuration_count(BASELINE_SPACE) == 6",
+            "assert configuration_count(BASELINE_SPACE) == 12",
             "assert configuration_count(ENHANCED_SPACE) == 48",
             # The two asserts that keep those counts from drifting rather than
             # merely stating today's value. Deleting either left every count
@@ -1986,7 +2065,10 @@ class SkillPackageTests(unittest.TestCase):
             'len(ENHANCED_SPACE["temperature"]) == 1',
             "set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) "
             "for knob in BASELINE_SPACE",
-            "assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)",
+            # EQUAL, not "at most": `grid` enumerates in order and stops at
+            # the cap, so a cap below the size silently drops whichever rows
+            # grid ordered last rather than running a smaller sweep.
+            "assert BASELINE_TRIALS == configuration_count(BASELINE_SPACE)",
             "assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)",
             "configuration_space=BASELINE_SPACE",
             "max_trials=BASELINE_TRIALS",
@@ -1995,9 +2077,25 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+        # Each default pinned inside ITS OWN positive_int block. Both counts are
+        # 12 now, so an `assertIn("default=12,", text)` over the whole file says
+        # nothing about either: flipping the baseline default back to 6 left the
+        # enhanced one satisfying the assertion and the suite green.
+        for name, default in (
+            ("BASELINE_TRIALS", "default=12,"),
+            ("ENHANCED_MAX_TRIALS", "default=12,"),
+        ):
+            with self.subTest(name=name):
+                block = text.split(f"{name} = positive_int(", 1)[1].split(")", 1)[0]
+                self.assertIn(f'"TRAIGENT_FIRST_RUN_{name}",', block)
+                self.assertIn(default, block)
+
         for phrase in (
-            "six baseline rows and a 12-trial enhanced cap",
-            "adds three real one-call controls: thinking shape, reflect, and self-check",
+            "twelve baseline rows and a 12-trial enhanced cap",
+            "adds two more real one-call controls: pre-action reflect and reflect",
+            # The doubled baseline is disclosed in the words the customer reads,
+            # not left for them to derive from two numbers.
+            "this doubles the baseline's paid trials",
             "`12` is therefore the ceiling and not a floor beneath a higher count",
             "max_trials` is a cap rather than an sdk-enforced minimum",
             # The 10 floor stays here and only here on the reference side: it
@@ -2015,24 +2113,30 @@ class SkillPackageTests(unittest.TestCase):
         enhanced_block = text.split("ENHANCED_SPACE = {", 1)[1].split(
             "def configuration_count", 1
         )[0]
-        # The baseline's one axis beyond `model` is `prompt_style`, and it
-        # must be a knob the enhanced space also carries - otherwise the
-        # baseline ranks a lever the enhanced run will never use, which is
-        # exactly what temperature became when it was pinned.
+        # The baseline's two axes beyond `model` are `prompt_style` and
+        # `thinking_shape`, and both must be knobs the enhanced space also
+        # carries - otherwise the baseline ranks a lever the enhanced run will
+        # never use, which is exactly what temperature became when it was
+        # pinned. Two rather than one because the selection rule downstream
+        # reads the baseline to choose the enhanced knobs.
         self.assertIn(
             '"prompt_style": [BASELINE_CONFIG["prompt_style"], "structured"]',
             baseline_block,
         )
+        self.assertIn(
+            '"thinking_shape": [BASELINE_CONFIG["thinking_shape"], "chain_of_thought"]',
+            baseline_block,
+        )
         self.assertIn('"temperature": [BASELINE_CONFIG["temperature"]]', baseline_block)
-        for pinned in ("thinking_shape", "reflect", "self_check"):
+        for pinned in ("pre_action_reflect", "reflect"):
             with self.subTest(pinned=pinned):
                 self.assertIn(
                     f'"{pinned}": [BASELINE_CONFIG["{pinned}"]]', baseline_block
                 )
         self.assertIn('"prompt_style": BASELINE_SPACE["prompt_style"]', enhanced_block)
         self.assertIn('"temperature": BASELINE_SPACE["temperature"]', enhanced_block)
+        self.assertIn('"pre_action_reflect": [False, True]', enhanced_block)
         self.assertIn('"reflect": [False, True]', enhanced_block)
-        self.assertIn('"self_check": [False, True]', enhanced_block)
 
         code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
         module = ast.parse(code)
@@ -2084,7 +2188,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
-            "BASELINE_TRIALS": 4,
+            "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 10,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
@@ -2092,9 +2196,9 @@ class SkillPackageTests(unittest.TestCase):
 
         # Exact, and asserted in the template itself so the number in the
         # prose cannot drift from the number the search receives. 3 models x 2
-        # prompt styles, and 3 models x 4 binary behaviour knobs.
+        # prompt styles x 2 thinking shapes, and 3 models x 4 binary knobs.
         count = namespace["configuration_count"]
-        self.assertEqual(count(namespace["BASELINE_SPACE"]), 6)
+        self.assertEqual(count(namespace["BASELINE_SPACE"]), 12)
         self.assertEqual(count(namespace["ENHANCED_SPACE"]), 48)
         self.assertEqual(len(namespace["BEHAVIOUR_KNOBS"]), 4)
         for knob in namespace["BEHAVIOUR_KNOBS"]:
@@ -2146,9 +2250,9 @@ class SkillPackageTests(unittest.TestCase):
         build_prompt = namespace["build_prompt"]
         off = {
             "style": "plain",
+            "pre_action_reflect": False,
             "thinking_shape": "direct",
             "reflect": False,
-            "self_check": False,
         }
         # Every knob at its baseline value must leave the message untouched, or
         # the baseline is not the agent's current behaviour.
@@ -2160,16 +2264,22 @@ class SkillPackageTests(unittest.TestCase):
             name: build_prompt("task", **{**off, name: value})
             for name, value in (
                 ("style", "structured"),
+                ("pre_action_reflect", True),
                 ("thinking_shape", "chain_of_thought"),
                 ("reflect", True),
-                ("self_check", True),
             )
         }
         self.assertIn("Task:\ntask", variants["style"])
+        self.assertIn("restate what is being asked", variants["pre_action_reflect"])
         self.assertIn("step by step", variants["thinking_shape"])
         self.assertIn("reconsider", variants["reflect"])
-        self.assertIn("silently check", variants["self_check"])
         self.assertEqual(len(set(variants.values())), 4)
+        # `pre_action_reflect` plans BEFORE the work and `thinking_shape`
+        # derives DURING it. For a single-call agent those collapse into each
+        # other unless the wording holds them apart, and a collapsed pair is
+        # the `pre_action_reflect` mistake again under new names.
+        self.assertNotIn("step by step", variants["pre_action_reflect"])
+        self.assertNotIn("restate what is being asked", variants["thinking_shape"])
 
         invalid_namespace = {
             "math": __import__("math"),
@@ -2200,7 +2310,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
-            "BASELINE_TRIALS": 4,
+            "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 10,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
         }
@@ -2208,7 +2318,7 @@ class SkillPackageTests(unittest.TestCase):
             compile(executable, "<sdk-reasoning-strong-tier>", "exec"),
             reasoning_namespace,
         )
-        self.assertEqual(count(reasoning_namespace["BASELINE_SPACE"]), 6)
+        self.assertEqual(count(reasoning_namespace["BASELINE_SPACE"]), 12)
         self.assertEqual(count(reasoning_namespace["ENHANCED_SPACE"]), 48)
         self.assertEqual(
             reasoning_namespace["ENHANCED_SPACE"], namespace["ENHANCED_SPACE"]
@@ -2271,7 +2381,7 @@ class SkillPackageTests(unittest.TestCase):
             "this decides which knobs and which two values each, never how many",
             "the managed run does the searching",
             # The evidence is weak and must be described as weak.
-            "at most three observations a side",
+            "at most six observations a side",
             "`the baseline's best combination used X` and never as `X is better`",
             "never as proof that a replaced knob does nothing",
             "the customer's own knob wins over one of this guide's suggestions",
@@ -2306,7 +2416,7 @@ class SkillPackageTests(unittest.TestCase):
         sdk = SDK_EXECUTION.read_text()
         for phrase in (
             'State them exactly,\nnever as "roughly" or "about"',
-            "3 models × 2 prompt styles = 6 configurations",
+            "3 models × 2 prompt styles × 2 thinking shapes = 12 configurations",
             "3 models × 4 binary behaviour knobs = 48 configurations",
         ):
             with self.subTest(phrase=phrase):
@@ -2343,7 +2453,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("preserve the user's existing baseline", skill)
         self.assertIn("including its original row count", skill)
         self.assertIn("preserve a user-owned baseline space unchanged", safety)
-        self.assertIn("its row count exactly; do not expand it to six", sdk)
+        self.assertIn("its row count exactly; do not expand it to twelve", sdk)
         self.assertIn("real one-row fixed configuration remains one row", sdk)
         self.assertIn("preserve its exact model set", sdk)
         self.assertIn("add non-model controls by default", sdk)
@@ -2452,7 +2562,7 @@ class SkillPackageTests(unittest.TestCase):
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
                 "reflect": False,
-                "self_check": False,
+                "pre_action_reflect": False,
             },
         )
         strong_call = calls[-1]
@@ -2468,7 +2578,7 @@ class SkillPackageTests(unittest.TestCase):
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
                 "reflect": False,
-                "self_check": False,
+                "pre_action_reflect": False,
             },
         )
         ordinary_call = calls[-1]
@@ -3800,7 +3910,7 @@ class SkillPackageTests(unittest.TestCase):
         # that measures breadth of values rather than usefulness of knobs. It
         # is stated here rather than smoothed over, and it is not a reason to
         # add a third value to a knob that has two real settings.
-        self.assertEqual(pillar.score, 80)
+        self.assertEqual(pillar.score, 94)
         counted = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
             counted.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
@@ -3884,7 +3994,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
-            "BASELINE_TRIALS": 4,
+            "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 12,
         }
         exec(
@@ -4268,8 +4378,8 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         no_op = self._wiring_probe_namespace(
-            build_prompt=lambda message, *, style, thinking_shape, reflect, self_check: (
-                message + ("\n\ncheck" if self_check else "")
+            build_prompt=lambda message, *, style, thinking_shape, reflect, pre_action_reflect: (
+                message + ("\n\ncheck" if pre_action_reflect else "")
             )
         )
         with_no_op = no_op["probe_wiring"](
@@ -4282,7 +4392,7 @@ class SkillPackageTests(unittest.TestCase):
             "probe_wiring must stop vouching for it",
         )
         self.assertEqual(
-            with_no_op["self_check"],
+            with_no_op["pre_action_reflect"],
             "visible",
             "the probe must still credit the knobs that do reach the request",
         )
@@ -4301,9 +4411,9 @@ class SkillPackageTests(unittest.TestCase):
 
         def model_dependent(message: str, config: dict) -> dict:
             if config["model"] != namespace["BASELINE_CONFIG"]["model"]:
-                # This model ignores self_check and nothing else: same request
+                # This model ignores pre_action_reflect and nothing else: same request
                 # for either value of it, every other knob still honoured.
-                config = {**config, "self_check": False}
+                config = {**config, "pre_action_reflect": False}
             return real_build_request(message, config)
 
         namespace["build_request"] = model_dependent
@@ -4311,7 +4421,7 @@ class SkillPackageTests(unittest.TestCase):
             namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
         )
         self.assertEqual(
-            verdicts["self_check"],
+            verdicts["pre_action_reflect"],
             "partial",
             "a knob only the base model consumes must not read as proven",
         )
@@ -4342,10 +4452,10 @@ class SkillPackageTests(unittest.TestCase):
 
         def input_dependent(message: str, config: dict) -> dict:
             request = real_build_request(message, config)
-            if message == trigger and config["self_check"]:
+            if message == trigger and config["pre_action_reflect"]:
                 request["messages"] = [{"role": "user", "content": "rewritten"}]
             else:
-                # Every other input ignores self_check entirely.
+                # Every other input ignores pre_action_reflect entirely.
                 request["messages"] = [{"role": "user", "content": message}]
             return request
 
@@ -4354,7 +4464,7 @@ class SkillPackageTests(unittest.TestCase):
             namespace["ENHANCED_SPACE"], namespace["BASELINE_CONFIG"]
         )
         self.assertEqual(
-            verdicts["self_check"],
+            verdicts["pre_action_reflect"],
             "visible",
             "a knob that acts only on one of the probed inputs is wired, and "
             "refusing to load is a false refusal that blocks a paid run",
@@ -4432,7 +4542,7 @@ class SkillPackageTests(unittest.TestCase):
             # All four behaviour knobs act through the prompt, so a model
             # that takes no prompt shaping at all is asymmetric in all four.
             # It was two while the space also swept temperature.
-            {"prompt_style", "thinking_shape", "reflect", "self_check"},
+            {"prompt_style", "thinking_shape", "reflect", "pre_action_reflect"},
             "the probe must still see the asymmetry it saw before",
         )
         self.assertEqual(
@@ -4446,7 +4556,7 @@ class SkillPackageTests(unittest.TestCase):
                 "prompt_style": [base_model],
                 "thinking_shape": [base_model],
                 "reflect": [base_model],
-                "self_check": [base_model],
+                "pre_action_reflect": [base_model],
             },
             "the load must name the models that honour a conditional knob",
         )
@@ -4454,11 +4564,11 @@ class SkillPackageTests(unittest.TestCase):
         for expected in ("conditional dimension", "prompt_style", base_model):
             self.assertIn(expected, report)
 
-        # A builder that reads only `self_check` makes the other three prompt
+        # A builder that reads only `pre_action_reflect` makes the other three prompt
         # knobs no-ops at once, and every one of them must fail the load.
         dead = self._wiring_probe_namespace(
-            build_prompt=lambda message, *, style, thinking_shape, reflect, self_check: (
-                message + ("\n\ncheck" if self_check else "")
+            build_prompt=lambda message, *, style, thinking_shape, reflect, pre_action_reflect: (
+                message + ("\n\ncheck" if pre_action_reflect else "")
             )
         )
         with self.assertRaises(AssertionError) as raised:
@@ -5143,7 +5253,34 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # 233_750 and not 233_500: 519 bytes rather than 269, because the
         # previous ceiling's 234 is what made every branch in this batch
         # re-litigate the same arithmetic. Measured 233_231.
-        budget = 233_750
+        #
+        # Raised to 242_250 deliberately, and this is the reason.
+        #
+        # The knob catalog is the one addition here that is content rather than
+        # rule. Twelve knobs, each with the condition that selects it, and
+        # twelve one-sentence explanations printed to the customer once the
+        # enhanced run is under way. It is bytes that no rewording folds away,
+        # because a list of twelve things is twelve things - and it is the
+        # point: the customer sees the breadth Traigent knows and pays for
+        # four, which cannot be said without saying what the other eight are.
+        # The explanations are held to one sentence each and forbidden from
+        # citing anything (`test_the_knob_explanations_cite_nothing`), so the
+        # section cannot grow into an essay under a later edit.
+        #
+        # What it pays back: `self_check` is gone. It and `reflect` were one
+        # knob under two names, and every place that listed the four behaviour
+        # knobs listed both, plus the paragraph in the prompt builder
+        # explaining how they differed - a distinction that had to be restated
+        # precisely because no reader could keep it.
+        #
+        # The baseline moving from 6 to 12 costs almost nothing in bytes: it is
+        # the same sentences with different numerals, plus the disclosure that
+        # the customer's paid trials doubled, which is one sentence and not
+        # optional.
+        #
+        # 242_250 and not 242_000: 454 bytes of headroom rather than 204, on
+        # the same reasoning the 519 above used. Measured 241_796.
+        budget = 242_250
         self.assertLess(
             total,
             budget,

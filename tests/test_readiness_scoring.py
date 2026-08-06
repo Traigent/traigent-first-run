@@ -56,25 +56,108 @@ class KnobVariationTests(unittest.TestCase):
         self.assertEqual(knob.quality, 1.0)
         self.assertEqual(knob.notes, ())
 
-    def test_single_value_knob_is_not_a_knob(self) -> None:
+    def test_a_pinned_knob_earns_the_pin_credit_and_nothing_more(self) -> None:
+        """One declared value is a decision, not a search.
+
+        `temperature: [0]` on a task that must be reproducible is expertise,
+        so it is not scored zero - but it contributes no configurations, so it
+        is scored almost zero. The rung is grafted onto the numeric path: span,
+        resolution and coverage stay honestly zero beside it.
+        """
         knob = MODULE.knob_variation("temperature", [0.7])
-        self.assertEqual(knob.quality, 0.0)
+        self.assertEqual(knob.quality, MODULE.PINNED_KNOB_CREDIT)
+        self.assertEqual(knob.quality, 0.10)
+        self.assertEqual((knob.span, knob.resolution, knob.coverage), (0.0, 0.0, 0.0))
+        self.assertEqual(knob.effective_values, 1)
         self.assertIn("only one value - nothing to search", knob.notes)
 
-    def test_categorical_knob_scores_on_breadth(self) -> None:
-        one = MODULE.knob_variation("prompt_policy", ["direct"])
+    def test_the_pin_credit_is_every_knob_type_not_only_model(self) -> None:
+        """The owner's example is numeric; the rule is not numeric-only."""
+        for name, values in (
+            ("temperature", [0.0]),
+            ("prompt_style", ["plain"]),
+            ("reflect", [False]),
+            ("model", ["provider/only"]),
+            ("retrieval_depth", [5]),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    MODULE.knob_variation(name, values).quality,
+                    MODULE.PINNED_KNOB_CREDIT,
+                )
+
+    def test_a_collapsed_sweep_is_not_a_pin_and_still_scores_zero(self) -> None:
+        """Two values inside the noise floor is a sweep that does not exist.
+
+        The author did not pin this knob - they tried to sweep it. Paying the
+        pin credit here would pay for the mistake the noise floor names.
+        """
+        knob = MODULE.knob_variation("temperature", [0.1, 0.115])
+        self.assertEqual(knob.distinct_values, 2)
+        self.assertEqual(knob.effective_values, 1)
+        self.assertEqual(knob.quality, 0.0)
+
+    def test_a_closed_categorical_knob_scores_full_breadth_at_two_values(self) -> None:
+        """Two values is the whole comparison, not half of one.
+
+        `(distinct - 1) / 2` scored two at 50%, which asserts a third value
+        exists and would be better - an assertion nothing here can make, since
+        a categorical knob's value list is not knowable (`thinking_shape` may
+        gain tree-of-thought and graph-of-thought). So two or more is full.
+        """
         two = MODULE.knob_variation("prompt_policy", ["direct", "structured"])
         three = MODULE.knob_variation(
             "prompt_policy", ["direct", "structured", "criteria_first"]
         )
-        self.assertEqual(one.quality, 0.0)
-        self.assertGreater(three.quality, two.quality)
+        self.assertEqual(two.quality, 1.0)
         self.assertEqual(three.quality, 1.0)
+        for values in ([False, True], ["direct", "chain_of_thought"]):
+            with self.subTest(values=values):
+                self.assertEqual(
+                    MODULE.knob_variation("thinking_shape", values).quality, 1.0
+                )
+
+    def test_model_keeps_a_ladder_because_more_models_really_is_better(self) -> None:
+        """The one categorical knob where the value count means something.
+
+        Three rungs - cheap, mid, strong - are what it takes to see the
+        cost-for-quality trade the middle one makes. Two can only say which of
+        the two won.
+        """
+        ladder = {
+            1: MODULE.PINNED_KNOB_CREDIT,
+            2: 0.60,
+            3: 1.0,
+            4: 1.0,
+        }
+        for count, expected in ladder.items():
+            with self.subTest(models=count):
+                values = [f"provider/m{index}" for index in range(count)]
+                self.assertEqual(
+                    MODULE.knob_variation("model", values).quality, expected
+                )
+        # Every open categorical knob names a model, so all of them ladder.
+        for name in MODULE.OPEN_CATEGORICAL_KNOBS:
+            with self.subTest(name=name):
+                self.assertEqual(MODULE.knob_variation(name, ["a", "b"]).quality, 0.60)
 
     def test_duplicate_values_do_not_inflate_breadth(self) -> None:
         knob = MODULE.knob_variation("prompt_policy", ["direct", "direct", "direct"])
         self.assertEqual(knob.distinct_values, 1)
-        self.assertEqual(knob.quality, 0.0)
+        self.assertEqual(knob.quality, MODULE.PINNED_KNOB_CREDIT)
+
+    def test_an_unranged_numeric_knob_keeps_the_old_breadth_formula(self) -> None:
+        """Full credit at two values is a CATEGORICAL rule, not a numeric one.
+
+        For a number, "how many values exist" is not unknowable, it is
+        unbounded - infinitely many sit between any two - so breadth is standing
+        in for a span this scorer cannot compute, and paying it full marks would
+        hand out the narrow-sweep credit the numeric path exists to withhold.
+        """
+        two = MODULE.knob_variation("retrieval_depth", [1, 10])
+        three = MODULE.knob_variation("retrieval_depth", [1, 5, 10])
+        self.assertEqual(two.quality, 0.5)
+        self.assertEqual(three.quality, 1.0)
 
     def test_seed_is_excluded_from_scoring(self) -> None:
         knob = MODULE.knob_variation("seed", [1, 2, 3])
@@ -654,9 +737,9 @@ WALKTHROUGH_CONFIG_SPACE = {
     "knobs": {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
         "prompt_style": ["plain", "structured"],
+        "pre_action_reflect": [False, True],
         "thinking_shape": ["direct", "chain_of_thought"],
         "reflect": [False, True],
-        "self_check": [False, True],
         "temperature": [0.0],
     },
     "max_trials": 12,
@@ -664,9 +747,9 @@ WALKTHROUGH_CONFIG_SPACE = {
         "model",
         "temperature",
         "prompt_style",
+        "pre_action_reflect",
         "thinking_shape",
         "reflect",
-        "self_check",
     ],
 }
 
@@ -738,7 +821,7 @@ class AgentScoringTests(unittest.TestCase):
         # them plus a pinned temperature average 0.5. That is the cost of an
         # exactly predictable 48, paid in the one sub-score that measures
         # breadth of values rather than usefulness of knobs.
-        self.assertEqual(pillar.score, 80)
+        self.assertEqual(pillar.score, 94)
         self.assertEqual(pillar.confidence, 1.0)
 
     def test_the_reasoning_branch_is_the_same_document(self) -> None:
@@ -760,7 +843,7 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(reasoning)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 80)
+        self.assertEqual(pillar.score, 94)
 
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
@@ -1112,7 +1195,7 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], [])
         # The walkthrough document's own score; the point here is that the
         # float spelling reaches it rather than exiting 2.
-        self.assertEqual(pillar.score, 80)
+        self.assertEqual(pillar.score, 94)
         self.assertEqual(
             pillar.score,
             MODULE.score_agent(
@@ -1640,7 +1723,7 @@ class DocumentedSchemaTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 80)
+        self.assertEqual(pillar.score, 94)
         count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
             count.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
@@ -1958,7 +2041,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 80)
+        self.assertEqual(agent["score"], 94)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )

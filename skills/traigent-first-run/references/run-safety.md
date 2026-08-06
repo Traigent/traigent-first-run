@@ -394,7 +394,16 @@ as "effective" depends on whether the knob has a range at all:
 - A numeric knob with **no** canonical range and no `bounds` entry is scored on breadth alone. Any
   two distinct values clear the cap, however close together they are - `[1, 1.01]` counts. There is
   no range to measure a noise floor against, so nothing collapses them.
-- A categorical or boolean knob needs two distinct values.
+- A categorical or boolean knob needs two distinct values. Two is also where it scores FULL
+  breadth, not half: for a categorical knob there is no knowable "how many values exist" to divide
+  by - `thinking_shape` may have two shapes today and four next year - so a denominator invented
+  here would only underprice an honest two-value comparison. `model` is the one exception and keeps
+  a ladder, because there more choices genuinely is better: 3 or more scores 100, 2 scores 60.
+- Any knob declared with exactly ONE value scores 10, whatever its type. It adds nothing to the
+  search, so it earns almost nothing; it is not zero because pinning can be the right call made on
+  purpose - `temperature: [0]` on a task that must be reproducible is a decision, not an omission.
+  Several values that collapse into one is a different case and still scores 0: that author did not
+  pin the knob, they tried to sweep it and the sweep does not exist.
 - `seed` never counts, however many values it lists.
 
 Three honesty rules govern the file:
@@ -447,7 +456,9 @@ Three honesty rules govern the file:
   the next write to replace it - staleness is removed by the run, not by the reader noticing.
 
 The walkthrough's document - 3 models x 4 binary behaviour knobs, with temperature declared at its
-one pinned value because the agent does consume it:
+one pinned value because the agent does consume it. A pinned knob scores 10 of 100 on breadth
+rather than 0: declaring it says the author considered the knob and decided, which is worth a
+little, and worth only a little because the search still gets one value:
 
 ```json
 {
@@ -455,14 +466,14 @@ one pinned value because the agent does consume it:
   "knobs": {
     "model": ["provider/current", "provider/alternative", "provider/strong"],
     "prompt_style": ["plain", "structured"],
+    "pre_action_reflect": [false, true],
     "thinking_shape": ["direct", "chain_of_thought"],
     "reflect": [false, true],
-    "self_check": [false, true],
     "temperature": [0.0]
   },
   "max_trials": 12,
   "wired": [
-    "model", "temperature", "prompt_style", "thinking_shape", "reflect", "self_check"
+    "model", "temperature", "prompt_style", "pre_action_reflect", "thinking_shape", "reflect"
   ]
 }
 ```
@@ -593,12 +604,17 @@ decision. This section owns configuration-selection depth and execution/reportin
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
 space unchanged, even when it contains one row. The generated walkthrough's two spaces have exact
 sizes, stated as exact numbers and never as "roughly": the baseline is **3 models x 2 prompt
-styles = 6 configurations** and the enhanced space is **3 models x 4 binary behaviour knobs = 48
-configurations**, both holding whether or not the strong rung reasons.
+styles x 2 thinking shapes = 12 configurations** and the enhanced space is **3 models x 4 binary
+behaviour knobs = 48 configurations**, both holding whether or not the strong rung reasons. The
+baseline's 12 trials are double the 6 this walkthrough used to spend, and the approval card says so
+in those words before any of it is spent.
 `references/sdk-execution.md` owns the spaces, the derivation, and the asserts.
 
-The four behaviour knobs are prompt style, thinking shape (direct or chain-of-thought), reflect,
-and self-check; temperature is pinned at 0, so every swept knob is real for every model. The
+The four behaviour knobs are prompt style, pre-action reflect, thinking shape (direct or
+chain-of-thought), and reflect; temperature is pinned at 0, so every swept knob is real for every
+model. They are four of a twelve-knob catalog `references/sdk-execution.md` owns; the customer sees
+the catalog and pays for four. `self_check` is not among them - it and `reflect` were one knob
+under two names, and `reflect` is the one that stayed. The
 models are the fast, mid, and strong rungs of the walkthrough model
 ladder from the selected route - the strong rung one step below the vendor's newest flagship, at a
 pinned effort in both runs when it is a reasoning model, and never the flagship itself. The
@@ -616,7 +632,7 @@ generated example's controls onto an unrelated task.
 
 **The baseline result chooses the enhanced space's values, not only its knobs.** Which knobs fill
 the four slots is decided by the baseline-evidence selection above. Which *two values* each slot
-carries is decided here, from the same 6 rows, by reading the combination that scored **lowest**:
+carries is decided here, from the same 12 rows, by reading the combination that scored **lowest**:
 the values distinguishing it are the ones the baseline showed least for, and re-testing them spends
 trials on territory already measured as poor. The gap between that lowest score and the best one
 picks between two moves, measured with the **0.05 normalized separation margin** that calibration
@@ -633,8 +649,8 @@ Neither move changes the size. The space stays 3 models x 4 binary knobs = 48; t
 knobs and which two values each, never how many. Neither is a search either: the managed run does
 the searching, and this only decides what space it is handed.
 
-Six trials split across a knob's values is at most three observations a side, so state it as `the
-baseline's best combination used X` and never as `X is better`, and never as proof that a replaced
+Twelve trials split across a knob's two values is at most six observations a side, so state it as
+`the baseline's best combination used X` and never as `X is better`, and never as proof that a replaced
 knob does nothing. Where the evidence ties, the customer's own knob wins over one of this guide's
 suggestions.
 
@@ -659,8 +675,10 @@ knob entirely, so pinning it always is both safer and simpler than pinning it so
 baseline's temperature behavior exactly, including an unset provider default; record resulting
 nondeterminism as a limitation rather than silently changing the baseline. Multi-call composite
 controls multiply
-cost and require a concrete failure-mode justification; the generated default's self-check stays
-within one provider call.
+cost and require a concrete failure-mode justification; every knob in the generated default stays
+within one provider call. `self_consistency` is the catalog's one deliberate exception, and it is
+selectable only for a customer already running above temperature 0 - at a pinned 0 every sample
+repeats, so it would multiply the bill and change no answer.
 
 Match each knob to how the agent actually fails: repair (re-prompt once on a malformed or erroring
 output), self-consistency (sample N and vote, for unstable answers), similarity-selected retrieval
@@ -672,7 +690,7 @@ Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
 not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `auto`, `grid`, or
 `random` unless a named selector is confirmed to run consistently on the installed SDK. For an
-assistant-prepared baseline, use local `grid` so all six distinct rows are predictable. For a
+assistant-prepared baseline, use local `grid` so all twelve distinct rows are predictable. For a
 user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
 connected `auto` with a default cap of 12 for the enhanced space, then report the actual count and
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
