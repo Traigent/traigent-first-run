@@ -131,8 +131,13 @@ worth explaining and which are worth fixing first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
-it is the card declining to call a project Strong on evidence it has not seen. Calibrating the
-evaluator is usually what moves it.
+it is the card declining to call a project Strong on evidence it has not seen. The card names which
+pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
+what fills that one in. It moves the band only once the score is clear of every ceiling: on the
+opening card the missing settings document holds the whole score at 45, inside Partial, and a band
+that low is never the one thin evidence was holding down - so calibrating there fills in the two
+lines and leaves `45/100 PARTIAL` exactly where it was. The band moves at the close, on a score no
+ceiling is capping.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
@@ -206,8 +211,8 @@ content-free labels inside the agent; raw prompt text is not used as a configura
 walkthrough does not independently audit network packets; it stops if observed runtime behavior
 contradicts that contract.
 
-That backend boundary is separate from local retention. SDK 0.25.0 normally writes each example's
-`query`, `response`, and `expected` text to local optimization logs. The walkthrough sets
+That backend boundary is separate from local retention. SDK 0.25.0 writes each example's `query`,
+`response`, and `expected` text to local optimization logs by default. The walkthrough sets
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps
 assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined

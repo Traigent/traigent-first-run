@@ -1028,6 +1028,128 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
         self.assertIn("finished stages as compact checkmarks", skill)
 
+    def test_the_opening_card_states_its_blank_lines_without_hedging(self) -> None:
+        """Four hedges over a state the scorer produces unconditionally.
+
+        SKILL.md mandates omitting *every* config-space file found before this
+        run's enhanced search, on every guided run including a zero-anchor one.
+        So no settings document ever reaches an opening score: `score_agent`
+        takes the no-document branch every time, `nothing_to_search_pillar`
+        marks two of its three sub-scores unmeasured behind one shared evidence
+        string, and the opening card reads `1 of 3 checks measured` for a
+        perfect project as readily as for a broken one. Measured against a
+        60-row production-sourced dataset and a passing deterministic
+        evaluator: `45/100 PARTIAL`, agent `1 of 3`, evaluation `2 of 4`.
+
+        The glossary called that "usually", and counted two blank lines where
+        the card prints three - the third being the whole Agent pillar, which
+        never names its own three checks because they collapse into that one
+        line. A reader who is told "usually" goes looking for what they did
+        wrong; there is nothing to find.
+        """
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        for phrase in (
+            # Unconditional, because the mandate is.
+            "an opening score always reports that none was provided yet",
+            "why three lines are blank at the start, every time",
+            # The third blank named, and named as a pillar rather than a check.
+            "the third is the whole agent pillar",
+            "no settings document ever reaches an opening score",
+            # Why its three named lines never print by name.
+            "one absent input is one finding, not three",
+            # And the point of the paragraph, which survives the correction.
+            "none of them is something you were supposed to bring",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, glossary)
+        for hedge in (
+            "an opening score usually reports",
+            "why two of them are usually blank",
+        ):
+            with self.subTest(hedge=hedge):
+                self.assertNotIn(hedge, glossary)
+
+        # The mandate this is read off, so the two cannot drift apart silently.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "explicitly omit every config-space file found before this run's "
+            "enhanced search",
+            skill,
+        )
+        self.assertIn("every guided run does this", skill)
+
+    def test_the_band_sentence_matches_what_calibration_can_actually_move(
+        self,
+    ) -> None:
+        """README told a first-time reader to calibrate and watch the band move.
+
+        It does not move there, and the code says why before any run: the
+        opening card has no settings document by mandate, so
+        `agent-no-varying-knobs` holds the whole score at 45. `band_for`
+        lowers a band for thin evidence and never raises one - a band at or
+        below `CONFIDENCE_BAND_CEILING` is returned untouched - and PARTIAL is
+        below WORKABLE. Measured on the same fixture, calibration moved the
+        opening card from `45/100 PARTIAL` to `45/100 PARTIAL`, and moved a
+        post-search card with a settings document from WORKABLE to EXCELLENT on
+        an unchanged number. So the sentence was true only in the state the
+        reader is not in when they read it.
+
+        Asserted against the constants rather than restated, because the claim
+        "PARTIAL is below the ceiling" is exactly what would go stale if the
+        band table were ever retuned.
+        """
+        self.assertEqual(READINESS.CONFIDENCE_BAND_CEILING, "WORKABLE")
+        order = READINESS.BAND_ORDER
+        self.assertLess(order.index("PARTIAL"), order.index("WORKABLE"))
+        # 45 really is PARTIAL, so the sentence's arithmetic is the code's.
+        self.assertEqual(READINESS.band_for(45, 1.0)[0], "PARTIAL")
+        # And a band at or below the ceiling is never lifted by more
+        # evidence, nor demoted for the lack of it: thin or full, 45 is
+        # PARTIAL, which is the whole reason calibration cannot move it.
+        self.assertEqual(READINESS.band_for(45, 0.35, 0.35), ("PARTIAL", False))
+
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for phrase in (
+            "the card names which pillar is thin",
+            "`evaluation 100/100 (2 of 4 checks measured)`",
+            "calibrating the evaluator is what fills that one in",
+            "it moves the band only once the score is clear of every ceiling",
+            "holds the whole score at 45",
+            "leaves `45/100 partial` exactly where it was",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readme)
+        self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+
+    def test_local_example_retention_is_stated_the_same_way_in_both_homes(
+        self,
+    ) -> None:
+        """A retention claim a customer reads must not be softer than the rule.
+
+        `run-safety.md` states the fact correctly - the SDK writes example
+        `query`, `response` and `expected` text to local logs **by default**,
+        which is precise because `TRAIGENT_LOG_EXAMPLE_CONTENT` controls it.
+        README said "normally", which reads as a tendency rather than a
+        setting, in the one paragraph a reader consults to decide whether their
+        prompts and answers stay on their machine. Same fact, same words.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        claim = (
+            "`query`, `response`, and `expected` text to local optimization "
+            "logs by default"
+        )
+        for text in (readme, safety):
+            with self.subTest(document="readme" if text is readme else "run-safety"):
+                self.assertIn(claim, text)
+        self.assertNotIn("normally writes each example's", readme)
+        # The env var is what makes "by default" the right word, so both homes
+        # have to keep naming it.
+        for text in (readme, safety):
+            self.assertIn("traigent_log_example_content=false", text)
+
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -4787,7 +4909,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # This branch then buys 810 bytes in glossary.md, all of it spent
+        # replacing a hedge with the count the code produces. "Why two of them
+        # are usually blank" named two blank lines where the card prints three
+        # and called an unconditional state a tendency; the corrected paragraph
+        # has to name the third blank (the whole Agent pillar), say why no
+        # settings document ever reaches an opening score, and say why that
+        # pillar's three named checks collapse into one line - three facts the
+        # old sentence got its brevity by not stating. Depth about the card
+        # belongs in glossary.md, which is the reference the assistant phrases
+        # the card from, so this is the policy above working rather than being
+        # spent. Measured 229_217, plus the same 371-byte headroom, rounded up
+        # to the next 250.
+        budget = 229_750
         self.assertLess(
             total,
             budget,
