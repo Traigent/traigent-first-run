@@ -2268,6 +2268,150 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertIsNone(MODULE.power_ceiling(None))
 
 
+def _cap_constructions() -> list[tuple[str, ast.expr]]:
+    """Every `Cap(...)` written in readiness.py, as (condition, ceiling node).
+
+    Read off the source rather than from a list kept beside it, for the reason
+    the sibling remedy test already gives: a hand-maintained expected list is
+    updated by whoever added the cap, so it agrees with them by construction.
+    """
+    source = Path(MODULE.__file__).read_text(encoding="utf-8")
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Cap"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            found.append((node.args[0].value, node.args[1]))
+    return found
+
+
+class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
+    """The ordering was evident, unwritten, and unenforced - so it had failed.
+
+    Worse conditions get lower ceilings. Nothing said so and nothing checked
+    it, and before #144 two overlapping unreadable-dataset conditions were
+    ranked by whichever author wrote each one. These tests are the check that
+    was missing; `CAP_SEVERITY_ORDER` in the module is the statement.
+
+    They deliberately assert the ORDER and never a value. Which number a
+    condition carries is the owner's call; that a new cap cannot be dropped in
+    out of sequence is not.
+    """
+
+    def test_every_cap_the_scorer_can_raise_has_a_place_in_the_order(self) -> None:
+        built = {condition for condition, _ceiling in _cap_constructions()}
+        self.assertTrue(built, "found no Cap construction to check")
+        self.assertEqual(
+            built - set(MODULE.CAP_CEILING),
+            set(),
+            "a cap can be raised whose ceiling nothing ranks against the others",
+        )
+        self.assertEqual(
+            set(MODULE.CAP_CEILING) - built,
+            set(),
+            "a ceiling is ranked for a condition the scorer never raises",
+        )
+        # And the two registries describe the same set of conditions. They
+        # answer different questions - what to do, and how far the score may
+        # rise - about exactly the same list, so a cap in one and not the other
+        # is a cap that is half-declared.
+        self.assertEqual(set(MODULE.CAP_CEILING), set(MODULE.ACTION_FOR_CONDITION))
+
+    def test_an_unranked_condition_cannot_be_constructed(self) -> None:
+        """Fail closed, exactly as an unmapped remedy already does."""
+        MODULE.ACTION_FOR_CONDITION["a-condition-nobody-ranked"] = "get-data"
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Cap("a-condition-nobody-ranked", 50, "reason")
+        finally:
+            del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-ranked"]
+        self.assertIn("CAP_SEVERITY_ORDER", str(caught.exception))
+
+    def test_a_worse_condition_never_carries_a_higher_ceiling(self) -> None:
+        """The order in the module is the order of the numbers."""
+        ranked = [
+            (group, condition, ceiling)
+            for group, entries in MODULE.CAP_SEVERITY_ORDER
+            for condition, ceiling in entries
+        ]
+        for (_, earlier, lower), (_, later, higher) in zip(ranked, ranked[1:]):
+            self.assertLessEqual(
+                lower,
+                higher,
+                f"{earlier} is ranked as worse than {later} and carries the "
+                f"higher ceiling ({lower} against {higher})",
+            )
+
+    def test_the_severity_groups_do_not_reach_into_each_other(self) -> None:
+        """The part of the ordering with a derivation behind it.
+
+        Group membership is decided by what the condition destroys - no result
+        at all, a result that answers the wrong question, or a sound result
+        whose claim is bounded. A cap that leaves the run usable may not be
+        capped as hard as one that leaves it meaningless, whatever anyone
+        judges about two conditions inside one group.
+        """
+        bands = [
+            (group, [ceiling for _condition, ceiling in entries])
+            for group, entries in MODULE.CAP_SEVERITY_ORDER
+        ]
+        self.assertGreater(len(bands), 1, "the grouping carries no information")
+        for (worse, lower), (better, higher) in zip(bands, bands[1:]):
+            self.assertLess(
+                max(lower),
+                min(higher),
+                f"the '{worse}' band reaches into '{better}': a run that is "
+                f"only limited in what it may claim is capped no higher than "
+                f"one that produced nothing usable",
+            )
+
+    def test_a_narrower_condition_never_outranks_the_one_it_implies(self) -> None:
+        """The #144 shape, generalised.
+
+        Where one condition's evidence strictly implies another's, the
+        stricter one describes a strictly worse dataset, so it may not carry
+        the higher ceiling. This is the one ordering claim that is derived
+        rather than judged, and it is the one that had already failed.
+        """
+        for stricter, looser in MODULE.CAP_IMPLICATIONS:
+            with self.subTest(stricter=stricter, looser=looser):
+                self.assertIn(stricter, MODULE.CAP_CEILING)
+                self.assertIn(looser, MODULE.CAP_CEILING)
+                self.assertLessEqual(
+                    MODULE.CAP_CEILING[stricter],
+                    MODULE.CAP_CEILING[looser],
+                    f"{stricter} implies {looser}, so it describes a strictly "
+                    "worse dataset and cannot be the less capped of the two",
+                )
+
+    def test_every_ceiling_is_raised_by_name_and_matches_the_order(self) -> None:
+        """One number, one home - the rule `action_kind` already enforces.
+
+        A literal at a call site is how one condition acquires two ceilings:
+        `dataset-fully-synthetic` is raised from two places and
+        `agent-no-varying-knobs` from three, and each extra copy is a chance
+        for two of them to disagree about the same condition.
+        """
+        for condition, ceiling_node in _cap_constructions():
+            with self.subTest(condition=condition):
+                self.assertIsInstance(
+                    ceiling_node,
+                    ast.Name,
+                    f"{condition} is raised with a literal ceiling; pass the "
+                    "constant named in CAP_SEVERITY_ORDER instead",
+                )
+                self.assertEqual(
+                    getattr(MODULE, ceiling_node.id),
+                    MODULE.CAP_CEILING[condition],
+                    f"{condition} is raised with {ceiling_node.id}, which is "
+                    "not the ceiling ranked for it",
+                )
+
+
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
     """traigent-first-run#98 - the payload named the problem, never the fix."""
 
