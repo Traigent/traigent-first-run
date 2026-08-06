@@ -779,9 +779,9 @@ reproduce in front of someone else is worth more than one they cannot, so state 
 actually ran rather than implying the managed one did.
 
 Grid also cannot enumerate a continuous parameter, so every baseline knob stays an explicit list of
-values. If a preserved user space is far larger than its trial cap - more than roughly twenty
-configurations per allowed trial - grid would only ever reach a corner of it; use `random` there
-instead and say why.
+values. If a preserved user space is large enough that its trial cap could not reach most of it,
+grid would only ever cover the corner it starts from; use `random` there instead, and say which
+one ran and why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
 truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`

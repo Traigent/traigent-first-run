@@ -653,7 +653,16 @@ class SkillPackageTests(unittest.TestCase):
             "total combination count beside the ceiling",
             "number of configurations actually tested and any concrete shortfall reason",
             "cannot yet support a trustworthy paid comparison",
-            "too little comparable evidence exists",
+            # This used to pin "too little comparable evidence exists" as a
+            # second meaning of PAID RUN BLOCKED. It is a promise about the
+            # scorer, and #149 is removing the behaviour behind it: a small
+            # comparison set becomes a ceiling rather than a stop, so the only
+            # blocking condition it could still describe is zero scoreable
+            # rows, which "missing or invalid" already covers. Pinning it here
+            # would hold the README to a meaning the merged card does not have.
+            # What must survive is the other half - that the card names the
+            # thing to do, not only that something is wrong.
+            "the card names what to create or repair first",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
@@ -1035,6 +1044,64 @@ class SkillPackageTests(unittest.TestCase):
         )
         owner = " ".join(RUN_SAFETY.read_text().casefold().split())
         self.assertIn("unmeasured defensive floor", owner)
+
+    # The sentence that chooses grid over random, wherever it is written. A
+    # threshold reintroduced as "40 configurations per trial" or "ten times the
+    # trial cap" fails the same way the deleted "roughly twenty" did.
+    _GRID_TO_RANDOM = re.compile(r"\bgrid\b.{0,400}?\brandom\b", re.IGNORECASE)
+    _A_RATIO = re.compile(
+        r"\b(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"twelve|twenty|fifty|hundred)\b\s*(?:x|times|-fold|per|configurations?\s+per)"
+        r"|\bper\s+(?:allowed\s+)?trial\b|\btimes\s+the\s+trial\s+cap\b",
+        re.IGNORECASE,
+    )
+
+    def test_the_grid_to_random_switch_is_not_stated_as_a_threshold(self) -> None:
+        """`sdk-execution.md` named a crossover nothing in this repository computes.
+
+        It said a preserved baseline moves from `grid` to `random` above
+        "roughly twenty configurations per allowed trial". No code chooses an
+        algorithm anywhere in this package - the scripts are offline scorers,
+        and the choice is prose the assistant follows - so the number had no
+        derivation, no test, and no other document to agree with. It is the
+        same defect as the `max_tokens` citation above, one step worse: that
+        one at least cited a sentence.
+
+        The digit is the trap. `readiness.py` damps the knob-count sub-score
+        when `space_size > 20 * max_trials`, and that is a DIFFERENT
+        subsystem - it lowers a readiness number, it does not decide how a
+        search is run. Reading across from it would manufacture the derivation
+        this fix removed, out of a coincidence. So the rule here is stated
+        qualitatively, and this test refuses any threshold, including the one
+        that would look like a match.
+
+        Pinned by shape, like the headroom rule: any ratio in the sentence that
+        chooses between the two algorithms fails, not just the phrase deleted.
+        The positive half holds the qualitative rule in place so the check
+        cannot be satisfied by deleting the guidance instead of the number.
+        """
+        offenders: list[str] = []
+        for document in assistant_facing_documents():
+            body = self._FENCED_BLOCK.sub("", document.read_text())
+            for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
+                if not self._GRID_TO_RANDOM.search(sentence):
+                    continue
+                ratio = self._A_RATIO.search(sentence)
+                if ratio:
+                    offenders.append(
+                        f"{document.relative_to(ROOT).as_posix()}: "
+                        f"{ratio.group(0)!r} in {sentence!r}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "the grid-to-random choice is stated as a numeric threshold. "
+            "Nothing in this repository computes one - readiness.py's "
+            "20 * max_trials damps a score in another subsystem and is not "
+            "this rule - so the number would have no support but itself",
+        )
+        owner = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        self.assertIn("could not reach most of it", owner)
 
     # An authoring label: the artifact ordinal and template letter a drafter
     # uses to say which block this is, which is not a thing the reader knows

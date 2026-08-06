@@ -148,11 +148,10 @@ number simply cannot claim more than the evidence supports.
 
 The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
 is the headline, and each blocking condition is listed under it as `FIX BEFORE PAID RUN` with the
-thing to fix. It means the current components or evidence cannot yet support a trustworthy paid
-comparison - either something is missing or invalid, or too little comparable evidence exists.
-Follow the named repair or evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the
-available evidence bounds what the result may claim; it names the number so "why is this 89" has an
-answer on the same line.
+thing to fix. It means the current components cannot yet support a trustworthy paid comparison, and
+the card names what to create or repair first. `LIMITED TO 89` means the paid comparison can
+proceed, but the available evidence bounds what the result may claim; it names the number so "why
+is this 89" has an answer on the same line.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - below every other ceiling, and below your average. A ceiling that is real but is not currently
