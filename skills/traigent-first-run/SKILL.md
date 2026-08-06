@@ -560,7 +560,9 @@ the user to choose trial counts or knobs; select them from the inspected agent a
 calls in the connected-stage approval.
 Every knob must change real behavior, native booleans must stay booleans, and the enhanced space
 must be materially larger than its trial cap so Traigent is choosing what to test rather than
-replaying the same tiny grid.
+replaying the same tiny grid - and no larger than that cap can explore: aim at four to six varying
+knobs, never a customer's whole declared set. `references/run-safety.md` owns that arithmetic and
+the baseline evidence that picks which.
 
 Before the enhanced search, re-establish current wiring in memory using the pure per-model,
 per-input request-diff probe and explicit outside-request claims in

@@ -616,20 +616,25 @@ the first look, a small slice of what Traigent can drive rather than its full ca
 A customer who brings ten wired knobs does not get all ten, and the reason is arithmetic. Ten knobs
 at two values each is 1024 configurations against a 12-trial cap - 1% of the space sampled - and
 the scorer damps knob-count points to their floor past 20x the cap, 240 configurations at that
-default. They plateau at four to six varying knobs and fall from seven. Aim there: the space this
-budget can explore, not the largest that fits.
+default. The points plateau at four to six varying knobs and fall from seven, which is where
+SKILL.md's upper bound on the enhanced space comes from.
 
 Which of theirs to keep is the baseline's call, not preference. For each knob the baseline VARIED,
-compare the best score on each of its values: a spread under the evaluator's separation margin -
-0.05 normalized, calibration's own number - did not move the baseline, and that knob is a candidate
-to drop. A knob the baseline never varied is not a candidate: silence is not a null result, and an
-assistant-prepared baseline sweeps only `model` and `temperature`. Six trials across a knob's
-values is three observations a side at most - enough to prefer one knob over another, never enough
-to prove one does nothing. Say `did not move the baseline`, never `does not matter`.
+compare the best score on each of its values: a spread under the evaluator's separation margin did
+not move the baseline, and that knob is a candidate to drop. That margin is 0.05 normalized, the
+`--separation-margin` default in `scripts/calibrate_evaluator.py` - a distance between two SCORES,
+never the same-sized noise floor above, which is a distance between two knob VALUES.
+
+A knob the baseline never varied is not a candidate: silence is not a null result. Read which knobs
+it varied off the space that actually ran rather than off a remembered list - a generated
+walkthrough's baseline axes follow the selected model rung, so it can rank only what it swept. Six
+trials across a knob's values is three observations a side at most - enough to prefer one knob over
+another, never enough to prove one does nothing. Say `did not move the baseline`, never `does not
+matter`, and give a knob this baseline never ranked no verdict at all.
 
 Fill the freed slots from the failure-mode levers below, once the customer's evidenced knobs are
-seated: where the evidence ties, keep theirs - they know their agent. Name every knob left out, and
-why, in the approval preview, so they can object before paying for a space that excluded it.
+seated: where the evidence ties, keep theirs - they know their agent. The connected-stage approval
+preview above is where that record reaches them, before they pay for a space that excluded it.
 
 Native boolean knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
 sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe

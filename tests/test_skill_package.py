@@ -76,6 +76,158 @@ def score_config_space(document: dict) -> tuple[object, list[str]]:
     return pillar, [cap.condition for cap in caps]
 
 
+# Three classifiers over ONE SENTENCE, used below to read a decision out of the
+# guidance instead of confirming that a phrase is still spelled the same way.
+#
+# The distinction is the whole point. A check built from `assertIn("candidate
+# to drop")` passes just as happily when the document has been changed to say
+# the opposite thing somewhere else in the same sentence, and it passes when
+# the sentence is reworded into nonsense as long as the fragment survives. So
+# each of these takes a sentence and returns WHICH ANSWER it gives, and the
+# tests below assert the answer. They are unit-tested against invented
+# sentences - phrasings this guide does not contain, in both directions - so
+# that a green result means the classifier can tell the directions apart,
+# rather than meaning the document happened to be quoted correctly.
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.;:])\s+")
+
+# "never X" and "not X" flip an assertion into its opposite, and this guidance
+# writes both on purpose - it names the wording it forbids in order to forbid
+# it. A classifier that ignored that would read every prohibition here as the
+# claim it prohibits, and would call the document wrong for being right.
+_IMMEDIATE_NEGATORS = ("never", "not", "than", "of", "no")
+
+
+def _words(text: str) -> list[str]:
+    """The alphabetic words of `text`, with punctuation and markup dropped."""
+    return re.sub(r"[^a-z]+", " ", text.casefold()).split()
+
+
+def _asserted(pattern: re.Pattern[str], sentence: str) -> int | None:
+    """Offset of the first match of `pattern` the sentence is not negating.
+
+    Negation here is the word immediately in front: `not preference` and
+    `never the one to keep` are the shapes this guide uses to rule an answer
+    out while still naming it.
+    """
+    for match in pattern.finditer(sentence):
+        before = _words(sentence[: match.start()])
+        if before and before[-1] in _IMMEDIATE_NEGATORS:
+            continue
+        return match.start()
+    return None
+
+
+_UNDER_MARGIN = re.compile(
+    r"\b(?:under|below|less than|smaller than|within)\b[^,.;:]{0,40}?"
+    r"\b(?:separation )?margin\b",
+    re.IGNORECASE,
+)
+_DROP_VERDICT = re.compile(
+    r"\b(?:candidate to drop|the one to drop|is droppable|drop(?:ped)? it)\b",
+    re.IGNORECASE,
+)
+_KEEP_VERDICT = re.compile(
+    r"\b(?:the one to keep|candidate to keep|must be kept|keep(?:s)? it|is kept)\b",
+    re.IGNORECASE,
+)
+
+
+def tie_verdict(sentence: str) -> str | None:
+    """For a knob whose values scored within the margin: drop it, or keep it?
+
+    `None` means this sentence does not reach that verdict at all, which is
+    itself a failing answer for the rule - a rule that stops before the verdict
+    leaves the assistant to guess.
+    """
+    trigger = _UNDER_MARGIN.search(sentence)
+    if trigger is None:
+        return None
+    tail = sentence[trigger.end() :]
+    drop = _asserted(_DROP_VERDICT, tail)
+    keep = _asserted(_KEEP_VERDICT, tail)
+    if drop is None and keep is None:
+        return None
+    if keep is None or (drop is not None and drop < keep):
+        return "drop"
+    return "keep"
+
+
+_BASELINE_AUTHORITY = re.compile(r"\bthe baseline'?s call\b", re.IGNORECASE)
+_PREFERENCE_AUTHORITY = re.compile(r"\bpreference\b", re.IGNORECASE)
+
+
+def selection_authority(sentence: str) -> str | None:
+    """Who decides which of the customer's knobs to keep: evidence, or taste?"""
+    baseline = _asserted(_BASELINE_AUTHORITY, sentence)
+    preference = _asserted(_PREFERENCE_AUTHORITY, sentence)
+    if (baseline is None) == (preference is None):
+        return None
+    return "baseline" if baseline is not None else "preference"
+
+
+# A claim that a knob has NO EFFECT, in the ways one gets written. Not a
+# blocklist of literals this document happens not to contain: it is the
+# predicate, in its ordinary English forms, so a phrasing nobody has written
+# yet is caught the first time rather than after someone reads it.
+_NO_EFFECT_CLAIM = re.compile(
+    r"\b(?:"
+    r"do(?:es)? not matter|don't matter|doesn't matter|didn't matter|did not matter"
+    # `inert` is deliberately absent. The guide uses it for a MECHANISM it can
+    # name - a reasoning model's provider ignores `temperature`, which is true
+    # of the API and not inferred from six trials - and this rule is about
+    # inferring absence from a measurement that cannot carry it. Refusing the
+    # provider fact would teach an author to route around the guard, which is
+    # worse than the gap.
+    r"|(?:is|are|was|were|be) +(?:irrelevant|useless|pointless|meaningless)"
+    r"|ha(?:s|ve|d) +no +(?:effect|impact|influence|bearing)"
+    r"|no +(?:effect|impact|influence|difference) +(?:at all|whatsoever|on)"
+    r"|does nothing|do nothing|did nothing"
+    r"|makes? no difference"
+    r"|(?:is|are|was|were) +(?:proven|shown|known) +(?:to be )?(?:irrelevant|useless)"
+    r")\b",
+    re.IGNORECASE,
+)
+# Prohibiting the claim is not making it, and this guide prohibits it in
+# writing - so the marker has to be looked for across the whole clause in
+# front, not only in the word immediately before. `never enough to prove one
+# does nothing` negates from six words away.
+#
+# The markers are deliberately the strong ones. A bare `not` would have
+# accepted `the knob did not move the baseline, so it does not matter`, which
+# is precisely the sentence the rule exists to refuse.
+_PROHIBITION = re.compile(
+    r"\b(?:never|cannot|can't|must not|may not|not enough|nothing here proves"
+    r"|rather than|instead of|avoid|refuse|refuses|forbid(?:s|den)?|no claim"
+    r"|does not prove|do not prove|cannot prove|is not proof|not proof)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_no_effect(sentence: str) -> bool:
+    """Does this sentence assert that a knob has no effect?
+
+    The guide may report `did not move the baseline` and may never report
+    `does not matter`, because six trials cannot tell those apart. Naming the
+    forbidden phrasing is how the rule is written, so a prohibition ("never say
+    it does not matter") is not a violation, and an assertion ("it does not
+    matter") is - regardless of which words the assertion happens to use.
+    """
+    for match in _NO_EFFECT_CLAIM.finditer(sentence):
+        if not _PROHIBITION.search(sentence[: match.start()]):
+            return True
+    return False
+
+
+def sentences(text: str) -> list[str]:
+    """Whitespace-normalised sentences, split on real sentence punctuation."""
+    return [
+        part.strip()
+        for part in _SENTENCE_BREAK.split(" ".join(text.split()))
+        if part.strip()
+    ]
+
+
 class SkillPackageTests(unittest.TestCase):
     def test_frontmatter_has_only_supported_fields(self) -> None:
         text = SKILL.read_text()
@@ -453,39 +605,66 @@ class SkillPackageTests(unittest.TestCase):
         statement of what the space may cost, and no gate anywhere if the
         assistant kept all of them: a ten-knob space at 1024 configurations
         against a 12-trial cap raises no cap and prints no note - it just
-        quietly loses points. Measured on this scorer, ten of a customer's own
-        knobs score the agent pillar 49 and the same customer's first four score
-        60, for no reason except the ratio of space to budget.
+        quietly loses points.
+
+        The cost of that is measured below rather than asserted here, because
+        the figures this docstring used to carry (49 and 60) could not be
+        reproduced against `readiness.py` on any shape tried, and an
+        unverifiable number in a docstring is exactly the drift the rest of
+        this test exists to stop. What IS reproducible is stated with its
+        inputs: ten wired knobs of a customer's own naming, two values each,
+        `agent_type` "general" and `max_trials` 12, score the agent pillar 44,
+        and that same customer's first four score 55 - the same knobs, the same
+        agent, eleven points from nothing but the ratio of space to budget.
 
         So the rule now names the numbers, and this asserts they are the
         scorer's numbers rather than a plausible-sounding pair. Guidance that
         cites arithmetic it does not share with the code is guidance that goes
         stale silently, which is the failure this file exists to catch.
+
+        The first version of this test was a list of `assertIn` calls, and it
+        was worth nothing: swapping the rule's `candidate to drop` for `the one
+        to keep` - the exact reversal of the decision it was written to protect
+        - left the whole suite green, and so did turning `the baseline's call,
+        not preference` around. It pinned VOCABULARY. What follows pins the
+        ANSWER, by reading it back out of the sentence with a classifier that
+        is itself unit-tested against invented sentences in both directions.
         """
         text = RUN_SAFETY.read_text()
         start = text.index("A customer who brings ten wired knobs")
         rule = " ".join(text[start : text.index("Native boolean knobs", start)].split())
+        parts = sentences(rule)
 
-        for phrase in (
-            "1024 configurations against a 12-trial cap",
-            "past 20x the cap, 240 configurations",
-            "plateau at four to six varying knobs and fall from seven",
-            "the space this budget can explore, not the largest that fits",
-            # the evidence rule, and the honesty about how weak it is
-            "For each knob the baseline VARIED",
-            "a spread under the evaluator's separation margin",
-            "0.05 normalized",
-            "never varied is not a candidate",
-            "silence is not a null result",
-            "three observations a side at most",
-            "never enough to prove one does nothing",
-            "`did not move the baseline`, never `does not matter`",
-            # preference, and the record the customer can object to
-            "where the evidence ties, keep theirs",
-            "Name every knob left out, and why, in the approval preview",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, rule)
+        # 1. Which way does the tie break? A knob whose values scored within
+        #    the margin is a CANDIDATE TO DROP. Reverse the document and this
+        #    reads "keep"; delete the verdict and this reads nothing at all.
+        verdicts = {tie_verdict(part) for part in parts} - {None}
+        self.assertEqual(
+            verdicts,
+            {"drop"},
+            "a knob whose values scored within the separation margin is a "
+            f"candidate to drop; the rule now reaches {verdicts or 'no verdict'}",
+        )
+
+        # 2. Who decides - the baseline's evidence, or the assistant's taste?
+        authorities = {selection_authority(part) for part in parts} - {None}
+        self.assertEqual(
+            authorities,
+            {"baseline"},
+            "which of the customer's knobs to keep is decided by baseline "
+            f"evidence, not preference; the rule now says {authorities or 'neither'}",
+        )
+
+        # 3. And the rule may not overclaim from six trials. This is the same
+        #    predicate the whole-guidance check below applies; it runs here too
+        #    because this paragraph is where the temptation lives.
+        overclaims = [part for part in parts if claims_no_effect(part)]
+        self.assertEqual(
+            overclaims,
+            [],
+            "six baseline trials cannot show a knob has no effect, only that "
+            "it did not move the baseline",
+        )
 
         scripts = str(SKILL_ROOT / "scripts")
         if scripts not in sys.path:
@@ -493,6 +672,7 @@ class SkillPackageTests(unittest.TestCase):
         readiness = importlib.import_module("readiness")
         points = readiness.knob_count_points
         best = max(points(count, 0, None) for count in range(1, 20))
+        plateau = [n for n in range(1, 20) if points(n, 0, None) == best]
         self.assertEqual([points(n, 0, None) for n in (4, 5, 6)], [best] * 3)
         self.assertLess(points(7, 0, None), best)
         # 240 is 20 x the default cap, and it is the threshold the rule quotes:
@@ -503,16 +683,223 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(floor, best)
         self.assertEqual(points(4, 240, 12), best)
         self.assertEqual(points(4, 241, 12), floor)
-        # And the separation margin is calibration's, not a number invented for
-        # the prose - two homes for one threshold is how they drift apart.
+
+        # The cost the rule exists to prevent, run through the real scorer so
+        # the docstring's two numbers cannot go stale in silence. The knobs are
+        # a customer's own naming rather than the scorer's canonical ones,
+        # which is the case the rule is about: a customer arrives with their
+        # agent's controls, not with `temperature` and `top_p`.
+        declared = {f"knob_{index}": ["x", "y"] for index in range(10)}
+
+        def agent_pillar(knobs: dict[str, list[str]]) -> int:
+            pillar, caps = score_config_space(
+                {
+                    "agent_type": "general",
+                    "knobs": knobs,
+                    "max_trials": 12,
+                    "wired": list(knobs),
+                }
+            )
+            self.assertEqual(caps, [], "neither space is capped; only scored")
+            return pillar.score
+
+        kept_all = agent_pillar(declared)
+        kept_four = agent_pillar(dict(list(declared.items())[:4]))
+        self.assertEqual(
+            (kept_all, kept_four),
+            (44, 55),
+            "the docstring's measured figures no longer match the scorer",
+        )
+        self.assertGreater(kept_four, kept_all)
+
+        # 4. The upper bound is a MANDATE, so it lives in SKILL.md (CLAUDE.md:
+        #    SKILL.md carries the mandates, a reference carries the depth), and
+        #    the number it states is read back and compared against the ramp
+        #    rather than quoted. Widen it to "four to nine" and this fails,
+        #    because nine is past the plateau.
+        stated = re.search(
+            r"aim at (\w+) to (\w+) varying knobs",
+            " ".join(SKILL.read_text().split()),
+            re.IGNORECASE,
+        )
+        self.assertIsNotNone(
+            stated,
+            "SKILL.md no longer bounds the enhanced space's knob count - the "
+            "unbounded 'materially larger than its trial cap' was the defect",
+        )
+        spelled = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+        self.assertEqual(
+            [spelled[word.casefold()] for word in stated.groups()],
+            [plateau[0], plateau[-1]],
+            "SKILL.md's knob-count bound and the scorer's knob_count_points "
+            "plateau have drifted apart",
+        )
+        # ...and run-safety.md carries the arithmetic behind it without stating
+        # the mandate a second time, which is the defect CLAUDE.md names.
+        self.assertIn("plateau at four to six varying knobs and fall from seven", rule)
+        self.assertNotIn("aim at", rule.casefold())
+
+        # 5. The separation margin is calibration's, not a number invented for
+        #    the prose - two homes for one threshold is how they drift apart -
+        #    and the rule names where it lives so a reader can check it.
         calibration = importlib.import_module("calibrate_evaluator")
         self.assertIn(f"{calibration.SEPARATION_MARGIN} normalized", rule)
+        self.assertIn("`--separation-margin` default in", rule)
+        self.assertIn("calibrate_evaluator.py", rule)
+        # Two unrelated 0.05s now sit in this file - the config-space scorer's
+        # per-VALUE noise floor and this per-SCORE margin - so the rule has to
+        # say which one it is not.
+        self.assertIn("noise floor", rule)
 
-        # The approval preview is where the rejected knobs are named, so the
-        # obligation has to be in the preview's own checklist, not only in the
-        # paragraph that decides them.
+        # 6. The obligation to name what was left out has ONE home: the
+        #    approval preview's own checklist. It had two, each satisfiable
+        #    without the other, which is a rule that can be changed in one
+        #    place and still look enforced from the other.
         preview = text[text.index("give the connected stage a preview") :]
         self.assertIn("any knob of theirs left out and what the baseline", preview)
+        omission_mandate = re.compile(
+            r"\bknobs?\b[^.]{0,40}?\b(?:left out|omitted|excluded|not carried)\b",
+            re.IGNORECASE,
+        )
+        homes = {
+            path.name: len(omission_mandate.findall(path.read_text()))
+            for path in assistant_facing_documents()
+            if omission_mandate.search(path.read_text())
+        }
+        self.assertEqual(
+            homes,
+            {"run-safety.md": 1},
+            "the omitted-knob disclosure is stated in more than one place; a "
+            "rule with two homes can be changed in one and still look enforced "
+            "from the other. Restate the conclusion and point at the home.",
+        )
+
+    def test_the_no_effect_classifier_can_tell_the_two_directions_apart(self) -> None:
+        """The guard above is only worth its green if this is true.
+
+        Every sentence here is INVENTED - none of them is in the package - so
+        this measures the classifier rather than the document. A guard tested
+        against the strings its own corpus contains proves only that the corpus
+        was quoted correctly, which is how a test survives the mutation of the
+        decision it was written to protect.
+        """
+        must_refuse = (
+            "A spread under the margin proves the knob does not matter.",
+            "Report that the knob is irrelevant, useless, and proves it has no effect.",
+            "The baseline showed this control is useless, so drop it.",
+            "Six trials showed the knob does nothing.",
+            "Tell the customer the setting has no impact on their agent.",
+            "Say the retrieval depth makes no difference and move on.",
+            "That knob was shown to be irrelevant by the baseline.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    claims_no_effect(sentence),
+                    "this asserts a knob has no effect and must be refused",
+                )
+
+        must_accept = (
+            "Say `did not move the baseline`, never `does not matter`.",
+            "Three observations a side is never enough to prove one does nothing.",
+            "Six trials cannot prove a knob has no effect.",
+            "Report that the knob did not move the baseline.",
+            "A spread under the margin makes that knob a candidate to drop.",
+            "Prefer the knob the baseline ranked, rather than one that does nothing.",
+            "Silence is not a null result, so the knob gets no verdict.",
+        )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    claims_no_effect(sentence),
+                    "this reports the measurement honestly, or forbids the "
+                    "overclaim, and must be allowed",
+                )
+
+    def test_the_direction_classifiers_can_tell_the_two_directions_apart(self) -> None:
+        """Same argument, for the two answers the knob-selection rule gives.
+
+        Invented sentences again, and deliberately including the reversals that
+        the previous `assertIn` version of that test let through unchanged.
+        """
+        self.assertEqual(
+            tie_verdict(
+                "A spread under the separation margin did not move the "
+                "baseline, and that knob is a candidate to drop."
+            ),
+            "drop",
+        )
+        self.assertEqual(
+            tie_verdict(
+                "A spread under the separation margin did not move the "
+                "baseline, and that knob is the one to keep."
+            ),
+            "keep",
+        )
+        self.assertEqual(
+            tie_verdict(
+                "Where the values score within the margin, that knob is a "
+                "candidate to drop, never the one to keep."
+            ),
+            "drop",
+        )
+        # No margin test, or no verdict after it, is not an answer.
+        self.assertIsNone(tie_verdict("Keep a few of the most relevant knobs."))
+        self.assertIsNone(
+            tie_verdict("A spread under the separation margin is worth noting.")
+        )
+
+        self.assertEqual(
+            selection_authority(
+                "Which of theirs to keep is the baseline's call, not preference."
+            ),
+            "baseline",
+        )
+        self.assertEqual(
+            selection_authority(
+                "Which of theirs to keep is preference, not the baseline's call."
+            ),
+            "preference",
+        )
+        self.assertIsNone(selection_authority("Keep the knobs that look useful."))
+
+    def test_no_guidance_document_claims_a_knob_has_no_effect(self) -> None:
+        """The honesty rule, applied to the whole corpus rather than asserted.
+
+        `Say "did not move the baseline", never "does not matter"` was stated
+        and unenforced: inserting "report that the knob is irrelevant, useless,
+        and proves it has no effect" into run-safety.md left every test green.
+        A rule the package states about its own wording and does not check is a
+        rule that survives exactly as long as nobody edits near it.
+
+        This is deliberately corpus-wide and not scoped to the paragraph that
+        states the rule. The overclaim is tempting wherever a result gets
+        summarised, and the reporting sections are further from the rule than
+        the paragraph that states it.
+        """
+        offenders = [
+            f"{path.name}: {part}"
+            for path in assistant_facing_documents()
+            for part in sentences(path.read_text())
+            if claims_no_effect(part)
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "a baseline can show that a knob did not move it; it cannot show "
+            "that the knob has no effect, and this guidance may not say so",
+        )
 
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -4574,6 +4961,29 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 configurations",
             ),
         ),
+        (
+            # The knob-selection rule shipped asserting that an
+            # assistant-prepared baseline "sweeps only `model` and
+            # `temperature`", and this same file already said the opposite
+            # about thirty lines above: a reasoning-model strong rung drops
+            # temperature for the whole walkthrough and uses two prompt styles
+            # instead. Both failure directions are the ones the rule governs -
+            # it told the assistant to compare scores across values that do not
+            # exist, and to classify the one non-model knob the baseline DID
+            # rank as never varied and therefore not a candidate.
+            #
+            # The settled answer is to read the axes off the space that ran
+            # rather than to name them, which is also the only form that
+            # survives the baseline's composition changing again.
+            "which knobs an assistant-prepared baseline can rank",
+            ("read which knobs it varied off the space that actually ran",),
+            (
+                "sweeps only `model` and `temperature`",
+                "sweeps only model and temperature",
+                "varies only `model` and `temperature`",
+                "baseline's two axes are `model` and `temperature`",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -4929,10 +5339,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # things nobody weighed. The rule is ~1_400 bytes and it is not
         # compressible below that: the arithmetic it aims at (the knob-count
         # plateau, and the 20x-trial-cap damping) has to be stated or the target
-        # is a preference; the evidence test has to say what "no measurable
+        # is a preference, and the evidence test has to say what "no measurable
         # difference" means AND admit that six baseline trials is three
-        # observations a side; and the record-and-object obligation is the only
-        # thing that lets the customer see what was dropped.
+        # observations a side.
         #
         # It is paid for as far as it honestly can be, which was less than it
         # looked. Five restatements were identified and three of them turned out
@@ -4946,12 +5355,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # (83), already carried where `probe_wiring` enforces it, and the second
         # copy of the retry prohibition (35).
         #
-        # So the rest is a raise rather than a trade, stated as one. Net +1_136,
-        # measured at 229_652. 230_000 and not 229_750: 98 bytes is a ceiling
-        # that trips on a one-word edit, which this file has now recorded three
-        # times, and 348 is within a rounding of the 371 named as the smallest
-        # headroom that keeps the next raise a choice.
-        budget = 230_000
+        # Review of that rule then found four things wrong with it, and the
+        # repairs are the rest of this increment. The rule asserted that an
+        # assistant-prepared baseline "sweeps only `model` and `temperature`",
+        # which this same file contradicts thirty lines above, so it now reads
+        # the swept axes off the space that ran; the `0.05` it cited pointed at
+        # calibration without naming it, and now names `--separation-margin`
+        # and distinguishes itself from the same-sized per-VALUE noise floor
+        # this file also carries; the upper bound is a mandate and moved into
+        # SKILL.md, leaving the arithmetic here; and the obligation to name
+        # dropped knobs, which had a home in the approval-preview checklist and
+        # a second one in the rule, is a pointer now rather than a restatement.
+        # Only the last of the four returns bytes, and not many: naming a
+        # source and separating two thresholds costs more than a duplicated
+        # sentence saves.
+        #
+        # So the rest is a raise rather than a trade, stated as one. Net +1_714
+        # over the base this branched from, measured at 230_230. Resident rises
+        # with it, to 61_350 against the 61_500 above, which is left where it is
+        # - the mandate that moved into SKILL.md is 207 bytes and the ceiling
+        # absorbs it, so there is nothing here to decide.
+        #
+        # 230_500 and not 230_250: 20 bytes is a ceiling that trips on a
+        # one-word edit, which this file has now recorded four times. And not
+        # 230_750, which would leave 520 - roughly a paragraph of headroom
+        # granted to nobody's argument, when the next 250 already clears the
+        # one-word-edit bar with 270.
+        budget = 230_500
         self.assertLess(
             total,
             budget,
