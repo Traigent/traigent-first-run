@@ -174,7 +174,9 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
-any applicable calibration result. Apply the run-scoped evaluator-method rule above to both
+any applicable calibration result. When rows exist, do the row-level sanity check in
+`references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
+spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
@@ -370,6 +372,8 @@ rather than the condition id:
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
+- `dataset-unsound-expected-outputs` - put each flagged row to the user as one approval-gated
+  question, as your reading rather than a finding; never edit an expected answer on it yourself.
 - `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.

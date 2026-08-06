@@ -377,6 +377,11 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-fully-synthetic": "connect-real-data",
     "dataset-mostly-synthetic": "connect-real-data",
     "dataset-generated-answer-key": "review-answer-key",
+    # Same remedy as the line above, deliberately: both say the answer key
+    # cannot be trusted until a person looks at it, and a consumer that already
+    # routes `review-answer-key` needs no new slug to route this. A second
+    # spelling for one remedy is the drift this table exists to remove.
+    "dataset-unsound-expected-outputs": "review-answer-key",
     "evaluator-absent": "connect-evaluator",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
@@ -573,6 +578,39 @@ class DatasetFacts:
     # Custom source tokens that preflight credited as collected for backward
     # compatibility but could not verify from its vocabulary.
     unrecognised_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RowReview:
+    """The assistant's own read of whether each expected output answers its input.
+
+    Deliberately NOT a field on `DatasetFacts`. Everything in that class was
+    measured by preflight from the user's files; this was judged by the
+    assistant reading the rows, and the two must not become one bag of "facts"
+    a later reader treats alike. Every other check in this scorer looks at one
+    column - empty golds, constant golds, dominant answers, duplicates - so a
+    row whose expected answer plainly contradicts its own input passes all of
+    them, and the optimizer then rewards whichever configuration gets it wrong.
+
+    It carries no points. A judgement can withhold a claim and may not
+    manufacture one, so a clean review leaves the score exactly where not
+    running it at all would have left it, and says so in the evidence line
+    instead - where it costs nothing and names who did the checking.
+    """
+
+    supplied: bool = False
+    # Rows read, and the verdicts. `unsound` is "this expected output is not a
+    # sensible answer to this input"; `unsure` is the assistant declining to
+    # answer, which is reported and never scored - deciding it belongs to the
+    # user, through the same approval gate a gold change already needs.
+    reviewed: int = 0
+    unsound: int = 0
+    unsure: int = 0
+    # Reviewed rows by the provenance class preflight assigned them. Kept so
+    # the coverage claim can be checked against the counted rows rather than
+    # believed: a review cannot say it read more collected rows than exist.
+    reviewed_collected: int = 0
+    reviewed_undeclared: int = 0
 
 
 @dataclass(frozen=True)
@@ -963,6 +1001,32 @@ GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a mod
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
+# The row-level sanity check's one ceiling.
+#
+# Below `GENERATED_ANSWER_KEY_CEILING` because it is the stronger finding about
+# the same thing: that cap says nobody observed these answers, this one says
+# somebody read them and they disagree with their own questions. Above the
+# structural dataset caps (overlap 50, unreadable rows 35) because those are
+# measured and this is an opinion, and an opinion should not be the harshest
+# number on the card. What it buys is exactly one thing: the run cannot present
+# as STRONG or EXCELLENT while a material share of what it grades against is
+# believed wrong.
+UNSOUND_ANSWER_CEILING = 70
+# One row in ten. Grounded in what the run does with these rows rather than
+# picked for roundness: the recommended configuration is reported on ten
+# held-out rows, so one wrong answer there moves the reported number by ten
+# points - larger than the gaps this run uses to rank configurations. At that
+# share the wrong answers can outweigh the differences the score is being read
+# for, which is the point at which the claim has to be bounded rather than
+# footnoted.
+UNSOUND_ANSWER_SHARE = 0.1
+# The three answers the check may give, and the only author it may declare.
+ROW_REVIEW_VERDICTS = ("yes", "no", "unsure")
+ROW_REVIEW_REVIEWER = "assistant"
+# Provenance classes a reviewed row may carry. `synthesised` is absent on
+# purpose and refused below: this run's own generated rows are out of scope.
+ROW_REVIEW_ORIGINS = ("collected", "undeclared")
+
 
 def _row_count(value: Any, name: str) -> int:
     """Read one provenance row count, refusing a present-but-impossible one.
@@ -1179,6 +1243,70 @@ REFERENCE_FREE_METHODS = frozenset(
 )
 
 
+def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
+    """Say what the read covered and what it found, in the line that costs nothing.
+
+    A clean pass has to be able to say something, or the check is invisible
+    whenever it works. It says it here rather than in points, because points
+    would be the assistant crediting its own opinion - and every count in the
+    sentence is a coverage claim, so the sentence names the rows read against
+    the rows there are. The score reads the whole dataset, not a subset, and a
+    review of 28 rows out of 4,812 says exactly that instead of implying the
+    dataset was cleared.
+    """
+    if not review.supplied:
+        return ""
+    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    provided = (
+        facts.collected_rows + facts.undeclared_rows if counted else (facts.rows or 0)
+    )
+    line = f"the coding assistant read {review.reviewed} of {provided} provided rows"
+    if review.unsound == 1:
+        line += "; 1 expected answer contradicts its input"
+    elif review.unsound:
+        line += f"; {review.unsound} expected answers contradict their input"
+    else:
+        line += "; none contradicts its own input"
+    if review.unsure:
+        line += f", {review.unsure} undecided"
+    if facts.synthesised_rows:
+        line += f"; {facts.synthesised_rows} generated rows not reviewed"
+    return line
+
+
+def unsound_answer_cap(review: RowReview) -> Cap | None:
+    """The one ceiling this judgement may set, and never a point of credit.
+
+    Fires on the share of what was actually read, which is the only population
+    it has evidence about. A single wrong answer below that share is still
+    surfaced - it becomes the approval-gated question the action table already
+    requires, and it is counted in the evidence line above - it just does not
+    bound the whole run on its own.
+
+    An `unsure` never reaches here. Withholding a claim on evidence the
+    assistant gathered is one thing; withholding it because the assistant could
+    not decide would let uncertainty grade the user's data.
+    """
+    if not review.supplied or not review.reviewed or not review.unsound:
+        return None
+    if review.unsound < review.reviewed * UNSOUND_ANSWER_SHARE:
+        return None
+    subject = (
+        "1 answer does not answer its own question"
+        if review.unsound == 1
+        else f"{review.unsound} answers do not answer their own question"
+    )
+    return Cap(
+        "dataset-unsound-expected-outputs",
+        UNSOUND_ANSWER_CEILING,
+        f"Reading each row's input beside its expected answer, {subject} "
+        f"(of {review.reviewed} read) - so a configuration is rewarded for "
+        "getting those rows wrong. This is the coding assistant's reading, not "
+        "a measurement, and each one is a question for you rather than an edit "
+        "it may make.",
+    )
+
+
 def scores_without_a_reference(method: str | None) -> bool:
     """True when the evaluator can score a row that carries no expected output.
 
@@ -1191,10 +1319,13 @@ def scores_without_a_reference(method: str | None) -> bool:
 
 
 def score_dataset(
-    facts: DatasetFacts, evaluator_method: str | None = None
+    facts: DatasetFacts,
+    evaluator_method: str | None = None,
+    review: RowReview | None = None,
 ) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
+    review = review or RowReview()
 
     if not facts.exists or not facts.rows:
         caps.append(
@@ -1214,6 +1345,17 @@ def score_dataset(
     rows = facts.rows
     reference_free = scores_without_a_reference(evaluator_method)
     labelled = facts.labelled_rows if facts.labelled_rows is not None else 0
+    # Appended to whichever labels line is written, and only ever appended: it
+    # is the sub-score named "answers to score against", which is the one the
+    # question "is this a sensible answer to this input" belongs to. It changes
+    # no value and no maximum, so a review that finds nothing leaves this
+    # pillar byte-for-byte where an unreviewed run leaves it apart from this
+    # clause.
+    review_clause = row_review_evidence(review, facts)
+
+    def with_review(evidence: str) -> str:
+        return f"{evidence}; {review_clause}" if review_clause else evidence
+
     if reference_free:
         subs.append(
             SubScore(
@@ -1221,8 +1363,10 @@ def score_dataset(
                 0.0,
                 30.0,
                 False,
-                "this reference-free evaluator does not use expected outputs"
-                + (f" ({labelled} present but unused)" if labelled else ""),
+                with_review(
+                    "this reference-free evaluator does not use expected outputs"
+                    + (f" ({labelled} present but unused)" if labelled else "")
+                ),
             )
         )
     elif labelled == 0:
@@ -1236,7 +1380,11 @@ def score_dataset(
         )
         subs.append(
             SubScore(
-                "labels", 0.0, 30.0, True, f"{rows} rows, none with an expectation"
+                "labels",
+                0.0,
+                30.0,
+                True,
+                with_review(f"{rows} rows, none with an expectation"),
             )
         )
     else:
@@ -1247,7 +1395,7 @@ def score_dataset(
                 round(30.0 * ratio, 2),
                 30.0,
                 True,
-                labels_evidence(labelled, rows, facts.placeholder_rows),
+                with_review(labels_evidence(labelled, rows, facts.placeholder_rows)),
             )
         )
 
@@ -1395,6 +1543,16 @@ def score_dataset(
     )
     caps.extend(provenance_caps)
     subs.append(SubScore("provenance", provenance, 10.0, True, evidence))
+
+    # Guarded by the same question the generated-answer-key cap asks: when the
+    # evaluator never reads an expected output, a wrong one cannot mis-rank
+    # anything, so there is nothing to withhold. A dataset with no expected
+    # outputs at all needs no guard - it already carries a ceiling of 30, well
+    # below this one, so this cap could never be the binding number there.
+    if not reference_free:
+        unsound = unsound_answer_cap(review)
+        if unsound is not None:
+            caps.append(unsound)
 
     if facts.split_overlap:
         caps.append(
@@ -2344,6 +2502,128 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+class RowReviewInputError(ValueError):
+    """A row review the scorer cannot read, or may not accept as one.
+
+    The sibling of `ConfigSpaceInputError` for `--row-review`, and hand-authored
+    in the same way. It refuses rather than degrades for a reason particular to
+    this input: every other scoring input is a measurement, and this one is an
+    opinion that is allowed to lower a score. An opinion that arrives malformed,
+    over-claiming its coverage, or attributed to anyone but the assistant is
+    exactly the input that must not be quietly repaired into a usable one.
+    """
+
+
+def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
+    """Read the assistant's row-by-row read, refusing one it cannot stand behind.
+
+    Checked against `facts` rather than taken at its word, because two of this
+    review's rules are only worth stating if they can be verified:
+
+    * It reviews rows the user brought and skips the ones this run generated.
+      A generated row is capped by the synthetic ceiling regardless, most of it
+      will be fine, and a model re-judging output it just wrote is marking its
+      own homework. So `synthesised` is not an accepted origin at all, and the
+      count of rows left unreviewed for that reason is read from preflight -
+      derived, not declared, so the review cannot claim a skip it did not make.
+    * It is the assistant's judgement and never the user's ground truth. The
+      author is a required field with one accepted value, so a file asserting
+      the user said something is refused here instead of being scored as if
+      they had. Their answer arrives through the approval gate, not this file.
+
+    A per-row sentence is required for the same reason: it is what makes a
+    verdict inspectable, and what stops a blanket "all fine" being emitted by
+    something that never read a row.
+    """
+    if not isinstance(document, dict):
+        raise RowReviewInputError(
+            "row review must be a JSON object with 'reviewer' and 'rows'"
+        )
+    reviewer = document.get("reviewer")
+    if reviewer != ROW_REVIEW_REVIEWER:
+        raise RowReviewInputError(
+            f"row review declares reviewer {reviewer!r}; this input records the "
+            f"coding assistant's own read, so it must say {ROW_REVIEW_REVIEWER!r}. "
+            "A user's verdict is not this file's type - it arrives as an answer "
+            "to the approval-gated question, and is never written here on their "
+            "behalf"
+        )
+    rows = document.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise RowReviewInputError(
+            "row review carries no 'rows' list; omit --row-review rather than "
+            "supplying an empty review, which would read as 'nothing was wrong'"
+        )
+
+    seen: set[str] = set()
+    counts = {verdict: 0 for verdict in ROW_REVIEW_VERDICTS}
+    origins = {origin: 0 for origin in ROW_REVIEW_ORIGINS}
+    for index, entry in enumerate(rows):
+        where = f"row review entry {index}"
+        if not isinstance(entry, dict):
+            raise RowReviewInputError(f"{where} is not an object")
+        row_id = entry.get("id")
+        if not isinstance(row_id, str) or not row_id.strip():
+            raise RowReviewInputError(
+                f"{where} has no 'id'; a verdict nobody can trace to a row "
+                "cannot be put to the user as a question about that row"
+            )
+        if row_id in seen:
+            raise RowReviewInputError(
+                f"{where} repeats id {row_id!r}; one row carries one verdict, "
+                "and a repeat inflates the share the ceiling is decided on"
+            )
+        seen.add(row_id)
+        verdict = entry.get("verdict")
+        if verdict not in ROW_REVIEW_VERDICTS:
+            raise RowReviewInputError(
+                f"{where} has verdict {verdict!r}; expected one of "
+                f"{', '.join(ROW_REVIEW_VERDICTS)}"
+            )
+        origin = entry.get("origin")
+        if origin == "synthesised":
+            raise RowReviewInputError(
+                f"{where} reviews a generated row ({row_id!r}). This check reads "
+                "the rows the user brought; rows this run generated are already "
+                "bounded by the synthetic ceiling, and a model re-judging its "
+                "own output is not evidence"
+            )
+        if origin not in ROW_REVIEW_ORIGINS:
+            raise RowReviewInputError(
+                f"{where} has origin {origin!r}; expected one of "
+                f"{', '.join(ROW_REVIEW_ORIGINS)} - the provenance class "
+                "preflight assigned that row"
+            )
+        note = entry.get("note")
+        if not isinstance(note, str) or not note.strip():
+            raise RowReviewInputError(
+                f"{where} carries no 'note'; each verdict states in one sentence "
+                "why, which is what makes it a read rather than a tally"
+            )
+        counts[verdict] += 1
+        origins[origin] += 1
+
+    for origin, available in (
+        ("collected", facts.collected_rows),
+        ("undeclared", facts.undeclared_rows),
+    ):
+        if origins[origin] > available:
+            raise RowReviewInputError(
+                f"row review reports {origins[origin]} {origin} rows read, but "
+                f"preflight counted {available}; the review and the dataset it "
+                "claims to describe are not the same dataset"
+            )
+
+    return RowReview(
+        supplied=True,
+        reviewed=len(rows),
+        unsound=counts["no"],
+        unsure=counts["unsure"],
+        reviewed_collected=origins["collected"],
+        reviewed_undeclared=origins["undeclared"],
+    )
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
@@ -3176,6 +3456,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--row-review",
+        help=(
+            "the coding assistant's own read of each provided row (path or -): "
+            "does this expected output answer this input? Lowers the ceiling "
+            "when a material share do not, and never raises the score"
+        ),
+    )
+    parser.add_argument(
         "--evaluator-method",
         choices=tuple(sorted(METHOD_PROFILES)),
         help="declared evaluation method (recorded as declared, not measured)",
@@ -3219,6 +3507,21 @@ def scoring_requested(args: argparse.Namespace) -> bool:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
+    # Refused rather than ignored, and refused before anything else runs: a
+    # review supplied without the preflight it describes has no dataset to
+    # check its coverage against, so it would be accepted on its own word - and
+    # this is the one input allowed to move the score on nothing but its own
+    # word. The planner half takes no evidence at all, so a review reaching it
+    # is the same mistake spelled differently.
+    if args.row_review and not args.preflight:
+        print(
+            "cannot read scoring input: --row-review needs --preflight - its "
+            "coverage is checked against the counted rows, and cannot be taken "
+            "on trust",
+            file=sys.stderr,
+        )
+        return 2
+
     if not scoring_requested(args):
         if not all((args.agent, args.dataset, args.evaluation)):
             print(
@@ -3259,16 +3562,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config_space
             else AgentFacts()
         )
+        row_review = (
+            row_review_from_document(load_json(args.row_review), dataset_facts)
+            if args.row_review
+            else RowReview()
+        )
     except (
         OSError,
         json.JSONDecodeError,
         PreflightInputError,
         ConfigSpaceInputError,
+        RowReviewInputError,
     ) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 
-    dataset_pillar, dataset_caps = score_dataset(dataset_facts, evaluation_facts.method)
+    dataset_pillar, dataset_caps = score_dataset(
+        dataset_facts, evaluation_facts.method, row_review
+    )
     evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
     agent_pillar, agent_caps, knobs = score_agent(agent_facts)
     score = aggregate(

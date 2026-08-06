@@ -428,6 +428,78 @@ the user asks for it.
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
 
+### The row-level sanity check
+
+Every check above reads one column. Empty golds, constant golds, duplicate inputs, a dominant
+answer, an overlapping split - each looks at one field on its own, and none of them reads a row's
+input beside its own expected output. So this row passes all of them:
+
+> input: `Refund requested 45 days after purchase; the policy window is 30 days` ·
+> expected output: `approve`
+
+Well-formed, unique, difficulty-tagged, perfectly scoreable - and simply wrong. The search then
+rewards whichever configuration gets it wrong, and on a ten-row held-out set one bad expected
+answer moves the reported number by ten points, which is larger than the gaps configurations are
+ranked by.
+
+So read each row and answer one question about it: **is this expected output a sensible answer to
+this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence. Record the answers
+in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
+
+```json
+{
+  "reviewer": "assistant",
+  "rows": [
+    {"id": "ticket-118", "origin": "collected", "verdict": "no",
+     "note": "45 days against a 30-day window, so 'approve' contradicts the input"},
+    {"id": "ticket-119", "origin": "undeclared", "verdict": "yes",
+     "note": "inside the stated window, so the expected answer follows"}
+  ]
+}
+```
+
+`origin` is the provenance class the row already declares, and the sentence is required on every
+verdict - it is what makes a reading inspectable instead of a tally. Five rules govern what the
+answers may do.
+
+**It is your own read, not a billed call.** The dataset is already open. Nothing here calls a model
+through the SDK, so it spends nothing, touches no ceiling, and needs no approval - which is why it
+can inform the opening readiness gate at all.
+
+**It reads the rows the user brought, and skips the rows this run generated.** That is its purpose
+rather than an exemption: it exists to test the data the run cannot vouch for. Generated rows are
+bounded by the synthetic ceiling however good they are, most of them will be fine, and a model
+re-judging output it wrote itself is marking its own homework. `readiness.py` refuses a review entry
+whose origin is `synthesised`, and counts the skipped rows from preflight rather than from the
+review.
+
+**It can lower the score and can never raise it.** An assistant's opinion may withhold a claim; it
+may not manufacture one. A material share of `no` verdicts lowers the ceiling to 70
+(`dataset-unsound-expected-outputs`); a clean pass earns no points, no band, and no credit of any
+kind. What a clean pass does earn is a sentence in the readiness evidence line, which costs zero
+score and names who did the checking. An `unsure` is reported there too and never scored, because
+uncertainty is not a finding.
+
+**A `no` is never a silent edit.** It becomes the approval-gated question the action table already
+requires: show the row, its input, its expected answer, and why you read them as disagreeing, then
+let the user decide. This is deliberately the opposite of the degenerate-gold rule above, and the
+contrast is the point. A gold that scores a right and a wrong answer identically offers no competing
+interpretation, so it is reported and excluded without a question. A gold reading `approve` where
+the input says 45 days against a 30-day window offers exactly two - the answer is wrong, or the task
+is not what you took it to be - and only the user can settle which.
+
+**It is declared as your judgement, never as the user's ground truth.** The file names
+`"reviewer": "assistant"` and readiness refuses any other value, so a verdict can never be filed as
+though the user gave it. If they approve a repair, the repaired row follows "Declaring provenance"
+above: its expected answer is now model-written, carries `output_provenance` saying so, and stops
+counting as an answer anyone observed.
+
+Say how much you read. Readiness scores the whole dataset and never a subset, so the evidence line
+reports the rows read against the rows the user brought. At or under the size where "First-run
+subset for a large dataset" applies, that is all of them. Above it, read what one pass can cover at
+the opening gate and let the line name the count - then read the drawn rows again at the stage-4
+re-score, because those are the rows the comparison actually runs on.
+
 ### Choosing rows when difficulty is not labelled
 
 Every pick this file asks for - the bounded subset below, the reserved split after it - wants

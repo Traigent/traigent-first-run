@@ -3953,6 +3953,70 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{safety} {sdk}")
 
+    def test_the_row_level_sanity_check_keeps_its_five_constraints(self) -> None:
+        """The rules that stop an opinion behaving like a measurement.
+
+        Each of these is load-bearing on its own, and the check is unsafe
+        without any one of them - a judgement that can raise a score, or edit a
+        gold, or grade rows the run itself wrote, is a worse defect than the
+        one it was added to catch. They are pinned in prose because the scorer
+        can only enforce three of the five; the other two are things the
+        assistant does or does not do.
+        """
+        dataset = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        normalized = " ".join(dataset.split())
+        skill = " ".join(SKILL.read_text().split())
+
+        # 1. Unbilled, which is the whole reason it may sit at the opening gate.
+        self.assertIn("your own read, not a billed call", normalized)
+        self.assertIn("needs no approval", normalized)
+        self.assertIn("--row-review", skill)
+        # 2. Scoped to the rows the user brought, stated as a purpose.
+        self.assertIn(
+            "reads the rows the user brought, and skips the rows this run " "generated",
+            normalized,
+        )
+        self.assertIn("marking its own homework", normalized)
+        # 3. The direction rule, and no credit for a clean pass.
+        self.assertIn("lower the score and can never raise it", normalized)
+        self.assertIn("may withhold a claim; it may not manufacture one", normalized)
+        self.assertIn(
+            "a clean pass earns no points, no band, and no credit of any kind",
+            normalized,
+        )
+        self.assertIn("sentence in the readiness evidence line", normalized)
+        # 4. A finding is a question, never an edit.
+        self.assertIn("never a silent edit", normalized)
+        self.assertIn(
+            "approval-gated question the action table already requires", normalized
+        )
+        # 5. Declared as the assistant's judgement, never as the user's.
+        self.assertIn("never as the user's ground truth", normalized)
+        self.assertIn('"reviewer": "assistant"', dataset)
+        # And the scorer actually implements the three it can.
+        self.assertEqual(READINESS.ROW_REVIEW_REVIEWER, "assistant")
+        self.assertNotIn("synthesised", READINESS.ROW_REVIEW_ORIGINS)
+        self.assertLess(
+            READINESS.UNSOUND_ANSWER_CEILING, READINESS.GENERATED_ANSWER_KEY_CEILING
+        )
+
+    def test_the_row_level_check_is_ordered_at_the_opening_gate(self) -> None:
+        """Where it runs is a decision, so it is written down where flow lives.
+
+        Not merely a placement: the opening gate is the one point at which the
+        rule above - review what the user brought, skip what this run generated
+        - covers every row in the file, because nothing has been generated yet.
+        Later is also where a wrong expected answer has already been copied
+        into whatever stage 3 derived from it.
+        """
+        skill = " ".join(SKILL.read_text().split())
+        gate = skill.index("#### Opening readiness gate")
+        creation = skill.index("### 3. Complete the system")
+        instruction = skill.index("do the row-level sanity check")
+        self.assertLess(gate, instruction)
+        self.assertLess(instruction, creation)
+        self.assertIn("no generated row competes with it yet", skill)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
@@ -3964,9 +4028,9 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # A tenth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the nine that exist today.
-        self.assertEqual(len(conditions), 9)
+        # An eleventh dataset cap must be routed too, so pin the count rather
+        # than spot-checking the ten that exist today.
+        self.assertEqual(len(conditions), 10)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -3979,6 +4043,10 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "dataset-generated-answer-key",
                 "a person reviews a sample of the answers",
+            ),
+            (
+                "dataset-unsound-expected-outputs",
+                "approval-gated question",
             ),
         ):
             with self.subTest(condition=condition):
@@ -5406,9 +5474,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # has recorded four times as a ceiling that trips on a one-word edit
         # rather than on a decision, so it rises with the change instead of
         # after it: measured 61_848, and 62_250 puts the headroom back at 402.
+        #
+        # The row-level sanity check spends 399 of that 402 on two things only
+        # SKILL.md can carry, and leaves the mechanism in
+        # evaluation-and-dataset.md where the other dataset-quality checks
+        # live. The first is an ordering decision: the check runs at the
+        # opening gate, and it is at the opening gate precisely because nothing
+        # has been generated yet, so the rows it may read are all the rows
+        # there are. The second is the routing line for the new cap, which the
+        # cap-routing guard above requires of every dataset condition. Measured
+        # 62_247, which is a 3-byte headroom - the state this ledger has now
+        # refused five times - so the number rises to 62_500, putting it back
+        # at 253, inside the 228-403 band every raise here has settled on.
         self.assertLess(
             resident,
-            62_250,
+            62_500,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5624,7 +5704,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #     restating it.
         #
         # Measured at 246_909, so 247_250 - 341 bytes, inside the same band.
-        budget = 247_250
+        #
+        # The row-level sanity check adds 4_361, and all but 399 of it is in
+        # evaluation-and-dataset.md - the one home for dataset quality, beside
+        # the degenerate-gold rule it is deliberately contrasted with. It
+        # replaces nothing: every check that file already lists reads a single
+        # column, so a row whose expected answer contradicts its own input was
+        # covered by no rule anywhere in this package. What the bytes buy is
+        # the five constraints that keep an assistant's opinion from behaving
+        # like a measurement - that it is unbilled and therefore may sit at the
+        # opening gate, that it skips this run's own generated rows, that it
+        # may lower a score and never raise one, that a "no" is a question
+        # rather than an edit, and that it is filed as the assistant's reading
+        # and never as the user's - plus the file shape the scorer reads and
+        # the coverage sentence a dataset above the subset threshold needs.
+        # None of that can be shortened into the cap's own reason string: a
+        # rule that only appears on a card fires once and is never read again.
+        # Measured at 251_670, so 252_000 - 330 bytes, inside the same band.
+        budget = 252_000
         self.assertLess(
             total,
             budget,
