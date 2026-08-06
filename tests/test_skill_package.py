@@ -37,6 +37,66 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
+BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
+BUDGET_CEILING = re.compile(r"^(resident|total)-ceiling: (\d[\d_]*)$", re.MULTILINE)
+# A raise is a decision, so an entry that states a number and not a reason is
+# the thing this ledger exists to refuse. The floor is not a guess: the
+# shortest reason anyone has written across the nine raises in
+# 0001-inherited-ledger.md is 259 characters, so 240 refuses a label without
+# refusing a short argument.
+BUDGET_REASON_FLOOR = 240
+
+
+def guidance_budget_entries() -> list[SimpleNamespace]:
+    """Every raise of a guidance ceiling, one file each, in order.
+
+    The ceilings and their reasons were one comment block in the budget test
+    below, which every branch that raised a number appended to - so the block
+    became the most-conflicted region in the repository, and every one of those
+    conflicts was two paragraphs that did not disagree being merged by hand.
+
+    Per-raise files remove that, and remove nothing else. The arithmetic trap
+    the ledger records five times - both branches raise correctly for their own
+    increment, and the merged package exceeds both - was never caught by the
+    textual conflict, because it is arithmetic. It is caught here, by the
+    duplicate-number check and by the ceiling itself.
+
+    `tests/guidance_budget/README.md` states the format for whoever adds the
+    next one.
+    """
+    entries: list[SimpleNamespace] = []
+    for path in sorted(GUIDANCE_BUDGET_LEDGER.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        name = BUDGET_ENTRY_NAME.match(path.name)
+        text = path.read_text(encoding="utf-8")
+        ceilings = {
+            which: int(value.replace("_", ""))
+            for which, value in BUDGET_CEILING.findall(text)
+        }
+        reason = BUDGET_CEILING.sub("", text)
+        # The heading is the entry's name, not its argument.
+        reason = re.sub(r"^#.*$", "", reason, flags=re.MULTILINE)
+        entries.append(
+            SimpleNamespace(
+                path=path,
+                index=int(name.group(1)) if name else None,
+                ceilings=ceilings,
+                reason=reason.strip(),
+            )
+        )
+    return sorted(entries, key=lambda entry: (entry.index is None, entry.index))
+
+
+def guidance_budget_ceilings() -> dict[str, int]:
+    """The ceiling in force: the newest entry that declared each one."""
+    ceilings: dict[str, int] = {}
+    for entry in guidance_budget_entries():
+        ceilings.update(entry.ceilings)
+    return ceilings
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -4704,6 +4764,72 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "an allowlisted external flag is no longer mentioned anywhere",
         )
 
+    def test_a_budget_raise_carries_its_reason(self) -> None:
+        """The ledger's own rule, checked instead of merely written down.
+
+        CLAUDE.md has said since #104 that raising a ceiling "is a decision:
+        change the number where it is defined, with the reason, in the same
+        commit". Nothing enforced the second half - a bare number passed the
+        suite, and only a reviewer noticing kept the ledger honest. Now the
+        number and the reason are the same file, so one cannot arrive without
+        the other.
+
+        The duplicate-number check is the other half. Two branches that each
+        raise a ceiling no longer collide textually, so this is what tells the
+        merger that two raises landed together and that the merged package
+        needs one entry measured against itself rather than either side's
+        figure - the mistake 0001-inherited-ledger.md records five times.
+        """
+        entries = guidance_budget_entries()
+        self.assertTrue(entries, "the guidance budget ledger is empty")
+
+        self.assertEqual(
+            [entry.path.name for entry in entries if entry.index is None],
+            [],
+            "a budget ledger entry is not named NNNN-slug.md, so it has no "
+            "place in the order and cannot be told apart from the entry a "
+            "concurrent branch added",
+        )
+
+        indexes = [entry.index for entry in entries]
+        duplicated = sorted({i for i in indexes if indexes.count(i) > 1})
+        self.assertEqual(
+            duplicated,
+            [],
+            f"two budget ledger entries share a number ({duplicated}). Two "
+            "raises landed together, which means neither one's ceiling is the "
+            "merged package's: measure this merge and replace both entries "
+            "with one that states the measured number and both reasons.",
+        )
+
+        self.assertEqual(
+            [entry.path.name for entry in entries if not entry.ceilings],
+            [],
+            "a budget ledger entry declares no ceiling; an entry that raises "
+            "nothing is a note, and notes belong in the raise they explain",
+        )
+
+        unreasoned = {
+            entry.path.name: len(entry.reason)
+            for entry in entries
+            if len(entry.reason) < BUDGET_REASON_FLOOR
+        }
+        self.assertEqual(
+            unreasoned,
+            {},
+            "a budget ledger entry states a number without a reason (under "
+            f"{BUDGET_REASON_FLOOR} characters). What the ceiling buys, what "
+            "it replaces, and the measured figure are the whole point of "
+            "raising it deliberately.",
+        )
+
+        self.assertEqual(
+            sorted(guidance_budget_ceilings()),
+            ["resident", "total"],
+            "the ledger no longer declares both ceilings, so one of the two "
+            "budgets is unenforced",
+        )
+
     def test_the_guidance_budget_is_not_silently_exceeded(self) -> None:
         """Size is a contradiction surface, so it gets a number and a ceiling.
 
@@ -4728,6 +4854,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         guided run does. It bounds how much guidance can accumulate behind the
         mandates before the late, expensive stages, which is where an
         instruction quietly stops being followed.
+
+        Neither number is here. Both live in `tests/guidance_budget/`, one file
+        per raise, with the reason for that raise in the same file - because a
+        ceiling that is edited by every branch is a ceiling every branch
+        conflicts on, and the reasons were never what disagreed.
         """
         document_bytes = {
             path: len(path.read_bytes()) for path in assistant_facing_documents()
@@ -4739,130 +4870,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             for path, size in document_bytes.items()
             if path in {ROOT / "GUIDE.md", SKILL}
         )
-        # Raised from 60_000 to 60_500 by #123's follow-up, which reframes the
-        # enhanced run's trial count for the reader who sees it at approval
-        # time: the card now states a ceiling against the space's own
-        # combination count instead of a range. The exact copy went to
-        # run-safety.md, which owns the approval disclosure, so what landed
-        # here is the mandate and the pointer - SKILL.md's own job. That is
-        # new contract surface with no prior statement, not stage detail that
-        # belongs in a reference. Half a kilobyte, because that is what the
-        # mandate costs; a rounder number would bank headroom for the next
-        # edit nobody weighed.
-        #
-        # The graduation handoff adds three mandates that only SKILL.md can
-        # carry - the closing run-scope statement, its repetition on the
-        # no-lift path, and the evidence-selected skills handoff - because each
-        # is an ordering decision about the close, and the depth behind all
-        # three moved into run-safety.md rather than into SKILL.md. That branch
-        # raised this to 62_000 against a 60 KB base. #131 has since landed and
-        # moved stage detail OUT of SKILL.md, which lowered the base - but not
-        # by enough to absorb the three new mandates: the merged package
-        # measures 61_129, over trunk's 60_500. So this genuinely rises, and
-        # the figure below is the MEASURED merged resident rather than either
-        # branch's - 62_000 would have banked 871 bytes nobody weighed.
-        #
-        # 61_500 and not the narrower 61_250: the 60_000 ceiling this file
-        # carried before left 23 bytes of headroom, which is a ceiling that
-        # trips on a one-word edit rather than on a decision. 371 bytes is the
-        # smallest headroom that still makes the next raise a choice.
+        ceilings = guidance_budget_ceilings()
         self.assertLess(
             resident,
-            61_500,
-            f"resident guidance is {resident / 1024:.0f} KB - the part in "
-            "context for the whole run, competing with the user's project from "
-            "the first turn. Stage detail belongs in the reference for that "
-            "stage, which the run can load and leave.",
+            ceilings["resident"],
+            f"resident guidance is {resident} bytes against a "
+            f"{ceilings['resident']} ceiling - the part in context for the "
+            "whole run, competing with the user's project from the first turn. "
+            "Stage detail belongs in the reference for that stage, which the "
+            "run can load and leave. If it genuinely has to rise, add an entry "
+            "to tests/guidance_budget/ with the measured number and the "
+            "reason - and measure this merge, do not take a branch's figure.",
         )
         # Count the actual UTF-8 files, not Unicode code points or a
         # whitespace-normalized proxy. The ceiling in #104 is a byte ceiling.
         total = sum(document_bytes.values())
-        # The #104 migration lowered this from 220 KB after removing duplicated
-        # environment, account, approval, config-lifecycle, and reporting detail
-        # from resident SKILL.md. The new execution-evaluator safety contract is
-        # real reference depth, not a reason to leave the old ceiling behind.
-        # Resident fell from roughly 69 KB to 54 KB and TOTAL from roughly
-        # 220 KB to 209 KB even with that new safety material, so both lowered
-        # numbers record the shape change rather than merely making today's
-        # text pass.
-        #
-        # The policy, so the next person does not have to invent one:
-        #
-        #   SKILL.md carries the ordered flow and the mandates. A reference
-        #   carries the depth behind one stage. When this ceiling is reached,
-        #   stage detail moves OUT of SKILL.md into the reference that owns
-        #   that stage, and SKILL.md keeps the ordering and the decision. It
-        #   does not move by growing a new document, because two of the four
-        #   contradictions in this package's history were between SKILL.md and
-        #   a reference, and every split is another seam for them.
-        #
-        # Raising this number is allowed and is a decision: change it here,
-        # with the reason, in the same commit as the guidance that needs it.
-        # PRs #125 and #126 add user-facing explanations for readiness evidence
-        # and exact pre-run cards. Those are new contract surface, not duplicated
-        # stage detail, so raise TOTAL by 5 KB while retaining a narrow ceiling.
-        # #133 adds the present-but-unresolved-evaluator distinction (a new
-        # evidence classification and its create/select vs. inspect/repair/
-        # replace routing) to SKILL.md and evaluation-and-dataset.md - also new
-        # contract surface, not duplicated stage detail - so raise TOTAL by
-        # roughly 1 KB, keeping the ceiling as narrow as the addition allows.
-        #
-        # #123's follow-up raises it again, by 1.5 KB. The enhanced run's count
-        # is now spoken to the user as a ceiling against the space it is drawn
-        # from, and run-safety.md carries the copy for that plus the form it
-        # degrades to when the combination count cannot be computed. Two of
-        # those three sentences replace nothing, because the previous framing
-        # said only a number. Against that, the duplicate statement of the
-        # 10-row shortfall obligation left run-safety.md, since #123 had
-        # already made sdk-execution.md its one home.
-        #
-        # #133 and #123's follow-up landed independently and each raised this
-        # number from 220_000 for its own increment, both arriving at 221_500 -
-        # so the merge produced no textual conflict on the line, only on the
-        # reasons above it. Merged, the package carries BOTH additions and
-        # measures 222_750, which neither branch's figure admits. The ceiling
-        # is therefore set here against the measured combined total: this is
-        # the arithmetic neither branch could do alone, and taking either
-        # side's number would have failed the suite rather than the review.
-        #
-        # #131 merges that trunk in and adds the journey structure on top, and
-        # the same arithmetic trap recurs one merge later: trunk said 223_000
-        # and #131 said 222_250, and the merged package measures 223_442 - so
-        # BOTH figures are too low again, for the same reason. The two changes
-        # are additive because they change different things. #137 owns how the
-        # enhanced count is *stated* - the ceiling copy and its degraded form,
-        # which land in run-safety.md. #131 owns the journey *structure* - the
-        # five-stage opening in GUIDE.md, the readiness presentation in
-        # glossary.md, and splitting one combined approval into a baseline
-        # approval and a separate connected-stage approval, which is the bulk
-        # of run-safety.md's share. Against that, #131 moved stage detail out
-        # of SKILL.md, so resident guidance falls to roughly 58 KB even while
-        # TOTAL rises, and the RESIDENT ceiling above is left where it is
-        # rather than raised; the ceiling copy sits in the reference for the
-        # stage that owns it, which is the policy above working rather than
-        # being spent. So the number below is the MEASURED merged total,
-        # 223_442, rounded up to the next 250 - not either branch's figure,
-        # and not an estimate. Measure it; do not take a side.
-        #
-        # The graduation handoff then adds the run-scope derivation and the
-        # evidence-to-skill map to run-safety.md's post-run section - the
-        # reference that already owns the close - so this is the policy above
-        # working, not a bypass of it. That branch raised TOTAL by 6 KB to
-        # 226_000 against a 220 KB base it branched from; trunk has since
-        # reached 223_750 by the two merges recorded above. The number below is
-        # the MEASURED merged total once more - 228_407 rounded up - and it is
-        # the fourth consecutive merge in which neither side's figure was
-        # correct, which is the whole reason this comment keeps growing instead
-        # of the number being guessed. Every branch weighs its own increment
-        # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        budget = ceilings["total"]
         self.assertLess(
             total,
             budget,
-            f"assistant-facing guidance is {total / 1024:.0f} KB against a "
-            f"{budget / 1024:.0f} KB budget. Every rule added is also a surface "
-            "for two rules to disagree on. Prune scope, or raise this number "
-            "deliberately with a reason.",
+            f"assistant-facing guidance is {total} bytes against a {budget} "
+            "budget. Every rule added is also a surface for two rules to "
+            "disagree on. Prune scope, or raise the ceiling deliberately: add "
+            "an entry to tests/guidance_budget/ stating the measured total and "
+            "why the addition earns it. If two branches just merged, this is "
+            f"the arithmetic neither could do alone - {total} is the number "
+            "that matters, not either side's.",
         )
 
 
