@@ -3368,8 +3368,12 @@ class SkillPackageTests(unittest.TestCase):
             "when the split was topped up, say so on the same line as its score",
             dataset,
         )
+        # The counts themselves are stated once, in the details layer that owns
+        # the whole mixture - see the row-provenance test below. The score line
+        # points at them rather than repeating them.
+        self.assertIn("the details layer below carries the counts", dataset)
         self.assertIn(
-            "how many of its rows are the customer's and how many were generated",
+            "how many rows are the customer's and how many this run generated",
             dataset,
         )
 
@@ -3419,9 +3423,70 @@ class SkillPackageTests(unittest.TestCase):
             "their own dataset still has the defect this run worked around",
             "name what changed and in which rows, and leave applying it to them",
             "offer it; never write it",
+            # Three kinds of row, kept apart. A repaired row is the customer's
+            # with a field changed; a generated row is this run's. Collapsing
+            # them into one "modified" bucket answers a question nobody asked
+            # and loses the one they did.
+            "those are three kinds of row",
+            "a row the customer brought, a row of theirs this run repaired",
+            "and a row this run generated",
+            'merging them into one "modified" bucket destroys the only answer',
+            "a repair changed a field, not an origin, so that row is still theirs; "
+            "only a generated row is ours",
+            # The mixture is stated as a mixture, with counts and ids - and as
+            # counts rather than a path, because there is no third file.
+            "give each set its own line saying it as a mixture",
+            "how many rows are the customer's and how many this run generated, "
+            "with the generated ids",
+            "interleaved with the real ones; there is no third file to point at",
+            # Reusing what exists, per the owner: no new vocabulary, no new file.
+            "the provenance fields the rows already carry and the id lists this "
+            "run already writes",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
+
+    def test_the_close_says_what_a_full_capability_run_would_do(self) -> None:
+        """The ten rows are a teaching choice, said forwards rather than implied.
+
+        The size decision is unchanged - ten, exact in both directions, for the
+        reasons the sizing paragraphs above already give. What was missing is
+        the positive half: the guide left "this is only a walkthrough" to be
+        inferred from a caveat, which reads as a limitation being apologised
+        for rather than as a step being demonstrated cheaply.
+
+        Two brakes, because this sentence is the one most likely to become a
+        pitch. It may not apologise for the ten rows, and it may not say what a
+        larger run would return - only what it would do. The route to it is the
+        skills handoff the close already carries, pointed at rather than
+        restated.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "at full capability this same check runs over the customer's whole dataset",
+            "that is where real-world validation actually happens",
+            "showing the shape of that step cheaply rather than performing it",
+            "which is a choice and not a shortfall",
+            "without apologizing for the ten rows and without saying what a "
+            "larger run would find",
+            "the close's skills handoff is already the route to it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # It sits beside the small-sample caveat and does not replace it: the
+        # backward-looking half stays exactly as it was.
+        self.assertIn("ten rows cannot resolve a small gap", dataset)
+        self.assertLess(
+            dataset.index("keep the note only while one row still moves"),
+            dataset.index("at full capability this same check runs"),
+        )
+        # And it does not reopen the size decision it explains.
+        self.assertIn("ten is therefore exact in both directions", dataset)
 
     def test_one_configuration_is_selected_on_tuning_and_only_it_is_held_out_scored(
         self,
@@ -5535,7 +5600,31 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # pointer, and the four other documents are unchanged or shorter.
         # Measured at 245_633, so 246_000 - 367 bytes, inside the 228-403 band
         # the raises above settled on.
-        budget = 246_000
+        #
+        # The owner's two closing additions cost 1_276 more, and RESIDENT does
+        # not move at all - both land in the reference that owns the close:
+        #
+        #   * The mixture, said as a mixture. The close named the two derived
+        #     files and said the original was never modified, which answers
+        #     "what did you do to my data" and not "which of these rows are
+        #     mine". Three kinds of row now stay apart - brought, repaired,
+        #     generated - because a repair changes a field and not an origin,
+        #     and one "modified" bucket would lose the only distinction the
+        #     disclosure exists to make. It costs counts and ids rather than a
+        #     path because the generated rows are interleaved in the same two
+        #     files; there is no third file, and no new field or vocabulary
+        #     either - the provenance values and id lists are already written.
+        #   * What a full-capability run would do, stated instead of implied.
+        #     Ten rows is unchanged and stays exact in both directions; what
+        #     was missing is the forward half, which the guide had left to be
+        #     inferred from a caveat. Inferred, it reads as an apology for the
+        #     size; stated, it is a step being shown cheaply. Five lines, two
+        #     of them brakes - no apology, and no claim about what a larger run
+        #     would return - and it points at the skills handoff rather than
+        #     restating it.
+        #
+        # Measured at 246_909, so 247_250 - 341 bytes, inside the same band.
+        budget = 247_250
         self.assertLess(
             total,
             budget,

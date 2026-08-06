@@ -632,10 +632,15 @@ walkthrough's. Keep the note only while one row still moves the held-out figure 
 held-out set large enough that it does not, drop the note rather than pasting a caveat the
 numbers do not need.
 
-When the split was topped up, say so on the same line as its score - how many of its rows are the
-customer's and how many were generated. "Held out" is a claim about what the search never saw, not
-a claim that the rows came from the customer's world, and a reader who is not told the difference
-will hear the second one.
+Then say the forward half out loud instead of leaving it implied: at full capability this same check
+runs over the customer's whole dataset, and that is where real-world validation actually happens -
+the walkthrough is showing the shape of that step cheaply rather than performing it, which is a
+choice and not a shortfall. State it without apologizing for the ten rows and without saying what a
+larger run would find; the close's skills handoff is already the route to it.
+
+When the split was topped up, say so on the same line as its score. "Held out" is a claim about what
+the search never saw, not a claim that the rows came from the customer's world, and a reader who is
+not told the difference will hear the second one. The details layer below carries the counts.
 
 Name both written files in the closing summary's details layer, by absolute path -
 `<project root>/traigent-runs/tuning.jsonl` and `<project root>/traigent-runs/holdout.jsonl` - and
@@ -649,6 +654,16 @@ One thing does have to travel back, and only the user can carry it: a repair mad
 diagnosis and repair choice" above lives in the working copy, so their own dataset still has the
 defect this run worked around. Name what changed and in which rows, and leave applying it to them.
 Offer it; never write it.
+
+Those are three kinds of row, and the details layer keeps them apart: a row the customer brought, a
+row of theirs this run repaired - named just above - and a row this run generated. Merging them into
+one "modified" bucket destroys the only answer the user came for, which is which rows are whose. A
+repair changed a field, not an origin, so that row is still theirs; only a generated row is ours.
+Give each set its own line saying it as a mixture - how many rows are the customer's and how many
+this run generated, with the generated ids. That is counts and ids rather than a path because the
+generated rows sit in those same two files, interleaved with the real ones; there is no third file
+to point at. The provenance fields the rows already carry and the id lists this run already writes
+are where both numbers come from.
 
 Call it a sealed holdout only when its split and labels were fixed and hidden from component
 design, tuning, and winner selection until the candidate was locked. Because the assistant creates
