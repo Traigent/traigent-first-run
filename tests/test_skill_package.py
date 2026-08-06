@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,60 +40,290 @@ def assistant_facing_documents() -> list[Path]:
 
 GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
 BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
-BUDGET_CEILING = re.compile(r"^(resident|total)-ceiling: (\d[\d_]*)$", re.MULTILINE)
+BUDGET_FIGURE = re.compile(
+    r"^(resident|total)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
+)
+BUDGET_FOLLOWS = re.compile(r"^follows: (\d{4})$", re.MULTILINE)
 # A raise is a decision, so an entry that states a number and not a reason is
 # the thing this ledger exists to refuse. The floor is not a guess: the
 # shortest reason anyone has written across the nine raises in
 # 0001-inherited-ledger.md is 259 characters, so 240 refuses a label without
 # refusing a short argument.
 BUDGET_REASON_FLOOR = 240
+# A character count alone is satisfied by 240 characters of one repeated word,
+# which is a label padded to length rather than an argument. Distinct words are
+# the cheap second half: that same shortest inherited reason uses 30 of them, so
+# 24 refuses padding with the same margin the character floor keeps. Neither
+# number can tell a bad argument from a good one - both refuse only the entry
+# that did not try.
+BUDGET_REASON_DISTINCT_WORDS = 24
 
 
-def guidance_budget_entries() -> list[SimpleNamespace]:
-    """Every raise of a guidance ceiling, one file each, in order.
+def guidance_budget_entries(
+    directory: Path = GUIDANCE_BUDGET_LEDGER,
+) -> list[SimpleNamespace]:
+    """Every raise of a guidance ceiling, one file each, read from `directory`.
 
-    The ceilings and their reasons were one comment block in the budget test
-    below, which every branch that raised a number appended to - so the block
-    became the most-conflicted region in the repository, and every one of those
-    conflicts was two paragraphs that did not disagree being merged by hand.
-
-    Per-raise files remove that, and remove nothing else. The arithmetic trap
-    the ledger records five times - both branches raise correctly for their own
-    increment, and the merged package exceeds both - was never caught by the
-    textual conflict, because it is arithmetic. It is caught here, by the
-    duplicate-number check and by the ceiling itself.
+    An entry states the ledger state it was measured on top of (`follows:`),
+    the ceiling it puts in force, the figure it measured, and why. The
+    directory is a parameter so the rules below can be exercised against
+    invented ledgers rather than only against the one that is committed.
 
     `tests/guidance_budget/README.md` states the format for whoever adds the
     next one.
     """
     entries: list[SimpleNamespace] = []
-    for path in sorted(GUIDANCE_BUDGET_LEDGER.glob("*.md")):
+    for path in sorted(directory.glob("*.md")):
         if path.name == "README.md":
             continue
         name = BUDGET_ENTRY_NAME.match(path.name)
         text = path.read_text(encoding="utf-8")
-        ceilings = {
-            which: int(value.replace("_", ""))
-            for which, value in BUDGET_CEILING.findall(text)
-        }
-        reason = BUDGET_CEILING.sub("", text)
+        figures: dict[str, dict[str, int]] = {"ceiling": {}, "measured": {}}
+        for which, kind, value in BUDGET_FIGURE.findall(text):
+            figures[kind][which] = int(value.replace("_", ""))
+        follows = BUDGET_FOLLOWS.findall(text)
+        reason = BUDGET_FOLLOWS.sub("", BUDGET_FIGURE.sub("", text))
         # The heading is the entry's name, not its argument.
         reason = re.sub(r"^#.*$", "", reason, flags=re.MULTILINE)
         entries.append(
             SimpleNamespace(
                 path=path,
                 index=int(name.group(1)) if name else None,
-                ceilings=ceilings,
+                ceilings=figures["ceiling"],
+                measured=figures["measured"],
+                follows=int(follows[0]) if len(follows) == 1 else None,
+                follows_count=len(follows),
                 reason=reason.strip(),
             )
         )
     return sorted(entries, key=lambda entry: (entry.index is None, entry.index))
 
 
-def guidance_budget_ceilings() -> dict[str, int]:
-    """The ceiling in force: the newest entry that declared each one."""
+def guidance_budget_reason_defect(reason: str) -> str | None:
+    """Why this reason is not an argument, or None if it may be one."""
+    if len(reason) < BUDGET_REASON_FLOOR:
+        return f"{len(reason)} characters, under the {BUDGET_REASON_FLOOR} floor"
+    distinct = len(set(re.findall(r"[a-z]{2,}", reason.casefold())))
+    if distinct < BUDGET_REASON_DISTINCT_WORDS:
+        return (
+            f"{distinct} distinct words, under the "
+            f"{BUDGET_REASON_DISTINCT_WORDS} floor - long enough only because "
+            "it repeats itself"
+        )
+    return None
+
+
+def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
+    """Every way this ledger fails to be a single chain of measured raises.
+
+    Returned in stages, and the first stage with anything to say is the last
+    one that runs: a ledger whose entries are not identifiable cannot be
+    checked for what they point at.
+    """
+    if not entries:
+        return ["the guidance budget ledger is empty"]
+
+    naming = [
+        f"{entry.path.name} is not named NNNN-slug.md, so it has no place in "
+        "the order and cannot be told apart from the entry a concurrent branch "
+        "added"
+        for entry in entries
+        if entry.index is None
+    ]
+    indexes = [entry.index for entry in entries if entry.index is not None]
+    naming += [
+        f"two budget ledger entries share the number {index:04d}; give each "
+        "entry its own number and state which one the later follows"
+        for index in sorted({i for i in indexes if indexes.count(i) > 1})
+    ]
+    if naming:
+        return naming
+
+    by_index = {entry.index: entry for entry in entries}
+    content: list[str] = []
+    for entry in entries:
+        if not entry.ceilings:
+            content.append(
+                f"{entry.path.name} declares no ceiling; an entry that raises "
+                "nothing is a note, and notes belong in the raise they explain"
+            )
+        defect = guidance_budget_reason_defect(entry.reason)
+        if defect is not None:
+            content.append(
+                f"{entry.path.name} states a number without a reason ({defect}). "
+                "What the ceiling buys, what it replaces, and the measured "
+                "figure are the whole point of raising it deliberately."
+            )
+        for which, ceiling in sorted(entry.ceilings.items()):
+            if which not in entry.measured:
+                content.append(
+                    f"{entry.path.name} declares {which}-ceiling but no "
+                    f"{which}-measured; a ceiling nobody measured against is a "
+                    "number, and the next merge has nothing to compare with"
+                )
+            elif entry.measured[which] >= ceiling:
+                content.append(
+                    f"{entry.path.name} measured {which} at "
+                    f"{entry.measured[which]} against its own "
+                    f"{which}-ceiling of {ceiling}; a ceiling at or below the "
+                    "measurement is already breached"
+                )
+        for which in sorted(set(entry.measured) - set(entry.ceilings)):
+            content.append(
+                f"{entry.path.name} declares {which}-measured but no "
+                f"{which}-ceiling; state the ceiling this measurement buys, or "
+                "drop the measurement"
+            )
+        if entry.follows_count > 1:
+            content.append(
+                f"{entry.path.name} declares follows: more than once; an entry "
+                "is measured on top of exactly one ledger state"
+            )
+        elif entry.follows is not None and entry.follows not in by_index:
+            content.append(
+                f"{entry.path.name} follows {entry.follows:04d}, which is not "
+                "in this tree. An entry can only follow a state it actually "
+                "has: measure on top of an entry that exists here, and say so."
+            )
+        elif entry.follows is not None and entry.follows >= entry.index:
+            content.append(
+                f"{entry.path.name} follows {entry.follows:04d}, which is not "
+                "lower than its own number; the chain runs one way"
+            )
+    if content:
+        return content
+
+    roots = [entry for entry in entries if entry.follows is None]
+    structure: list[str] = []
+    if len(roots) != 1:
+        structure.append(
+            "the ledger has "
+            + (
+                "no entry that declares no follows:"
+                if not roots
+                else f"{len(roots)} entries that declare no follows: "
+                + ", ".join(entry.path.name for entry in roots)
+            )
+            + ". Exactly one entry is the root; every other entry names the "
+            "entry it was measured on top of."
+        )
+    followed: dict[int, list[SimpleNamespace]] = {}
+    for entry in entries:
+        if entry.follows is not None:
+            followed.setdefault(entry.follows, []).append(entry)
+    for target, claimants in sorted(followed.items()):
+        if len(claimants) > 1:
+            structure.append(
+                ", ".join(entry.path.name for entry in claimants)
+                + f" all follow {target:04d}, so they were each measured on the "
+                "same ledger state and none of their figures describes the "
+                "package that now holds every one of these changes. Measure the "
+                "merged package, then either replace them with one entry "
+                "measured against it, or re-point the later entry at the "
+                "earlier one and re-state that entry's measured figure and "
+                "ceiling against the merge."
+            )
+    if structure:
+        return structure
+
+    chain = _guidance_budget_walk(entries)
+    monotone: list[str] = []
+    for later in chain[1:]:
+        for which, measurement in sorted(later.measured.items()):
+            previous = _last_measured(chain, which, later)
+            if previous is None:
+                continue
+            previous_entry, previous_measurement = previous
+            previous_ceiling = _ceiling_in_force(chain, which, later)
+            if (
+                which in later.ceilings
+                and previous_ceiling is not None
+                and later.ceilings[which] < previous_ceiling
+            ):
+                # A prune lowers both the ceiling and the measurement; that is a
+                # different decision and this check has nothing to say about it.
+                continue
+            if measurement < previous_measurement:
+                monotone.append(
+                    f"{later.path.name} measured {which} at {measurement}, "
+                    f"below {previous_entry.path.name}'s {previous_measurement} "
+                    "which it follows. A figure taken before its predecessor's "
+                    "change cannot describe a package that contains it: "
+                    "re-measure the merged package and re-state this entry's "
+                    "figure and ceiling."
+                )
+    return monotone
+
+
+def _guidance_budget_walk(entries: list[SimpleNamespace]) -> list[SimpleNamespace]:
+    """Walk the ledger from its root, and insist the walk reaches all of it.
+
+    One root and no two entries following the same one force a single path -
+    n nodes, n-1 edges, in-degree and out-degree at most one, and numbers that
+    only decrease, so there is nowhere for a fork or a cycle to be. That is why
+    the ceiling in force is unambiguous, and why the walk below is the same
+    order as the numbers.
+
+    The guard is therefore unreachable while those two rules hold. It is not a
+    check that catches an author mistake and is not tested as one; it is here
+    so that changing either rule cannot quietly turn the ceiling in force into
+    whichever branch of the ledger happened to be read.
+    """
+    successor = {entry.follows: entry for entry in entries if entry.follows is not None}
+    chain = [next(entry for entry in entries if entry.follows is None)]
+    while chain[-1].index in successor:
+        chain.append(successor[chain[-1].index])
+    if len(chain) != len(entries):
+        raise RuntimeError(
+            "the guidance budget ledger walks as "
+            + ", ".join(entry.path.name for entry in chain)
+            + " but holds "
+            + ", ".join(entry.path.name for entry in entries)
+            + "; the ceiling in force would depend on which branch was read"
+        )
+    return chain
+
+
+def _last_measured(
+    chain: list[SimpleNamespace], which: str, before: SimpleNamespace
+) -> tuple[SimpleNamespace, int] | None:
+    """The newest measurement of `which` strictly before `before` in the chain."""
+    for entry in reversed(chain[: chain.index(before)]):
+        if which in entry.measured:
+            return entry, entry.measured[which]
+    return None
+
+
+def _ceiling_in_force(
+    chain: list[SimpleNamespace], which: str, before: SimpleNamespace
+) -> int | None:
+    """The ceiling `which` was under strictly before `before` in the chain."""
+    for entry in reversed(chain[: chain.index(before)]):
+        if which in entry.ceilings:
+            return entry.ceilings[which]
+    return None
+
+
+def guidance_budget_chain(
+    entries: list[SimpleNamespace] | None = None,
+) -> list[SimpleNamespace]:
+    """The ledger read as the single chain of raises it has to be."""
+    entries = guidance_budget_entries() if entries is None else entries
+    defects = guidance_budget_defects(entries)
+    if defects:
+        raise ValueError(
+            "the guidance budget ledger is not a single chain of measured "
+            "raises, so no ceiling can be read off it:\n- " + "\n- ".join(defects)
+        )
+    return _guidance_budget_walk(entries)
+
+
+def guidance_budget_ceilings(
+    entries: list[SimpleNamespace] | None = None,
+) -> dict[str, int]:
+    """The ceiling in force: the last entry along the chain that declared it."""
     ceilings: dict[str, int] = {}
-    for entry in guidance_budget_entries():
+    for entry in guidance_budget_chain(entries):
         ceilings.update(entry.ceilings)
     return ceilings
 
@@ -4765,62 +4996,44 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         )
 
     def test_a_budget_raise_carries_its_reason(self) -> None:
-        """The ledger's own rule, checked instead of merely written down.
+        """The committed ledger obeys the rules the mechanism enforces.
 
-        CLAUDE.md has said since #104 that raising a ceiling "is a decision:
-        change the number where it is defined, with the reason, in the same
-        commit". Nothing enforced the second half - a bare number passed the
-        suite, and only a reviewer noticing kept the ledger honest. Now the
-        number and the reason are the same file, so one cannot arrive without
-        the other.
+        Two things are checked, and they are different. CLAUDE.md has said
+        since #104 that raising a ceiling "is a decision: change the number
+        where it is defined, with the reason, in the same commit"; nothing
+        enforced the second half, so a bare number passed. The number, the
+        figure it was measured against, and the reason are now one file, and
+        an entry missing any of the three fails.
 
-        The duplicate-number check is the other half. Two branches that each
-        raise a ceiling no longer collide textually, so this is what tells the
-        merger that two raises landed together and that the merged package
-        needs one entry measured against itself rather than either side's
-        figure - the mistake 0001-inherited-ledger.md records five times.
+        The second is what the ledger records five times: two branches each
+        raise correctly for their own increment, and the merged package
+        exceeds both. Every entry states the entry it was measured on top of,
+        so two concurrent raises both honestly say `follows: 0001`, and the
+        merge - which produces no textual conflict at all - fails because two
+        entries may not follow the same one. A branch can only point at an
+        entry it actually has, so renumbering around the collision does not
+        help: an entry that claims to follow one its own tree lacks fails on
+        that branch, before any merge.
+
+        What this does not do: it detects that two raises were measured on the
+        same state, not that any figure is correct. Nothing here re-measures
+        the package on the author's behalf, and an author who re-points an
+        entry and rewrites its figures to any larger pair of numbers is
+        believed. The monotonicity check catches only the re-point whose
+        stated figure is below the one it now follows - the un-remeasured
+        case - and says nothing about a figure that is merely wrong. What
+        keeps the whole thing honest is the ceiling check below, which
+        measures the package for real.
+
+        The rules themselves are exercised against invented ledgers in
+        `GuidanceBudgetLedgerRulesTests`; this test is the committed ledger.
         """
         entries = guidance_budget_entries()
         self.assertTrue(entries, "the guidance budget ledger is empty")
-
         self.assertEqual(
-            [entry.path.name for entry in entries if entry.index is None],
+            guidance_budget_defects(entries),
             [],
-            "a budget ledger entry is not named NNNN-slug.md, so it has no "
-            "place in the order and cannot be told apart from the entry a "
-            "concurrent branch added",
-        )
-
-        indexes = [entry.index for entry in entries]
-        duplicated = sorted({i for i in indexes if indexes.count(i) > 1})
-        self.assertEqual(
-            duplicated,
-            [],
-            f"two budget ledger entries share a number ({duplicated}). Two "
-            "raises landed together, which means neither one's ceiling is the "
-            "merged package's: measure this merge and replace both entries "
-            "with one that states the measured number and both reasons.",
-        )
-
-        self.assertEqual(
-            [entry.path.name for entry in entries if not entry.ceilings],
-            [],
-            "a budget ledger entry declares no ceiling; an entry that raises "
-            "nothing is a note, and notes belong in the raise they explain",
-        )
-
-        unreasoned = {
-            entry.path.name: len(entry.reason)
-            for entry in entries
-            if len(entry.reason) < BUDGET_REASON_FLOOR
-        }
-        self.assertEqual(
-            unreasoned,
-            {},
-            "a budget ledger entry states a number without a reason (under "
-            f"{BUDGET_REASON_FLOOR} characters). What the ceiling buys, what "
-            "it replaces, and the measured figure are the whole point of "
-            "raising it deliberately.",
+            "the committed guidance budget ledger breaks its own rules",
         )
 
         self.assertEqual(
@@ -4897,6 +5110,414 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             f"the arithmetic neither could do alone - {total} is the number "
             "that matters, not either side's.",
         )
+
+
+class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
+    """The ledger rules, run against invented ledgers rather than the real one.
+
+    Checking the rules against `tests/guidance_budget/` alone would only ever
+    prove that the committed ledger is currently well-formed. Every rule here
+    is exercised by writing the ledger that breaks it into a temporary
+    directory, so each check is proven by the case it must refuse.
+    """
+
+    REASON = (
+        "Branch A adds the degraded form of the enhanced-run card to "
+        "run-safety.md: the sentence the assistant says when the combination "
+        "count cannot be computed, so the card states the ceiling on its own "
+        "instead of estimating a total it does not have. That is new contract "
+        "surface with no prior statement, and it replaces nothing."
+    )
+
+    def ledger(self, **files: str) -> list[SimpleNamespace]:
+        """Write an invented ledger to a temporary directory and read it back."""
+        directory = Path(tempfile.mkdtemp(prefix="guidance-budget-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        for name, body in files.items():
+            (directory / name).write_text(body, encoding="utf-8")
+        return guidance_budget_entries(directory)
+
+    def entry(
+        self,
+        title: str,
+        *,
+        follows: int | None = None,
+        reason: str | None = None,
+        **figures: int,
+    ) -> str:
+        lines = [f"# {title}", ""]
+        if follows is not None:
+            lines.append(f"follows: {follows:04d}")
+        lines += [
+            f"{name.replace('_', '-')}: {value}" for name, value in figures.items()
+        ]
+        lines += ["", reason if reason is not None else self.REASON, ""]
+        return "\n".join(lines)
+
+    def root(self) -> str:
+        return self.entry(
+            "0001 - the ledger this mechanism inherited",
+            resident_ceiling=61_500,
+            resident_measured=61_129,
+            total_ceiling=228_750,
+            total_measured=228_407,
+        )
+
+    def assertDefect(self, entries: list[SimpleNamespace], fragment: str) -> None:
+        defects = guidance_budget_defects(entries)
+        self.assertTrue(defects, "the ledger was accepted; expected a defect")
+        self.assertTrue(
+            any(fragment in defect for defect in defects),
+            f"no defect mentioned {fragment!r}; got {defects}",
+        )
+
+    def test_a_sequential_chain_of_raises_is_accepted(self) -> None:
+        """The shape the mechanism is asking for has to actually pass.
+
+        Reversal: this is the control for every refusal below. If it failed,
+        the rules would be refusing the correct ledger too, and every other
+        test in this class would prove nothing.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+        self.assertEqual(
+            [entry.path.name for entry in guidance_budget_chain(entries)],
+            ["0001-inherited-ledger.md", "0002-branch-a.md", "0003-branch-b.md"],
+        )
+        self.assertEqual(
+            guidance_budget_ceilings(entries),
+            {"resident": 61_500, "total": 240_000},
+        )
+
+    def test_two_entries_measured_on_the_same_state_are_refused(self) -> None:
+        """The mistake the ledger records five times, caught at the merge.
+
+        Two branches each add an entry, each honestly measured on top of 0001.
+        They take different numbers - the polite thing to do when you can see
+        the other pull request - so nothing collides: no textual conflict, no
+        duplicate number. Before `follows:` this merged green, and the higher
+        number's ceiling silently governed a package neither branch measured.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=1,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                ),
+            }
+        )
+        # Neither of the two older checks sees this: the numbers differ, and
+        # both entries carry a ceiling and a reason.
+        self.assertEqual(
+            sorted(entry.index for entry in entries), [1, 2, 3], "no duplicate number"
+        )
+        self.assertDefect(entries, "all follow 0001")
+        # The message has to hand over the fix, not only the refusal.
+        self.assertDefect(entries, "Measure the merged package")
+        self.assertDefect(entries, "re-point the later entry at the earlier one")
+
+    def test_an_entry_cannot_follow_one_that_is_not_in_the_tree(self) -> None:
+        """Renumbering around the collision is what the pointer refuses.
+
+        The second author renumbers 0002 to 0003 and writes `follows: 0002` to
+        make the chain look sequential. On that author's own branch 0002 does
+        not exist, so their own suite is red before the merge - which is the
+        whole point of grounding the pointer in the tree rather than in the
+        number.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                ),
+            }
+        )
+        self.assertDefect(entries, "follows 0002, which is not in this tree")
+
+    def test_an_entry_is_measured_on_top_of_exactly_one_state(self) -> None:
+        """Two follows: lines would let an entry claim both sides of a merge."""
+        body = self.entry(
+            "0003 - branch B",
+            follows=1,
+            total_ceiling=240_000,
+            total_measured=239_118,
+        ).replace("follows: 0001", "follows: 0001\nfollows: 0002")
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0003-branch-b.md": body,
+            }
+        )
+        self.assertDefect(entries, "declares follows: more than once")
+
+    def test_an_entry_may_not_follow_a_higher_number(self) -> None:
+        """The chain runs one way, so the ceiling in force is not a cycle."""
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=3,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=1,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                ),
+            }
+        )
+        self.assertDefect(entries, "which is not lower than its own number")
+
+    def test_the_ledger_has_exactly_one_root(self) -> None:
+        """Two entries that follow nothing are two ledgers in one directory."""
+        two_roots = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A", total_ceiling=232_000, total_measured=231_402
+                ),
+            }
+        )
+        self.assertDefect(two_roots, "2 entries that declare no follows:")
+
+        no_root = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.entry(
+                    "0001 - root",
+                    follows=1,
+                    total_ceiling=228_750,
+                    total_measured=228_407,
+                ),
+            }
+        )
+        self.assertDefect(no_root, "which is not lower than its own number")
+
+    def test_a_re_point_that_never_re_measured_is_refused(self) -> None:
+        """The offered fix is only a fix if the figure is taken again.
+
+        Re-pointing 0003 at 0002 makes the chain well-formed. If the author
+        does not re-measure, the figure they keep is the one they took on a
+        package that did not contain 0002's change - and here it is smaller
+        than 0002's own measurement, which cannot be true of a package that
+        holds both. This catches exactly that case and not the general one:
+        a re-point whose stale figure happens to be the larger of the two is
+        believed.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    total_ceiling=232_500,
+                    total_measured=229_800,
+                ),
+            }
+        )
+        self.assertDefect(entries, "below 0002-branch-a.md's 231402")
+        self.assertDefect(entries, "re-measure the merged package")
+
+    def test_a_prune_that_lowers_the_ceiling_may_lower_the_measurement(
+        self,
+    ) -> None:
+        """Monotonicity is about raises; #104 lowered a ceiling after a prune.
+
+        Reversal of the test above: the same falling measurement is accepted
+        when the entry lowers the ceiling with it, because that is a prune
+        rather than an unmeasured re-point. Without this the mechanism would
+        make the one move CLAUDE.md actually prefers - prune instead of
+        raise - impossible to record.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - the #104 migration",
+                    follows=1,
+                    total_ceiling=220_000,
+                    total_measured=209_400,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+
+    def test_a_ceiling_needs_the_figure_it_was_measured_against(self) -> None:
+        """A ceiling with no measurement leaves the next merge nothing to
+        compare against, and a ceiling under its own measurement is breached
+        on arrival."""
+        unmeasured = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A", follows=1, total_ceiling=232_000
+                ),
+            }
+        )
+        self.assertDefect(unmeasured, "declares total-ceiling but no total-measured")
+
+        backwards = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=232_400,
+                ),
+            }
+        )
+        self.assertDefect(backwards, "a ceiling at or below the measurement")
+
+        # The other way round: a figure with no ceiling attached is a number
+        # nobody has to live under, and the next entry would be held monotone
+        # against it.
+        stray = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    resident_ceiling=62_000,
+                    resident_measured=61_400,
+                    total_measured=231_402,
+                ),
+            }
+        )
+        self.assertDefect(stray, "declares total-measured but no total-ceiling")
+
+    def test_an_entry_still_needs_a_number_a_name_and_a_reason(self) -> None:
+        """The rules the previous revision had, kept and proven the same way."""
+        unnamed = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "branch-a.md": self.entry(
+                    "branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+            }
+        )
+        self.assertDefect(unnamed, "is not named NNNN-slug.md")
+
+        # `follows:` is what catches two raises measured on one state; the
+        # number is still what tells them apart in the order, so two entries
+        # cannot share one.
+        duplicated = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                "0002-branch-b.md": self.entry(
+                    "0002 - branch B",
+                    follows=1,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                ),
+            }
+        )
+        self.assertDefect(duplicated, "share the number 0002")
+
+        no_ceiling = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry("0002 - branch A", follows=1),
+            }
+        )
+        self.assertDefect(no_ceiling, "declares no ceiling")
+
+    def test_the_reason_floor_refuses_padding_and_accepts_a_short_argument(
+        self,
+    ) -> None:
+        """A character count alone is met by one word repeated to length.
+
+        Both inputs are invented rather than taken from the committed ledger,
+        because a check calibrated against the text it is checking proves only
+        that the text has not changed. The padded string is over the character
+        floor and is refused; the short argument is barely over it and is
+        accepted, which is what stops the floor from refusing an author who
+        made their case in four sentences.
+        """
+        padded = "padding " * 45
+        self.assertGreater(len(padded.strip()), BUDGET_REASON_FLOOR)
+        self.assertIsNotNone(guidance_budget_reason_defect(padded))
+
+        short_but_real = (
+            "The graduation handoff adds the closing run-scope statement to "
+            "run-safety.md, which already owns the close. It replaces nothing "
+            "and is new contract surface, so TOTAL rises. The merged package "
+            "measures 229_204; the ceiling here is that figure rounded up, "
+            "not either branch's own."
+        )
+        self.assertLess(len(short_but_real), 300)
+        self.assertIsNone(guidance_budget_reason_defect(short_but_real))
+
+        # The two floors do different work, so each gets an input the other
+        # one lets through. This is under the character floor and well over
+        # the distinct-word floor, and it is the entry the ledger exists to
+        # refuse: a note about the arithmetic with no argument in it.
+        arithmetic_only = (
+            "Raised because the merged package grew past its previous ceiling "
+            "once both branches landed together, so this number simply records "
+            "that arithmetic and says nothing about which addition earns its "
+            "bytes."
+        )
+        self.assertLess(len(arithmetic_only), BUDGET_REASON_FLOOR)
+        self.assertGreaterEqual(
+            len(set(re.findall(r"[a-z]{2,}", arithmetic_only.casefold()))),
+            BUDGET_REASON_DISTINCT_WORDS,
+        )
+        self.assertIsNotNone(guidance_budget_reason_defect(arithmetic_only))
+
+        self.assertIsNotNone(guidance_budget_reason_defect("Raised for #142."))
 
 
 if __name__ == "__main__":

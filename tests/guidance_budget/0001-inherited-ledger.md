@@ -1,7 +1,15 @@
 # 0001 - the ledger this mechanism inherited
 
 resident-ceiling: 61_500
+resident-measured: 61_129
 total-ceiling: 228_750
+total-measured: 228_407
+
+This is the root of the chain, so it declares no `follows:` - there is no
+earlier ledger state it was measured on top of. The two measured figures are not
+new: both are stated in the carried-over prose below, as the merged measurements
+the two ceilings were set against. They are lifted into fields so the next entry
+has something to be monotone with respect to.
 
 Everything below is the reasoning that stood in `tests/test_skill_package.py` as
 one comment block, carried here verbatim rather than rewritten. It records nine
@@ -13,7 +21,8 @@ here, and every later raise leans on them.
 It is one entry rather than nine because splitting settled prose into files
 after the fact would be a rewrite of other people's stated reasons, and the
 conflict this file exists to remove is between *new* entries, not old ones.
-The next raise adds `0002-*.md`; this file is not appended to again.
+The next raise adds `0002-*.md` declaring `follows: 0001`; this file is not
+appended to again.
 
 ## RESIDENT
 
