@@ -198,6 +198,31 @@ them. Read which case applies off their existing configuration; do not build tas
 `batch_size` and `max_tokens` are deliberately absent: both move throughput and cost without changing
 what the answer says, and a knob that cannot change the answer is not a quality lever.
 
+### Judging a space before you send it
+
+Readiness scores the agent pillar on one number: how many distinct configurations the space holds,
+against how many the run has budget to try. That number is the honest part - whether four wide
+knobs beat ten narrow ones is what the run is *for*, and nothing can rank it from a JSON file.
+
+Three things it cannot count, and you can. Check each before emitting the document; none of them
+lowers the score by itself, and each makes the score describe a search that is not there.
+
+- **Values too close together are not two values.** `temperature: [0.1, 0.115]` is one setting
+  written twice, and a run that spends two trials on it learns nothing from the second. The scorer
+  collapses the numeric ones it has a range for - the card then says "2 distinct configurations
+  (4 declared)" - but it has no range for an unfamiliar knob, so `chunk_size: [500, 505]` counts as
+  two and the space it reports is bigger than the space that exists.
+- **Two knobs naming one dimension are one knob.** `prompt_style` and `prompt_policy` are the same
+  lever spelled twice, and the scorer only knows the spellings it has been told about. Two aliases
+  it does not know multiply the space by the size of a dimension the agent has only one of.
+- **A knob the agent never reads is not a lever.** Only names in `wired` are counted, and that list
+  is your claim rather than a measurement. A name in it the call path ignores adds configurations
+  that differ in nothing.
+
+So say what you left out and why on the approval card, in the customer's terms, and let their own
+judgement of their agent settle it. That is the check this guide actually has - the customer knows
+whether two of their knobs are the same knob, and the scorer never will.
+
 ### Say what is being tried, once the enhanced run is under way
 
 The moment the enhanced optimization starts, the customer is waiting on it. Use that wait: print one

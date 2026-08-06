@@ -247,9 +247,53 @@ PINNED_KNOB_CREDIT = 0.10
 MODEL_BREADTH_LADDER = {1: PINNED_KNOB_CREDIT, 2: 0.60}
 MODEL_BREADTH_FULL = 3
 
-# The agent pillar's two sub-scores, and why they are 55 and 45 rather than the
-# 35/40/25 they replace.
+# The agent pillar's ONE sub-score, and why arithmetic over several of them is
+# gone.
 #
+# This is an onboarding guide. The reader is someone running a first
+# optimization with their own coding assistant beside them, and the pillar's
+# job is to tell them whether there is a search here worth paying for - not to
+# grade the taste of their knob choices to two decimal places. Three sub-scores
+# became two became one, and the last step is the one that admits what the
+# scorer can actually know before a single trial has run.
+#
+# The size of the space is the measure, because it is the only thing here that
+# is both decidable and load-bearing. Ten knobs with one value each is a space
+# of one: every trial identical, whatever the catalog says about those ten
+# names. Whether four knobs with wide values beat ten knobs with narrow ones is
+# not decidable from a JSON document - it is what the run is FOR - so this
+# scorer stops pretending to rank it and reports what it can count.
+#
+# The two sub-scores this replaces:
+#
+# `knob-count` counted varying knobs on a plateau and then damped the result
+# against the trial budget. The damping was the part that carried information,
+# and it was about the space, not the count; the count itself answered a
+# question nobody has, because four knobs of two values and two knobs of four
+# are the same search and scored differently.
+#
+# `variation` averaged a per-knob quality blend, and one piece of it was
+# load-bearing: the numeric noise floor that refuses `temperature:
+# [0.1, 0.115]` as a sweep. That piece SURVIVES, and survives in a stronger
+# place - it is now inside the count itself, through `effective_values`, so a
+# fake sweep does not produce a bigger space rather than producing a bigger
+# space and then losing points for it. The rest of the blend - span,
+# resolution, endpoint coverage, categorical breadth - is still computed and
+# still reported per knob, where a reader can act on "spans 17% of the useful
+# 0-2 range". It just no longer pretends to be a fraction of a hundred.
+#
+# What goes with it is the 55/45 weighting, and the argument for it. Two
+# numbers only need weighing against each other while there are two of them.
+#
+# The qualitative rules the arithmetic used to carry now live in
+# `references/sdk-execution.md`, beside the knob catalog, as guidance
+# addressed to the assistant - the reader that can check them: values too close
+# together are not a sweep, two knobs naming one dimension are one knob, and a
+# knob the agent never reads is not a lever. None of the three is decidable
+# from the value lists alone, which is why each was either approximated or got
+# wrong when it was arithmetic.
+SEARCH_SPACE_WEIGHT = 100.0
+
 # A third sub-score, `coverage`, scored `1.0 - missing/len(HIGH_IMPACT_KNOBS[
 # agent_type])` out of 25 and is gone. Two things were wrong with it and only
 # the first was noticed at the time.
@@ -276,28 +320,14 @@ MODEL_BREADTH_FULL = 3
 # which tells the customer to sweep the knob this guide now pins at 0 and calls
 # surface noise.
 #
-# The remaining two are NOT scaled proportionally. 35:40 became 55:45, so the
-# order of the two swapped, and the reason is this branch's base. Categorical
-# breadth now
-# earns FULL credit at two values, and the walkthrough's own enhanced space is
-# four binary categoricals - so `variation` saturates for the common case and
-# has stopped discriminating between spaces worth running and spaces that are
-# not. `knob-count` is what still reads the space against the trial cap: it is
-# the sub-score that separates one varying knob from four, and 24 reachable
-# configurations from 1024 against a cap of 12.
-#
-# 55/45 and not 60/40, because `variation` is still the only place a fake sweep
-# is refused - the numeric noise floor that scores `temperature: [0.1, 0.115]`
-# at zero, and the pinned-knob credit - and the two shapes that test the gap
-# stay ordered correctly at 55/45 and start to compress past it: a ten-knob
-# space of two-value categoricals measures 83 against the tight three-knob
-# space's 85, and at 60/40 that margin is 81 against 84 while the one-knob
-# space it should also be beaten by falls to 61.
-#
-# Not 50/50 either. Equal weights are the same reflex as scaling: a number that
-# looks neutral, chosen because it needs no argument.
-KNOB_COUNT_WEIGHT = 55.0
-VARIATION_WEIGHT = 45.0
+# The other two went the same way and for a related reason - see
+# `SEARCH_SPACE_WEIGHT` above. What is worth recording here is that a
+# re-weighting was drafted first, 35:40 became 55:45, and it was the wrong
+# repair. The argument for 55:45 was that `variation` had stopped
+# discriminating once categorical breadth earned full credit at two values, so
+# `knob-count` had to carry more - which is a description of one sub-score
+# measuring nothing, answered by paying the other one more. The weighting
+# question only exists while there are two numbers to weigh.
 
 # Below these deltas two values are the same configuration in practice.
 NOISE_FLOORS: dict[str, float] = {"temperature": 0.05, "top_p": 0.05}
@@ -533,8 +563,7 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     "reproducibility": "same answer every time",
     "probe-spread": "separates good answers from bad",
     # agent
-    "knob-count": "settings that vary",
-    "variation": "how widely each setting varies",
+    "search-space": "how many settings-combinations there are to try",
 }
 
 
@@ -1754,50 +1783,112 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     return combine("evaluation", subs), caps
 
 
-# The knob-count ladder, as SHARES of whatever this sub-score is worth. It was
-# written as points out of 35, which meant the weight and the shape of the curve
-# were the same numbers - so re-weighting the pillar silently flattened the
-# ladder instead of rescaling it (26/35 became 26/55, and one varying knob went
-# from 34% of the sub-score to 22% with nobody deciding that). The ratios are
-# the judgement; the weight is a separate decision, made once at
-# `KNOB_COUNT_WEIGHT`.
-KNOB_COUNT_ONE = 12.0 / 35.0
-KNOB_COUNT_FEW = 26.0 / 35.0
-KNOB_COUNT_FULL = 1.0
-# The floor a space too large for its trial budget is damped to, and the step
-# each knob past six costs.
-KNOB_COUNT_OVERSIZED = 24.0 / 35.0
-KNOB_COUNT_STEP = 2.0 / 35.0
+# The search-space ladder, as SHARES of whatever the sub-score is worth, so the
+# curve and the pillar weight stay separable. The ladder this replaces was
+# written as points out of 35 and read back as points out of 55 when the pillar
+# was re-weighted, which silently reshaped it instead of rescaling it.
+#
+# Every threshold below is a number this guide already uses somewhere else. It
+# is a taste guide, and inventing a fresh scale for it would be the same
+# mistake as the sub-score it replaces.
+#
+# The smallest space in which two knobs can interact at all: two binary
+# dimensions. Below it the run compares points along one line, which is a
+# comparison and not a search.
+SEARCH_SPACE_INTERACTION = 4
+# `BASELINE_TRIALS` in references/sdk-execution.md. Twelve is what this guide's
+# own baseline sweep enumerates exhaustively, and that file says why: it is the
+# run whose "job is to rank knobs across all of them". A space this run can
+# compare twelve distinct configurations from is a space that does what this
+# guide asks of one.
+SEARCH_SPACE_FULL = 12
+SEARCH_SPACE_ONE_DIMENSION = 0.35
+SEARCH_SPACE_PARTIAL = 0.70
+# Kept from the ladder this replaces, where it was the one clause carrying
+# information about the space rather than about the knob count. Past twenty
+# times the budget the search reads under five percent of what it declares, and
+# what comes back describes the sample rather than the space.
+OVERSIZED_SPACE_FACTOR = 20
 
 
-def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> float:
-    """Plateau, not a ramp.
+def configuration_budget(max_trials: int | None, repeats: int) -> int | None:
+    """How many distinct configurations the trial budget actually pays for.
 
-    More knobs is not monotonically better: a space far larger than the trial
-    budget cannot be explored, so a twelve-knob space against a twelve-trial cap
-    is worse than four. A ramp would tell users to keep adding knobs forever.
+    Not `max_trials`. A run that sweeps three seeds spends three trials on each
+    configuration, so twelve trials buy four configurations and not twelve -
+    the seed dimension is excluded from what the search can TELL APART and is
+    emphatically not excluded from what it COSTS. Dividing here is what keeps
+    both true in one number, and it is the relationship the retired ladder
+    expressed by damping against the raw trial count.
 
-    Returns points out of `KNOB_COUNT_WEIGHT`, from shares held above, so the
-    curve and the pillar weight can be changed independently.
+    `None` when no budget was declared, which is a different statement from a
+    budget of zero: nothing bounds the space rather than nothing being tried.
     """
-    if varying == 0:
-        return 0.0
-    if varying == 1:
-        share = KNOB_COUNT_ONE
-    elif varying <= 3:
-        share = KNOB_COUNT_FEW
-    elif varying <= 6:
-        share = KNOB_COUNT_FULL
+    if not max_trials:
+        return None
+    return max_trials // max(repeats, 1)
+
+
+def search_space_points(configurations: int, budget: int | None) -> float:
+    """Score the space by how much of it this run will actually compare.
+
+    Size RELATIVE TO THE TRIAL BUDGET, not size alone, and the two shapes that
+    decide it point opposite ways. A thousand configurations against twelve
+    trials is worse than forty-eight: the twelve trials are the same twelve
+    either way, and the thousand-configuration report describes a sample nobody
+    chose. But forty-eight configurations against forty-eight trials is not
+    better than forty-eight against twelve by anything this scorer can see
+    before a trial has run - which is the whole reason the pillar stopped
+    grading knob choices.
+
+    So the credit is read off `min(configurations, budget)` - what the run will
+    actually compare - and then damped when the declared space dwarfs it. With
+    no budget declared there is nothing to be too large for, and the size
+    stands on its own.
+    """
+    # One branch, not two. A space of one configuration and a budget of one
+    # trial are the same finding - the run compares nothing - so an early
+    # return for the first would be a second spelling of the rung below.
+    reachable = min(configurations, budget) if budget is not None else configurations
+    if reachable < 2:
+        share = 0.0
+    elif reachable < SEARCH_SPACE_INTERACTION:
+        share = SEARCH_SPACE_ONE_DIMENSION
+    elif reachable < SEARCH_SPACE_FULL:
+        share = SEARCH_SPACE_PARTIAL
     else:
-        share = max(
-            KNOB_COUNT_OVERSIZED, KNOB_COUNT_FULL - KNOB_COUNT_STEP * (varying - 6)
-        )
-    # Compared as integers rather than through `space_size / max_trials`: both
+        share = 1.0
+    # Compared as integers rather than through `configurations / budget`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
-    if max_trials and space_size and space_size > 20 * max_trials:
-        share = min(share, KNOB_COUNT_OVERSIZED)
-    return round(KNOB_COUNT_WEIGHT * share, 2)
+    if budget and configurations > OVERSIZED_SPACE_FACTOR * budget:
+        share = min(share, SEARCH_SPACE_PARTIAL)
+    return round(SEARCH_SPACE_WEIGHT * share, 2)
+
+
+def search_space_evidence(
+    configurations: int, declared: int, repeats: int, budget: int | None
+) -> str:
+    """One sentence a person can act on, which a bare number is not.
+
+    Names the space and then what this run will do with it, because the second
+    is the one the reader can change cheaply - a budget is an argument, a space
+    is a rewrite. The collapse is named whenever it happened, or the sentence
+    contradicts a document the reader can count for themselves.
+    """
+    unit = "configuration" if configurations == 1 else "configurations"
+    line = f"your space has {configurations} distinct {unit}"
+    if declared > configurations:
+        line += f" ({declared} declared - values too close to tell apart count once)"
+    if configurations <= 1:
+        line += "; every trial would be identical"
+    elif budget is not None:
+        line += f"; this run will try up to {min(configurations, budget)} of them"
+    else:
+        line += "; no trial budget was declared, so the run may try all of them"
+    if repeats > 1:
+        line += f", each repeated {repeats} times over 'seed'"
+    return line
 
 
 NOTHING_WIRED_CAP = Cap(
@@ -1815,30 +1906,31 @@ UNATTESTED_WIRING_CAP = Cap(
 )
 
 
-def nothing_to_search_pillar(evidence: str) -> Pillar:
+def nothing_to_search_pillar(evidence: str, *, supplied: bool) -> Pillar:
     """The agent pillar every "no knob is attested as wired" state reports.
 
     Three inputs land here: no knobs declared at all, knobs declared with no
-    `wired` list, and knobs declared with an explicit empty one. The rule is
-    that all three report the same shape - score 0, `knob-count` measured at
-    zero, the two behavior-dependent sub-scores unmeasured - because how many
-    knobs the document attests as wired is readable off the document in every
-    one of them (it is zero), while how those absent knobs vary and what they
-    cover is not readable from anything.
+    `wired` list, and knobs declared with an explicit empty one. All three
+    report score 0, because a space nothing varies in has one configuration
+    however the document spells it.
 
-    Holding them equal is what keeps confidence monotonic: handing the scorer a
-    config space can never *lower* the agent pillar's confidence below what the
-    same run reports with no document at all. An earlier draft marked all three
-    sub-scores unmeasured for the missing-`wired` case alone, which dropped that
-    pillar to confidence 0.00 while a run with no document kept 0.35 - so
-    supplying more input reported knowing less.
+    What separates them is whether a document arrived, and with one sub-score
+    that is exactly what `measured` now says. A document that lists nothing, or
+    wires nothing, IS a measurement of the search space - it is one
+    configuration, read off the file. No document at all is not a measurement
+    of anything, and the previous shape claimed it was: `knob-count` was marked
+    measured at the opening gate, where this guide deliberately withholds any
+    config-space document, so the pillar reported 55% evidence coverage for a
+    space nobody had looked at.
+
+    Confidence stays monotonic, which was the constraint an earlier draft
+    broke: handing the scorer a config space can never *lower* this pillar's
+    confidence. Supplying nothing gives 0.00; supplying a document that lists
+    nothing gives 1.00; supplying a real one gives 1.00.
     """
     return combine(
         "agent",
-        [
-            SubScore("knob-count", 0.0, KNOB_COUNT_WEIGHT, True, evidence),
-            SubScore("variation", 0.0, VARIATION_WEIGHT, False, evidence),
-        ],
+        [SubScore("search-space", 0.0, SEARCH_SPACE_WEIGHT, supplied, evidence)],
     )
 
 
@@ -1868,7 +1960,11 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             if facts.config_space_supplied
             else "no settings document was provided to this score yet"
         )
-        return nothing_to_search_pillar(evidence), [NOTHING_WIRED_CAP], []
+        return (
+            nothing_to_search_pillar(evidence, supplied=facts.config_space_supplied),
+            [NOTHING_WIRED_CAP],
+            [],
+        )
 
     if facts.wired is None:
         # Declared knobs, unattested wiring. The document lists controls but
@@ -1883,7 +1979,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         return (
             nothing_to_search_pillar(
                 f"{len(facts.knobs)} setting(s) listed, none marked as one the "
-                "agent uses - list those in the document's 'wired' field"
+                "agent uses - list those in the document's 'wired' field",
+                supplied=True,
             ),
             [UNATTESTED_WIRING_CAP],
             [],
@@ -1898,25 +1995,39 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     scoreable = [knob for knob in knobs if knob.kind != "excluded"]
     varying = [knob for knob in scoreable if knob.effective_values >= 2]
 
-    # Two different questions, and one number cannot answer both.
+    # Three counts, and they answer three different questions. Collapsing any
+    # two of them is how this block was wrong before.
     #
-    # `space_size` is how many CONFIGURATIONS the search can distinguish, and it
-    # is printed beside the knob counts - so it must be derived from the same
-    # knobs those counts are, or the sentence does not add up. Multiplying over
-    # every knob included `seed`, which this module deliberately excludes from
-    # scoring, and printed "2 of 2 wired knobs actually vary; 24 combinations"
-    # for two two-valued knobs. Four is the only number two of those can make.
+    # `configurations` is how many settings-combinations the search can TELL
+    # APART, and it is the number the pillar is scored on. Two things make it
+    # smaller than a naive product over the value lists, and both are the
+    # point rather than a rounding. `seed` is excluded, because sweeping it
+    # measures run-to-run variance and every seed sees the same configuration -
+    # multiplying it in printed "2 of 2 wired knobs actually vary; 24
+    # combinations" for two two-valued knobs, and four is the only number two
+    # of those can make. And `effective_values` collapses numeric values closer
+    # together than the noise floor, so `temperature: [0.1, 0.115]` is one
+    # value and not two. That collapse is the piece of the retired `variation`
+    # sub-score that had to survive: counting a fake sweep as two would let a
+    # space grow by declaring values nothing can tell apart, which is the exact
+    # shape the noise floor exists to refuse.
     #
-    # `run_count` is how many TRIALS the budget must cover, and there `seed`
-    # does count: the SDK runs every combination once per seed, so the spend is
-    # real even though the dimension measures variance rather than quality.
-    # That is why the budget check below reads this one.
-    space_size = 1
+    # `declared_configurations` is the same product WITHOUT the collapse. It is
+    # never scored; it exists so the evidence line can say a number the reader
+    # can reconcile with their own file, and name why the two differ.
+    #
+    # `run_count` is how many TRIALS the run will actually spend, and there
+    # both `seed` and the un-collapsed values count: the SDK enumerates what
+    # the document says, so the money is real even where the distinction is
+    # not.
+    configurations = 1
+    declared_configurations = 1
     for knob in scoreable:
-        space_size *= knob.distinct_values
+        configurations *= max(knob.effective_values, 1)
+        declared_configurations *= max(knob.distinct_values, 1)
     run_count = 1
     for knob in knobs:
-        run_count *= knob.distinct_values
+        run_count *= max(knob.distinct_values, 1)
 
     if not knobs:
         # Reachable now only for an explicit "wired": [] (or wired names
@@ -1925,7 +2036,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         return (
             nothing_to_search_pillar(
                 f"0 of {len(facts.knobs)} listed settings are marked as ones "
-                "the agent uses"
+                "the agent uses",
+                supplied=True,
             ),
             [NOTHING_WIRED_CAP],
             knobs,
@@ -1941,42 +2053,24 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             )
         )
 
-    # Named when the two differ, because a reader who can add cannot otherwise
-    # reconcile a budget penalty with the knobs on the same line - the knob that
-    # caused it is, by construction, not among them.
-    repeats = run_count // space_size if space_size else 1
-    combinations = (
-        f"{space_size} combinations"
-        if repeats <= 1
-        else f"{space_size} combinations x {repeats} repeats = {run_count} runs"
-    )
+    # How many times the SDK re-runs each configuration, which is what `seed`
+    # buys. Named in the evidence line when it is more than one, because a
+    # reader who can multiply cannot otherwise reconcile the trial spend with
+    # the configuration count - the dimension that caused it is, by
+    # construction, not one of the ones being counted.
+    repeats = run_count // declared_configurations if declared_configurations else 1
+    budget = configuration_budget(facts.max_trials, repeats)
     subs.append(
         SubScore(
-            "knob-count",
-            knob_count_points(len(varying), run_count, facts.max_trials),
-            KNOB_COUNT_WEIGHT,
+            "search-space",
+            search_space_points(configurations, budget),
+            SEARCH_SPACE_WEIGHT,
             True,
-            f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
-            + combinations,
+            search_space_evidence(
+                configurations, declared_configurations, repeats, budget
+            ),
         )
     )
-
-    if scoreable:
-        mean_quality = sum(knob.quality for knob in scoreable) / len(scoreable)
-        weakest = min(scoreable, key=lambda knob: knob.quality)
-        subs.append(
-            SubScore(
-                "variation",
-                round(VARIATION_WEIGHT * mean_quality, 2),
-                VARIATION_WEIGHT,
-                True,
-                f"weakest knob '{weakest.name}' at {weakest.quality:.0%}",
-            )
-        )
-    else:
-        subs.append(
-            SubScore("variation", 0.0, VARIATION_WEIGHT, False, "no scoreable knobs")
-        )
 
     return combine("agent", subs), caps, knobs
 

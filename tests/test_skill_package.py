@@ -3894,35 +3894,69 @@ class SkillPackageTests(unittest.TestCase):
         assert match is not None
         pillar, conditions = score_config_space(json.loads(match.group(1)))
         self.assertEqual(conditions, [])
-        # The pillar's own score, re-measured rather than carried over, and the
-        # drop from 90 is a real trade this space made on purpose, recorded so
-        # nobody reads it as a regression.
+        # The pillar's own score, re-measured rather than carried over.
         #
-        # `knob_variation` scores a categorical knob at FULL breadth from two
-        # distinct values, and the numeric-without-a-canonical-range path keeps
-        # the old `(distinct - 1) / 2`. So the four binary behaviour knobs
-        # score 1.0 each and `model` 1.0; the shortfall is the pinned
-        # `temperature`, which earns the 0.1 pin credit and drags the mean to
-        # 0.85, which is 38.25 of 45. The 90 came from three-valued
-        # `prompt_style` and `temperature` sweeps, which scored the variation
-        # sub-score better and bought the search nothing the owner wanted:
-        # temperature adds surface noise an exact-match evaluator punishes.
+        # It reads 100 now, and the previous 93 is worth recording because of
+        # what it was docking. The pillar used to average a per-knob quality
+        # blend, and the shortfall in this space was the deliberately pinned
+        # `temperature` - a knob this guide instructs authors to pin, because
+        # sweeping it adds surface noise an exact-match evaluator punishes. The
+        # sub-score therefore charged the walkthrough seven points for
+        # following the walkthrough, and the note beside it warned readers not
+        # to fix that by adding a third value to a two-value knob. A measure
+        # that needs a warning against acting on it is not a measure.
         #
-        # So this is a predictable-space decision paid for in one sub-score
-        # that measures breadth of values rather than usefulness of knobs. It
-        # is stated here rather than smoothed over, and it is not a reason to
-        # add a third value to a knob that has two real settings.
-        #
-        # 93 rather than 94 since `coverage` was removed: it scored this space
-        # 25/25, and the remaining two were re-weighted 55/45 - so the
-        # variation shortfall is measured against 45 points instead of 40 and
-        # costs one point more.
-        self.assertEqual(pillar.score, 93)
-        counted = next(s for s in pillar.subscores if s.name == "knob-count")
+        # What earns the 100 is the shape rather than the taste: 48 distinct
+        # configurations against a 12-trial budget, so the run compares twelve
+        # of them, and 48 is four times the budget rather than twenty.
+        self.assertEqual(pillar.score, 100)
+        space = next(s for s in pillar.subscores if s.name == "search-space")
         self.assertEqual(
-            counted.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
+            space.evidence,
+            "your space has 48 distinct configurations; this run will try up to "
+            "12 of them",
         )
         self.assertEqual(pillar.confidence, 1.0)
+
+    def test_the_qualitative_knob_rules_are_guidance_and_not_arithmetic(
+        self,
+    ) -> None:
+        """Three rules the scorer used to approximate, now addressed to a reader.
+
+        Each was in the arithmetic and each was wrong there in a way the code
+        could not see: the noise floor only collapses knobs it has a range for,
+        the alias table only knows the spellings it was told, and `wired` is a
+        claim rather than a measurement. So they are stated where the one
+        reader who can check them against the customer's actual agent will
+        read them - beside the knob catalog that chooses the knobs - and the
+        scorer keeps only what it can count.
+
+        Pinned because "moved into guidance" is exactly the change that
+        silently becomes "deleted" a branch later.
+        """
+        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn("Judging a space before you send it", sdk)
+        self.assertIn("Values too close together are not two values", sdk)
+        self.assertIn("Two knobs naming one dimension are one knob", sdk)
+        self.assertIn("A knob the agent never reads is not a lever", sdk)
+        # And each names why the scorer cannot settle it.
+        self.assertIn("it has no range for an unfamiliar knob", sdk)
+        self.assertIn("only knows the spellings it has been told about", sdk)
+        self.assertIn("your claim rather than a measurement", sdk)
+        # The pillar it describes is one number, and the document says which.
+        self.assertIn(
+            "how many distinct configurations the space holds, against how "
+            "many the run has budget to try",
+            sdk,
+        )
+        self.assertEqual(
+            sorted(
+                name
+                for name in READINESS.CHECK_DISPLAY_NAMES
+                if name in {"knob-count", "variation", "search-space"}
+            ),
+            ["search-space"],
+        )
 
     def test_config_space_document_is_serialized_before_but_written_after(self) -> None:
         """The document must not be able to drift *or* outlive a failed search.
@@ -4241,7 +4275,7 @@ class SkillPackageTests(unittest.TestCase):
         """
         printed = {
             READINESS.CHECK_DISPLAY_NAMES[name]
-            for name in ("knob-count", "variation")
+            for name in ("knob-count", "variation", "search-space")
             if name in READINESS.CHECK_DISPLAY_NAMES
         }
         glossary = (SKILL_ROOT / "references" / "glossary.md").read_text()
@@ -5411,7 +5445,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # 242_250 and not 242_000: 454 bytes of headroom rather than 204, on
         # the same reasoning the 519 above used. Measured 241_796.
-        budget = 242_250
+        #
+        # Replacing the agent pillar's arithmetic with the size of the search
+        # space adds 1_582, and the trade is arithmetic for prose on purpose.
+        # The three rules that came out of the scorer - values too close
+        # together are not two values, two knobs naming one dimension are one
+        # knob, a knob the agent never reads is not a lever - were being
+        # APPROXIMATED in points, and each approximation was wrong in a way the
+        # code could not see: the noise floor only knows the knobs it has a
+        # range for, the alias table only the spellings it was told. Written as
+        # guidance beside the knob catalog, they are addressed to the one
+        # reader who can actually check them against the customer's agent. The
+        # bytes are the difference between a number that pretends to have
+        # checked and a sentence that asks someone who can.
+        # Measured at 243_378, so 243_800 - 422 bytes, inside the same band.
+        budget = 243_800
         self.assertLess(
             total,
             budget,

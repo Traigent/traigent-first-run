@@ -183,12 +183,12 @@ The lines under each pillar on the card
                                  and known-bad answers. A narrow gap means the
                                  grade barely reflects quality.
   Agent:
-    settings that vary         - how many of your agent's settings the search
-                                 has more than one value for. One value is not
-                                 a search.
-    how widely each setting varies - whether those values cover a useful part of
-                                 the setting's range, rather than three points
-                                 next to each other.
+    how many settings-combinations there are to try - the size of the search
+                                 space: every combination of the values you
+                                 listed, counted against how many the run has
+                                 budget to try. Values too close to tell apart
+                                 count once, so ten settings with one value
+                                 each is a space of one, not a space of ten.
   Words the evidence beside those lines uses:
     settings document          - the file listing which of your agent's settings
                                  the search may vary, and which of them the
