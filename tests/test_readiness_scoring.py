@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -98,6 +99,7 @@ class KnobVariationTests(unittest.TestCase):
 class BandAndAggregationTests(unittest.TestCase):
     def test_band_boundaries_are_exact(self) -> None:
         for score, expected in (
+            (0, "NOT READY"),
             (29, "NOT READY"),
             (30, "PARTIAL"),
             (54, "PARTIAL"),
@@ -111,6 +113,45 @@ class BandAndAggregationTests(unittest.TestCase):
             with self.subTest(score=score):
                 band, _ = MODULE.band_for(score, 1.0)
                 self.assertEqual(band, expected)
+
+    def test_the_documented_bands_match_the_thresholds(self) -> None:
+        """The customer reads the ranges in prose; the code reads the tuple.
+
+        `BAND_THRESHOLDS` states exclusive upper bounds and its last entry is a
+        sentinel one past the top of the scale, which reads as "you need 101 to
+        be excellent" to anyone who has not traced `band_for`. The glossary
+        states the same bands as inclusive ranges for the user. Two statements
+        of one fact is a thing that drifts, so the prose is derived from the
+        tuple here rather than trusted - and a renumbering that forgets the
+        glossary fails rather than shipping a card whose own guide misdescribes
+        it.
+        """
+        expected: dict[str, tuple[int, int]] = {}
+        low = 0
+        for threshold, name in MODULE.BAND_THRESHOLDS:
+            # The last entry's bound is a sentinel past the end of the scale;
+            # a band cannot be documented as reaching further than 100.
+            expected[name.casefold()] = (low, min(threshold - 1, 100))
+            low = threshold
+        self.assertEqual(expected["excellent"], (90, 100), "EXCELLENT is reachable")
+
+        glossary = (
+            ROOT / "skills" / "traigent-first-run" / "references" / "glossary.md"
+        ).read_text(encoding="utf-8")
+        documented = {
+            name.strip().casefold(): (int(start), int(end))
+            for name, start, end in re.findall(
+                r"([A-Za-z][A-Za-z ]*?) \((\d+)-(\d+)\)", glossary
+            )
+        }
+        for name, band_range in expected.items():
+            with self.subTest(band=name):
+                self.assertIn(
+                    name,
+                    documented,
+                    "the glossary documents the bands and does not name this one",
+                )
+                self.assertEqual(documented[name], band_range)
 
     def test_low_confidence_demotes_a_top_band(self) -> None:
         band, limited = MODULE.band_for(95, 0.4)
@@ -2266,6 +2307,111 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_an_unknown_size_is_not_capped(self) -> None:
         """No size reported is not the same claim as a small size."""
         self.assertIsNone(MODULE.power_ceiling(None))
+
+
+class AModelWrittenAnswerKeyCannotPresentAsStrongTests(unittest.TestCase):
+    """The owner's rule: synthesised material may be workable, never good.
+
+    `GENERATED_ANSWER_KEY_CEILING` was 75 - the STRONG threshold itself - so a
+    dataset whose entire ruler was written by a model could present as STRONG,
+    against the module's own convention that a ceiling making a claim about a
+    band sits one point below that band's edge. #159 found it and left the
+    number alone because the value is the owner's call; the owner then decided
+    it: "as synthesised data - no good, no strong."
+
+    These tests pin the DECISION and never the number. Asserting `== 74` would
+    pass just as happily if the bands were renumbered and 74 landed inside
+    STRONG again, which is the exact defect being fixed - a literal that agreed
+    with the intent on the day it was written. So each assertion asks the
+    module where its own STRONG band starts and checks the ceiling against
+    that.
+    """
+
+    def _generated_key_cap(self) -> object:
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=200,
+            labelled_rows=200,
+            collected_rows=200,
+            answerable_rows=200,
+            generated_answer_rows=200,
+        )
+        _pillar, caps = MODULE.score_dataset(facts, "exact")
+        cap = next(
+            (cap for cap in caps if cap.condition == "dataset-generated-answer-key"),
+            None,
+        )
+        self.assertIsNotNone(
+            cap, "a dataset whose every expected answer is a model's raised no cap"
+        )
+        return cap
+
+    def test_the_ceiling_lands_below_the_band_the_module_calls_strong(self) -> None:
+        """The whole guarantee, expressed against the band table itself."""
+        cap = self._generated_key_cap()
+        band, _limited = MODULE.band_for(cap.ceiling, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            f"a fully model-written answer key is capped at {cap.ceiling}, "
+            f"which the module reports as {band} - at or above STRONG, so the "
+            "ceiling permits the one claim it exists to refuse",
+        )
+
+    def test_an_otherwise_perfect_project_is_held_under_strong(self) -> None:
+        """End to end, on the shape that made this worth fixing.
+
+        A project excellent on every other dimension is exactly the one the
+        ceiling has to bind: a deduction would be absorbed and the run would
+        report STRONG anyway. `weighted_average` is asserted to be in STRONG
+        territory so the test cannot pass merely because the project was weak.
+        """
+        cap = self._generated_key_cap()
+        pillars = [
+            MODULE.combine(name, [MODULE.SubScore("x", 10.0, 10.0, True, "")])
+            for name in ("agent", "dataset", "evaluation")
+        ]
+        score = MODULE.aggregate(pillars, [cap], [], dict(MODULE.DEFAULT_WEIGHTS))
+        uncapped_band, _limited = MODULE.band_for(score.weighted_average, 1.0, 1.0)
+        self.assertGreaterEqual(
+            MODULE.BAND_ORDER.index(uncapped_band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            "the fixture no longer scores into STRONG before the cap, so it "
+            "cannot demonstrate that the cap is what holds it back",
+        )
+        self.assertLess(
+            MODULE.BAND_ORDER.index(score.band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            f"scored {score.weighted_average} before the cap and presented as "
+            f"{score.band} after it",
+        )
+
+    def test_no_provenance_ceiling_reaches_the_strong_band(self) -> None:
+        """The rung below the last one may not overtake it either.
+
+        The decision is about model-supplied material, not about one condition:
+        a dataset more invented than this one must not be allowed to present
+        better. Reads the three ceilings off the module so a fourth rung added
+        later is covered without editing this test.
+        """
+        strong = MODULE.BAND_ORDER.index("STRONG")
+        strong_floor = min(
+            score
+            for score in range(101)
+            if MODULE.BAND_ORDER.index(MODULE.band_for(score, 1.0, 1.0)[0]) >= strong
+        )
+        for name in (
+            "FULLY_SYNTHETIC_CEILING",
+            "MOSTLY_SYNTHETIC_CEILING",
+            "GENERATED_ANSWER_KEY_CEILING",
+        ):
+            with self.subTest(ceiling=name):
+                self.assertLess(
+                    getattr(MODULE, name),
+                    strong_floor,
+                    f"{name} reaches the STRONG band, so generated data can "
+                    "present as good rather than merely workable",
+                )
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):

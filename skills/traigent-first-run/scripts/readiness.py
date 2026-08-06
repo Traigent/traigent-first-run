@@ -170,12 +170,21 @@ def render_text(plan: ReadinessPlan) -> str:
 # which it was looking at.
 SCHEMA_VERSION = 2
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
+# Read each entry as "score BELOW this number is that band" - these are
+# exclusive upper bounds, not the score a band requires. The last entry is an
+# upper sentinel one past the top of a 0-100 scale, so EXCELLENT is 90-100 and
+# nothing needs 101. Written out because the bare tuple invites exactly the
+# opposite reading - "you need 101 to be excellent" - and a band table a reader
+# has to reverse-engineer is a band table that gets misquoted. The inclusive
+# range is on each line so the table can be read without running it, and
+# `test_the_documented_bands_match_the_thresholds` holds the glossary's
+# customer-facing copy of these ranges to the same numbers.
 BAND_THRESHOLDS = (
-    (30, "NOT READY"),
-    (55, "PARTIAL"),
-    (75, "WORKABLE"),
-    (90, "STRONG"),
-    (101, "EXCELLENT"),
+    (30, "NOT READY"),  # 0-29
+    (55, "PARTIAL"),  # 30-54
+    (75, "WORKABLE"),  # 55-74
+    (90, "STRONG"),  # 75-89
+    (101, "EXCELLENT"),  # 90-100; 101 is the sentinel, not a requirement
 )
 BAND_ORDER = ["NOT READY", "PARTIAL", "WORKABLE", "STRONG", "EXCELLENT"]
 CONFIDENCE_BAND_CEILING = "WORKABLE"
@@ -386,6 +395,18 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
 
+# What a ceiling is FOR, and the one sentence the ordering was missing.
+#
+# A ceiling answers "how good is this data now", not "what could this become".
+# That is the owner's decision and it settles the objection the ranking keeps
+# attracting: a broken real dataset is capped harder (35) than a fully
+# generated one (65), which looks inverted if you read the numbers as a claim
+# about real-world basis. It is not one. A broken dataset cannot be run at all;
+# a generated one can be run today and corrected by a person afterwards. Grade
+# the current state, and the order comes out the way it is.
+#
+# Do not reorder these on the strength of the potential reading - it was put to
+# the owner and rejected.
 @dataclass(frozen=True)
 class Cap:
     condition: str
@@ -959,7 +980,24 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # reported 93 and read as production-ready.
 FULLY_SYNTHETIC_CEILING = 65  # nothing here was observed
 MOSTLY_SYNTHETIC_CEILING = 70  # more invented than observed
-GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a model's
+# Real questions, but the answer key is a model's. 74 and not 75, because 75 is
+# the STRONG threshold itself: at 75 a dataset whose entire ruler was written by
+# a model could present as STRONG, which is the one claim this ceiling exists to
+# refuse. Synthesised material may be workable; it may not be good.
+#
+# Two of these three numbers are not derived and are not meant to be. 65 and 70
+# are relative positions on a 0-100 scale - ordered against each other because
+# strictly more invented data may not be the less capped, and placed inside
+# WORKABLE because that is the band the ladder intends. Only this rung states a
+# claim about a BAND, so only this rung takes the band edge's number, the same
+# way `WIRING_CHECK_CEILING` and `COARSE_RESOLUTION_CEILING` do. Do not
+# "correct" 65 and 70 onto a band edge: they answer a different question.
+#
+# It lands equal to `WIRING_CHECK_CEILING`, which is a coincidence of the same
+# band edge rather than a shared cause - two conditions saying the same thing
+# about what the result may present as, from unrelated evidence, exactly as
+# `evaluator-absent` and `evaluator-unresolved` already do at 40.
+GENERATED_ANSWER_KEY_CEILING = 74
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 

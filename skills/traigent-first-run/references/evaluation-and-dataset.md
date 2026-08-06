@@ -358,13 +358,15 @@ So how much of the data was invented also sets a ceiling on the entire run:
 |---|---|
 | Every row generated | 65 |
 | More than half generated | 70 |
-| Real questions, but every expected answer written by a model | 75 |
+| Real questions, but every expected answer written by a model | 74 |
 
 The ladder is ordered by how much of the result is the model talking to itself. The last rung is the
 highest because the questions are still real - but an accuracy number computed against an answer key
 a model wrote reports agreement with that model, not correctness, and nothing inside the run can
-falsify it. A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average
-stays in the output, and the number simply cannot claim more than the data supports.
+falsify it. All three rungs stay inside Workable: data a model supplied, on either side of the row,
+can be workable and cannot be good. A ceiling is not a deduction and not a refusal: the run
+continues, the pre-cap average stays in the output, and the number simply cannot claim more than the
+data supports.
 
 Every generated row must:
 
