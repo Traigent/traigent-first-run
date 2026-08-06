@@ -196,7 +196,12 @@ _NO_EFFECT_CLAIM = re.compile(
 # The markers are deliberately the strong ones. A bare `not` would have
 # accepted `the knob did not move the baseline, so it does not matter`, which
 # is precisely the sentence the rule exists to refuse.
-_PROHIBITION = re.compile(
+#
+# The name is deliberately narrow. This alternation is not a general-purpose
+# "is this sentence a prohibition" matcher - it deliberately omits `do not`
+# and `don't`, because those are too weak to hedge a no-effect claim. Naming
+# it `_PROHIBITION` would invite a reader, or a merge, to reuse it as one.
+_NO_EFFECT_HEDGE = re.compile(
     r"\b(?:never|cannot|can't|must not|may not|not enough|nothing here proves"
     r"|rather than|instead of|avoid|refuse|refuses|forbid(?:s|den)?|no claim"
     r"|does not prove|do not prove|cannot prove|is not proof|not proof)\b",
@@ -214,7 +219,7 @@ def claims_no_effect(sentence: str) -> bool:
     matter") is - regardless of which words the assertion happens to use.
     """
     for match in _NO_EFFECT_CLAIM.finditer(sentence):
-        if not _PROHIBITION.search(sentence[: match.start()]):
+        if not _NO_EFFECT_HEDGE.search(sentence[: match.start()]):
             return True
     return False
 
