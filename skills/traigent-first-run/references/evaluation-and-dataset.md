@@ -658,14 +658,16 @@ because a filter is a predicate that has to keep being right, while a file the s
 given cannot leak a row however the predicate drifts - and it is two files, written beside the
 user's untouched original, not a folder of them.
 
-Ten rows is the design, not a placeholder on the way to a larger split. Ten is where the readiness
-score puts its own floor: at nine comparable rows it raises `dataset-below-measurable-size` and
-blocks the paid comparison, so a smaller split stops the run rather than sharpening it. Above ten,
+Ten rows is the design, not a placeholder on the way to a larger split. Ten is what the
+composition costs: 2 easy, 3 medium, 3 hard, 2 very hard, no band holding a spare. Take one from
+an outer band and it drops to a single row, whose one outcome becomes that band's whole result - a
+band present without being measured. Take one from a middle band and the split loses resolution
+where configurations separate, which is why those two carry more. Nine rows is not a smaller
+version of this split; it is this split with a hole in it. Above ten,
 each extra row is another paid call on the winner bought from the same walkthrough ceiling, spent
 on the check instead of on the search this run exists to show. Ten is therefore exact in both
 directions, never a floor to grow from. The one split that is not ten is a project's own, kept at
-the size it already has - and held to the same floor, since a split under ten comparable rows
-blocks the paid comparison wherever it came from. So the resolution stays coarse, and
+the size it already has, whatever its composition. So the resolution stays coarse, and
 the honest move is to say so plainly rather than to grow the split until the number sounds
 authoritative. What this walkthrough shows is what Traigent can do; the full picture comes from
 running the whole dataset over a wider knob space, as "First-run subset for a large dataset" above
