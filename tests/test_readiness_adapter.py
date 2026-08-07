@@ -465,7 +465,18 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         so nothing may persist a cap across it.
         """
         rows = [
-            {"id": str(index), "question": f"q{index}", "answer": f"a{index % 4}"}
+            # `source` is stated because #165 scores a row that declares none
+            # as generated, and this test's claim is that a correct re-map
+            # leaves NO dataset finding. Without it the file would carry a
+            # provenance cap that has nothing to do with the shape - a true
+            # finding about a different fact, which would make the assertion
+            # below untestable rather than wrong.
+            {
+                "id": str(index),
+                "question": f"q{index}",
+                "answer": f"a{index % 4}",
+                "source": "production",
+            }
             for index in range(40)
         ]
         with tempfile.TemporaryDirectory() as raw:
@@ -2227,13 +2238,31 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             declared_score = _score(declared, extra)
             silent_score = _score(silent, extra)
 
+            # OWNER DECISION RECORDED HERE. #165 wrote this as three
+            # assertions: equal overall, equal status, and both BLOCKED. #149
+            # then decided that a generated dataset may not stop the run at
+            # all - the guide WRITES the walkthrough dataset for a user who has
+            # none, and blocking it made the guide demand real data from the
+            # one user who by construction has none. The two cannot both hold
+            # literally.
+            #
+            # What is kept is #165's purpose - silence may never be cheaper
+            # than declaring - and #149's rule - a route that only scopes the
+            # claim does not stop the run. So the SCORE is still identical,
+            # which is the number the defect was about, and the two differ in
+            # the one place #149's rule makes them differ: declaring routes to
+            # `connect-real-data`, which only scopes what may be claimed, while
+            # silence routes to `declare-data-provenance`, which asks the user
+            # to change the file and therefore waits. Silence is now strictly
+            # more expensive than declaring, never less, which is the incentive
+            # #165 set out to fix.
             self.assertEqual(declared_score["overall"], silent_score["overall"])
-            self.assertEqual(declared_score["status"], silent_score["status"])
+            self.assertEqual(declared_score["status"], "OK")
             self.assertEqual(silent_score["status"], "BLOCKED")
-            # Same verdict, different instruction. Telling a customer to connect
+            # Same ceiling, different instruction. Telling a customer to connect
             # real data is wrong when the data may already be real and merely
             # unlabelled, so the remedies deliberately do not match.
-            self.assertEqual(declared_score["recommended_action"], "connect-real-data")
+            self.assertEqual(declared_score["recommended_action"], "proceed")
             self.assertEqual(
                 silent_score["recommended_action"], "declare-data-provenance"
             )
@@ -2411,8 +2440,19 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             )
 
             score = _score(before, extra)
-            self.assertEqual(score["recommended_action"], "connect-real-data")
+            # The decision under test is WHICH condition owns this corpus, and
+            # the three assertions below are it. `recommended_action` was #165's
+            # proxy for that and #149 took it away: an advisory cap does not set
+            # the recommendation at all, so a corpus whose only cap scopes the
+            # claim recommends `proceed` whatever the condition is called. The
+            # remedy is still carried per cap in `action_kind`, which is where
+            # this now reads it.
+            self.assertEqual(score["recommended_action"], "proceed")
             conditions = {cap["condition"] for cap in score["caps"]}
+            self.assertEqual(
+                {cap["action_kind"] for cap in score["caps"]},
+                {"connect-real-data"},
+            )
             self.assertIn("dataset-mostly-synthetic", conditions)
             self.assertNotIn("dataset-mostly-undeclared", conditions)
             self.assertNotIn("dataset-undeclared-provenance", conditions)
@@ -2482,11 +2522,25 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
                     "check": "dataset-provenance",
                     "status": "WARN",
                     "detail": "no row records a provenance",
+                    # The counts are stated rather than omitted. #161 made an
+                    # absent count a refusal (exit 2) instead of a silent zero,
+                    # because an absent `answerable_rows` short-circuited the
+                    # whole answer-key ladder and made silence the
+                    # highest-scoring input. preflight.py emits all of these in
+                    # one `emit` call, so a payload without them is not one this
+                    # script can receive - and what this test is about, a corpus
+                    # where no row declares a source, is exactly
+                    # `undeclared_rows: 200`.
                     "metrics": {
                         "rows": 200,
                         "labelled_rows": 200,
                         "synthetic": False,
                         "sources": ["unknown"],
+                        "collected_rows": 0,
+                        "synthesised_rows": 0,
+                        "undeclared_rows": 200,
+                        "generated_answer_rows": 0,
+                        "answerable_rows": 200,
                     },
                 },
                 {

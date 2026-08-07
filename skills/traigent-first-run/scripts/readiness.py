@@ -503,11 +503,15 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
-    # ceilings, same category - what differs is the remedy, not what the result
-    # is. Registered here because `Cap.__post_init__` fails closed and #144
-    # wrote this table without them.
-    "dataset-undeclared-provenance": CLAIM_SCOPING,
-    "dataset-mostly-undeclared": CLAIM_SCOPING,
+    # ceilings as the declared pair above and a DIFFERENT category, which is
+    # #165's own point: the remedy is `declare-data-provenance`, and declaring
+    # is a change the user makes to their file. #149's rule reads that as a
+    # repair, so these stop the run where the declared pair does not - and
+    # #165's adapter tests assert exactly that (BLOCKED, `connect-real-data`
+    # once declaring can no longer lift the ceiling). Registered here because
+    # `Cap.__post_init__` fails closed and #144 wrote this table without them.
+    "dataset-undeclared-provenance": CREATION_OR_REPAIR,
+    "dataset-mostly-undeclared": CREATION_OR_REPAIR,
     "dataset-generated-answer-key": CLAIM_SCOPING,
     # #161's second rung. It scopes for the same reason the rung above
     # does - the questions are real and only part of the ruler is a
@@ -1863,7 +1867,6 @@ def score_provenance(
                 "dataset-undeclared-provenance",
                 FULLY_SYNTHETIC_CEILING,
                 UNDECLARED_ALL_REASON,
-                blocks=False,
             )
             if silent
             else Cap(
@@ -1882,7 +1885,6 @@ def score_provenance(
                 "dataset-mostly-undeclared",
                 MOSTLY_SYNTHETIC_CEILING,
                 UNDECLARED_MOST_REASON,
-                blocks=False,
             )
             if silent
             else Cap(

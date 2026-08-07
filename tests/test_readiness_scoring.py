@@ -431,9 +431,16 @@ class DatasetScoringTests(unittest.TestCase):
 
         `label-data` is the remedy that repairs what they already have, and the
         labels cap already carries it.
+
+        `collected_rows` is stated because #165 scores a corpus that declares
+        no provenance as generated, and would raise a second cap here about a
+        different fact. This test is about two caps for ONE fact, so the other
+        fact is declared rather than left silent.
         """
         _, caps = MODULE.score_dataset(
-            MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
+            MODULE.DatasetFacts(
+                exists=True, rows=500, labelled_rows=0, collected_rows=500
+            )
         )
         self.assertEqual(
             [cap.condition for cap in caps], ["dataset-no-expected-outputs"]
