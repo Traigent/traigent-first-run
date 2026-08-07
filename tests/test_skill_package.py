@@ -4855,7 +4855,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #159 then adds four lines to run-safety.md, beside the exit-2 rule
+        # that section already owns. The three scripts grew a boundary that
+        # turns an internal failure into exit 3 instead of a traceback, and the
+        # assistant has to route that differently from every other non-zero
+        # exit: nothing was checked, so there is no finding about the user's
+        # material to relay. That is new contract surface with no prior
+        # statement, and it lands in the reference that owns exit codes rather
+        # than in SKILL.md. Measured after it: 228_853. 229_000 banks 147
+        # bytes, which is the thin-ceiling failure the RESIDENT note above
+        # already records - it trips on a one-word edit rather than on a
+        # decision. 229_250 leaves 397, the order of headroom the last two
+        # raises settled on.
+        budget = 229_250
         self.assertLess(
             total,
             budget,

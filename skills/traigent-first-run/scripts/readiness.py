@@ -31,6 +31,7 @@ import json
 import math
 import os
 import sys
+import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
@@ -535,6 +536,40 @@ CAP_CEILING: dict[str, int] = {
     for condition, ceiling in entries
 }
 
+# The declared order, as a number the runtime actually reads.
+#
+# `CAP_CEILING` above folds the order away - a dict answers "what ceiling",
+# never "which is worse" - and both consumers used to sort by
+# `(ceiling, condition)`, which at equal ceilings is alphabetical. So the order
+# written down above decided nothing: swapping two entries left `CAP_CEILING`
+# byte-identical and every payload unchanged, and where it could be observed it
+# was contradicted. At the 45 tie the declaration ranks `evaluator-timeout`
+# first and the card recommended `vary-knobs`, purely because "a" sorts before
+# "e".
+#
+# The ceiling still decides severity, because the ceiling is what holds the
+# score down. This rank decides the tie - the one place the ceiling has nothing
+# left to say, and the exact place the declaration was silent before.
+CAP_RANK: dict[str, int] = {
+    condition: index
+    for index, condition in enumerate(
+        condition
+        for _group, entries in CAP_SEVERITY_ORDER
+        for condition, _ceiling in entries
+    )
+}
+
+
+def cap_order(cap: "Cap") -> tuple[int, int]:
+    """The one sort key for caps, so no consumer invents a second one.
+
+    `aggregate` and `collect_gaps` both order caps, and ordering them two ways
+    is how the card's recommended action and the gap list come to disagree
+    about which cap is worst. They call this.
+    """
+    return (cap.ceiling, CAP_RANK[cap.condition])
+
+
 # Where one condition's evidence STRICTLY IMPLIES another's, the stricter one
 # must not carry the higher ceiling. This is the ordering rule with a
 # derivation rather than a judgment behind it: a dataset where every row is
@@ -555,6 +590,50 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
     # Under ten comparable examples is also under thirty.
     ("dataset-below-measurable-size", "dataset-coarse-resolution"),
+)
+
+# The other half of that declaration, and the half that was doing nothing.
+#
+# `CAP_SEVERITY_ORDER` is enforced twice - the constructor refuses an unranked
+# condition and a test refuses a ranked one nothing raises. `CAP_IMPLICATIONS`
+# was enforced nowhere: it constrains only the pairs someone remembered to
+# write down, so a new cap that narrows an existing one and carries the higher
+# ceiling ships green, which is the #144 defect exactly. Silence and "I checked
+# and it overlaps nothing" are the same text in a file that only lists pairs.
+#
+# So overlap is declared for every condition, not for the ones that have one.
+# A condition is either named in a pair above or listed here with the reason it
+# is not, and the constructor refuses one that is in neither - the author of a
+# new cap is asked the question rather than trusted to have asked it.
+CAP_NO_IMPLICATION: dict[str, str] = {
+    "evaluator-invalid": (
+        "a ruler that scores wrong answers well is orthogonal to every dataset "
+        "condition and mutually exclusive with the other evaluator ones"
+    ),
+    "evaluator-absent": "nothing is connected; no other condition can be read off that",
+    "evaluator-unresolved": (
+        "present-but-unnamed excludes absent, and no dataset condition follows "
+        "from it"
+    ),
+    "evaluator-timeout": "a run that did not finish says nothing about the material",
+    "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
+    "dataset-integrity-fail": (
+        "fires only when at least one row DID parse, so it is the complement of "
+        "dataset-absent rather than a narrowing of it"
+    ),
+    "dataset-tune-holdout-overlap": (
+        "a split defect; it can accompany any size or provenance and narrows none"
+    ),
+    "dataset-generated-answer-key": (
+        "guarded by `synthesised_rows != counted`, so it is mutually exclusive "
+        "with dataset-fully-synthetic rather than implied by it"
+    ),
+}
+
+# Every condition, reviewed for overlap one way or the other.
+CAP_OVERLAP_REVIEWED: frozenset[str] = frozenset(
+    {condition for pair in CAP_IMPLICATIONS for condition in pair}
+    | set(CAP_NO_IMPLICATION)
 )
 
 
@@ -605,6 +684,52 @@ class Cap:
                 "every cap is ranked against the others, so add it to the "
                 "group its condition belongs to rather than choosing a "
                 "ceiling that nothing compares"
+            )
+        # And the third registry, which was declared and enforced nowhere. A
+        # cap whose overlap with the others nobody stated is the #144 defect
+        # waiting to recur - it fails here rather than shipping green.
+        if self.condition not in CAP_OVERLAP_REVIEWED:
+            raise ValueError(
+                f"cap {self.condition!r} states no overlap with the other "
+                "conditions; name it in CAP_IMPLICATIONS if its evidence "
+                "implies another condition's, or in CAP_NO_IMPLICATION with "
+                "the reason it implies none"
+            )
+        # The two fields the guards above never looked at.
+        #
+        # `condition` failed closed and these did not, so `Cap(cond, None, ...)`,
+        # `Cap(cond, "twenty", ...)`, `Cap(cond, 999, ...)`, `Cap(cond, -5, ...)`
+        # and `blocks="yes"` all constructed. Each reaches arithmetic that
+        # cannot say so: `min(weighted_average, ceiling)` raises deep inside
+        # `aggregate` on a string and silently returns `None` for the overall
+        # score's comparison partner, 999 makes a ceiling that can never bind,
+        # -5 makes one that always does, and a truthy `blocks` string turns
+        # every ceiling into a block. The type hints stated all of this and
+        # nothing read them.
+        #
+        # The VALUE is still not pinned to `CAP_CEILING[condition]` - a probe
+        # building `Cap(condition, 50, ...)` to exercise a ceiling it does not
+        # otherwise reach is legitimate, and the source-reading test is where a
+        # wrong constant at a call site actually shows up. What is refused is a
+        # ceiling that is not a score on the 0-100 scale the band table reads.
+        if isinstance(self.ceiling, bool) or not isinstance(self.ceiling, int):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-integer ceiling "
+                f"{self.ceiling!r}; a ceiling is a score on the same 0-100 "
+                "scale as the overall, because that is what it is compared to"
+            )
+        if not 0 <= self.ceiling <= 100:
+            raise ValueError(
+                f"cap {self.condition!r} carries a ceiling of {self.ceiling}, "
+                "which is off the 0-100 scale; a ceiling above 100 can never "
+                "bind and one below 0 always does, and neither describes a "
+                "band this module can name"
+            )
+        if not isinstance(self.blocks, bool):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-boolean blocks flag "
+                f"{self.blocks!r}; `blocks` decides BLOCKED against OK and a "
+                "truthy string decides it silently in one direction"
             )
 
 
@@ -2071,15 +2196,28 @@ def collect_gaps(
     for all of them - silently restoring the flat ordering this argument exists
     to replace, in whichever caller forgot to pass it.
     """
-    gaps: list[tuple[float, str]] = []
+    # Second column: the declared severity rank, so two caps that weigh the
+    # same break their tie the way `CAP_SEVERITY_ORDER` ranks them instead of
+    # by whichever condition id sorts first alphabetically. Non-cap gaps take a
+    # rank past every cap's, which is where their weight already puts them and
+    # keeps their existing alphabetical tie-break intact.
+    unranked = len(CAP_RANK)
+    gaps: list[tuple[float, int, str]] = []
     for cap in caps:
-        gaps.append((cap_weight(cap, overall), f"{cap.condition}: {cap.reason}"))
+        gaps.append(
+            (
+                cap_weight(cap, overall),
+                CAP_RANK[cap.condition],
+                f"{cap.condition}: {cap.reason}",
+            )
+        )
     for pillar in pillars:
         for sub in pillar.subscores:
             if not sub.measured:
                 gaps.append(
                     (
                         sub.maximum * 0.5,
+                        unranked,
                         f"{pillar.name}/{sub.name} could not be measured - "
                         f"{sub.evidence}",
                     )
@@ -2088,14 +2226,15 @@ def collect_gaps(
                 gaps.append(
                     (
                         sub.maximum - sub.value,
+                        unranked,
                         f"{pillar.name}/{sub.name}: {sub.evidence}",
                     )
                 )
     for knob in knobs:
         for note in knob.notes:
-            gaps.append((5.0, f"knob '{knob.name}': {note}"))
-    gaps.sort(key=lambda item: (-item[0], item[1]))
-    return tuple(text for _, text in gaps)
+            gaps.append((5.0, unranked, f"knob '{knob.name}': {note}"))
+    gaps.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return tuple(text for _weight, _rank, text in gaps)
 
 
 def recommended_action(ordered_caps: Sequence[Cap]) -> str:
@@ -2130,7 +2269,7 @@ def aggregate(
     ) / (total_weight or 1.0)
     weighted_average = round_half_up(weighted)
 
-    ordered_caps = tuple(sorted(caps, key=lambda cap: (cap.ceiling, cap.condition)))
+    ordered_caps = tuple(sorted(caps, key=cap_order))
     ceiling = min((cap.ceiling for cap in ordered_caps), default=100)
     overall = min(weighted_average, ceiling)
 
@@ -3406,7 +3545,60 @@ def scoring_requested(args: argparse.Namespace) -> bool:
     return any((args.preflight, args.calibration, args.config_space))
 
 
+# The one place an unexpected failure is allowed to end.
+#
+# `run` below catches the four input errors it can name and returns 2. Every
+# other failure - a `ValueError` from a cap the registries do not know, a
+# `KeyError` from a payload shape nobody anticipated, a `TypeError` from a
+# field that arrived as a string - escaped to the interpreter, which printed a
+# traceback and exited 1. The card never printed at all.
+#
+# That is the worst possible output for this tool. The person reading it is
+# running their first optimization, the traceback names this file rather than
+# anything they wrote, and it replaces the one artifact the whole run exists to
+# produce. A defect in the checker must not read as a defect in their project.
+#
+# So the boundary catches broadly and the failure stays loud: named error class,
+# its message, a non-zero exit, and nothing pretending a score was computed.
+# What it does NOT do is swallow it - the environment variable prints the whole
+# stack for whoever is fixing it, which is the audience a traceback was ever
+# for. An environment variable rather than a flag because the three scripts
+# share this boundary and none of them should grow an option for it.
+INTERNAL_ERROR_EXIT = 3
+TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+
+def report_internal_error(
+    tool: str,
+    error: BaseException,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any = None,
+) -> int:
+    """Print an unexpected failure as a diagnosis, never as a traceback."""
+    out = sys.stderr if stream is None else stream
+    env = os.environ if environ is None else environ
+    print(f"{tool}: internal error - {type(error).__name__}: {error}", file=out)
+    print(
+        f"{tool} could not finish, and this is a defect in the check rather "
+        "than in your project. Nothing was scored, so treat no result as "
+        f"reported. Re-run with {TRACEBACK_ENV}=1 and report the output.",
+        file=out,
+    )
+    if env.get(TRACEBACK_ENV):
+        traceback.print_exception(type(error), error, error.__traceback__, file=out)
+    return INTERNAL_ERROR_EXIT
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """The process boundary. See `report_internal_error`."""
+    try:
+        return run(argv)
+    except Exception as error:  # noqa: BLE001 - the boundary is the point
+        return report_internal_error("readiness.py", error)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     if not scoring_requested(args):
