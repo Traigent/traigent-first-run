@@ -731,6 +731,19 @@ ROUTE_CATEGORY: dict[str, str] = {
     # fails closed on an unclassified condition: #161 added the cap and
     # #144 added the registry, and neither branch could see the other.
     "dataset-mostly-generated-answer-key": CLAIM_SCOPING,
+    # #177's row-level sanity check, registered here for exactly the reason the
+    # two rungs above are: `Cap.__post_init__` fails closed on an unclassified
+    # condition, #144 wrote this table, and #177 wrote the cap against a base
+    # that had neither this registry nor `CAP_SEVERITY_ORDER`. Neither branch
+    # could see the other, and the merge is the first tree where both exist.
+    #
+    # `CLAIM_SCOPING`, with the same argument its `review-answer-key` siblings
+    # carry: the remedy is a question put to the customer about material that
+    # may be perfectly good, not a change they must make first. #187 makes that
+    # explicit by giving the cap `blocks=False` and `asks=True`, and the guard
+    # below refuses any non-scoping route that does not block - so this is the
+    # only category the merged behaviour admits.
+    "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # The sweep found a second one. A file is connected and no method could be
     # honestly declared for it without executing it - which on the ordinary
@@ -868,6 +881,31 @@ MOSTLY_SYNTHETIC_CEILING = 70
 # invented, so strictly less capped. This pair is the clearest case of the
 # ordering rule: the condition below implies this one, so its ceiling may never
 # be the higher of the two.
+UNSOUND_ANSWER_CEILING = 70
+# Equal to `mostly-synthetic`, and ranked AFTER it - the tie is broken, not
+# left to whichever author wrote each line, which is the failure this whole
+# block exists to stop.
+#
+# The number first. It sits below `generated-answer-key` (75) because it is the
+# stronger finding about the same thing: that condition says nobody observed
+# these answers, this one says somebody read them and they disagree with their
+# own questions. It sits above the structural dataset conditions (overlap 50,
+# unreadable rows 35) because those are measured and this is an opinion, and an
+# opinion may not be the harshest number on the card. What 70 buys is one
+# thing: the run cannot present as STRONG while a material share of what it
+# grades against is believed wrong.
+#
+# Now the tie. `mostly-synthetic` is a COUNT - preflight read the provenance
+# field on every row and divided. This is the assistant's reading of a
+# customer's domain, and on collected data it can simply be wrong. Where two
+# conditions bound the claim by the same amount, the measured one is ranked as
+# the worse of the two, because a severity you counted outranks a severity you
+# inferred. That is the same reason `evaluator-absent` precedes
+# `evaluator-unresolved` at their shared 40.
+#
+# Both belong to "bounded claim" and neither implies the other, so there is no
+# `CAP_IMPLICATIONS` entry: a dataset can be mostly generated with a sound
+# answer key, or fully collected with a wrong one.
 WIRING_CHECK_CEILING = 74
 # One below the STRONG boundary at 75, which is the only derived number in this
 # block: the claim is about what the result may PRESENT as, and under ten
@@ -949,6 +987,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("dataset-undeclared-provenance", FULLY_SYNTHETIC_CEILING),
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-unsound-expected-outputs", UNSOUND_ANSWER_CEILING),
             ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
             ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
             (
@@ -1069,6 +1108,16 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     ),
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
+    ),
+    # #177's cap, answered in #188's own words: it and the provenance
+    # conditions "both belong to 'bounded claim' and neither implies the
+    # other". Declared here rather than left silent because this registry
+    # refuses silence - #177 and #188 were both written against a base without
+    # it, so the answer existed in their prose and nowhere a guard could read.
+    "dataset-unsound-expected-outputs": (
+        "a dataset can be mostly generated with a sound answer key, or fully "
+        "collected with a wrong one, so it narrows no provenance condition and "
+        "none narrows it"
     ),
 }
 
@@ -2064,17 +2113,11 @@ UNDECLARED_MOST_REASON = (
     "generated. Declare or re-label the source on any such row that was "
     "collected."
 )
-# The row-level sanity check's one ceiling.
+# The row-level sanity check's ceiling lives with every other ceiling in
+# `CAP_SEVERITY_ORDER`, because its ORDER against the rest is a rule and a
+# number defined beside its own threshold is a number nothing ranks. Only the
+# share that triggers it lives here.
 #
-# Below `GENERATED_ANSWER_KEY_CEILING` because it is the stronger finding about
-# the same thing: that cap says nobody observed these answers, this one says
-# somebody read them and they disagree with their own questions. Above the
-# structural dataset caps (overlap 50, unreadable rows 35) because those are
-# measured and this is an opinion, and an opinion should not be the harshest
-# number on the card. What it buys is exactly one thing: the run cannot present
-# as STRONG or EXCELLENT while a material share of what it grades against is
-# believed wrong.
-UNSOUND_ANSWER_CEILING = 70
 # One row in ten. Grounded in what the run does with these rows rather than
 # picked for roundness: the recommended configuration is reported on ten
 # held-out rows, so one wrong answer there moves the reported number by ten

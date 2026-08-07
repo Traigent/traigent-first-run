@@ -4444,6 +4444,90 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 f"one that produced nothing usable",
             )
 
+    def test_every_tie_in_the_order_was_broken_on_purpose(self) -> None:
+        """Equal ceilings are allowed; equal ceilings in arbitrary ORDER are not.
+
+        The non-decreasing assertion above cannot see a tie: swapping two
+        conditions that carry the same number leaves it green. So each tie is
+        recorded here with the reason it was broken the way it was, which is
+        the whole point of the block in the module - the failure it exists to
+        stop is "ranked by whichever author wrote each one".
+
+        Two of the three ties are the same rule: where two conditions bound
+        the claim by the same amount, the one that was COUNTED is ranked as the
+        worse of the two and the one that was inferred follows it.
+        `evaluator-absent` is a fact about the input; `evaluator-unresolved` is
+        what this scorer concluded after failing to read a file.
+        `dataset-mostly-synthetic` is a provenance count;
+        `dataset-unsound-expected-outputs` is the assistant's reading of a
+        customer's domain, which on collected data can be wrong.
+
+        The third is ordered by its band instead, and the module says so where
+        it is defined: `evaluator-timeout` opens "answers the wrong question"
+        and `agent-no-varying-knobs` is equal to it because neither is broken
+        and neither compares anything. Both are read off the input, so the
+        counted-before-inferred rule has nothing to separate them with.
+
+        Six ties on the merged tree rather than three. This test arrived with
+        the branch that ranked the unsound-answer cap, whose base carried
+        neither the silent-provenance rungs nor the middle answer-key rung nor
+        the unrecognised-shape condition, so the three ties those conditions
+        make were invisible to it. They are not new decisions: each is recorded
+        beside its ceiling in the module, and each falls under one of the two
+        rules already stated above - counted before inferred, or a shared band
+        edge that is a coincidence rather than a cause. Pinning them here is
+        what stops the next merge from reordering one silently.
+        """
+        ranked = [
+            condition
+            for _group, entries in MODULE.CAP_SEVERITY_ORDER
+            for condition, _ceiling in entries
+        ]
+        ties = {}
+        for condition in ranked:
+            ties.setdefault(MODULE.CAP_CEILING[condition], []).append(condition)
+        self.assertEqual(
+            {
+                ceiling: conditions
+                for ceiling, conditions in ties.items()
+                if len(conditions) > 1
+            },
+            {
+                # A ruler that scores a wrong answer as well as a right one,
+                # and a file no row of which parsed. Both leave nothing
+                # trustworthy; `evaluator-invalid` is ranked first because it
+                # produces believable numbers, where the unrecognised shape
+                # produces none.
+                25: ["evaluator-invalid", "dataset-shape-unrecognised"],
+                40: ["evaluator-absent", "evaluator-unresolved"],
+                45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                # The declared/silent pair. Identical ceilings deliberately -
+                # the assumption IS "generated" either way - and the declared
+                # one is ranked first because what differs is the remedy, which
+                # this table does not rank.
+                65: ["dataset-fully-synthetic", "dataset-undeclared-provenance"],
+                70: [
+                    "dataset-mostly-synthetic",
+                    # The silent counterpart of the count before it, ranked
+                    # beside it for the same reason the 65 pair is.
+                    "dataset-mostly-undeclared",
+                    "dataset-unsound-expected-outputs",
+                ],
+                # Three conditions meeting at the same band edge rather than
+                # at a shared cause: 74 is one below STRONG, and each of these
+                # states a claim about that band. Counted before inferred
+                # again - the two size conditions are measured, the answer-key
+                # rungs are read off provenance.
+                74: [
+                    "dataset-below-measurable-size",
+                    "dataset-generated-answer-key",
+                    "dataset-mostly-generated-answer-key",
+                ],
+            },
+            "a tie in the ceiling order is a decision; record it here with its "
+            "reason rather than leaving the sequence to whoever edited last",
+        )
+
     def test_a_narrower_condition_never_outranks_the_one_it_implies(self) -> None:
         """The #144 shape, generalised.
 
@@ -6413,6 +6497,26 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
         ]
 
+    def _middle_rung_answer_key_caps(self) -> list["MODULE.Cap"]:
+        """The same, on the answer-key ladder's middle rung.
+
+        The full rung and the middle rung are mutually exclusive branches, so
+        one dataset can never show both and the fixture above reaches only the
+        first. This branch's own base had no middle rung; the branch that added
+        it could not see this test. Between them the two fixtures observe all
+        three conditions that route to `review-answer-key`, which is what the
+        last assertion needs in order to mean what it says.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10, generated_answer_rows=20)
+        _, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=3)
+        )
+        return [
+            cap
+            for cap in caps
+            if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
+        ]
+
     def test_the_run_is_not_stopped_and_the_ceiling_still_binds(self) -> None:
         """Bounding is not silence: the number moves, the run does not stop."""
         cap = self._cap(reviewed=28, unsound=3)
@@ -6450,11 +6554,21 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         )
         self.assertEqual(
             siblings,
-            ["dataset-generated-answer-key", "dataset-unsound-expected-outputs"],
+            [
+                "dataset-generated-answer-key",
+                # The ladder's middle rung, which shares this remedy and did
+                # not exist on the base this test was written against.
+                "dataset-mostly-generated-answer-key",
+                "dataset-unsound-expected-outputs",
+            ],
         )
-        verdicts = {cap.condition: cap.blocks for cap in self._both_answer_key_caps()}
+        verdicts = {
+            cap.condition: cap.blocks
+            for cap in self._both_answer_key_caps()
+            + self._middle_rung_answer_key_caps()
+        }
         self.assertEqual(
-            sorted(verdicts), siblings, "both sibling caps must be observed"
+            sorted(verdicts), siblings, "every sibling cap must be observed"
         )
         self.assertEqual(
             len(set(verdicts.values())),
