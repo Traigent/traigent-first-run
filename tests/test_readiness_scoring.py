@@ -3416,9 +3416,12 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
                     "agent_type": "bespoke-thing",
                     "knobs": {
                         "temperature": [0.0, 0.5, 1.0],
-                        "prompt_policy": ["direct", "structured", "criteria_first"],
+                        # `prompt_style`, not `prompt_policy`: #191 made the
+                        # latter a refused synonym, and this test only needs a
+                        # second knob, so it takes the canonical spelling.
+                        "prompt_style": ["direct", "structured", "criteria_first"],
                     },
-                    "wired": ["temperature", "prompt_policy"],
+                    "wired": ["temperature", "prompt_style"],
                     "max_trials": 12,
                 }
             )

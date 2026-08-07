@@ -4320,6 +4320,12 @@ class SkillPackageTests(unittest.TestCase):
             "dataset-fully-synthetic",
             "dataset-mostly-synthetic",
             "dataset-generated-answer-key",
+            # #161's second rung, added here because #149 wrote this partition
+            # before that rung existed and #161 added the rung without seeing
+            # the partition. It scopes: SKILL.md routes it to the same review
+            # as the rung above, on the model-written answers only, and says
+            # the run proceeds meanwhile.
+            "dataset-mostly-generated-answer-key",
             "dataset-coarse-resolution",
         }
         # The third category, and the reason it has to exist: one condition
