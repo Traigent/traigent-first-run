@@ -235,13 +235,18 @@ HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "general": ("model", "temperature", "prompt_style"),
 }
 
-# Accepted alternate spellings of a catalog knob, mapped onto the one canonical
-# name the catalog uses. Both spellings name one search dimension, so the rename
-# happens once - `canonical_alias_names`, applied to the facts before any
-# sub-score reads them - rather than inside whichever sub-score noticed the
-# problem. Normalizing only inside coverage let knob-count, variation and the
-# combination count treat the two spellings as two independent dimensions.
-KNOB_ALIASES: dict[str, str] = {"prompt_policy": "prompt_style"}
+# Names that mean a knob this file already knows, kept ONLY so a document
+# using one can be refused by name. Never read to rename anything: this
+# replaces `KNOB_ALIASES`, whose renaming had to run before every count, could
+# silently reset a field of the dataclass it rebuilt, and forced an ordering
+# between itself and the phantom-name check. `_reject_synonym_spellings` owns
+# what that table was actually for.
+#
+# Whoever merges the branch that removes `max_tokens` from every catalog:
+# its `test_max_tokens_is_absent_from_every_catalog` reads `MODULE.KNOB_ALIASES`,
+# which this branch deletes. It sits outside any conflict region, so the merge
+# is clean and the suite errors. Point that row at `KNOB_SYNONYMS`.
+KNOB_SYNONYMS: dict[str, str] = {"prompt_policy": "prompt_style"}
 
 # Evaluation-method profiles. `fidelity` is which task kinds the method actually
 # measures well; a method can be perfectly reproducible and still be the wrong
@@ -1689,9 +1694,6 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
 
-    # Once, before anything counts a dimension - see `canonical_alias_names`.
-    facts = canonical_alias_names(facts)
-
     # Order is deliberate: an empty `knobs` map is answered here, ahead of the
     # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
     # whether or not it carries a `wired` key. Swapping the two branches would
@@ -1821,7 +1823,6 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
 
     catalog = HIGH_IMPACT_KNOBS.get(facts.agent_type or "general")
     if catalog:
-        # Already canonical: `canonical_alias_names` renamed the facts above.
         present = {knob.name for knob in scoreable}
         missing = [name for name in catalog if name not in present]
         fraction = 1.0 - (len(missing) / len(catalog))
@@ -2811,10 +2812,7 @@ def _read_bounds(field: str, value: Any) -> dict[str, dict[str, float]]:
         #   same width instead makes the span ratio it divides infinite, which
         #   is no more measurable, so the default fraction is what decides.
         width = high - low
-        # Under the canonical name, because that is the name `score_agent` will
-        # look the floor up under: a check that reads a spelling the scorer has
-        # already renamed is answering about a knob that will not exist.
-        floor = noise_floor(KNOB_ALIASES.get(knob, knob), low, high)
+        floor = noise_floor(knob, low, high)
         if (
             not math.isfinite(width)
             or width * DEFAULT_NOISE_FRACTION <= 0.0
@@ -2933,85 +2931,51 @@ CONFIG_SPACE_SPACE_KEYS = tuple(
 )
 
 
-def candidate_domain(values: Iterable[Any]) -> list[tuple[bool, Any]]:
-    """A candidate list as a key that tells `True` from `1`.
+def _reject_synonym_spellings(knobs: dict[str, Any], knobs_key: str) -> None:
+    """Refuse a knob written under a name that means a knob this file knows.
 
-    `True == 1` and `False == 0` in Python, so comparing two candidate lists
-    directly read `[true, false]` and `[1, 0]` as one domain: two spellings of
-    one dimension declared over *different* values were merged silently, which
-    is the narrowing the refusal below exists to stop. `dict.fromkeys` collapsed
-    the pair the same way, before any comparison ran.
+    What `KNOB_ALIASES` bought was not the renaming - that was the part with
+    the ordering hazard, the rebuilt dataclass and the field it could silently
+    reset. What it bought was a REFUSAL: two spellings of one search dimension
+    are two dimensions to everything downstream, so declaring both doubled the
+    reported size of the space and paid a second dimension's credit for it.
+    Deleting the table deleted the refusal with it, and measured end to end on
+    one document declaring `prompt_policy` and `prompt_style` over different
+    values, the scorer went from exit 2 to exit 0 with the agent pillar at 77
+    against 61 for the same space written once, 24 combinations against 12, and
+    a card reading `4 of 4 wired knobs actually vary`. A deletion that raises a
+    score is the shape this repository has been wrong about before.
 
-    The key pairs each value with whether it is a bool rather than using its
-    `repr`, because `1` and `1.0` genuinely are one candidate everywhere else
-    here - `knob_variation` dedupes by value, and the combination count was
-    moved off `repr` for exactly that reason. Keying on `repr` would refuse
-    `[1]` against `[1.0]`, a document that scores today.
+    So the refusal stays and the substitution does not. `KNOB_SYNONYMS` is
+    never read to rename anything: no name the author wrote is replaced, no
+    facts object is rebuilt, and nothing downstream has to know the table
+    exists. It produces one message, and the message teaches the spelling the
+    rest of this file uses - which is the same help `_reject_phantom_names`
+    gives for a near miss, applied to the one case a near miss cannot reach
+    because the written name is not a misspelling of anything.
+
+    That case is the quieter half of the same defect. A document written
+    consistently in `prompt_policy` matches itself, so nothing was phantom and
+    nothing was refused - it simply scored lower, silently, than the identical
+    document written in `prompt_style`: coverage 8.33/25 against 16.67/25 on
+    one measured pair, with the missing knob named in the evidence line as
+    though the author had not tuned it. Refusing is what makes that visible.
+
+    Nothing is lost by refusing either shape: this repository has published no
+    config space, and the one producer of the document writes `prompt_style`.
     """
-    return list(dict.fromkeys((isinstance(value, bool), value) for value in values))
-
-
-def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
-    """Collapse alias spellings onto one dimension before anything counts them.
-
-    Doing this inside the coverage sub-score alone was too late. Knob-count,
-    variation and the combination count had already run, and each of them had
-    counted `prompt_policy` and `prompt_style` as two independent dimensions:
-    declaring both over the same values scored the agent pillar 95 with "5 of 5
-    wired knobs" and 108 combinations, against 93, "4 of 4" and 36 for the
-    single spelling. One conceptual dimension earned two dimensions' credit and
-    tripled the reported size of the space.
-
-    Two spellings of one dimension with *different* candidate lists is not a
-    space this can silently pick a winner from, so it is refused.
-    """
-    names = (*facts.knobs, *(facts.wired or ()), *facts.bounds)
-    if not any(name in KNOB_ALIASES for name in names):
-        return facts
-
-    def _canonical(name: str) -> str:
-        return KNOB_ALIASES.get(name, name)
-
-    knobs: dict[str, list[Any]] = {}
-    for name, values in facts.knobs.items():
-        canonical = _canonical(name)
-        held = knobs.get(canonical)
-        if held is not None and candidate_domain(held) != candidate_domain(values):
-            raise ConfigSpaceInputError(
-                f"config-space declares both '{name}' and '{canonical}' over "
-                "different candidate values, but they are two spellings of one "
-                "search dimension: declare it once, under either name"
-            )
-        if held is None:
-            knobs[canonical] = list(values)
-
-    bounds: dict[str, dict[str, float]] = {}
-    for name, spec in facts.bounds.items():
-        canonical = _canonical(name)
-        held = bounds.get(canonical)
-        if held is not None and held != spec:
-            raise ConfigSpaceInputError(
-                f"config-space bounds declares both '{name}' and '{canonical}' "
-                "with different ranges, but they are two spellings of one "
-                "search dimension: declare it once, under either name"
-            )
-        if held is None:
-            bounds[canonical] = dict(spec)
-
-    return AgentFacts(
-        agent_type=facts.agent_type,
-        max_trials=facts.max_trials,
-        knobs=knobs,
-        wired=(
-            None
-            if facts.wired is None
-            else tuple(dict.fromkeys(_canonical(name) for name in facts.wired))
-        ),
-        bounds=bounds,
-        # Carried, not defaulted. This function rebuilds the dataclass, so a
-        # field it forgets is silently reset - and `score_agent` calls it before
-        # reading anything, so the reset would be invisible and total.
-        config_space_supplied=facts.config_space_supplied,
+    written = [name for name in knobs if name in KNOB_SYNONYMS]
+    if not written:
+        return
+    detail = ", ".join(
+        f"'{name}', which is another name for '{KNOB_SYNONYMS[name]}'"
+        for name in sorted(written)
+    )
+    raise ConfigSpaceInputError(
+        f"config-space '{knobs_key}' declares {detail}: declare each search "
+        "dimension once, under the name this scorer knows. Two spellings of "
+        "one dimension are counted as two dimensions, which doubles the "
+        "reported size of the space and pays twice for one knob"
     )
 
 
@@ -3023,20 +2987,28 @@ def _reject_phantom_names(
     Both fields address knobs by name, and both are read by intersecting with
     the space, so an unmatched name silently disappears instead of failing.
 
-    It judges the *canonical* name and reports the written one, and it runs
-    after `canonical_alias_names`. Running before it made this refuse
-    `wired: ["prompt_policy"]` against a space declaring `prompt_style` - a
-    spelling this module itself defines as legal - and say the name "is not
-    declared", which is false under the module's own semantics: it does match a
-    declared knob, through `KNOB_ALIASES`. A validation step that reads names
-    the normalization step has not yet collapsed cannot answer the question it
-    is asking.
+    A name is compared to the declared space exactly as written. It used to be
+    compared through an alias table first, which forced this check to run after
+    a normalization step and made the ordering between the two a defect
+    surface of its own; the table is gone, so a name either names a declared
+    knob or it does not.
+
+    What the table actually bought was one knob's worth of tolerance for one
+    synonym. That is replaced here by the general form of the same help: the
+    message names the declared knob the written name is closest to, for every
+    knob rather than for `prompt_policy` alone, and it teaches the canonical
+    spelling instead of silently substituting it.
     """
-    phantom = sorted(
-        {name for name in names if KNOB_ALIASES.get(name, name) not in knobs}
-    )
+    phantom = sorted({name for name in names if name not in knobs})
     if phantom:
-        detail = ", ".join(f"'{name}'" for name in phantom)
+        detail = ", ".join(
+            (
+                f"'{name}' (did you mean '{near[0]}'?)"
+                if (near := difflib.get_close_matches(name, sorted(knobs), n=1))
+                else f"'{name}'"
+            )
+            for name in phantom
+        )
         raise ConfigSpaceInputError(
             f"config-space '{field}' names {detail}, which "
             f"{'is' if len(phantom) == 1 else 'are'} not declared in "
@@ -3095,7 +3067,7 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
 
     Every field is read by its own entry in `CONFIG_SPACE_FIELDS` and by
     nothing else, so this function holds only what is genuinely *cross*-field.
-    There are four such rules, and they run in this order because a rule that
+    There are three such rules, and they run in this order because a rule that
     reads a name must read the name the scorer will use:
 
     0. **Every key of the document must be a declared field**
@@ -3106,17 +3078,9 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
        `configuration_space` alias only when it is non-empty, and `knobs_key`
        names whichever was actually read, so no message points at a key the
        author never wrote.
-    2. **Alias spellings are collapsed onto one dimension**
-       (`canonical_alias_names`), across `knobs`, `wired` and `bounds` at once.
-       Two spellings of one dimension declared over different candidate values,
-       or with different ranges, are refused here rather than merged.
-    3. **A `wired` or `bounds` name must be a knob of the declared space**
+    2. **A `wired` or `bounds` name must be a knob of the declared space**
        (`_reject_phantom_names`, applied to each field). Such a name is not a
        narrower space, it is a typo, and it is refused rather than dropped.
-
-    Rule 3 runs on the output of rule 2 and never the other way round: an alias
-    spelling is a legal name for a declared knob, so checking names before they
-    are collapsed refuses documents this module itself defines as valid.
     """
     if not isinstance(document, dict):
         raise ConfigSpaceInputError(
@@ -3164,18 +3128,16 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # it from "collapsed" to "varying" and clear the cap on a range the author
     # never declared for it. The template's own fence asserts this before it
     # searches; enforce it here too, because the document is read long after.
-    facts = canonical_alias_names(
-        AgentFacts(
-            agent_type=read.get("agent_type"),
-            max_trials=read.get("max_trials"),
-            knobs=knobs,
-            wired=wired,
-            bounds=bounds,
-            # Reaching this line is the proof: a document was read.
-            config_space_supplied=True,
-        )
+    facts = AgentFacts(
+        agent_type=read.get("agent_type"),
+        max_trials=read.get("max_trials"),
+        knobs=knobs,
+        wired=wired,
+        bounds=bounds,
+        # Reaching this line is the proof: a document was read.
+        config_space_supplied=True,
     )
-    # Against the collapsed space, and reporting the spelling the author wrote.
+    _reject_synonym_spellings(facts.knobs, knobs_key)
     # An unattested document names nothing, so there is no phantom to reject.
     if wired is not None:
         _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
