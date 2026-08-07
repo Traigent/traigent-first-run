@@ -5346,6 +5346,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # silently switch that statement off.
     STILL_THE_GENERATED_SWEEP = re.compile(r"generated|swept|grid")
 
+    # `(\w+)` will happily capture the tail of a number that was written with a
+    # separator: `a 10 000-configuration space` yields "000", which resolves to
+    # 0 and is reported as a document claiming a zero-configuration baseline.
+    # A thousands group is not a quantity, and the character before the capture
+    # is what says so - a digit, or a digit and one space.
+    NUMBER_FRAGMENT = re.compile(r"[\d,]\s?$")
+
     def _states_the_held_out_split(self, text: str, start: int, end: int) -> bool:
         opening = text.rfind(". ", 0, start) + 2
         closing = text.find(". ", end)
@@ -5393,6 +5400,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         for match in re.finditer(pattern, text):
                             preceding = text[max(0, match.start() - 24) : match.start()]
                             if preceding.endswith(self.NOT_THE_GENERATED_SWEEP):
+                                continue
+                            # Against the QUANTITY's own position, never the
+                            # match's: `binary knobs = (\d+)` starts eleven
+                            # characters after the `4` of "3 models x 4", and
+                            # testing the match start there would silently
+                            # exempt the enhanced space's only statement.
+                            if self.NUMBER_FRAGMENT.search(text[: match.start(1)]):
                                 continue
                             if self._states_the_held_out_split(
                                 text, match.start(), match.end()
