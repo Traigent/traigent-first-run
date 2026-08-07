@@ -5311,6 +5311,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         r"\brun as (\d+) trials\b",
         r"\bbaseline's (\d+) trials\b",
         r"\bexpand it to (\w+)\b",
+        # The EXECUTABLE statements, which this guard was missing entirely.
+        # Swept across all 34 open branches: of the 19 six-statements trunk
+        # still carries, these patterns caught 15 - and the four they missed
+        # included BOTH of the fence's own asserts and the environment default
+        # feeding one of them. A guard that reads every sentence about the
+        # size and not the two lines that decide it is checking the commentary
+        # while the code drifts underneath. `sdk-execution.md` is prose around
+        # a code block, so the block is matched as text like everything else.
+        r"configuration_count\(baseline_space\) == (\d+)",
+        r"first_run_baseline_trials\", default=(\d+)",
+        # `a credible six-point standard sweep` walked past the noun-phrase
+        # pattern above because one adjective sat between the quantity and the
+        # noun. Anchored on the quantity and the noun with the adjectives left
+        # open, so the next writer's adjective does not reopen the hole.
+        r"\b(\w+)-point (?:\w+ )?sweep\b",
     )
 
     ENHANCED_SIZE_CLAIMS = (
@@ -5319,6 +5334,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         r"\bthe same (\w+) whatever\b",
         r"\bbinary knobs = (\d+)\b",
         r"\bexactly (\d+) configurations\b",
+        r"configuration_count\(enhanced_space\) == (\d+)",
     )
 
     # The number beside these is a size the generated sweep is forbidden to
