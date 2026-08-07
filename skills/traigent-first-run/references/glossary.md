@@ -322,11 +322,11 @@ Confirmation code
   page you started on, and a second email will follow."
 
 Access code
-  Plain: the single-use code in the second Traigent email. It lets you register
-  once, any time in the next 10 days. Entering it is what creates your account,
-  and it cannot be used again afterwards. The registration link in that email is
-  just the way to the page - it carries no credential, so the code has to be
-  typed in rather than clicked through.
+  Plain: the single-use code in the second Traigent email. The access code
+  lets you register once, any time in the next 10 days. Entering it is what
+  creates your account, and it cannot be used again afterwards. The registration
+  link in that email is just the way to the page - it carries no credential, so
+  the code has to be typed in rather than clicked through.
   Note: because your address was already confirmed by the six-digit code,
   registration will not ask you to confirm it a second time. Registering lands
   you in the portal; you then create your full-access key yourself - the key

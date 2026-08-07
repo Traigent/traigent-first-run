@@ -571,7 +571,8 @@ unrecorded. Reuse a preserved suitable key or establish exactly one of the four 
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
 handoff and have the user enter credentials locally, never in chat. It is the same file the
 baseline used, and that reference performs the handoff again there for `TRAIGENT_API_KEY=`; follow
-it for which address each account state gets, and the two 10-day windows.
+it for which address each account state gets, and the two 10-day windows: the access code, then
+portal access.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a

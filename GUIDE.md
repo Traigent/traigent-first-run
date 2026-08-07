@@ -56,8 +56,8 @@ Use the bundled tools:
 One file carries every credential this run needs, including the Traigent key after the baseline.
 The skill's `references/run-safety.md` selects that file and owns every rule about it - which
 file, when and how it may be opened, and what may be written there. Follow it too for which
-address each account state gets, and the two 10-day windows. This document states none of that a
-second time.
+address each account state gets, and the two 10-day windows: the access code, then portal access.
+This document states none of that a second time.
 
 ## User-facing promise
 
