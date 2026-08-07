@@ -89,14 +89,57 @@ def ten_day_clocks_named(sentence: str) -> set[str]:
     return named
 
 
+# A line that opens a markdown block-level unit: a list item, a table row, a
+# heading, a block quote. The first version of the splitter joined a whole
+# paragraph-separated block into one string and cut it on `.!?`, which is right
+# for wrapped prose and wrong for every one of these - a bullet ends at the
+# newline and carries no full stop, and a table row never does. So two bullets,
+# one naming each clock, arrived as a single "sentence" naming both, and a table
+# row arrived glued to its neighbours. `run-safety.md` already presents the
+# account states as bullets and already carries tables, which is how a
+# presentation this guard is meant to encourage became one it refused.
+_MARKDOWN_BLOCK_START = re.compile(r"\s*(?:[-*+]\s|\d+[.)]\s|\||#{1,6}\s|>)")
+
+
+def prose_units(text: str) -> list[str]:
+    """One document, split the way a reader sees it.
+
+    A unit is a markdown block - a paragraph, a list item, a table row - with
+    its continuation lines rejoined, then cut into sentences. Rejoining matters
+    because this guidance hard-wraps: a sentence routinely spans three source
+    lines, and splitting on newlines alone would tear it apart and report each
+    half as naming nothing. Both halves of that trade are load-bearing, which is
+    why neither the line splitter nor the block splitter is used on its own.
+    """
+    units: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            units.append(" ".join(" ".join(current).split()))
+            current.clear()
+
+    for line in text.splitlines():
+        if not line.strip():
+            flush()
+            continue
+        if _MARKDOWN_BLOCK_START.match(line):
+            flush()
+        current.append(line)
+    flush()
+    return [
+        sentence
+        for unit in units
+        for sentence in re.split(r"(?<=[.!?])\s+", unit)
+        if sentence
+    ]
+
+
 def ten_day_sentences(text: str) -> list[str]:
     """Every sentence in a document that mentions a 10-day period."""
-    sentences = []
-    for block in re.split(r"\n\s*\n", text):
-        for sentence in re.split(r"(?<=[.!?])\s+", " ".join(block.split())):
-            if TEN_DAY_MENTION.search(sentence):
-                sentences.append(sentence)
-    return sentences
+    return [
+        sentence for sentence in prose_units(text) if TEN_DAY_MENTION.search(sentence)
+    ]
 
 
 # The config-space document is a contract between prose the assistant follows and
@@ -3038,39 +3081,47 @@ class SkillPackageTests(unittest.TestCase):
         wrong one.
 
         Pinned by shape rather than by a sentence, because the wording is free
-        to change and the distinction is not. Every mention of a 10-day period
-        names exactly one clock - naming neither leaves the reader guessing, and
-        naming both in one breath is the conflation itself - and a mention that
-        speaks of the pair has to name both. "The two 10-day windows" fails on
-        both counts: it counts them without distinguishing them.
+        to change and the distinction is not. The defect is a 10-day period
+        mentioned without saying which one it is, so that is what fails: a
+        mention names at least one clock, and a mention that puts both periods
+        in one sentence names both. "The two 10-day windows" fails on the
+        second count - it counts them without distinguishing them.
+
+        AT LEAST one, not exactly one, and that correction is the point of this
+        revision. The first version demanded exactly one on the theory that
+        naming both in one breath *was* the conflation. It is the opposite. The
+        clearest sentence anyone can write here - "the access code's 10 days to
+        register are not the same as the 10 days of portal access that
+        registering starts" - names both clocks in order to separate them, and
+        the rule refused it. A guard whose loudest false red lands on the best
+        statement of the very distinction it enforces teaches authors to write
+        the vaguer sentence, which is the defect. A sentence carrying two
+        10-day mentions is held to naming both, so contrasting them is
+        permitted and blurring them is not.
 
         Which clock is named is decided by `ten_day_clocks_named`, tested above
         against invented sentences. The scan here only applies that decision to
         the corpus; it cannot vouch for it, which is why that test is separate.
         """
+        # The corpus is the contract documents, not the assistant-facing ones:
+        # README.md is the single most-read file in a public repository and is
+        # where a customer first meets the two windows, and it sat outside every
+        # check that owns this distinction. It carries no 10-day sentence today;
+        # including it is what makes that a fact the suite knows rather than one
+        # this comment asserts. (Not the whole tracked tree, unlike the
+        # disclosure guards: this file plants deliberately-vague 10-day
+        # sentences as probe inputs, so scanning the tests would flag the guard's
+        # own fixtures.)
         carrying = set()
-        for path in assistant_facing_documents():
+        for path in conversation_contract_documents():
             for sentence in ten_day_sentences(path.read_text()):
                 carrying.add(path.name)
-                named = ten_day_clocks_named(sentence)
                 with self.subTest(document=path.name, sentence=sentence):
-                    if TEN_DAY_COLLECTIVE.search(sentence):
-                        self.assertEqual(
-                            named,
-                            {"registration", "portal"},
-                            "both 10-day periods are referred to at once "
-                            "without naming both, so the reader is told there "
-                            "are two and left to guess what distinguishes them",
-                        )
-                    else:
-                        self.assertEqual(
-                            len(named),
-                            1,
-                            "a 10-day period must name exactly one clock - the "
-                            "access code's 10 days to register, or the 10 days "
-                            "of portal access that registering starts - and "
-                            f"this sentence names {sorted(named) or 'neither'}",
-                        )
+                    self.assertEqual(
+                        self._ten_day_defect(sentence),
+                        "",
+                        f"{path.name}: {sentence}",
+                    )
 
         # A pass has to mean the corpus was actually read, and the pointers that
         # carry the distinction are part of what is pinned: deleting them
@@ -3098,6 +3149,117 @@ class SkillPackageTests(unittest.TestCase):
                     "10-day windows at all, so nothing points at the "
                     "difference between them",
                 )
+
+    @staticmethod
+    def _ten_day_defect(sentence: str) -> str:
+        """The reason one sentence conflates the clocks, or "" if it does not.
+
+        Returned as a string rather than raised, so the corpus scan above and
+        the invented-input probe below apply the identical rule to a real
+        sentence and to a planted one. A guard checked only against the tree it
+        already passes cannot tell "clean" from "neutered".
+        """
+        named = ten_day_clocks_named(sentence)
+        # Two periods in one sentence - counted as a pair ("the two 10-day
+        # windows") or written out twice - has to distinguish them.
+        both = bool(TEN_DAY_COLLECTIVE.search(sentence)) or (
+            len(TEN_DAY_MENTION.findall(sentence)) > 1
+        )
+        if both and named != {"registration", "portal"}:
+            return (
+                "refers to both 10-day periods at once but names "
+                f"{sorted(named) or 'neither'} - the reader is told there are "
+                "two and left to guess what distinguishes them"
+            )
+        if not named:
+            return (
+                "mentions a 10-day period without naming which - the access "
+                "code's 10 days to register, or the 10 days of portal access "
+                "that registering starts"
+            )
+        return ""
+
+    def test_the_ten_day_guard_fails_on_a_planted_conflation(self) -> None:
+        """The tree being clean says nothing about what the rule can see.
+
+        Every input here is invented. The first group must be refused or the
+        guard has been neutered into a rule that passes whatever it is given;
+        the second must be accepted or it has been tightened into a rule that
+        pushes authors away from the presentations that distinguish the clocks
+        best - which is the failure this revision exists to correct, and the
+        one a clean tree hid, because the tree simply had no bullet list or
+        table row that mentioned a 10-day period.
+        """
+        for conflated in (
+            "The key stops working 10 days later.",
+            "Read `references/run-safety.md` for the two 10-day windows.",
+            "Both ten-day clocks are covered in the reference.",
+            "The access code gives you 10 days, and 10 days is also all you get "
+            "afterwards.",
+        ):
+            with self.subTest(conflated=conflated):
+                self.assertNotEqual(
+                    self._ten_day_defect(conflated),
+                    "",
+                    f"the guard accepts {conflated!r}, which does not say "
+                    "which 10-day period it means - it has been neutered",
+                )
+
+        for clear in (
+            # The sentence the previous rule refused, and the reason it was
+            # wrong: both clocks named, in order to contrast them.
+            "The access code's 10 days to register are not the same as the 10 "
+            "days of portal access that registering starts.",
+            "A single-use access code is valid for 10 days.",
+            "Portal access lasts 10 days from the moment you register.",
+            "The two ten-day windows: the access code, then portal access.",
+        ):
+            with self.subTest(clear=clear):
+                self.assertEqual(
+                    self._ten_day_defect(clear),
+                    "",
+                    f"the guard refuses {clear!r}, which names its clock - a "
+                    "false red here teaches authors to write the vaguer "
+                    "sentence, which is the defect",
+                )
+
+        # And the splitter reaches the shapes it used to glue together. A
+        # bullet list and a table row each carry one clock per unit; joined into
+        # one string they read as a single sentence naming both, which the old
+        # `.!?` splitter did and which made a correct list look like a
+        # conflation - and, with the rule relaxed, would now make a genuine
+        # conflation look correct. Both directions are checked.
+        bullets = (
+            "- The access code expires 10 days after it is issued\n"
+            "- Portal access then runs for 10 days from registration\n"
+        )
+        self.assertEqual(
+            [self._ten_day_defect(s) for s in ten_day_sentences(bullets)], ["", ""]
+        )
+        table = (
+            "| Window | Length |\n"
+            "| --- | --- |\n"
+            "| Access code | 10 days |\n"
+            "| Portal access | 10 days |\n"
+        )
+        self.assertEqual(
+            [self._ten_day_defect(s) for s in ten_day_sentences(table)], ["", ""]
+        )
+        blurred = (
+            "- The code expires 10 days after it is issued\n"
+            "- You then get 10 days\n"
+        )
+        self.assertEqual(len(ten_day_sentences(blurred)), 2)
+        self.assertTrue(all(self._ten_day_defect(s) for s in ten_day_sentences(blurred)))
+        # Hard-wrapped prose still arrives whole: split on newlines alone, this
+        # sentence becomes two halves that each name one clock and neither
+        # mentions both, so a real conflation across a line break would pass.
+        wrapped = (
+            "The access code's 10 days to register are not the same as the\n"
+            "10 days of portal access that registering starts.\n"
+        )
+        self.assertEqual(len(ten_day_sentences(wrapped)), 1)
+        self.assertEqual(self._ten_day_defect(ten_day_sentences(wrapped)[0]), "")
 
     def test_retired_lead_funnel_vocabulary_is_absent(self) -> None:
         """`lead_token` and the two-path framing are gone, not renamed.
@@ -5027,12 +5189,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # against the base it branched from; only the merge knows the sum.
         #
         # #175 names which 10-day window is which wherever a customer meets one
-        # and hardens the check that pins it. Its own guidance cost is 19 bytes
-        # - MEASURED TOTAL 228_603, which the previous 228_750 already covered,
+        # and hardens the check that pins it. Its own guidance cost is 87 bytes
+        # - GUIDE.md +37, SKILL.md +37, glossary.md +13, which is 228_603
+        # against trunk's MEASURED 228_516. The first draft of this entry said
+        # 19, and that is worth leaving on the record rather than quietly
+        # correcting: the TOTAL was measured and the DELTA was not, so the one
+        # number a later entry copies forward was the one nobody checked.
+        # Every figure in this comment is now stated as a subtraction someone
+        # can redo - MEASURED TOTAL 228_603, which the previous 228_750 already
+        # covered,
         # so on this branch alone the number below would not move. It moves for
         # the merge, and this is the first entry that can say so before the
-        # merge instead of after it. #171 (`ow/blocked-card-wording`) adds a
-        # MEASURED +227 bytes to the same corpus, entirely in glossary.md, and
+        # merge instead of after it. #171 (`ow/blocked-card-wording`) measures
+        # 228_743 against the same trunk, so +227 bytes to the same corpus,
+        # entirely in glossary.md, and
         # touches no line #175 touches - so the two land with zero textual
         # conflict and their bytes simply add: 228_603 + 227 = 228_830. That is
         # a computed projection, not a measured merge: it is the sum of two
