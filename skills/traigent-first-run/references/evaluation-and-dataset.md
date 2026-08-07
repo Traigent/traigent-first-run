@@ -347,8 +347,10 @@ Each row earns its own share of the 10 provenance points, and the sub-score is t
 |---|---|
 | Observed question, observed answer | 10 |
 | Observed question, answer written by a model | 6 |
-| Says nothing about where it came from | 6 |
+| Says nothing about where it came from | 3 |
 | Neither was observed | 3 |
+
+A row that says nothing scores as a generated row: silence is not a declaration.
 
 Because it is a per-row average, a mixture scores like a mixture: 99 collected rows and one
 generated one score 9.93, not 3. What a mixture cannot do is escape a ceiling - see the cap ladder
@@ -362,31 +364,38 @@ observed this - and are not different classes. `production`, `real`, `collected`
 
 A word on neither list keeps the collected score, so a project's own vocabulary (`crm-export`) is
 not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
-unknown word quietly earning the production band is the failure that check exists to prevent. If the
-data is generated, say so with a word from the first list.
+unknown word quietly earning the production band is the failure that check exists to prevent.
 
 Do not express a generated answer in the row's own `provenance` token: that marks the whole row
 generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
 
 ### Provenance ceilings
 
-Points alone cannot keep a score honest here. Provenance is 10 points inside a pillar worth 40% of
-the total, so the whole 10-to-3 range moves the overall score by under 3 points - a fully generated
-dataset that was perfect on every other dimension still reported 93 and read as production-ready.
-So how much of the data was invented also sets a ceiling on the entire run:
+Points alone cannot keep a score honest here: provenance is 10 points inside a pillar worth 40% of
+the total, so the whole 10-to-3 range moves the overall score by under 3 - a fully generated dataset
+perfect on every other dimension still reported 93. So how much of the data was invented also sets a
+ceiling on the entire run:
 
 | The dataset | Ceiling |
 |---|---|
-| Every row generated | 65 |
-| More than half generated | 70 |
+| Every row generated, or no row declared collected | 65 |
+| More than half generated or undeclared | 70 |
 | Real questions, but most expected answers written by a model | 74 |
 | Real questions, but every expected answer written by a model | 74 |
+
+An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
+declaration rather than new data unless over half the corpus is declared generated - a ceiling no
+declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
+capped by neither.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an
 answer key a model wrote reports agreement with that model, not correctness, and nothing inside the
 run can falsify it. All four rungs stay inside Workable: data a model supplied, on either side of
-the row, can be workable and cannot be good.
+the row, can be workable and cannot be good. The answer-key rungs are 74 and not 75 because 75 is
+the Strong boundary itself, and presenting as Strong is the one claim they exist to refuse. They
+are also not raised at all for a corpus where no row was observed: the 65 above governs there and
+says strictly more.
 
 The last two share a ceiling and differ in what they ask of you. When most of the expected answers
 are a model's, the run proceeds and the claim is bounded. When *all* of them are, it waits until a

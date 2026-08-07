@@ -33,7 +33,7 @@ import math
 import os
 import sys
 import traceback
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 
@@ -428,6 +428,12 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-tune-holdout-overlap": "resplit-dataset",
     "dataset-fully-synthetic": "connect-real-data",
     "dataset-mostly-synthetic": "connect-real-data",
+    # Not `connect-real-data`. The dataset is *assumed* generated because no row
+    # said otherwise, and the customer may already have collected the rows and
+    # simply never labelled them - in which case the remedy is a field, not a
+    # data-collection project.
+    "dataset-undeclared-provenance": "declare-data-provenance",
+    "dataset-mostly-undeclared": "declare-data-provenance",
     "dataset-generated-answer-key": "review-answer-key",
     # The same remedy as the rung above, deliberately: both say a person has to
     # look at the answer key before the number means anything, and a consumer
@@ -496,6 +502,12 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
+    # #165's two rungs, reached by silence rather than by a declaration. Same
+    # ceilings, same category - what differs is the remedy, not what the result
+    # is. Registered here because `Cap.__post_init__` fails closed and #144
+    # wrote this table without them.
+    "dataset-undeclared-provenance": CLAIM_SCOPING,
+    "dataset-mostly-undeclared": CLAIM_SCOPING,
     "dataset-generated-answer-key": CLAIM_SCOPING,
     # #161's second rung. It scopes for the same reason the rung above
     # does - the questions are real and only part of the ruler is a
@@ -713,7 +725,14 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         "bounded claim",
         (
             ("dataset-fully-synthetic", FULLY_SYNTHETIC_CEILING),
+            # Identical ceilings to the pair above, deliberately: the
+            # assumption IS "generated", so the claim the run may make is the
+            # same one. What differs is the remedy - a customer who has real
+            # data and never labelled it is asked to declare, not to go and
+            # collect - and the remedy is not what this table ranks.
+            ("dataset-undeclared-provenance", FULLY_SYNTHETIC_CEILING),
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
             ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
             (
@@ -796,6 +815,9 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
     # And the same on the answer-key ladder, which now has the same two rungs.
     ("dataset-generated-answer-key", "dataset-mostly-generated-answer-key"),
+    # And the same on the undeclared rungs, which grade the same mass reached
+    # by silence rather than by a declaration.
+    ("dataset-undeclared-provenance", "dataset-mostly-undeclared"),
     # Under ten comparable examples is also under thirty.
     ("dataset-below-measurable-size", "dataset-coarse-resolution"),
 )
@@ -1059,6 +1081,26 @@ class KnobScore:
 
 
 @dataclass(frozen=True)
+class ProvenanceAssumption:
+    """What this score assumed about silent rows, and what it cost.
+
+    An assumption a customer only discovers after paying is not an assumption,
+    it is a trap - so the one this scorer makes is carried in the payload beside
+    the number it produced, and rendered on the card rather than left to a
+    reference. `if_declared_collected` is the same evidence scored again with
+    these rows counted as collected; it is computed, never estimated, because a
+    number a customer is invited to act on has to be the one they would get.
+    """
+
+    undeclared_rows: int
+    scored_rows: int
+    # The two grades: what this run scored under the assumption, and what the
+    # identical evidence scores once the silent rows declare a collected source.
+    scored_as_generated: int
+    if_declared_collected: int
+
+
+@dataclass(frozen=True)
 class ReadinessScore:
     schema_version: int
     overall: int
@@ -1084,6 +1126,10 @@ class ReadinessScore:
     caps: tuple[Cap, ...]
     knobs: tuple[KnobScore, ...]
     gaps: tuple[str, ...]
+    # `None` when no row was silent, which is the ordinary case: there is no
+    # assumption to disclose, so nothing is printed. Additive, so a consumer
+    # reading schema 2 keeps working; it gains a key it can ignore.
+    provenance_assumption: ProvenanceAssumption | None = None
 
 
 @dataclass(frozen=True)
@@ -1134,8 +1180,12 @@ class DatasetFacts:
     synthetic: bool = False
     generated_outputs: bool = False
     # Row counts by provenance class. All zero means the preflight JSON predates
-    # them, and `score_provenance` falls back to the pre-count behaviour rather
-    # than reading the absence as an empty dataset.
+    # them, and `score_provenance` reads `sources` instead rather than taking
+    # the absence for an empty dataset. That fallback reaches the same verdict
+    # the counted path reaches, NOT the one the older payload used to get: a
+    # payload declaring `unknown` scored 6.0 under no ceiling and now scores 3.0
+    # under a blocking 65, because the rule is about what silence means and not
+    # about which payload shape carried it.
     collected_rows: int = 0
     synthesised_rows: int = 0
     undeclared_rows: int = 0
@@ -1554,8 +1604,20 @@ def size_points(effective_n: int | None) -> tuple[float, str]:
 # same question asked twice: was the question observed, and was the answer?
 COLLECTED_ROW_POINTS = 10.0  # observed question, observed answer
 GENERATED_ANSWER_ROW_POINTS = 6.0  # observed question, answer written by a model
-UNDECLARED_ROW_POINTS = 6.0  # says nothing - not credited as production data
 SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
+# A row that says nothing is scored as a row that says generated. Defined AS
+# the synthesised credit rather than repeating 3.0, because the two are one
+# decision: silence is an assumption, and the assumption is the pessimistic one.
+#
+# It used to score 6.0 and carry no ceiling, which paid for silence. Measured on
+# 200 identical rows differing only in whether `provenance` was present: declared
+# synthetic scored 65 and BLOCKED the paid run, the same rows with the field
+# removed scored 91 and OK. Twenty-six points and a block, for telling the truth.
+#
+# The assumption is never silent in return - `main` re-scores the same evidence
+# with these rows counted as collected and prints both numbers, so a customer
+# reads what they scored under the assumption and what declaring would earn.
+UNDECLARED_ROW_POINTS = SYNTHESISED_ROW_POINTS
 
 # A cap is a ceiling on the whole run, not a deduction. It exists because a
 # points deduction cannot stop an average from hiding a fatal flaw: 10 -> 3 on a
@@ -1612,6 +1674,44 @@ GENERATED_ANSWER_KEY_CAP = Cap(
     "agreement with that model rather than correctness.",
     blocks=False,
 )
+# The reasons for the same two rungs of that ladder, reached by silence instead
+# of by a declaration. The ceilings are identical because the assumption IS
+# "generated"; what differs is the remedy, and it has to. `connect-real-data` is
+# the wrong instruction for a customer who already has real data and never
+# labelled it, and reading silence as a declaration is what made staying quiet
+# the cheaper move.
+#
+# The reasons are named here and the conditions are written out at each `Cap(`
+# below, rather than splatting one tuple: two separate guards read the condition
+# strings straight out of this file's source, and a cap built from a variable is
+# a cap they stop seeing.
+#
+# Both reasons describe a corpus that HAS declared-generated rows in it as well,
+# so neither claims the dataset declared nothing at all, and neither asks for a
+# declaration on rows that may not exist. "Declare the rows that were collected"
+# was both: it read as "nothing here is declared" beside a corpus that was
+# largely declared generated, and it instructed a reader with no collected rows
+# to declare rows they do not have. The instruction is conditional instead,
+# because whether any silent row was collected is the one thing this scorer
+# cannot see and the reader can.
+# "records nothing this run could read" and not "records nothing": a row
+# carrying a word the vocabulary does not know is in the same position as a
+# silent one - this script cannot tell what it came from - and it is now scored
+# there, so the sentence has to describe both or it is false on the card of
+# every customer using their own vocabulary.
+UNDECLARED_ALL_REASON = (
+    "No row of this dataset was observed - every row is either declared "
+    "generated, or records no source this run can read, and a row whose source "
+    "it cannot read is scored as generated. Declare or re-label the source on "
+    "any such row that was collected; if none was, this dataset is generated."
+)
+UNDECLARED_MOST_REASON = (
+    "More than half of these rows were never observed: they are declared "
+    "generated, or record no source this run can read and are scored as "
+    "generated. Declare or re-label the source on any such row that was "
+    "collected."
+)
+
 
 
 def _row_count(value: Any, name: str, *, required: bool = True) -> int:
@@ -1671,31 +1771,42 @@ def score_provenance(
     detail line claiming every row was generated. Mixtures are the normal case
     once a user tops up real data with examples, so they get a real answer.
 
-    Falls back to the pre-count behaviour when the counts are absent, which is
-    what a preflight JSON written before this field looks like - an older
-    payload keeps scoring exactly as it did rather than silently reading 0 rows.
+    Reads `sources` instead when the counts are absent, which is what a preflight
+    JSON written before this field looks like - the absence is a payload shape,
+    not an empty dataset. That path reaches the same verdict as the counted one
+    and NOT the verdict it used to reach: `unknown` scored 6.0 under no ceiling
+    and now scores 3.0 under a blocking 65, because the rule is about what
+    silence means rather than about which payload carried it.
     """
     caps: list[Cap] = []
     counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    undeclared_rows = facts.undeclared_rows
+    synthesised_rows = facts.synthesised_rows
     if not counted:
+        # A fact set with rows in it and no per-row provenance count says
+        # nothing about where any row came from - which is precisely what an
+        # undeclared row says - so it is scored there, in two lines.
+        #
+        # What used to be here was forty: a second implementation of this whole
+        # ladder that re-derived it from `sources`, with its own helper
+        # (`declares_no_provenance`), its own counterfactual token
+        # (`COUNTERFACTUAL_SOURCE`) and its own branch in
+        # `provenance_assumption`. Its stated purpose was a preflight JSON
+        # written before the counts existed. `emit_dataset_provenance` emits
+        # all three counts together for every dataset with a row in it, and
+        # this repository has published nothing that could have been written
+        # before that - so the machinery guarded a payload that has never
+        # existed, and any real one that reaches this line is truncated. The
+        # adapter refuses that one at the boundary; here the fail-closed
+        # reading is enough, and it is the same reading a silent row gets.
+        # `synthetic` is preflight's own all-or-nothing statement about the
+        # same rows and is kept, so a count-free fixture that says every row is
+        # generated is still scored generated rather than merely unread.
+        counted = facts.rows
         if facts.synthetic:
-            return (
-                SYNTHESISED_ROW_POINTS,
-                "fully generated - cannot represent production traffic",
-                [FULLY_SYNTHETIC_CAP],
-            )
-        if "unknown" in facts.sources or not facts.sources:
-            return (
-                UNDECLARED_ROW_POINTS,
-                "no row says whether it was collected or generated, so none "
-                "counts as evidence about real traffic",
-                [],
-            )
-        return (
-            COLLECTED_ROW_POINTS,
-            f"declared sources: {', '.join(facts.sources)}",
-            [],
-        )
+            synthesised_rows = facts.rows
+        else:
+            undeclared_rows = facts.rows
 
     # An answer written by a model downgrades a row that was otherwise
     # collected; it cannot downgrade one already counted as synthesised, and
@@ -1709,17 +1820,79 @@ def score_provenance(
     points = (
         clean_collected * COLLECTED_ROW_POINTS
         + generated_answers * GENERATED_ANSWER_ROW_POINTS
-        + facts.undeclared_rows * UNDECLARED_ROW_POINTS
-        + facts.synthesised_rows * SYNTHESISED_ROW_POINTS
+        + undeclared_rows * UNDECLARED_ROW_POINTS
+        + synthesised_rows * SYNTHESISED_ROW_POINTS
     ) / counted
 
-    synthesised_share = facts.synthesised_rows / counted
-    if facts.synthesised_rows == counted:
-        caps.append(FULLY_SYNTHETIC_CAP)
-    elif synthesised_share > MOSTLY_SYNTHETIC_SHARE:
+    # The ladder runs on how much of the corpus was never observed, and an
+    # undeclared row counts there: it is scored as generated, so it is capped as
+    # generated. Half declared-collected and half silent is 50%, under the
+    # threshold, so it is not capped at all: it loses points per row like any
+    # mixture. Half declared-generated and half silent is 100% unobserved and IS
+    # capped, at 65, even though neither half reaches 100% on its own - which is
+    # the case the two shares could not see separately.
+    unobserved = synthesised_rows + undeclared_rows
+
+    # WHICH of the two remedies that ceiling carries is a share too, not the
+    # existence of a silent row. `undeclared_rows > 0` handed "declare the rows
+    # that were collected" to any corpus with one silent row in it, including a
+    # corpus that is overwhelmingly DECLARED generated - which is the wrong
+    # remedy this pair of conditions exists to prevent, in mirror image.
+    # Measured on 50 collected / 260 declared-generated / 90 silent: the reader
+    # was told to declare, declared all 90, scored the same 70, stayed BLOCKED,
+    # and was only then handed `connect-real-data` - the instruction they needed
+    # first.
+    #
+    # The threshold is the ceiling's own, and it is chosen because it is exactly
+    # the condition under which declaring changes the answer. Moving every
+    # silent row into the collected count leaves `synthesised_rows` as the whole
+    # unobserved mass, so declaring clears both rungs if and only if the
+    # DECLARED generated rows are at most `MOSTLY_SYNTHETIC_SHARE` of the
+    # corpus. Past that they hold the ceiling down on their own, no declaration
+    # can lift it, and the honest first instruction is to connect real data -
+    # while the silent rows stay named in the evidence line and in the
+    # disclosure sentence, so nothing about them is hidden by routing the
+    # remedy at the mass that actually binds.
+    silent = (
+        undeclared_rows > 0
+        and synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
+    )
+    if unobserved == counted:
+        caps.append(
+            Cap(
+                "dataset-undeclared-provenance",
+                FULLY_SYNTHETIC_CEILING,
+                UNDECLARED_ALL_REASON,
+                blocks=False,
+            )
+            if silent
+            else Cap(
+                "dataset-fully-synthetic",
+                FULLY_SYNTHETIC_CEILING,
+                "The dataset is generated, so a high score here measures the "
+                "walkthrough, not real-world readiness.",
+                blocks=False,
+            )
+        )
+    elif unobserved / counted > MOSTLY_SYNTHETIC_SHARE:
         # Without this the any()->all() correction would hand every mixture a
         # free pass: a 90%-generated dataset would lose its ceiling entirely.
-        caps.append(MOSTLY_SYNTHETIC_CAP)
+        caps.append(
+            Cap(
+                "dataset-mostly-undeclared",
+                MOSTLY_SYNTHETIC_CEILING,
+                UNDECLARED_MOST_REASON,
+                blocks=False,
+            )
+            if silent
+            else Cap(
+                "dataset-mostly-synthetic",
+                MOSTLY_SYNTHETIC_CEILING,
+                "Most of the dataset is generated, so the result mostly "
+                "measures invented examples rather than real traffic.",
+                blocks=False,
+            )
+        )
 
     # The expected answers are the ruler every score is measured against. When
     # all of them were written by a model, an accuracy number reports agreement
@@ -1745,7 +1918,13 @@ def score_provenance(
     # guide writes for a user who has no data. So the module-level
     # `GENERATED_ANSWER_KEY_CAP` is kept for the full rung and the new rung is
     # built here, because its reason quotes counts and cannot be a constant.
-    if uses_expected_outputs and facts.synthesised_rows != counted:
+    # `unobserved != counted`, not `synthesised_rows != counted`: #165 widened
+    # this premise and #161 rewrote the body under it, so the merge takes both.
+    # "The questions are still real" is the whole basis of this ceiling, and it
+    # is false for a corpus where no row was observed - whether the rows say
+    # "generated" or say nothing at all. The 65 governs there and says strictly
+    # more.
+    if uses_expected_outputs and unobserved != counted:
         generated_key_share = (
             facts.generated_answer_rows / facts.answerable_rows
             if facts.answerable_rows
@@ -1773,7 +1952,13 @@ def score_provenance(
     return (
         round(points, 2),
         provenance_evidence(
-            facts, counted, uses_expected_outputs=uses_expected_outputs
+            replace(
+                facts,
+                synthesised_rows=synthesised_rows,
+                undeclared_rows=undeclared_rows,
+            ),
+            counted,
+            uses_expected_outputs=uses_expected_outputs,
         ),
         caps,
     )
@@ -1793,8 +1978,9 @@ def provenance_evidence(
     unverified = ""
     if facts.unrecognised_sources:
         unverified = (
-            "; unrecognized provenance tokens treated as collected on an "
-            f"unverified declaration: {', '.join(facts.unrecognised_sources)}"
+            "; provenance tokens this run could not verify, scored as "
+            "undeclared rather than as collected: "
+            f"{', '.join(facts.unrecognised_sources)}"
         )
     parts: list[str] = []
     if facts.collected_rows:
@@ -1816,8 +2002,9 @@ def provenance_evidence(
         # reader skimming it takes the word for a claim that the rows are real -
         # which is the misreading this whole sub-score exists to prevent.
         mixture += (
-            " (undeclared means the row does not record where it came from, so "
-            "it cannot count as evidence about real traffic)"
+            " (undeclared means the row records no source this run can read - "
+            "either none at all, or a word its vocabulary does not know - so "
+            "this run scores it as generated)"
         )
     if facts.generated_answer_rows:
         if not uses_expected_outputs:
@@ -2860,6 +3047,129 @@ def aggregate(
     )
 
 
+def score_run(
+    dataset_facts: DatasetFacts,
+    evaluation_facts: EvaluationFacts,
+    agent_facts: AgentFacts,
+    weights: dict[str, float],
+) -> ReadinessScore:
+    """Score one set of facts end to end.
+
+    Extracted so the counterfactual below is the SAME computation over changed
+    facts, rather than a second arithmetic path that could drift from the one
+    the customer was actually graded by. A quoted alternative score has to be
+    the score they would really get; re-deriving it another way is how it stops
+    being that.
+    """
+    dataset_pillar, dataset_caps = score_dataset(dataset_facts, evaluation_facts.method)
+    evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
+    agent_pillar, agent_caps, knobs = score_agent(agent_facts)
+    return aggregate(
+        [dataset_pillar, evaluation_pillar, agent_pillar],
+        [*dataset_caps, *evaluation_caps, *agent_caps],
+        knobs,
+        weights,
+    )
+
+
+def provenance_assumption(
+    score: ReadinessScore,
+    dataset_facts: DatasetFacts,
+    evaluation_facts: EvaluationFacts,
+    agent_facts: AgentFacts,
+    weights: dict[str, float],
+) -> ProvenanceAssumption | None:
+    """Both grades for a corpus that did not say where it came from.
+
+    Returns `None` when every row declared a source - there is then no
+    assumption, and a disclosure line about one would be noise.
+
+    The counterfactual scores the same evidence again with the silent rows read
+    as collected. It deliberately does not touch `synthetic` or the answer-key
+    counts: this answers exactly one question - "what if these rows are
+    collected data nobody labelled" - and a second edit would make it answer a
+    different one.
+
+    "Silent" now includes a row that declared a source in a vocabulary this
+    run does not know, because `classify_provenance` scores that row as
+    undeclared - so the customer whose rows all say `crm-export` is shown, in
+    this sentence, the grade their own declaration earns once it is mapped.
+    That is the half of the unverifiable-declaration rule that keeps it from
+    being a punishment: the number is disclosed before they do anything.
+    """
+    if not dataset_facts.exists or not dataset_facts.rows:
+        # `score_dataset` scores no provenance for these at all - it reports
+        # "no dataset" and caps at 20 - so there is no assumption behind the
+        # number to disclose. Restated here because `main` calls this beside
+        # that guard rather than from inside it.
+        return None
+    counted = (
+        dataset_facts.collected_rows
+        + dataset_facts.synthesised_rows
+        + dataset_facts.undeclared_rows
+    )
+    # The same normalization `score_provenance` makes, and it has to be the
+    # same one: this function has to disclose an assumption on exactly the runs
+    # that were scored under it.
+    undeclared = dataset_facts.undeclared_rows
+    if not counted:
+        counted = dataset_facts.rows
+        undeclared = 0 if dataset_facts.synthetic else dataset_facts.rows
+    if not undeclared:
+        return None
+    # One shape, because there is only one. The second branch that used to be
+    # here declared `COUNTERFACTUAL_SOURCE` into `sources` for a count-free
+    # payload, through a `declares_no_provenance` helper that read the silence
+    # out of a word list. Neither exists now.
+    declared = replace(
+        dataset_facts,
+        collected_rows=dataset_facts.collected_rows + undeclared,
+        undeclared_rows=0,
+    )
+    if_declared = score_run(declared, evaluation_facts, agent_facts, weights).overall
+    if if_declared == score.overall:
+        # Two identical grades are a repetition, not a disclosure: "scores
+        # 77/100 ... the same evidence scores 77/100" spends the reader's
+        # attention, at the moment they are deciding whether to pay, to tell
+        # them nothing changes. It happens when something else binds the run at
+        # or below where provenance does - and the silent rows are still counted
+        # in the provenance evidence line, which says what they scored as, so
+        # suppressing the sentence hides no fact.
+        return None
+    return ProvenanceAssumption(
+        undeclared_rows=undeclared,
+        scored_rows=counted,
+        scored_as_generated=score.overall,
+        if_declared_collected=if_declared,
+    )
+
+
+def assumption_sentence(assumption: ProvenanceAssumption) -> str:
+    """The disclosure, in one sentence, with both numbers in it.
+
+    One sentence and not a paragraph because it competes with the score for the
+    reader's attention at the one moment they are deciding whether to pay, and
+    the whole content is: this number rests on an assumption, here is the other
+    number if the assumption is wrong.
+    """
+    # "no source this run can read" rather than "do not record where they came
+    # from": since an unrecognised token is scored here too, the older wording
+    # was false on the card of a customer who HAD declared one, in their own
+    # words, on every row.
+    rows = (
+        f"{assumption.undeclared_rows} of {assumption.scored_rows} rows record "
+        "no source this run can read"
+        if assumption.undeclared_rows < assumption.scored_rows
+        else f"No row of the {assumption.scored_rows} records a source this run "
+        "can read"
+    )
+    return (
+        f"{rows}, so this run scores them as generated: "
+        f"{assumption.scored_as_generated}/100. Declared as collected data, the "
+        f"same evidence scores {assumption.if_declared_collected}/100."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -3054,6 +3364,17 @@ def render_card(
                 label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
             lines.append(f"  {label} {cap.reason}")
         lines.append("")
+    if score.provenance_assumption is not None:
+        # On the card, not only in the durable report or a reference. This is
+        # the one line that says the headline number rests on an assumption
+        # about the reader's own data, and a customer who learns that after
+        # paying learns it too late - so it sits with the score, and it carries
+        # the number they would get instead rather than only the bad news.
+        lines.append(
+            f"  {palette.warn}ASSUMED GENERATED{palette.reset} "
+            f"{assumption_sentence(score.provenance_assumption)}"
+        )
+        lines.append("")
     if score.band_limited_by_confidence:
         # Grounded in the rows above rather than in a percentage: the reader can
         # see which checks did not run and why.
@@ -3096,6 +3417,11 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",
+            *(
+                [assumption_sentence(score.provenance_assumption), ""]
+                if score.provenance_assumption is not None
+                else []
+            ),
             "This is a first-pass estimate computed from local evidence only, "
             "before any optimization has run. It is an ordinal planning aid, not "
             "a calibrated probability. Weights are a judgment call and are listed "
@@ -4307,15 +4633,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         print(f"cannot read scoring input: {error}", file=sys.stderr)
         return 2
 
-    dataset_pillar, dataset_caps = score_dataset(dataset_facts, evaluation_facts.method)
-    evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
-    agent_pillar, agent_caps, knobs = score_agent(agent_facts)
-    score = aggregate(
-        [dataset_pillar, evaluation_pillar, agent_pillar],
-        [*dataset_caps, *evaluation_caps, *agent_caps],
-        knobs,
-        args.weights,
+    score = score_run(dataset_facts, evaluation_facts, agent_facts, args.weights)
+    assumption = provenance_assumption(
+        score, dataset_facts, evaluation_facts, agent_facts, args.weights
     )
+    if assumption is not None:
+        score = replace(score, provenance_assumption=assumption)
 
     if args.report:
         Path(args.report).write_text(render_markdown(score, args.report_timestamp))

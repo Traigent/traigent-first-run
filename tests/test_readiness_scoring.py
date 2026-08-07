@@ -561,14 +561,67 @@ class DatasetScoringTests(unittest.TestCase):
         )
         self.assertIn("dataset-tune-holdout-overlap", [cap.condition for cap in caps])
 
-    def test_undeclared_provenance_never_reaches_the_production_band(self) -> None:
-        pillar, _ = MODULE.score_dataset(
+    def test_undeclared_provenance_is_scored_as_generated(self) -> None:
+        """Silence is read as "generated", and says so rather than passing.
+
+        This is the pre-count fallback - a preflight JSON with no row counts,
+        which is what an older payload looks like. It reaches the same verdict
+        as the counted path, because the rule is about what silence means and
+        not about which payload carried it.
+        """
+        pillar, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True, rows=50, labelled_rows=50, sources=("unknown",)
             )
         )
         provenance = next(s for s in pillar.subscores if s.name == "provenance")
-        self.assertEqual(provenance.value, 6.0)
+        self.assertEqual(provenance.value, MODULE.SYNTHESISED_ROW_POINTS)
+        cap = next(c for c in caps if c.condition == "dataset-undeclared-provenance")
+        self.assertEqual(cap.ceiling, MODULE.FULLY_SYNTHETIC_CEILING)
+        # The remedy is the whole point of a separate condition: a customer may
+        # already hold real data and simply never have labelled it.
+        self.assertEqual(cap.action_kind, "declare-data-provenance")
+
+    def test_an_unobserved_corpus_raises_one_ceiling_and_not_two(self) -> None:
+        """Which ceiling governs an unobserved corpus with a model's answer key.
+
+        The 65 does, and the answer-key 75 is not raised at all: its premise is
+        that the questions are still real, which is exactly what a corpus where
+        no row was observed cannot say. It used to be refused only for the
+        DECLARED version of that state (`synthesised_rows != counted`), so the
+        undeclared one raised both and the card listed two ceilings for one
+        fact, the higher of them resting on a premise the lower one denies.
+        """
+        _, _, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=30,
+                labelled_rows=30,
+                undeclared_rows=30,
+                answerable_rows=30,
+                generated_answer_rows=30,
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.ceiling) for cap in caps],
+            [("dataset-undeclared-provenance", MODULE.FULLY_SYNTHETIC_CEILING)],
+        )
+        # The ceiling is still raised where its premise holds: observed
+        # questions whose every answer a model wrote.
+        _, _, observed = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=30,
+                labelled_rows=30,
+                collected_rows=30,
+                answerable_rows=30,
+                generated_answer_rows=30,
+            )
+        )
+        self.assertEqual(
+            [(cap.condition, cap.ceiling) for cap in observed],
+            [("dataset-generated-answer-key", MODULE.GENERATED_ANSWER_KEY_CEILING)],
+        )
 
     def test_power_uses_labelled_rows_when_no_split_is_declared(self) -> None:
         """90 of the 100 rows cannot be scored, so they buy no precision."""
@@ -3868,6 +3921,119 @@ class TheRouteIsClassifiedInThreeKindsNotTwoTests(unittest.TestCase):
             del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-classified"]
             del MODULE.CAP_CEILING["a-condition-nobody-classified"]
         self.assertIn("ROUTE_CATEGORY", str(caught.exception))
+
+
+class AnUnverifiableDeclarationCannotOutscoreAVerifiableOneTests(unittest.TestCase):
+    """`classify_provenance` read any unknown token as collected production data.
+
+    Measured through the whole scorer on 200 identical rows, only the token
+    varying: no token at all scored 65 WORKABLE and BLOCKED; the truthful
+    `synthetic` scored 65 WORKABLE and BLOCKED; `crm-export` scored 95
+    EXCELLENT and OK; and so did `zzz`. Three junk characters in a field
+    nothing checks were worth thirty points and the difference between a
+    blocked run and an excellent one.
+
+    The rule implemented is not "refuse unknown tokens" - customer vocabulary
+    is unknowable in advance, and `crm-export` is a real collected source that
+    failing closed would punish for honesty. It is that an unverifiable
+    declaration must not outscore a verifiable one, so an unreadable token
+    scores what a silent row scores and never above a row that declares itself
+    generated.
+    """
+
+    def _points(self, **counts: int) -> float:
+        points, _evidence, _caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(exists=True, rows=200, labelled_rows=200, **counts)
+        )
+        return points
+
+    def test_an_unreadable_token_scores_where_silence_scores(self) -> None:
+        unreadable = self._points(undeclared_rows=200)
+        generated = self._points(synthesised_rows=200)
+        collected = self._points(collected_rows=200)
+        self.assertLessEqual(
+            unreadable,
+            generated,
+            "a token nothing can verify outscored an honest declaration",
+        )
+        self.assertLess(unreadable, collected)
+
+    def test_the_ceiling_an_unreadable_token_carries_is_the_undeclared_one(
+        self,
+    ) -> None:
+        _points, _evidence, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                undeclared_rows=200,
+                unrecognised_sources=("crm-export",),
+            )
+        )
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-undeclared-provenance"]
+        )
+        self.assertEqual(caps[0].action_kind, "declare-data-provenance")
+
+    def test_the_tokens_are_named_rather_than_silently_demoted(self) -> None:
+        _points, evidence, _caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                undeclared_rows=200,
+                unrecognised_sources=("crm-export",),
+            )
+        )
+        self.assertIn("crm-export", evidence)
+        self.assertIn("could not verify", evidence)
+        # And never the older claim, which said the opposite of what now
+        # happens to those rows.
+        self.assertNotIn("treated as collected", evidence)
+
+
+class TheCountFreePayloadHasOneReadingTests(unittest.TestCase):
+    """Forty lines of a second provenance implementation, on a void rationale.
+
+    `declares_no_provenance`, `COUNTERFACTUAL_SOURCE`, the `if not counted:`
+    ladder and the `else` branch of `provenance_assumption` existed for a
+    preflight JSON written before the row counts did. `emit_dataset_provenance`
+    emits all three counts together for every dataset with a row in it, and
+    this repository has published nothing that could have been written before
+    that - so the machinery guarded a payload that has never existed.
+    """
+
+    def test_the_removed_machinery_is_gone_rather_than_relocated(self) -> None:
+        for name in ("declares_no_provenance", "COUNTERFACTUAL_SOURCE"):
+            with self.subTest(name=name):
+                self.assertFalse(
+                    hasattr(MODULE, name),
+                    f"{name} is still here; the second implementation was "
+                    "moved rather than removed",
+                )
+
+    def test_no_row_count_is_read_as_no_statement_about_any_row(self) -> None:
+        points, _evidence, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True, rows=200, labelled_rows=200, sources=("collected",)
+            )
+        )
+        # `sources` no longer decides anything: an unverifiable declaration is
+        # what it is whether it is a word this script knows or not.
+        self.assertEqual(points, MODULE.UNDECLARED_ROW_POINTS)
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-undeclared-provenance"]
+        )
+
+    def test_preflight_s_own_all_generated_statement_is_still_read(self) -> None:
+        """The false-red direction: the normalization is not a blanket."""
+        points, _evidence, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True, rows=200, labelled_rows=200, synthetic=True
+            )
+        )
+        self.assertEqual(points, MODULE.SYNTHESISED_ROW_POINTS)
+        self.assertEqual([cap.condition for cap in caps], ["dataset-fully-synthetic"])
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):

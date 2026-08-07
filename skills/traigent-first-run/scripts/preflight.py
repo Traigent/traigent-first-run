@@ -588,12 +588,33 @@ def is_synthetic(row: dict[str, Any]) -> bool:
 def classify_provenance(token: Any) -> tuple[str, bool]:
     """Classify one provenance token, and report whether it was recognised.
 
-    Returns `(class, recognised)`. An unrecognised non-empty token is classified
-    `collected` so that a project using its own vocabulary (`crm-export`) keeps
-    the score it has today rather than being silently demoted by a word list -
-    but `recognised=False` is reported so the caller can say out loud which
-    tokens it had to take on trust. Silently reading an unknown word as
-    collected production data is the failure this pair exists to make visible.
+    Returns `(class, recognised)`.
+
+    An unrecognised non-empty token is classified `undeclared`, and that is a
+    decision with a measurement behind it. It used to be classified
+    `collected`, on the reasoning that a project using its own vocabulary
+    (`crm-export`) should not be demoted by a word list. What that bought
+    instead was that a lie outscored the truth. Measured on 200 identical
+    rows with only the token varying, through the full scorer: no token at all
+    scored 65 and BLOCKED; the truthful `synthetic` scored 65 and BLOCKED;
+    `crm-export` scored 95 EXCELLENT; and so did `zzz`. Three junk characters
+    in a field nothing checks were worth thirty points and the difference
+    between a blocked run and an excellent one.
+
+    The rule this now implements is narrower than "refuse unknown tokens",
+    which would be wrong for the reason above: an UNVERIFIABLE declaration
+    must not outscore a VERIFIABLE one. `undeclared` is exactly that position -
+    it scores what a row that says nothing scores, which is what a row this
+    script cannot read is, and never more than a row that honestly declares
+    itself generated.
+
+    It is not a refusal and it is not permanent. `recognised=False` is still
+    reported, the tokens are named on the card, and the remedy is
+    `declare-data-provenance`: map the word onto the guide's vocabulary and
+    re-score. The disclosure that comes with it prints BOTH grades, so a
+    customer whose `crm-export` really is collected is shown the number that
+    declaration earns before they do anything - honesty is disclosed, not
+    punished, and the run is never stopped for it.
     """
     if token in (None, ""):
         return PROVENANCE_UNDECLARED, True
@@ -604,7 +625,7 @@ def classify_provenance(token: Any) -> tuple[str, bool]:
         return PROVENANCE_SYNTHESISED, True
     if normalized.startswith(COLLECTED_SOURCE_PREFIXES):
         return PROVENANCE_COLLECTED, True
-    return PROVENANCE_COLLECTED, False
+    return PROVENANCE_UNDECLARED, False
 
 
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
@@ -722,9 +743,25 @@ def emit_dataset_provenance(
         )
     else:
         detail = f"declared sources: {sorted(declared_sources)}"
+    if counts[PROVENANCE_UNDECLARED]:
+        # Appended to whichever detail was built, so a mixture keeps its shares
+        # and still says what happens to the silent part of it.
+        detail += (
+            f"; {counts[PROVENANCE_UNDECLARED]} of {total} rows record no "
+            "provenance and are scored as generated"
+        )
     emit(
         "dataset-provenance",
-        WARN if counts[PROVENANCE_SYNTHESISED] else PASS,
+        # `unknown` used to PASS, which read as "checked, fine" for a dataset
+        # that had said nothing at all - the one state this check exists to
+        # surface. It is not a FAIL: the data may be entirely real and merely
+        # unlabelled, and the run continues either way. It is a WARN, for the
+        # same reason a declared-generated corpus is.
+        (
+            WARN
+            if counts[PROVENANCE_SYNTHESISED] or counts[PROVENANCE_UNDECLARED]
+            else PASS
+        ),
         detail,
         {
             "rows": total,
@@ -741,15 +778,18 @@ def emit_dataset_provenance(
         },
     )
     if unrecognised:
-        # Scored as collected for backward compatibility, so say so rather than
-        # let an unknown word quietly earn the production band.
+        # Named, so an unknown word neither quietly earns the production band
+        # nor quietly loses one - what happened to it is on the card, and so is
+        # the one-step way to change it.
         emit(
             "dataset-provenance-vocabulary",
             WARN,
-            f"{sorted(unrecognised)} is not a recognised provenance word and was "
-            "treated as collected by the compatibility rule, not verified as real; "
-            "declare generated data with a "
-            "'synthetic'/'generated' token if that is wrong",
+            f"{sorted(unrecognised)} is not a provenance word this check knows, "
+            "so those rows are scored as undeclared - the same as a row that "
+            "says nothing, and never above a row that declares itself "
+            "generated. Re-label them with a 'collected'/'production' or "
+            "'synthetic'/'generated' token and re-run to score them as what "
+            "they are",
         )
     return synthetic
 

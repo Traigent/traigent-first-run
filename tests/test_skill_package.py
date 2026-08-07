@@ -4311,7 +4311,7 @@ class SkillPackageTests(unittest.TestCase):
         # this; #161 added the middle answer-key rung and #144 added
         # `dataset-shape-unrecognised`, and neither branch could see the other
         # two.
-        self.assertEqual(len(conditions), 11)
+        self.assertEqual(len(conditions), 13)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -4330,6 +4330,11 @@ class SkillPackageTests(unittest.TestCase):
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),
             ("dataset-fully-synthetic", "walkthrough labeling rules"),
             ("dataset-mostly-synthetic", "name the split out loud"),
+            (
+                "dataset-undeclared-provenance",
+                "say the assumption and both card scores",
+            ),
+            ("dataset-mostly-undeclared", "say the assumption and both card scores"),
             (
                 "dataset-generated-answer-key",
                 "a person reviews a sample of the answers",
@@ -4392,6 +4397,11 @@ class SkillPackageTests(unittest.TestCase):
             # as the rung above, on the model-written answers only, and says
             # the run proceeds meanwhile.
             "dataset-mostly-generated-answer-key",
+            # #165's two rungs. Same ceilings as the declared pair beside them
+            # and the same category: what the result IS does not change with
+            # how the corpus came to be unobserved, only the remedy does.
+            "dataset-undeclared-provenance",
+            "dataset-mostly-undeclared",
             "dataset-coarse-resolution",
         }
         # The third category, and the reason it has to exist: one condition
@@ -4454,6 +4464,11 @@ class SkillPackageTests(unittest.TestCase):
                     self.assertIn("only where", bullet)
                     self.assertIn("the same condition blocks", bullet)
                     self.assertIn("fix before paid run", bullet)
+        # The other half of the same mandate, which had no home and no test:
+        # a reason routed correctly and phrased in this module's vocabulary is
+        # still a reason the reader cannot act on.
+        self.assertIn("in the user's language", normalized)
+        self.assertIn("machine vocabulary and condition ids stay internal", normalized)
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()

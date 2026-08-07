@@ -356,7 +356,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 remedy.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
-rather than the condition id. A route asking for a creation or repair blocks the run; one that only
+rather than the condition id, in the user's language - machine vocabulary and condition ids stay
+internal. A route asking for a creation or repair blocks the run; one that only
 scopes what the result may claim is an advisory ceiling, never a repair to route:
 
 - `dataset-absent` - enter the creation dependency matrix.
@@ -371,6 +372,9 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
+- `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
+  scores when shown, offer declaring the real source rather than new data, and meanwhile apply the
+  rules above.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
