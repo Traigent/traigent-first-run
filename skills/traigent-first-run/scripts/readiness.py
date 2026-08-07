@@ -195,9 +195,29 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 
 # Vendored from the installed SDK's canonical presets
 # (traigent/config_generator/presets/range_presets.py, read at 0.23.0). The
-# scorer runs before any install, so it cannot import them; --verify-against-sdk
-# re-reads them when the SDK *is* importable and reports drift without ever
-# changing a score. The installed SDK is always authoritative.
+# scorer runs before any install, so it cannot import them: this is the first
+# thing the guide runs, on a machine where `traigent` may not exist yet, and a
+# check that only worked after installing would not run at the gate it exists
+# for. Vendoring is the whole answer, and the copy is authoritative for nothing
+# - the installed SDK is, and these numbers are only what this score measures a
+# knob's span against before one is there to ask.
+#
+# That used to be argued by deferring to a `verify-against-sdk` flag, which no
+# parser in this bundle has ever defined (traigent-first-run#179). It was not a
+# stale name for something real: it named a capability that does not exist, and
+# it was cited as the reason a vendored entry was safe to keep - so a false
+# statement was load-bearing for a scoring decision.
+#
+# The citation is deleted rather than built, and the reason is recorded here so
+# it is not re-added. The paragraph above stands on its own without it: the
+# scorer cannot import what is not installed, which is a fact about when this
+# runs and needs no second capability to be true. A drift check between this
+# table and the SDK is a real and separate want, but it fires when the SDK IS
+# importable - the exceptional case here, not the ordinary one - so it belongs
+# to its own trigger and its own issue, not to a footnote on a table that is
+# read before any install. Note the flag name is written WITHOUT its dashes
+# above, because spelling it as a flag is the shape
+# `test_the_guidance_names_no_flag_that_does_not_exist` now refuses.
 #
 # One preset is deliberately NOT vendored. `max_tokens` has a canonical range
 # upstream and no entry here, because an entry here is what makes a knob

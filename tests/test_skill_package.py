@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12211,6 +12212,37 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # test_the_handoff_names_real_skills_and_only_hypotheses.
     EXTERNAL_FLAGS = frozenset({"--all", "--list", "--skill"})
 
+    # argparse defines this one for every parser without an `add_argument` call,
+    # so it is genuinely present on all three scripts and reading the source for
+    # `add_argument` cannot see it. It is not an allowlist entry in the sense
+    # `EXTERNAL_FLAGS` is - `readiness.py --help` really does work - so it is
+    # added to the DEFINED side rather than subtracted from the mentioned one.
+    ARGPARSE_BUILTIN_FLAGS = frozenset({"--help"})
+
+    @staticmethod
+    def script_prose(source: str) -> list[str]:
+        """Every comment and docstring in one script, and nothing else.
+
+        Deliberately not the raw text. A script's own `add_argument("--json")`
+        lines and its `help=` strings are the definitions, so scanning the whole
+        file would compare the parser against itself and pass by construction.
+        What is checked is only the part a human wrote ABOUT the tool, which is
+        where a name can be wrong without anything failing.
+        """
+        prose: list[str] = []
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT:
+                prose.append(token.string)
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(
+                node,
+                (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                docstring = ast.get_docstring(node, clean=False)
+                if docstring:
+                    prose.append(docstring)
+        return prose
+
     def test_the_guidance_names_no_flag_that_does_not_exist(self) -> None:
         """#62's class: an instruction that cannot be followed as written.
 
@@ -12219,10 +12251,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         see that - the phrase was consistent, and consistently wrong. Reading
         the flags out of the scripts is what makes the check independent of
         whoever wrote the sentence.
+
+        The scripts' own comments and docstrings are read for the same reason,
+        and they are the half this check was missing. #179 found
+        `--verify-against-sdk` cited in a `readiness.py` comment - a flag no
+        parser has ever defined - and this test was green the whole time,
+        because it read the `.md` documents and a flag inside a backtick pair.
+        A comment is guidance too: it is what the next author reads before
+        deciding whether a line is safe to keep, and this one was cited as the
+        reason a scoring entry could stay. A name that does not exist argues
+        just as convincingly as one that does, which is what makes it worth a
+        check rather than a proofread.
         """
-        defined: set[str] = set()
-        for script in sorted((SKILL_ROOT / "scripts").glob("*.py")):
-            tree = ast.parse(script.read_text(encoding="utf-8"))
+        defined: set[str] = set(self.ARGPARSE_BUILTIN_FLAGS)
+        scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
+        self.assertTrue(scripts, "found no bundled scripts to read flags from")
+        sources = {script: script.read_text(encoding="utf-8") for script in scripts}
+        for source in sources.values():
+            tree = ast.parse(source)
             for node in ast.walk(tree):
                 if (
                     isinstance(node, ast.Call)
@@ -12239,6 +12285,25 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         for text in self.guidance().values():
             mentioned |= set(re.findall(r"`(--[a-z0-9][a-z0-9-]*)`", text))
         self.assertTrue(mentioned, "found no flag mentions to check")
+
+        # The scripts are checked per file and reported per file, because the
+        # answer "some comment somewhere names a flag that does not exist" is
+        # the one that made this defect survive a search.
+        in_comments: dict[str, set[str]] = {}
+        for script, source in sources.items():
+            named: set[str] = set()
+            for passage in self.script_prose(source):
+                named |= set(re.findall(r"--[a-z0-9][a-z0-9-]*", passage))
+            in_comments[script.name] = named - defined - self.EXTERNAL_FLAGS
+        self.assertEqual(
+            {name: sorted(missing) for name, missing in in_comments.items() if missing},
+            {},
+            "a bundled script's own comments or docstrings name a flag no "
+            "bundled script defines. The next author reads that comment as a "
+            "statement about what this tool can do, and #179 is what happens "
+            "when one of them is cited as a reason: delete the name, or build "
+            "the flag",
+        )
 
         self.assertEqual(
             sorted(mentioned - defined - self.EXTERNAL_FLAGS),
