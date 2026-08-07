@@ -3,8 +3,8 @@
 follows: 0014
 resident-ceiling: 65_300
 resident-measured: 65_063
-total-ceiling: 293_700
-total-measured: 293_245
+total-ceiling: 296_000
+total-measured: 295_610
 
 #142 reinstates the walkthrough's held-out split and this is the first entry in
 five to move RESIDENT, because a split is not a detail one stage owns. SKILL.md
