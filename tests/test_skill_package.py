@@ -8564,14 +8564,16 @@ class SkillPackageTests(unittest.TestCase):
         assert match is not None
         pillar, conditions = score_config_space(json.loads(match.group(1)))
         self.assertEqual(conditions, [])
-        # 80 = 35/35 knob-count + 20/40 variation + 25/25 coverage, and the
+        # The pillar's own score, re-measured rather than carried over, and the
         # drop from 90 is a real trade this space made on purpose, recorded so
         # nobody reads it as a regression.
         #
-        # `knob_variation` scores a categorical knob on breadth, `(distinct-1)/2`
-        # capped at 1, so a BINARY knob can never exceed 50%. Four binary
-        # behaviour knobs at 0.5, `model` at 1.0, and a pinned `temperature` at
-        # 0.0 average 0.5, which is 20 of 40. The 90 came from three-valued
+        # `knob_variation` scores a categorical knob at FULL breadth from two
+        # distinct values, and the numeric-without-a-canonical-range path keeps
+        # the old `(distinct - 1) / 2`. So the four binary behaviour knobs
+        # score 1.0 each and `model` 1.0; the shortfall is the pinned
+        # `temperature`, which earns the 0.1 pin credit and drags the mean to
+        # 0.85, which is 38.25 of 45. The 90 came from three-valued
         # `prompt_style` and `temperature` sweeps, which scored the variation
         # sub-score better and bought the search nothing the owner wanted:
         # temperature adds surface noise an exact-match evaluator punishes.
@@ -8580,7 +8582,12 @@ class SkillPackageTests(unittest.TestCase):
         # that measures breadth of values rather than usefulness of knobs. It
         # is stated here rather than smoothed over, and it is not a reason to
         # add a third value to a knob that has two real settings.
-        self.assertEqual(pillar.score, 94)
+        #
+        # 93 rather than 94 since `coverage` was removed: it scored this space
+        # 25/25, and the remaining two were re-weighted 55/45 - so the
+        # variation shortfall is measured against 45 points instead of 40 and
+        # costs one point more.
+        self.assertEqual(pillar.score, 93)
         counted = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
             counted.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
@@ -8840,6 +8847,130 @@ class SkillPackageTests(unittest.TestCase):
             1.0,
             "every agent sub-score must be measured for the template's own document",
         )
+
+    def test_agent_type_moves_no_score_and_the_contract_says_so(self) -> None:
+        """`agent_type` selected a catalog for a sub-score that no longer exists.
+
+        Two halves, and only together are they worth anything. The behaviour:
+        the same space scored under every accepted `agent_type` - and under an
+        unrecognised one - must produce the identical pillar, sub-scores and
+        confidence, because nothing in the scorer reads the field any more.
+        The contract: `run-safety.md` has to say so, since a reader deciding
+        what to put in the document is owed the fact that it costs nothing to
+        get wrong.
+
+        Written this way round on purpose. Asserting only the sentence would
+        pass while the field silently regained an effect, and asserting only
+        the behaviour would leave a field-table row that still promises one.
+        """
+        space = {
+            "knobs": {
+                "model": ["a", "b", "c"],
+                "retrieval_k": [1, 5],
+                "prompt_style": ["direct", "structured"],
+            },
+            "max_trials": 12,
+            "wired": ["model", "retrieval_k", "prompt_style"],
+        }
+
+        def scored(agent_type):
+            document = dict(space)
+            if agent_type is not None:
+                document["agent_type"] = agent_type
+            pillar, _ = score_config_space(document)
+            return (
+                pillar.score,
+                pillar.confidence,
+                tuple(
+                    (s.name, s.value, s.maximum, s.measured) for s in pillar.subscores
+                ),
+            )
+
+        # `rag` names `retrieval_k` and `context_format`; `general` and
+        # `code_gen` do not. Under the old sub-score those three answers
+        # differed by design, which is what makes them the probe.
+        baseline = scored("general")
+        for agent_type in ("rag", "code_gen", None, "", "a-type-no-catalog-has"):
+            with self.subTest(agent_type=agent_type):
+                self.assertEqual(scored(agent_type), baseline)
+
+        row = next(
+            line
+            for line in RUN_SAFETY.read_text().splitlines()
+            if line.startswith("| `agent_type` |")
+        )
+        self.assertIn("changes no number", row.casefold())
+
+    def test_the_glossary_names_exactly_the_agent_lines_the_card_prints(self) -> None:
+        """The card's Agent lines and the glossary's list are one decision.
+
+        Read off `CHECK_DISPLAY_NAMES` rather than quoted, so removing a
+        sub-score without removing its glossary entry fails here - which is the
+        mutation that survived when `coverage` was dropped, leaving the
+        customer a definition for a line the card no longer prints.
+        """
+        printed = {
+            READINESS.CHECK_DISPLAY_NAMES[name]
+            for name in ("knob-count", "variation")
+            if name in READINESS.CHECK_DISPLAY_NAMES
+        }
+        glossary = (SKILL_ROOT / "references" / "glossary.md").read_text()
+        block = glossary.split("\n  Agent:\n", 1)[1].split("\n  Words the evidence", 1)[
+            0
+        ]
+        listed = {
+            line.strip().split(" - ", 1)[0].strip()
+            for line in block.splitlines()
+            if " - " in line and not line.startswith(" " * 20)
+        }
+        self.assertEqual(listed, printed)
+
+    def test_every_pair_of_configuration_counts_agrees_with_the_fence(self) -> None:
+        """The prose may not restate a size the code fence contradicts.
+
+        `sdk-execution.md` asserts both sizes in executable code, and then
+        speaks them again in prose two and three hundred lines earlier. The
+        branch that changed the baseline from six configurations to twelve
+        updated the asserts and one bullet and left two sentences saying "6 and
+        48" - each correct-looking on its own, and neither visible in the diff
+        that broke it, which is the defect class CLAUDE.md is about.
+
+        Derived from the fence, never quoted: the asserted pair is read out of
+        the document's own `assert configuration_count(...) == N` lines, and
+        any prose pair ending in the enhanced count has to open with the
+        baseline count. A future re-sizing changes both halves or fails here.
+        """
+        text = SDK_EXECUTION.read_text()
+        asserted = dict(
+            re.findall(
+                r"assert configuration_count\((BASELINE|ENHANCED)_SPACE\) == (\d+)",
+                text,
+            )
+        )
+        self.assertEqual(
+            sorted(asserted),
+            ["BASELINE", "ENHANCED"],
+            "the fence stopped asserting both sizes",
+        )
+        baseline, enhanced = int(asserted["BASELINE"]), int(asserted["ENHANCED"])
+        self.assertNotEqual(
+            baseline, enhanced, "the probe below needs the two to differ"
+        )
+
+        disagreeing = [
+            match.group(0)
+            for match in re.finditer(r"\b(\d+) and (\d+)\b", text)
+            if int(match.group(2)) == enhanced and int(match.group(1)) != baseline
+        ]
+        self.assertEqual(
+            disagreeing,
+            [],
+            f"prose states a baseline size the fence contradicts; it asserts "
+            f"{baseline} and {enhanced}",
+        )
+        # And the pair really is spoken, so the check cannot pass by the prose
+        # going silent about a number the reader is told twice.
+        self.assertIn(f"{baseline} and {enhanced}", text)
 
     def test_every_wired_knob_actually_changes_the_agent_request(self) -> None:
         """`wired` is an author claim the scorer cannot verify - so verify it here.

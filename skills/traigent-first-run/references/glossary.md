@@ -193,9 +193,6 @@ The lines under each pillar on the card
     how widely each setting varies - whether those values cover a useful part of
                                  the setting's range, rather than three points
                                  next to each other.
-    the settings that matter most - whether the settings known to move results
-                                 for this kind of agent are among the ones being
-                                 tried.
   Words the evidence beside those lines uses:
     settings document          - the file listing which of your agent's settings
                                  the search may vary, and which of them the

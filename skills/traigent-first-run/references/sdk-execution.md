@@ -435,8 +435,10 @@ ENHANCED_SPACE = {
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
     "reflect": [False, True],
 }
-# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
-# the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
+# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE names
+# the high-impact catalog this walkthrough drew its knobs from; it is recorded
+# on the score and changes no number, because the sub-score that once graded a
+# space against that catalog was removed. WIRED_KNOBS names only the dimensions
 # call_agent below actually consumes - a knob listed here that the agent ignores
 # is a false claim about the search space. The scorer cannot check that claim,
 # so the assert under `demonstrably_wired` below checks it here at load time.

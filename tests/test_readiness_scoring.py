@@ -1519,12 +1519,20 @@ class AgentScoringTests(unittest.TestCase):
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
         # 35/35 knob-count + 20/40 variation + 25/25 coverage. Was 90 while the
-        # space swept three prompt values and three temperatures: a BINARY knob
-        # tops out at half marks on variation, `(distinct - 1) / 2`, so four of
-        # them plus a pinned temperature average 0.5. That is the cost of an
+        # `knob_variation` scores a categorical knob at FULL breadth from two
+        # distinct values, and the numeric-without-a-canonical-range path keeps
+        # the old `(distinct - 1) / 2`. So the four binary behaviour knobs
+        # score 1.0 each and `model` 1.0; the shortfall is the pinned
+        # `temperature`, which earns the 0.1 pin credit and drags the mean to
+        # 0.85. That is the cost of an
         # exactly predictable 48, paid in the one sub-score that measures
         # breadth of values rather than usefulness of knobs.
-        self.assertEqual(pillar.score, 94)
+        #
+        # 93 rather than 94 since `coverage` was removed: it scored this space
+        # 25/25, and the remaining two were re-weighted 55/45 - so the
+        # variation shortfall is measured against 45 points instead of 40 and
+        # costs one point more.
+        self.assertEqual(pillar.score, 93)
         self.assertEqual(pillar.confidence, 1.0)
 
     def test_the_reasoning_branch_is_the_same_document(self) -> None:
@@ -1546,7 +1554,7 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(reasoning)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 94)
+        self.assertEqual(pillar.score, 93)
 
     # REMOVED ON THE MERGE, not lost. #157 added
     # `test_the_two_spellings_refusal_names_both_written_spellings` to pin the
@@ -1737,7 +1745,7 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual(facts.bounds, {"retrieval_k": {"low": 1.0, "high": 5.0}})
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 56)
+        self.assertEqual(pillar.score, 63)
         numeric = MODULE.agent_facts_from_config_space(
             dict(document, bounds={"retrieval_k": {"low": 1, "high": 5}})
         )
@@ -1988,7 +1996,7 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], [])
         # The walkthrough document's own score; the point here is that the
         # float spelling reaches it rather than exiting 2.
-        self.assertEqual(pillar.score, 94)
+        self.assertEqual(pillar.score, 93)
         self.assertEqual(
             pillar.score,
             MODULE.score_agent(
@@ -2029,7 +2037,7 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(sweeping)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 32)
+        self.assertEqual(pillar.score, 41)
         for edges in (
             {"low": "-inf", "high": "inf"},
             {"low": "nan", "high": "nan"},
@@ -2064,22 +2072,106 @@ class AgentScoringTests(unittest.TestCase):
         self.assertGreater(four, twelve)
 
     def test_space_far_larger_than_the_trial_budget_is_penalized(self) -> None:
-        self.assertLessEqual(MODULE.knob_count_points(5, 5000, 12), 24.0)
-
-    def test_missing_high_impact_knobs_are_named(self) -> None:
-        pillar, _, _ = MODULE.score_agent(
-            MODULE.AgentFacts(
-                agent_type="rag",
-                knobs={"temperature": [0.0, 1.0]},
-                wired=("temperature",),
-            )
+        # Against the declared floor rather than a point total: the ladder is
+        # shares of `KNOB_COUNT_WEIGHT`, so re-weighting the pillar must not
+        # look like the damping getting weaker or stronger.
+        self.assertLessEqual(
+            MODULE.knob_count_points(5, 5000, 12),
+            MODULE.KNOB_COUNT_WEIGHT * MODULE.KNOB_COUNT_OVERSIZED,
         )
-        coverage = next(s for s in pillar.subscores if s.name == "coverage")
-        self.assertIn("retrieval_k", coverage.evidence)
+        self.assertLess(
+            MODULE.knob_count_points(5, 5000, 12), MODULE.knob_count_points(5, 16, 12)
+        )
 
-    def _coverage(self, **kwargs) -> object:
+    def test_omitting_the_trial_budget_never_outscores_declaring_one(self) -> None:
+        """Deleting a legal line must not be worth more than writing it.
+
+        `max_trials` is documented requirement "no", so omitting it is a legal
+        document - and the damping only fired when it was present, which meant
+        silence was scored as `max_trials = infinity`. Measured end to end
+        before the fix, one identical 100 000 000-configuration space and
+        otherwise identical preflight and calibration: declared scored the
+        agent pillar 83 and omitted scored it 94. On the trunk this branch
+        descends from, the same pair is 88 STRONG against 90 EXCELLENT - a
+        band, bought by deleting a key.
+
+        It also inverted the sibling branch that refuses a key the schema does
+        not declare: a customer told "did you mean `max_trials`?" scored higher
+        by deleting the key than by fixing the spelling.
+
+        Swept rather than spot-checked, because one shape passing is how the
+        original rule looked correct: for every shape below, omitted may never
+        exceed declared. A declared budget is still allowed to score LOWER -
+        `max_trials: 1` is a real and bad measurement, where silence is not a
+        measurement of anything.
+        """
+        shapes = {
+            "walkthrough baseline": {
+                "model": ["a", "b", "c"],
+                "prompt_style": ["p", "q"],
+                "thinking_shape": ["x", "y"],
+            },
+            "one knob": {"model": ["a", "b", "c"]},
+            "nothing varies": {"model": ["a"], "temperature": [0.0]},
+            "ten binary knobs": {f"k{i}": ["a", "b"] for i in range(10)},
+            "eight knobs of ten values": {
+                f"k{i}": [str(v) for v in range(10)] for i in range(8)
+            },
+        }
+        for name, knobs in shapes.items():
+            with self.subTest(shape=name):
+                declared, _, _ = MODULE.score_agent(
+                    MODULE.AgentFacts(
+                        max_trials=12,
+                        knobs=knobs,
+                        wired=tuple(knobs),
+                        config_space_supplied=True,
+                    )
+                )
+                omitted, _, _ = MODULE.score_agent(
+                    MODULE.AgentFacts(
+                        knobs=knobs,
+                        wired=tuple(knobs),
+                        config_space_supplied=True,
+                    )
+                )
+                self.assertLessEqual(
+                    omitted.score,
+                    declared.score,
+                    "omitting `max_trials` scores above declaring it, so "
+                    "deleting a documented-optional line is worth points",
+                )
+
+        # And the deduction is named on the card, so a reader who lost points
+        # is told which field to write - but only where it actually cost them.
+        wide = {f"k{i}": ["a", "b"] for i in range(10)}
+        pillar, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs=wide, wired=tuple(wide), config_space_supplied=True)
+        )
+        # Every sub-score's evidence, not the one currently called
+        # `knob-count`: the sibling branch renames this sub-score, and a
+        # lookup by name turns a behavioural check into a StopIteration at
+        # merge time - which reads as a broken test rather than as the
+        # decision it was guarding.
+        evidence = " ".join(sub.evidence for sub in pillar.subscores)
+        self.assertIn("no trial budget was declared", evidence)
+        self.assertIn("declaring `max_trials`", evidence)
+
+        flat = {"model": ["a"], "temperature": [0.0]}
+        pillar, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs=flat, wired=tuple(flat), config_space_supplied=True)
+        )
+        evidence = " ".join(sub.evidence for sub in pillar.subscores)
+        self.assertNotIn(
+            "no trial budget",
+            evidence,
+            "nothing varies here, so the budget cost this document nothing - "
+            "naming it points the author away from what is actually wrong",
+        )
+
+    def _agent_pillar(self, **kwargs) -> object:
         pillar, _, _ = MODULE.score_agent(MODULE.AgentFacts(**kwargs))
-        return next(s for s in pillar.subscores if s.name == "coverage")
+        return pillar
 
     def test_a_synonym_spelling_is_refused_rather_than_renamed_or_scored(
         self,
@@ -2168,18 +2260,19 @@ class AgentScoringTests(unittest.TestCase):
             "spelling for every knob, instead of substituting one silently",
         )
 
-    def test_not_sweeping_max_tokens_is_not_a_coverage_gap(self) -> None:
-        """`max_tokens` is a capacity guard, so omitting it must not cost points.
+    def test_max_tokens_is_named_by_no_catalog_this_guide_recommends_from(
+        self,
+    ) -> None:
+        """`max_tokens` is a capacity guard, so no catalog may propose it.
 
-        references/run-safety.md tells authors not to sweep `max_tokens` at all
-        - a truncated answer scores 0 for reasons unrelated to configuration
-        quality. While the catalog listed it, a space that obeyed that rule was
-        docked 25% of its coverage for doing so.
+        references/run-safety.md tells authors not to sweep low `max_tokens`
+        values in any space containing a reasoning model - a truncated answer
+        scores 0 for reasons unrelated to configuration quality.
 
-        The catalogs are also the recommendation path: an assistant composing a
-        space reads them to decide what is worth tuning, so a knob named in any
-        of them is a knob this guide is proposing. `max_tokens` must appear in
-        none of them.
+        This test used to end by proving that omitting `max_tokens` cost a
+        space none of its `coverage` points. That sub-score is gone, and with
+        it the only way a catalog omission could cost anything at all - so the
+        half that remains is the half that was always doing the work.
         """
         for agent_type in ("general", "code_gen"):
             with self.subTest(agent_type=agent_type):
@@ -2196,7 +2289,8 @@ class AgentScoringTests(unittest.TestCase):
             with self.subTest(catalog=name):
                 self.assertNotIn("max_tokens", catalog)
 
-        without = self._coverage(
+        # And no sub-score is left that a catalog omission could dock.
+        pillar = self._agent_pillar(
             agent_type="general",
             knobs={
                 "model": ["a", "b"],
@@ -2205,8 +2299,12 @@ class AgentScoringTests(unittest.TestCase):
             },
             wired=("model", "temperature", "prompt_style"),
         )
-        self.assertEqual(without.value, 25.0)
-        self.assertNotIn("max_tokens", without.evidence)
+        self.assertEqual(
+            sorted(sub.name for sub in pillar.subscores), ["knob-count", "variation"]
+        )
+        for sub in pillar.subscores:
+            with self.subTest(subscore=sub.name):
+                self.assertNotIn("max_tokens", sub.evidence)
 
 
 class ConfigSpaceSchemaTests(unittest.TestCase):
@@ -2490,10 +2588,10 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
             dict(sweeping, bounds={"widget": {"low": 1, "high": 50}})
         )
         self.assertEqual(facts.bounds, {"widget": {"low": 1.0, "high": 50.0}})
-        self.assertEqual(MODULE.score_agent(facts)[0].score, 51)
+        self.assertEqual(MODULE.score_agent(facts)[0].score, 63)
         self.assertEqual(
             MODULE.score_agent(MODULE.agent_facts_from_config_space(sweeping))[0].score,
-            32,
+            41,
         )
 
     def test_bounds_width_must_be_a_number_the_scorer_can_use(self) -> None:
@@ -2541,7 +2639,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                     dict(sweeping, bounds={"k": {"low": 1, "high": 50}})
                 )
             )[0].score,
-            51,
+            63,
         )
 
     def test_a_large_integer_trial_budget_scores_like_any_other(self) -> None:
@@ -2598,18 +2696,18 @@ class DocumentedSchemaTests(unittest.TestCase):
     def test_the_walkthrough_document_still_scores_and_clears_the_cap(self) -> None:
         """The pin the alias change could have moved, measured rather than assumed.
 
-        The shipped space declares only `prompt_style`, so collapsing the alias
-        leaves its six dimensions and 48 combinations untouched and the 80
-        stands. 80 rather than the old 90 because four BINARY behaviour knobs
-        cap the variation sub-score at half marks - `(distinct - 1) / 2` for a
-        categorical knob - where three-valued knobs and a temperature sweep
-        scored it higher without buying a search the owner wanted.
+               The shipped space declares only `prompt_style`, so collapsing the alias
+               leaves its six dimensions and 48 combinations untouched and the 80
+        stands. The variation shortfall is not binary knobs: since #174 a categorical
+        knob earns FULL breadth from two distinct values, so the four behaviour knobs
+        score 1.0 each. What costs points is the pinned `temperature`, at the 0.1 pin
+        credit.
         """
         pillar, caps, _ = MODULE.score_agent(
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 94)
+        self.assertEqual(pillar.score, 93)
         count = next(s for s in pillar.subscores if s.name == "knob-count")
         self.assertEqual(
             count.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
@@ -2630,9 +2728,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         self.assertEqual(pillar.score, 0)
         self.assertEqual(knobs, [])
         measured = {s.name: s.measured for s in pillar.subscores}
-        self.assertEqual(
-            measured, {"knob-count": True, "variation": False, "coverage": False}
-        )
+        self.assertEqual(measured, {"knob-count": True, "variation": False})
 
     def test_declared_knobs_without_wiring_score_like_no_document(self) -> None:
         """The declaration on its own is worth exactly zero points.
@@ -2695,7 +2791,18 @@ class DocumentedSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(knobs, [])
                 self.assertEqual(pillar.score, 0)
-                self.assertEqual(pillar.confidence, 0.35)
+                # 0.55, not 0.35: confidence is the share of the pillar's
+                # weight that was measured, and `coverage` - always the
+                # unmeasured one on this path - is gone. Nothing knows more
+                # than it did; the denominator shrank.
+                self.assertEqual(
+                    pillar.confidence,
+                    round(
+                        MODULE.KNOB_COUNT_WEIGHT
+                        / (MODULE.KNOB_COUNT_WEIGHT + MODULE.VARIATION_WEIGHT),
+                        2,
+                    ),
+                )
                 self.assertEqual(
                     {s.evidence for s in pillar.subscores},
                     {"the settings document lists no settings"},
@@ -2937,7 +3044,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 94)
+        self.assertEqual(agent["score"], 93)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )
@@ -4502,13 +4609,23 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
         self.assertTrue(declared.measured, "a declared zero is a measurement")
         self.assertEqual(declared.value, 0.0)
 
-    def test_a_check_this_tool_could_not_run_still_renormalizes(self) -> None:
-        """The false-red direction, and the reason `withheld` is its own flag.
+    def test_an_agent_type_this_tool_has_no_catalog_for_costs_nothing(self) -> None:
+        """The false-red direction, after the sub-score that carried it went.
 
-        An unrecognized `agent_type` leaves coverage unmeasured because THIS
-        TOOL has no catalog for it, not because the run withheld anything. That
-        one still renormalizes: charging the user for our missing catalog would
-        be the same defect pointed the other way.
+        This asserted that an unrecognized `agent_type` left COVERAGE
+        unmeasured-but-not-withheld, and that the pillar renormalized rather
+        than charging the user for a catalog this tool does not have. #182
+        deletes the coverage sub-score, so the vehicle is gone - but the
+        guarantee it carried is the one thing about `agent_type` that still
+        has to hold while the field exists at all: a bespoke value must score
+        exactly like a recognized one, because nothing reads it any more.
+
+        The renormalization mechanism itself is unaffected and still tested,
+        by `test_unmeasured_subscores_renormalize_and_lower_confidence` and by
+        the pillars that still set `withheld`. What is checked here is that
+        `agent_type` reaches no number - which is precisely the fact #185 acts
+        on when it removes the field, so this fails loudly if #185 lands
+        without the field having gone dead first.
         """
         pillar, _caps, _knobs = MODULE.score_agent(
             MODULE.agent_facts_from_config_space(
@@ -4526,10 +4643,31 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
                 }
             )
         )
-        coverage = next(s for s in pillar.subscores if s.name == "coverage")
-        self.assertFalse(coverage.measured)
-        self.assertFalse(coverage.withheld)
+        self.assertNotIn(
+            "coverage",
+            [sub.name for sub in pillar.subscores],
+            "#182 removed this sub-score; a test still reading it is reading a "
+            "number nothing produces",
+        )
         self.assertGreater(pillar.score, 0)
+
+        # The same document with a recognized type scores identically, which is
+        # what "reaches no number" means operationally.
+        recognized, _caps, _knobs = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(
+                {
+                    "agent_type": "general",
+                    "knobs": {
+                        "temperature": [0.0, 0.5, 1.0],
+                        "prompt_style": ["direct", "structured", "criteria_first"],
+                    },
+                    "wired": ["temperature", "prompt_style"],
+                    "max_trials": 12,
+                }
+            )
+        )
+        self.assertEqual(pillar.score, recognized.score)
+        self.assertEqual(pillar.confidence, recognized.confidence)
 
 
 class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):

@@ -299,6 +299,83 @@ PINNED_KNOB_CREDIT = 0.10
 MODEL_BREADTH_LADDER = {1: PINNED_KNOB_CREDIT, 2: 0.60}
 MODEL_BREADTH_FULL = 3
 
+# The agent pillar's two sub-scores, and why they are 55 and 45 rather than the
+# 35/40/25 they replace.
+#
+# A third sub-score, `coverage`, scored `1.0 - missing/len(HIGH_IMPACT_KNOBS[
+# agent_type])` out of 25 and is gone. Two things were wrong with it and only
+# the first was noticed at the time.
+#
+# It restated `knob-count`. The line beside it already reads "4 of 4 wired
+# knobs actually vary", so a pillar carrying both charged twice for one fact.
+# The rewrite considered - "any knob with 2+ values counts" - would have made
+# the restatement exact rather than approximate, which is why it was dropped.
+#
+# The second is worse, and it is measured. `present` was built from `scoreable`,
+# which includes PINNED knobs, so coverage graded whether the catalog names
+# appeared in the document, not whether anything was tuned. A space declaring
+# `model: [a], temperature: [0], prompt_style: [direct]` - every configuration
+# identical, `agent-no-varying-knobs` firing on the same card - scored coverage
+# 25/25, full marks, from the sub-score displayed to the customer as "the
+# settings that matter most". It was not a redundant measure of the right
+# thing; it was a confident measure of the wrong thing.
+#
+# And it punished better knobs. Measured on the scorer this branch replaces,
+# with the shapes stated so both sides can be re-derived - the previous figures
+# here were 90 and 78, and named no shape, which is how they survived being
+# unreachable:
+#
+#   {model: 3 values, temperature: [0.0, 1.0], prompt_style: 2 values}
+#     - the general catalog, exactly - coverage 25/25, pillar 91
+#   {model: 3 values, thinking_shape / reflect / self_consistency: 2 each}
+#     - coverage 8.33/25, pillar 83, evidence `not tuning: temperature,
+#       prompt_style`
+#
+# Eight points for bringing four levers instead of three, and an evidence line
+# telling the customer to sweep the knob this guide now pins at 0 and calls
+# surface noise. The gap is smaller than 78 claimed and the direction is the
+# whole argument; 78 was not merely imprecise, it is unreachable - swept
+# exhaustively over one to four values on each of those four knobs, that shape
+# scores one of {12, 29, 33, 52, 56, 61, 65, 79, 83} and never 78. Narrow the
+# temperature sweep to the `[0.0, 0.2]` of this guide's own worked example and
+# the catalog shape scores 85, so the gap is two - the penalty for better knobs
+# is real at every width, and its size depends on a value the catalog shape
+# happens to carry, which is itself the argument against scoring names.
+#
+# The remaining two are NOT scaled proportionally. 35:40 became 55:45, so the
+# order of the two swapped, and the reason is this branch's base. Categorical
+# breadth now
+# earns FULL credit at two values, and the walkthrough's own enhanced space is
+# four binary categoricals - so `variation` saturates for the common case and
+# has stopped discriminating between spaces worth running and spaces that are
+# not. `knob-count` is what still reads the space against the trial cap: it is
+# the sub-score that separates one varying knob from four, and 24 reachable
+# configurations from 1024 against a cap of 12.
+#
+# 55/45 and not 60/40, because `variation` is still the only place a fake sweep
+# is refused - the numeric noise floor that scores `temperature: [0.1, 0.115]`
+# at zero, and the pinned-knob credit - and the two shapes that test the gap
+# stay ordered correctly at 55/45 and start to compress past it. Measured
+# against this walkthrough's own `max_trials=12`, which is what damps the wide
+# space and is therefore load-bearing for both figures:
+#
+#   ten two-value categoricals (1024 configurations)  55/45: 83   60/40: 81
+#   {model: 3, prompt_style: 2, thinking_shape: 2}    55/45: 86   60/40: 85
+#   {model: 3 values} alone                           55/45: 64   60/40: 61
+#
+# The three-point margin at 55/45 becomes four at 60/40 while the one-knob
+# space falls seven, which is the compression. (The tight space's figures here
+# read 85 and 84 before this correction, and the `max_trials` they were
+# measured under was not stated - without it the ten-knob space is not damped
+# at all and scores 87, above the tight space, which inverts the ordering the
+# whole argument rests on. The ordering holds; it holds because of a cap the
+# sentence did not name.)
+#
+# Not 50/50 either. Equal weights are the same reflex as scaling: a number that
+# looks neutral, chosen because it needs no argument.
+KNOB_COUNT_WEIGHT = 55.0
+VARIATION_WEIGHT = 45.0
+
 # Below these deltas two values are the same configuration in practice.
 NOISE_FLOORS: dict[str, float] = {"temperature": 0.05, "top_p": 0.05}
 DEFAULT_NOISE_FRACTION = 0.02
@@ -307,7 +384,7 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 
 # `max_tokens` is deliberately absent from every catalog in this file: the
 # high-impact catalogs below, and `CANONICAL_RANGES`, `OPEN_CATEGORICAL_KNOBS`,
-# `NOISE_FLOORS` and `KNOB_ALIASES` above. Those catalogs are the
+# `NOISE_FLOORS` and `KNOB_SYNONYMS` above. Those catalogs are the
 # recommendation path - an assistant composing a space reads them to decide what
 # is worth tuning - so a knob named in any of them is a knob this guide
 # proposes. `EXCLUDED_KNOB_REASONS` then refuses it credit if an author declares
@@ -330,6 +407,18 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # the baseline's medium model is a cap the enhanced run's stronger or reasoning
 # model can exceed, so the truncation would be introduced BY this guide, between
 # two runs, on a configuration the customer never chose.
+#
+# NO LONGER A SCORING INPUT as of #182. `coverage` was the only reader, so
+# nothing consults these catalogs now and the `agent_type` field that selected a
+# row reaches no number - #185 removes the field, and #182 must not land without
+# it or the schema documents a field that changes nothing. The catalogs
+# themselves stay, as the list a human or an assistant picks the enhanced run's
+# knobs from; #185 records that decision where it lands.
+#
+# The `max_tokens` exclusion above is a rule with an enforcer again: #168 landed
+# first here, so the `CANONICAL_RANGES` entry that still earned it credit
+# through `knob_variation` is gone and the knob is refused outright rather than
+# merely left out of a table no code reads.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -1118,7 +1207,6 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     # agent
     "knob-count": "settings that vary",
     "variation": "how widely each setting varies",
-    "coverage": "the settings that matter most",
 }
 
 
@@ -2952,29 +3040,79 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     return combine("evaluation", subs), caps
 
 
+# The knob-count ladder, as SHARES of whatever this sub-score is worth. It was
+# written as points out of 35, which meant the weight and the shape of the curve
+# were the same numbers - so re-weighting the pillar silently flattened the
+# ladder instead of rescaling it (26/35 became 26/55, and one varying knob went
+# from 34% of the sub-score to 22% with nobody deciding that). The ratios are
+# the judgement; the weight is a separate decision, made once at
+# `KNOB_COUNT_WEIGHT`.
+KNOB_COUNT_ONE = 12.0 / 35.0
+KNOB_COUNT_FEW = 26.0 / 35.0
+KNOB_COUNT_FULL = 1.0
+# The floor a space too large for its trial budget is damped to, and the step
+# each knob past six costs.
+KNOB_COUNT_OVERSIZED = 24.0 / 35.0
+KNOB_COUNT_STEP = 2.0 / 35.0
+
+
 def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> float:
     """Plateau, not a ramp.
 
     More knobs is not monotonically better: a space far larger than the trial
     budget cannot be explored, so a twelve-knob space against a twelve-trial cap
     is worse than four. A ramp would tell users to keep adding knobs forever.
+
+    An UNDECLARED budget is damped exactly where an oversized one is, and that
+    is the part the earlier rule had backwards. "With no budget there is
+    nothing to be too large for" reads as reasoning about the space; it is
+    actually reasoning about the DOCUMENT. Nothing in a document that omits
+    `max_trials` establishes that the run will compare the whole space - only
+    declaring it is that claim - so scoring the silence as though it were
+    `max_trials = infinity` made deleting a line worth more than writing one.
+
+    Measured on this scorer before the change, one identical
+    100 000 000-configuration space, changing only whether `max_trials: 12` is
+    written: declared scored this sub-score's pillar 83, omitted scored it 94.
+    `max_trials` is documented requirement "no", so omitting it is legal - and
+    it inverts the sibling branch that refuses a misspelled key, where a
+    customer told "did you mean `max_trials`?" scored higher by deleting the
+    key than by fixing it. On the trunk this branch descends from the same pair
+    is 88 STRONG against 90 EXCELLENT, so it was worth a band there.
+
+    Declaring a budget can still score lower than omitting one - a declared
+    `max_trials: 1` reaches a space of one reachable configuration - and that is
+    not the same defect. "This run compares one configuration" is a real and bad
+    measurement; silence is not a measurement of anything.
+
+    Returns points out of `KNOB_COUNT_WEIGHT`, from shares held above, so the
+    curve and the pillar weight can be changed independently.
     """
     if varying == 0:
         return 0.0
     if varying == 1:
-        base = 12.0
+        share = KNOB_COUNT_ONE
     elif varying <= 3:
-        base = 26.0
+        share = KNOB_COUNT_FEW
     elif varying <= 6:
-        base = 35.0
+        share = KNOB_COUNT_FULL
     else:
-        base = max(24.0, 35.0 - 2.0 * (varying - 6))
+        share = max(
+            KNOB_COUNT_OVERSIZED, KNOB_COUNT_FULL - KNOB_COUNT_STEP * (varying - 6)
+        )
+    # Two reasons to damp, written as one `if/elif` on the same `share` so a
+    # future edit cannot leave the ceiling in place down one path and not the
+    # other. `space_size` guards both: a caller with no space size at all is
+    # asking about the curve, not about a document.
+    #
     # Compared as integers rather than through `space_size / max_trials`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
-    if max_trials and space_size and space_size > 20 * max_trials:
-        base = min(base, 24.0)
-    return base
+    if space_size and max_trials is None:
+        share = min(share, KNOB_COUNT_OVERSIZED)
+    elif max_trials and space_size and space_size > 20 * max_trials:
+        share = min(share, KNOB_COUNT_OVERSIZED)
+    return round(KNOB_COUNT_WEIGHT * share, 2)
 
 
 NOTHING_WIRED_CAP = Cap(
@@ -3036,9 +3174,8 @@ def nothing_to_search_pillar(evidence: str) -> Pillar:
     return combine(
         "agent",
         [
-            SubScore("knob-count", 0.0, 35.0, True, evidence),
-            SubScore("variation", 0.0, 40.0, False, evidence),
-            SubScore("coverage", 0.0, 25.0, False, evidence),
+            SubScore("knob-count", 0.0, KNOB_COUNT_WEIGHT, True, evidence),
+            SubScore("variation", 0.0, VARIATION_WEIGHT, False, evidence),
         ],
     )
 
@@ -3235,13 +3372,34 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             f" ({', '.join(left_out)} not counted: sweeping it measures "
             "run-to-run variance, not quality)"
         )
+    # Named, because the deduction is otherwise invisible: the sentence beside
+    # the number is byte-identical whether or not a budget was declared, so a
+    # reader who lost points for omitting the field had nothing on the card
+    # telling them which field to write.
+    #
+    # Derived from the deduction, never from the absence. The reference is the
+    # same space with a budget equal to its own size - a declared budget that
+    # reaches everything, so it is never damped - and the note appears only
+    # when the omission actually cost points against it. A space with no
+    # varying knob loses nothing here, and telling that author to declare
+    # `max_trials` would point them away from the one thing wrong with their
+    # document.
+    points = knob_count_points(len(varying), run_count, facts.max_trials)
+    budget_note = (
+        "; no trial budget was declared, so nothing here says how much of it "
+        "this run compares - declaring `max_trials` is what lets this reach "
+        "full credit"
+        if facts.max_trials is None
+        and points < knob_count_points(len(varying), run_count, run_count)
+        else ""
+    )
     subs.append(
         SubScore(
             "knob-count",
-            knob_count_points(len(varying), run_count, facts.max_trials),
-            35.0,
+            points,
+            KNOB_COUNT_WEIGHT,
             True,
-            f"{counted}; " + combinations,
+            f"{counted}; " + combinations + budget_note,
         )
     )
 
@@ -3251,35 +3409,17 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         subs.append(
             SubScore(
                 "variation",
-                round(40.0 * mean_quality, 2),
-                40.0,
+                round(VARIATION_WEIGHT * mean_quality, 2),
+                VARIATION_WEIGHT,
                 True,
                 f"weakest knob '{weakest.name}' at {weakest.quality:.0%}",
             )
         )
     else:
-        subs.append(SubScore("variation", 0.0, 40.0, False, "no scoreable knobs"))
-
-    catalog = HIGH_IMPACT_KNOBS.get(facts.agent_type or "general")
-    if catalog:
-        present = {knob.name for knob in scoreable}
-        missing = [name for name in catalog if name not in present]
-        fraction = 1.0 - (len(missing) / len(catalog))
         subs.append(
-            SubScore(
-                "coverage",
-                round(25.0 * fraction, 2),
-                25.0,
-                True,
-                (
-                    f"not tuning: {', '.join(missing)}"
-                    if missing
-                    else "every high-impact knob for this agent type is tuned"
-                ),
-            )
+            SubScore("variation", 0.0, VARIATION_WEIGHT, False, "no scoreable knobs")
         )
-    else:
-        subs.append(SubScore("coverage", 0.0, 25.0, False, "agent type not recognized"))
+
     return combine("agent", subs), caps, knobs
 
 
@@ -4668,14 +4808,18 @@ def _read_trial_budget(field: str, value: Any) -> int:
 
 
 def _read_agent_type(field: str, value: Any) -> str:
-    """`agent_type`: which high-impact catalog coverage is scored against.
+    """`agent_type`: read, type-checked, and scored against nothing.
 
-    An unrecognized *string* stays legal: it names an agent this scorer has no
-    catalog for, which is a real situation and not a typo the scorer can
-    detect. Coverage then goes unmeasured, and because `combine` renormalizes
-    over the measured sub-scores that *raises* the pillar's score while
-    dropping its confidence - the "agent type not recognized" gap line is what
-    carries the news, not the number. A non-string cannot even be looked up.
+    It selected the high-impact catalog `coverage` graded against. That
+    sub-score is gone as of this branch, so no number on the card moves with
+    this field, no gap line mentions it, and an unrecognized value is now
+    indistinguishable from a recognized one. It is parsed only so that a
+    document declaring it is not rejected.
+
+    That makes the field dead, and #185 deletes it. This branch must not land
+    alone: on its own it leaves a field the schema still documents, a
+    `HIGH_IMPACT_KNOBS` catalog no scoring code selects from, and a type error raised
+    on the way to nowhere.
     """
     if not isinstance(value, str):
         raise ConfigSpaceInputError(
