@@ -949,7 +949,7 @@ Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` abov
 contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
 onto its own resolved parent by dataset validation and doubles into
 `.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
-time. Never shorten these to a relative path. Tracked upstream as Traigent/Traigent issue 1993.
+time. Never shorten these to a relative path. It is an SDK defect, tracked upstream.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
@@ -1053,8 +1053,8 @@ JSON and use its `cloud_url` as the baseline portal link; syncing does not mutat
 Use `baseline_results.sync_session_id` only after feature-detecting that public attribute and a
 non-empty value. If unavailable, leave the baseline local and report it from the saved local
 results - do not inspect private storage or substitute `--all`. The pinned 0.25.0 release does not
-expose this id; support is capability-gated for a later release. Tracked upstream as
-Traigent/Traigent issue 2020.
+expose this id; support is capability-gated for a later release. It is tracked upstream and the fix
+belongs there.
 
 ## Broader optimization
 

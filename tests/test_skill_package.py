@@ -7645,8 +7645,8 @@ class SkillPackageTests(unittest.TestCase):
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
-        Separately, the SDK exposes no supported id for the run just completed
-        (Traigent/Traigent#2020), and the fix for that belongs upstream: this
+        Separately, the SDK exposes no supported id
+        for the run just completed, and the fix for that belongs upstream: this
         repo must not work around it by reading the SDK's private storage
         layout.
         """
@@ -7657,7 +7657,10 @@ class SkillPackageTests(unittest.TestCase):
             "do not inspect private storage",
             "baseline_results.sync_session_id",
             "successful sync json",
-            "traigent/traigent issue 2020",
+            # Was "traigent/traigent issue 2020". The guidance may not carry an
+            # internal issue number at all, so what is pinned is the decision -
+            # the fix is upstream's and this repo must not route around it.
+            "tracked upstream and the fix belongs there",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -8727,16 +8730,20 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(restatement=restatement):
                 self.assertNotIn(restatement, dataset)
 
-    # Engineering-rationale citations that predate this rule and are never
-    # instructed to be echoed to the user. Allowlisted by exact text so the
-    # corpus below can stay whole: narrowing the corpus to the documents that
-    # happen to be clean is how run-safety.md - which carries the customer
-    # facing approval copy - fell outside this check in the first place.
-    TRACKER_CITATION_ALLOWLIST = (
-        "(traigent-first-run#78)",
-        "Tracked upstream as Traigent/Traigent issue 1993.",
-        "Tracked upstream as Traigent/Traigent issue 2020.",
-    )
+    # There is no allowlist any more, and its absence is the point. It held
+    # three exact citations - engineering rationale that "predates this rule" -
+    # and every one of them named a repository or an issue number in a file the
+    # installed skill ships. A citation that must not reach a customer is not
+    # made safe by being old, and with nothing published there is no citation
+    # this repository is stuck with, so the three sentences were rewritten to
+    # say what they meant: the defect is upstream's and the fix belongs there.
+    #
+    # It was also the guard's own hole. `Tracked upstream as Traigent/Traigent
+    # issue 1993.` sat on the allowlist while `Traigent/Traigent#1993` - the
+    # same reference, in the commoner spelling - matched no pattern at all, so
+    # the allowlist documented the exact form the guard could see and said
+    # nothing about the form it could not.
+    TRACKER_CITATION_ALLOWLIST: tuple[str, ...] = ()
     # Every shape a tracker citation is written in, not the two that happened to
     # be in the tree when this was written. Those two were `traigent-first-run#N`
     # and `traigent/traigent issue N`; measured against ten realistic spellings
@@ -8819,7 +8826,7 @@ class SkillPackageTests(unittest.TestCase):
                 allowed = allowed.replace(citation, "")
             with self.subTest(document=name):
                 self.assertEqual(
-                    self.TRACKER_REFERENCE.findall(allowed),
+                    self.TRACKER_REFERENCE.findall(" ".join(raw.split())),
                     [],
                     f"{name} carries a tracker reference outside the "
                     "allowlisted engineering citations",
