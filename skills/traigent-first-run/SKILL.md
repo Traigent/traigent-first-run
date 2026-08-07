@@ -198,8 +198,16 @@ spends nothing, and no generated row competes with it yet. Apply the run-scoped 
 scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
-its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
-`wired` list does not make it current. Every guided run does this, including a zero-anchor run.
+its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
+run does this, including a zero-anchor run.
+
+Then measure the search space from the agent itself and pass it as `--agent-knobs`, so the opening
+card grades what this project can search instead of reporting nothing. Read the agent's own source
+for parameters it can already vary - model, temperature, top_p, prompt strategy, retry/reflection
+flags, tool selection - and record each with the line that shows it. Never write a range or an
+option you did not read: an omitted parameter costs a few points, an invented one makes the card
+wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+Omit it only when there is no agent to read. `references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the baseline the
 closing report measures against. Show it before anything is created or repaired.
 
@@ -428,13 +436,13 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
 
-`agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
-provided to the score: before the enhanced run there is no document to score, and afterwards a
-missing one is that run's own outcome to report, not a defect in the project. Where a document
-exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
-excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
-that by its reason, and mark the settings the agent actually uses or give one of them a second
-value.
+`agent-no-varying-knobs` always blocks now, and only fires where a settings document exists and
+nothing in it varies - no knobs, none marked as wired, one value each, or only knobs excluded from
+scoring. The card prints `FIX BEFORE PAID RUN`; route by its reason, and mark the settings the
+agent actually uses or give one of them a second value. An absent settings document raises no cap
+at all: the score reports the agent pillar as not measured and leaves it out of the average instead
+of ceilinging the whole card for it. That silence is never a verdict on the search - after a
+stopped, failed, or zero-trial enhanced run it is that run's own outcome to report.
 
 ### 5. Prepare the environment and finish free checks
 

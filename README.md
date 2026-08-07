@@ -133,11 +133,16 @@ That is also why the band can sit below the number. A pillar measured thinly can
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
 pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
-what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
-the opening card the missing settings document holds the whole score to at most 45, inside Partial,
-so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
-already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent wait for
-the close, on a score no ceiling is capping.
+what fills that one in.
+
+The same promise covers a whole pillar, and the opening card is where it has to. No settings
+document exists before the search, so the agent pillar has no document to read - it is read from
+the agent's own code instead, which is what the opening score grades the search space from. Where
+there is nothing to read, or nothing in it that can vary, the pillar is excluded from the average
+rather than averaged in as a zero, the card names it, and the band stays at Workable because a
+score computed without a third of the picture may not present as Strong or Excellent. What the
+opening card no longer does is hold every project at 45 for a document nobody was supposed to
+bring.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
