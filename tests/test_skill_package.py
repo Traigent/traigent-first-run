@@ -5821,7 +5821,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # bytes are the difference between a number that pretends to have
         # checked and a sentence that asks someone who can.
         # Measured at 243_378, so 243_800 - 422 bytes, inside the same band.
-        budget = 243_800
+        #
+        # The paragraph above about "the disclosure that the customer's paid
+        # trials doubled" describes a sentence that no longer exists, and its
+        # replacement is why this number moves again. The doubling was stated
+        # to the customer as a change from an earlier release of this
+        # walkthrough - our changelog, on the card where they approve spending
+        # money, about a run they have never made - so both statements of it
+        # now give the COUNT instead, plus the mandate saying why. Measured at
+        # 243_995, so 244_250 and 255 bytes, inside the 228-339 band.
+        budget = 244_250
         self.assertLess(
             total,
             budget,
