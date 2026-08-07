@@ -1427,8 +1427,8 @@ def check_dataset(
     labelled_split_counts: Counter[str] = Counter()
     # Iterates `present_rows`, not only normalized scoreable rows (#66). Under a
     # reference-requiring method, a row with no output never reaches `rows`, so a
-    # holdout declared that way used to be invisible:
-    # preflight reported "no explicit tuning/holdout split was found" about a
+    # held-out split declared that way used to be invisible:
+    # preflight reported "no explicit tuning/held-out split was found" about a
     # dataset where every row declared one, and readiness scored it through the
     # no-split branch.
     #
@@ -1485,12 +1485,16 @@ def check_dataset(
             )
 
     if overlap:
-        emit("dataset-split", FAIL, f"{len(overlap)} inputs overlap tuning and holdout")
+        emit(
+            "dataset-split",
+            FAIL,
+            f"{len(overlap)} inputs overlap the tuning and held-out splits",
+        )
     elif tune_inputs and holdout_inputs:
         emit(
             "dataset-split",
             PASS,
-            "tuning and holdout inputs are disjoint",
+            "tuning and held-out inputs are disjoint",
             {"kind": "tuning-and-holdout"},
         )
         tuning_count = sum(
@@ -1519,17 +1523,17 @@ def check_dataset(
             # row there is no resolution to quote at all, and the old divisor
             # would now be zero.
             holdout_detail = (
-                f"{holdout_count} holdout rows, none scoreable; no holdout row "
+                f"{holdout_count} held-out rows, none scoreable; no held-out row "
                 "carries an expected output, so this split resolves nothing"
             )
         elif holdout_scoreable == holdout_count:
             holdout_detail = (
-                f"{holdout_count} holdout rows; one example changes the score by "
+                f"{holdout_count} held-out rows; one example changes the score by "
                 f"{(100 / holdout_count):.1f} percentage points"
             )
         else:
             holdout_detail = (
-                f"{holdout_count} holdout rows, {holdout_scoreable} scoreable; one "
+                f"{holdout_count} held-out rows, {holdout_scoreable} scoreable; one "
                 f"scoreable example changes the score by "
                 f"{(100 / holdout_scoreable):.1f} percentage points"
             )
@@ -1549,12 +1553,12 @@ def check_dataset(
         emit(
             "dataset-split",
             PASS,
-            "tuning-only dataset; no independent validation split was declared",
+            "tuning-only dataset; no held-out split was declared",
             {"kind": "tuning-only"},
         )
         emit_tuning_size(tuning_count, tuning_labelled)
     else:
-        emit("dataset-split", WARN, "no explicit tuning/holdout split was found")
+        emit("dataset-split", WARN, "no explicit tuning/held-out split was found")
 
     difficulty_values = [
         str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")

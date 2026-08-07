@@ -1110,11 +1110,11 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(power.value, 18.4)
         self.assertEqual(
             power.evidence,
-            "no tuning set and held-back test set, so the result would be measured on the same rows the search used; 100 examples - substantial "
+            "no tuning set and held-out set, so the result would be measured on the same rows the search used; 100 examples - substantial "
             "comparison set",
         )
 
-    def test_tuning_only_dataset_names_its_missing_independent_validation(self) -> None:
+    def test_tuning_only_dataset_names_its_missing_held_out_set(self) -> None:
         pillar, _ = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True,
@@ -1127,9 +1127,7 @@ class DatasetScoringTests(unittest.TestCase):
         power = next(
             subscore for subscore in pillar.subscores if subscore.name == "power"
         )
-        self.assertIn(
-            "18 tuning rows and no independent validation set", power.evidence
-        )
+        self.assertIn("18 tuning rows and no held-out set", power.evidence)
         self.assertNotIn("no tuning set", power.evidence)
 
     def _power(self, facts: object) -> float:

@@ -24,7 +24,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Shared comparison
 
-- Tuning rows, coverage, and known limitations:
+- Tuning rows and held-out rows (default 10, reserved at creation), coverage, and known limitations:
 - Agent and evaluator/judge calls per example:
 - Total walkthrough ceiling (default `$5.00`):
 
@@ -43,7 +43,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 ## Connected-stage plan and approval
 
 - Added dimensions, total combinations, configuration ceiling, and recipients:
-- Calls, runtime, and spend:
+- Calls, including the winner's held-out scoring, runtime, and spend:
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
@@ -53,6 +53,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Interpretation
 
+- Held-out score for the recommended configuration, the round it came from, its tuning score, the held-out set's real/generated counts, and the small-sample note:
 - Components that remain walkthrough substitutes:
 - What the result demonstrates:
 - What the result does not establish:

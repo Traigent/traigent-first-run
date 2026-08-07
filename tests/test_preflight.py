@@ -219,7 +219,7 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(split.status, MODULE.PASS)
         self.assertEqual(
             split.detail,
-            "tuning-only dataset; no independent validation split was declared",
+            "tuning-only dataset; no held-out split was declared",
         )
         self.assertEqual(
             tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}

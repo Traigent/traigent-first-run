@@ -66,5 +66,5 @@ escapes) and cross-pass nondeterminism, so run it before pushing anything that c
 allowlisted scripts.
 
 The connected staging smoke test remains responsible for SDK compatibility, real provider and
-Traigent calls, cost/quota behavior, visible baseline and enhanced trials, portal persistence, and
-direct experiment links.
+Traigent calls, cost/quota behavior, visible baseline and enhanced trials, holdout reporting,
+portal persistence, and direct experiment links.

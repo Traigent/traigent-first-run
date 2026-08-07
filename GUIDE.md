@@ -109,9 +109,8 @@ The assistant uploads the completed baseline without rerunning it only when the 
 exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline
 result and the connected enhanced result side by side, with a verified portal link for every
 persisted run and an explicit `local-only` label for an unsynced baseline, and compares the best
-configs and their measured tuning behavior directly. If you later add an independent validation
-track, treat it as a later follow-up rather than part of this first run: small datasets can
-overfit quickly.
+configs and their measured tuning behavior directly. It also discloses the enhanced winner's
+held-out score here, with a note saying how little ten examples can settle.
 Approve the provider-paid baseline first. After its result, preview and approve the connected
 optimization separately. The assistant chooses how many configurations it tests and which knobs it
 varies.

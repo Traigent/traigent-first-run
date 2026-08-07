@@ -328,8 +328,9 @@ Follow this order:
    review pause. Clarification never authorizes changing real labels, examples, answers, or policy;
    follow `references/evaluation-and-dataset.md` for degenerate-row bounds and gold-repair rules.
 3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
-   containing the combined tuning rows, so local structure and quality problems are
-   checked without importing user modules. Omit optional model-pricing checks in this
+   holding every row of both splits, each carrying its `split` label, so local structure and
+   quality problems are checked without importing user modules. That combined file is scoring
+   evidence; `references/evaluation-and-dataset.md` owns the files the run writes from it. Omit optional model-pricing checks in this
    standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
    schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
    data and task; do not infer SDK aliases. Apply the run-scoped evaluator-method rule above: if
@@ -567,6 +568,7 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
+- Do not disclose the held-out score before stage 8.
 
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
@@ -610,6 +612,11 @@ supported id, keep the baseline local; never inspect private storage or use `--a
 enhanced optimization connected, require its own verified portal link, and report a direct link for
 every persisted run without implying it covers a local-only baseline.
 
+Once the enhanced search returns, select the configuration this run recommends on the **tuning**
+scores across both paid measurements - never on the held-out rows, which arbitrate nothing - and
+score only that one against the ten held-out rows;
+`references/evaluation-and-dataset.md` owns the rest.
+
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the connected-stage approval.
@@ -646,9 +653,10 @@ twelve-row default (including its initial configuration) ran, subject only to an
 reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
 trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
 stop/failure reason; and a
-best configuration and non-degenerate measures exist. Report truncation and persistence failures,
-require the portal probe to have stayed green, and verify each portal link before claiming
-visibility.
+best configuration and non-degenerate measures exist. Verify the held-out score belongs to the one
+configuration this run recommends, chosen on the tuning scores, and that no other candidate was
+scored on those rows. Report truncation and persistence failures, require the portal
+probe to have stayed green, and verify each portal link before claiming visibility.
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
 auditable:
@@ -657,7 +665,7 @@ auditable:
 2. **What the evidence establishes** - baseline tuning result, enhanced tuning result, and actual
    persisted runs.
 3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
-   phases, and any small-data overfitting risk.
+   phases, and any small-sample held-out gap.
 4. **Next action** - one action selected from the latest closing evidence.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
@@ -667,6 +675,7 @@ Include:
 - Best baseline configuration versus best enhanced configuration on the tuning set.
 - Each run's accuracy-cost frontier, in the details layer. One recommendation still leads; a
   frontier put where the recommendation belongs is the menu this stage already refuses.
+- The recommended configuration's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.

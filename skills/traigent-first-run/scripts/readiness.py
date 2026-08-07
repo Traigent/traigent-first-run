@@ -2691,7 +2691,7 @@ def score_dataset(
         # Resolution is a property of the TUNING split, and the holdout is
         # exempt from it.
         #
-        # This used to take `min(tuning, holdout, ...)`, so the held-back set
+        # This used to take `min(tuning, holdout, ...)`, so the held-out set
         # bounded a number it does not participate in producing. The search
         # compares configurations against each other on the tuning rows; that
         # comparison's resolution is how many rows it has. The holdout is not a
@@ -2727,12 +2727,12 @@ def score_dataset(
         if effective < facts.tuning_rows:
             prefix = f"{prefix}, {marker}"
         # Exempt from setting the resolution is not exempt from being reported.
-        # A held-back set with nothing scoreable in it cannot check the winner
+        # A held-out set with nothing scoreable in it cannot check the winner
         # it exists to check, and taking it out of `effective` above is what
         # stopped that from showing up in the number - so it is said here
         # instead, on the card, where a user can act on it.
         if not reference_free and facts.holdout_labelled_rows == 0:
-            prefix = f"{prefix}; none of the held-back rows can be scored"
+            prefix = f"{prefix}; none of the held-out rows can be scored"
         evidence = f"{prefix}; {evidence}"
     elif facts.tuning_rows is not None:
         tuning_labelled = (
@@ -2749,7 +2749,7 @@ def score_dataset(
                 f"{evidence}"
             )
         evidence = (
-            f"{facts.tuning_rows} tuning rows and no independent validation set, so the "
+            f"{facts.tuning_rows} tuning rows and no held-out set, so the "
             f"result would be measured on the same rows the search used; {evidence}"
         )
     else:
@@ -2759,7 +2759,7 @@ def score_dataset(
         if effective < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = (
-            "no tuning set and held-back test set, so the result would be "
+            "no tuning set and held-out set, so the result would be "
             f"measured on the same rows the search used; {evidence}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
@@ -4524,7 +4524,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         if unusable:
             raise PreflightInputError(
                 "declared split metrics carry no usable "
-                f"{'/'.join(unusable)} count - a declared tuning/holdout split "
+                f"{'/'.join(unusable)} count - a declared tuning/held-out split "
                 "can only be scored from all four per-split row counts, so this "
                 "preflight JSON predates the current preflight.py or was "
                 "edited; re-run preflight.py --json from the same version as "
@@ -4562,7 +4562,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             if sum(split_labelled) > aggregate_labelled:
                 raise PreflightInputError(
                     f"declared split metrics report {sum(split_labelled)} labelled "
-                    f"rows across tuning and holdout, more than the "
+                    f"rows across tuning and held-out, more than the "
                     f"{aggregate_labelled} the dataset declares in total - the "
                     "splits are disjoint, so this cannot describe one dataset; "
                     "re-run preflight.py --json from the same version as this "

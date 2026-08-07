@@ -993,6 +993,7 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
     ids = [row["id"] for row in rows]
     inputs = [" ".join(row["input"].casefold().split()) for row in rows]
     tuning = [row for row in rows if row["split"] == "tune"]
+    holdout = [row for row in rows if row["split"] == "holdout"]
     difficulty_counts = {
         name: sum(row["difficulty"] == name for row in rows)
         for name in ("easy", "medium", "hard", "very-hard")
@@ -1001,15 +1002,35 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
         name: sum(row["difficulty"] == name and row["split"] == "tune" for row in rows)
         for name in ("easy", "medium", "hard", "very-hard")
     }
+    holdout_difficulty_counts = {
+        name: sum(
+            row["difficulty"] == name and row["split"] == "holdout" for row in rows
+        )
+        for name in ("easy", "medium", "hard", "very-hard")
+    }
     tuning_output_counts = {
         name: sum(row["output"] == name for row in tuning)
         for name in ("billing", "cancellation", "technical-support")
     }
-    if len(rows) != 18 or len(tuning) != 18:
-        raise ContractError("generated dataset must contain 18 tuning rows")
-    if len(set(ids)) != 18 or len(set(inputs)) != 18:
+    holdout_output_counts = {
+        name: sum(row["output"] == name for row in holdout)
+        for name in ("billing", "cancellation", "technical-support")
+    }
+    if len(rows) != 28 or len(tuning) != 18 or len(holdout) != 10:
         raise ContractError(
-            "generated dataset ids and normalized inputs must be unique"
+            "generated dataset must contain 28 rows with an 18/10 split"
+        )
+    # This is also the tune/holdout leakage check, and the only one that can be:
+    # the two splits partition all 28 rows, so distinct ids and distinct
+    # normalized inputs across the whole file already make it impossible for a
+    # row - or a restatement of one - to sit on both sides. The separate
+    # id-overlap guard that used to follow was therefore unreachable, and
+    # deleting it left the suite green; an unreachable check reads like leakage
+    # coverage while providing none.
+    if len(set(ids)) != 28 or len(set(inputs)) != 28:
+        raise ContractError(
+            "generated dataset ids and normalized inputs must be unique across "
+            "both splits, so no row can appear in tuning and holdout alike"
         )
     if tuning_difficulty_counts != {
         "easy": 3,
@@ -1019,6 +1040,15 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
     }:
         raise ContractError(
             "generated dataset must contain 3 easy, 5 medium, 5 hard, and 5 very-hard tuning rows"
+        )
+    if holdout_difficulty_counts != {
+        "easy": 2,
+        "medium": 3,
+        "hard": 3,
+        "very-hard": 2,
+    }:
+        raise ContractError(
+            "generated dataset must contain 2 easy, 3 medium, 3 hard, and 2 very-hard holdout rows"
         )
     if any(row.get("source") != "synthetic-walkthrough" for row in rows):
         raise ContractError("generated rows must retain walkthrough-only provenance")
@@ -1040,9 +1070,12 @@ def dataset_invariants(path: Path) -> dict[str, Any]:
     return {
         "rows": len(rows),
         "tuning": len(tuning),
+        "holdout": len(holdout),
         "difficulty_counts": difficulty_counts,
         "tuning_difficulty_counts": tuning_difficulty_counts,
+        "holdout_difficulty_counts": holdout_difficulty_counts,
         "tuning_output_counts": tuning_output_counts,
+        "holdout_output_counts": holdout_output_counts,
         "coverage_branches": len({row["coverage"] for row in rows}),
         "provenance": "synthetic-walkthrough",
     }
@@ -1402,9 +1435,13 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
         if (
             generated["rows"] != expected["dataset_rows"]
             or generated["tuning"] != expected["tuning_rows"]
+            or generated["holdout"] != expected["holdout_rows"]
             or generated["tuning_difficulty_counts"]
             != expected["tuning_difficulty_counts"]
+            or generated["holdout_difficulty_counts"]
+            != expected["holdout_difficulty_counts"]
             or generated["tuning_output_counts"] != expected["tuning_output_counts"]
+            or generated["holdout_output_counts"] != expected["holdout_output_counts"]
         ):
             raise ContractError(
                 "partial scenario dataset counts violated its declaration"
@@ -1559,7 +1596,7 @@ def run_once(
             "provider and backend",
             "cost and quota",
             "portal persistence and links",
-            "visible baseline and enhanced results",
+            "visible baseline, enhanced, and holdout results",
         ],
     }
     validate_semantics(contract, evidence)

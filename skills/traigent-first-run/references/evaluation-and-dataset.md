@@ -8,7 +8,7 @@ Use this reference whenever creating or validating a dataset or evaluation metho
 2. Mandatory calibration
 3. Quality diagnosis and repair choice
 4. Dataset construction
-5. Validation split and claims
+5. Held-out set and claims
 
 ## Evaluation selection
 
@@ -278,7 +278,7 @@ Use concrete evidence:
 | Corrupted rows | Invalid count, total count, percentage, and what the named lines actually contain | Some cases never reach the agent/evaluator; reported accuracy is incomplete |
 | Duplicate or narrow cases | Duplicate counts, dominant scenarios/labels, representative rows | Repetition overweights one behavior and can manufacture a high score |
 | Easy-only coverage | Cite representative trivial cases and name absent boundary/failure modes | Most plausible configurations may tie near 100%, leaving no measurable headroom |
-| Missing or overlapping validation split | Split sizes and overlap evidence | No independent generalization claim is supported |
+| Missing or overlapping held-out split | Split sizes and overlap evidence | No independent generalization claim is supported |
 | Task-inappropriate evaluator | Show the exact rule and one valid answer it rejects or bad answer it accepts | Optimization rewards the wrong behavior |
 | Degenerate evaluator | Four-probe scores, exceptions, or constant/inverted ordering | Candidate configurations cannot be ranked reliably |
 | Present-but-unresolved evaluator | A file exists but no method could be honestly declared without executing it (a syntax error, or a return that plainly ignores the input) | Nothing can be scored yet; this is a repair/inspect gap on an existing file, not a create/select gap |
@@ -351,12 +351,13 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 18 tuning examples by default: 3 easy, 5 medium,
-5 hard, and 5 very hard. Use those rows for the baseline and enhanced comparison; do not create a
-held-back validation set for the default first run. Independent validation is optional later, when
-the project already has that data or a real decision justifies collecting it.
+For a fully generated walkthrough, create 28 examples by default: 18 tuning rows (3 easy, 5
+medium, 5 hard, 5 very hard) plus the held-out ten. "Held-out set and claims" below owns that
+split wherever its rows come from - its composition, when it is reserved, where it is written,
+what it is for, when it is scored and disclosed, and why the count stays at ten.
 
-Adjust size when cost or task shape requires it, but keep all four bands represented.
+Adjust the tuning size when cost or task shape requires it, but keep all four bands represented in
+it. The held-out ten do not move.
 
 ### Declaring provenance
 
@@ -562,14 +563,50 @@ one question carrying every option that applies, never one question per option:
 
 Repeated questions cost more attention than the wait they save.
 
+### Choosing rows when difficulty is not labelled
+
+Every pick this file asks for - the bounded subset below, the reserved split after it - wants
+difficulty spread first, because a pick that lands in one band measures one band. Work down this
+ladder, stop at the first rung that holds, and record that rung wherever the pick itself is
+recorded:
+
+1. **The rows carry difficulty tags.** Stratify on them.
+2. **Rank the rows yourself.** You are reading them anyway, so a ranking you can defend is evidence
+   you already have, and falling through to a random sample throws away a free judgement. Use it
+   only while the ranking is clear by the test below.
+3. **The rows carry other tags** - coverage, scenario, topic. Judge by that same test whether those
+   groups actually differ in difficulty. If they do, stratify on them as a difficulty proxy and name
+   the axis. If they all sit at one level, spread the pick across them anyway - spread beats
+   clustering on any axis - but call that topical spread, not difficulty spread.
+4. **Neither holds.** Take a seeded random sample and record the pick as unstratified.
+
+Difficulty is clear when the bands differ the way school levels differ: a question a bright
+12-to-15-year-old would just answer, against one that needs real research and close reading. A
+short single-table SQL query against a long multi-join one. "How many X are in Y" against a PDF,
+against "what is the main idea of this article". A lookup of known data, against "compare what this
+article says about J with what is known today, and say who is more correct, and why".
+
+"Clear" has to be falsifiable or it is a feeling, and that test is the falsifier: it asks the
+estimate to separate the extremes, not to order the middle. Rows that all sit at one level can
+still be ranked, and the ranking is still one level. When they do not separate, say so and take the
+next rung.
+
+An estimate is the assistant's opinion, not a label the user supplied. Declare it as "Declaring
+provenance" above declares an answer nobody observed - `difficulty_provenance`, top level or under
+`metadata`, from those same two word lists - and on rows the user brought, keep it out of the
+`difficulty` field itself. That field is scored: filling it converts "declares no difficulty" into
+full band coverage and clears the spread complaint on the assistant's own opinion, which is the one
+thing a self-ranked pick must not be able to do. A generated row is the other case - whoever wrote
+the question wrote its band too, and the row already declares itself generated.
+
 ## First-run subset for a large dataset
 
 A first run has to show the capability, not exhaust the dataset. Above roughly 100 usable rows,
 every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
-that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 rows by
-default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
+that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
+rows by default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
 `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
-one cluster.
+one cluster - plus the held-out ten below, drawn to their own composition.
 
 Five rules make the subset honest:
 
@@ -587,46 +624,199 @@ Five rules make the subset honest:
    difference as directional unless paired uncertainty from the completed outputs supports it."
    Sample size alone cannot supply a confidence interval or minimum detectable effect for a paired
    comparison, so never invent a percentage-point threshold before those outcomes exist.
-3. **Sample within each split, never across it.** Draw the tuning rows from the tuning split and
-   the holdout rows from the holdout split, keeping them disjoint. A subset drawn over the combined
+3. **Sample within each split, never across it.** Draw the 18 tuning rows from the tuning split
+   and the held-out ten from the held-out split, keeping them disjoint. A subset drawn over the combined
    set can pull the same input into both sides and fabricate a tune/holdout overlap that the
    original dataset did not have.
 4. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
    the seed when the pick inside a band was random. The recorded ids are what makes the run
    reproducible - a seed alone does not, because the selection also depends on judgment about which
    rows are hard.
-5. **Name the bound to the user.** Report the subset size beside the full row count ("18 of 4,812
-   rows for this first run"). Never let a bounded run read as though the whole dataset was
-   evaluated.
+5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
+   and 10 held-out rows of your 4,812 for this first run"). Never let a bounded run read as though
+   the whole dataset was evaluated.
 
 Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
 drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.
 
-When the rows carry no difficulty tags, spread the pick across the coverage/scenario tags instead
-and say which axis was used. When neither exists, take a random seeded sample and record that the
-subset is unstratified - an unlabelled pick is still bounded and reproducible, just less
+When the rows carry no difficulty tags, work down the ladder in "Choosing rows when difficulty is
+not labelled" above. An unlabelled pick is still bounded and reproducible, just less
 representative, and that limitation belongs in the report.
 
 The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
-it; this bound exists only so the first run finishes.
+it, and over a wider knob space than this first look reaches; this bound exists only so the first
+run finishes.
 
-## Optional validation split and claims
+## Held-out set and claims
 
-When the project already has independent validation data, or when a later real decision warrants
-adding it, reserve that data before optimization and keep the same split across comparisons. It is
-not part of the default first-run walkthrough. Call it a sealed holdout only when its split and
-labels were fixed and hidden from component design, tuning, and winner selection until the
-candidate was locked. If the assistant inspected or authored it, call it held-back, non-blind
-validation.
+Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) at creation time, before any
+component design, calibration, or optimization touches the dataset, and keep the same rows aside
+for the rest of the run. That composition holds wherever the rows come from - a fully generated
+walkthrough or a bounded subset drawn from a large real dataset alike - because the rule governs
+the split this run reserves, not where the data originated. A project that already maintains its
+own independent held-out split is the exception: use it as it stands rather than re-cutting it
+to ten, and follow every claim rule below. When the rows carry no usable difficulty tags, work down
+the same ladder the bounded subset uses, and record the rung the split was cut on.
+
+**Real rows reach both sets before either is topped up.** Take the customer's own rows first
+and generate only the shortfall - and when there are too few to fill both sets, divide the real
+ones between them in the same proportion as the sets themselves, rounding in the tuning set's
+favour, before a single row is generated. Against the 18/10 default that is about two real rows to
+tuning for every one held back: ten real rows split seven and three, four split three and one, two
+split one and one. Below two there is nothing to divide, so the one row goes to tuning where the
+search can at least see it. Filling one set with the real rows and generating the other is the
+failure this rule exists to stop, and it fails in both directions: a held-out set of generated rows
+validates nothing about real inputs, and a tuning set of generated rows searches a task the
+customer does not have.
+
+Then top each set up to its composition with generated rows rather than dropping a band, placing
+each real row in the band its own difficulty puts it in, and declare the mixture through the
+provenance fields above so the row says what it is. State what the top-up costs rather than leaving
+it implied: a generated held-out row cannot show that the winner generalizes to real inputs, only
+that it survives rows the tuning search never saw. Such a split is non-blind either way, so the
+synthetic-evidence rules at the end of this section already govern what it may claim.
+
+Write the reserved rows to their own file. The tuning rows and the held-out rows are two files,
+not one file with a column, because that separation is what physically keeps a reserved row out
+of the search: the optimization's `eval_dataset` names the tuning file only, so no candidate
+configuration can be scored on a held-out row even by accident.
+`references/sdk-execution.md` carries the two paths and the scoring code. The combined,
+split-labelled dataset stays the input to preflight and readiness - it is scoring evidence about
+the data, never the search's input.
+
+Two files is a choice, not a limitation the SDK imposes: `eval_dataset` also takes rows directly,
+so the search could be handed a filtered slice of one file instead. It is still the safer shape,
+because a filter is a predicate that has to keep being right, while a file the search was never
+given cannot leak a row however the predicate drifts - and it is two files, written beside the
+user's untouched original, not a folder of them.
+
+Ten rows is the design, not a placeholder on the way to a larger split. Ten is what the
+composition costs: 2 easy, 3 medium, 3 hard, 2 very hard, no band holding a spare. Take one from
+an outer band and it drops to a single row, whose one outcome becomes that band's whole result - a
+band present without being measured. Take one from a middle band and the split loses resolution
+where configurations separate, which is why those two carry more. Nine rows is not a smaller
+version of this split; it is this split with a hole in it. Above ten,
+each extra row is another paid call on the winner bought from the same walkthrough ceiling, spent
+on the check instead of on the search this run exists to show. Ten is therefore exact in both
+directions, never a floor to grow from. The one split that is not ten is a project's own, kept at
+the size it already has, whatever its composition. So the resolution stays coarse, and
+the honest move is to say so plainly rather than to grow the split until the number sounds
+authoritative. What this walkthrough shows is what Traigent can do; the full picture comes from
+running the whole dataset over a wider knob space, as "First-run subset for a large dataset" above
+already says.
+
+A gap between the tuning score and the held-out score is expected, and it is explained by two
+separate things - neither is a bug:
+
+- **Selecting on the tuning rows inflates the tuning score.** Scoring several candidate
+  configurations on the same rows and keeping the best one selects partly on real signal and
+  partly on that sample's noise. The winner's tuning score is inflated by the act of choosing it
+  and will not fully repeat on a fresh sample even when nothing is actually overfitted. This is
+  exactly what the held-out rows exist to check.
+- **Ten rows cannot resolve a small gap.** One *standard error* on an accuracy measured from ten
+  items is about 15 points near 50% and still about 10 points near 90% - and a 95% interval is
+  roughly twice that, about +/-31 and +/-19 points. Quote the interval as the interval; a standard
+  error presented as "the uncertainty" understates it about twofold. This bounds one accuracy from
+  its sample size, and is not the paired uncertainty rule 2 above defers until outcomes exist. A
+  gap inside that range is neither confirmed overfitting nor confirmed fine - it is inconclusive,
+  and no wording should claim otherwise.
+
+Do not say Traigent prevents or corrects this: holdout support is not yet a first-class SDK
+feature, so that claim would not be true. Do not call a gap in this range "overfitting," either -
+name it for what it is, the ordinary result of picking the best of several configurations on a
+small sample, and say plainly that ten examples cannot tell how much of it is real. Giving
+Traigent real holdout support instead of this guide-authored split is tracked internally as a
+Traigent-owned follow-up - never surface a repository, issue, or tracker reference to the user;
+the disclosure note below stays free of one.
+
+Score the held-out rows once, on one configuration: the one this run recommends. This walkthrough
+pays for two measurements, the baseline grid and the enhanced search, so select it on the **tuning**
+scores across both of them - the tuning rows are the ones already spent on selection. The enhanced
+search's winner is not the answer by position: when the baseline's best configuration still scores
+higher on the tuning rows, that is the one this run recommends and the one that gets scored. Then
+run that configuration, and only that configuration, against the reserved rows. Include those calls
+in the combined paid-work approval alongside the enhanced search.
+
+**The held-out rows arbitrate nothing.** Scoring two configurations on them and keeping whichever
+came back higher is selection, and a set used for selection is not held out: its number would carry
+the same optimism as the tuning score, which is the single thing this split exists to avoid. It
+reports on a candidate that was already chosen; it does not choose one. So the choice is made where
+selection is already paid for, and only its outcome is measured here.
+
+Cost belongs in that choice, on the tuning side. When two configurations score the same on the
+tuning rows, prefer the cheaper one; at equal cost prefer the stronger model, whose headroom a
+wider search after this walkthrough is likelier to use. That is a decision taken on the rows
+selection is allowed to use, so it costs the held-out set nothing.
+
+SKILL stages 7 and 8 own when that score is disclosed. The split itself does not change between
+the two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once,
+when the winner it is scoring actually exists. Report it as one line each, not as a statistics
+lesson:
+
+```text
+Tuning set (<n> ex):   <correct> of <n> correct
+Held-out set (<m> ex): <correct> of <m> correct
+Note: the best of several configurations was picked on the tuning rows, so the
+held-out number can land lower, level, or higher. <m> examples cannot settle
+which.
+```
+
+Report counts, not percentages, while the split is this small: on ten rows only multiples of ten
+exist, so "60%" claims a resolution of one point where the truth is ten - and the static preflight
+already prints that arithmetic for whatever size the split actually is. Substitute the run's own
+`<n>` and `<m>`; a project that brought its own 500/120 split copies its numbers here, not the
+walkthrough's. Keep the note only while one row still moves the held-out figure materially. On a
+held-out set large enough that it does not, drop the note rather than pasting a caveat the
+numbers do not need.
+
+Then say the forward half out loud instead of leaving it implied: at full capability this same check
+runs over the customer's whole dataset, and that is where real-world validation actually happens -
+the walkthrough is showing the shape of that step cheaply rather than performing it, which is a
+choice and not a shortfall. State it without apologizing for the ten rows and without saying what a
+larger run would find; the close's skills handoff is already the route to it.
+
+When the split was topped up, say so on the same line as its score. "Held out" is a claim about what
+the search never saw, not a claim that the rows came from the customer's world, and a reader who is
+not told the difference will hear the second one. The details layer below carries the counts.
+
+Name both written files in the closing summary's details layer, by absolute path -
+`<project root>/traigent-runs/tuning.jsonl` and `<project root>/traigent-runs/holdout.jsonl` - and
+say the reserved rows are the second one, so a user who wants them gone knows which file to open.
+Both are derived: their dataset was read and rows were copied out of it. Nothing was moved and
+nothing has to be put back - the original was never modified, lost no row, and stays the canonical
+copy - so deleting either derived file loses nothing. This is housekeeping, so it goes below the
+outcome and the recommendation, never beside them.
+
+One thing does have to travel back, and only the user can carry it: a repair made under "Quality
+diagnosis and repair choice" above lives in the working copy, so their own dataset still has the
+defect this run worked around. Name what changed and in which rows, and leave applying it to them.
+Offer it; never write it.
+
+Those are three kinds of row, and the details layer keeps them apart: a row the customer brought, a
+row of theirs this run repaired - named just above - and a row this run generated. Merging them into
+one "modified" bucket destroys the only answer the user came for, which is which rows are whose. A
+repair changed a field, not an origin, so that row is still theirs; only a generated row is ours.
+Give each set its own line saying it as a mixture - how many rows are the customer's and how many
+this run generated, with the generated ids. That is counts and ids rather than a path because the
+generated rows sit in those same two files, interleaved with the real ones; there is no third file
+to point at. The provenance fields the rows already carry and the id lists this run already writes
+are where both numbers come from.
+
+Call it a sealed holdout only when its split and labels were fixed and hidden from component
+design, tuning, and winner selection until the candidate was locked. Because the assistant creates
+and can inspect the generated split, call the held-out set held-back and non-blind instead.
 
 Synthetic examples may support later promotion validation only after independent human review
 against the real task and only when the split and labels remained sealed from design, tuning, and
 winner selection. This is a later production-promotion safeguard, not a calibration gate or a
 reason to pause the first walkthrough. Until then:
 
-- Report them as synthetic, non-blind validation evidence.
+- Report them as synthetic, non-blind held-out evidence.
 - Do not promote the result to production.
 - Do not describe the measured lift as expected customer lift.
 
-For small validation sets, report the paired outcome counts. State a difference as directional
-unless a justified paired uncertainty analysis supports a stronger claim.
+Beside those two totals, report the paired outcome counts - how many examples the enhanced winner
+scored correctly that the baseline did not, how many went the other way, and how many tied. This
+is required on the ten-row default, not only above it: at that size the paired counts are the
+whole resolution the split has, and a percentage claims one it does not. State a difference as
+directional unless a justified paired uncertainty analysis supports a stronger claim.

@@ -4463,7 +4463,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 rows by default",
+            "18 tuning rows by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
@@ -6307,6 +6307,7 @@ class SkillPackageTests(unittest.TestCase):
             'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
             'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
+            'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
             "save_to=BASELINE_RESULTS",
             "save_to=OPTIMIZED_RESULTS",
             "ObjectiveSchema.from_objectives(",
@@ -6320,7 +6321,6 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
-        self.assertNotIn("HOLDOUT_DATASET", text)
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
@@ -6554,7 +6554,7 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
             call_agent("task", {})
 
-    def test_sdk_comparison_uses_one_public_metric_contract(self) -> None:
+    def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
         text = SDK_EXECUTION.read_text()
         functions = {}
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
@@ -6572,13 +6572,195 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "adapter around the preserved evaluator",
             "installed sdk's documented public `metric_functions` contract",
-            "baseline and enhanced search must use the same selected public evaluation path",
+            "baseline, search, and holdout must use the same selected public evaluation path",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
         self.assertIn("inspect.signature(traigent.Dataset.from_jsonl)", text)
-        self.assertNotIn("HOLDOUT_DATASET", text)
-        self.assertNotIn("def evaluate_holdout", text)
+        self.assertIn('HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")', text)
+        self.assertIn("def holdout_agent_input(input_data)", text)
+        # Scoring the winner on reserved rows is not a generalization claim,
+        # and the closing result has to say so somewhere. Before this, no
+        # document stated it of the closing result at all: the nearest sentence
+        # read as a remedy ("score the enhanced winner against the reserved
+        # held-out rows") rather than as the limit that still stands after it.
+        self.assertIn(
+            "this first-run comparison does not establish generalization or "
+            "expected production improvement, and the held-out score does not "
+            "convert it into one",
+            normalized,
+        )
+
+        holdout_node = functions["evaluate_holdout"]
+        holdout_module = ast.fix_missing_locations(
+            ast.Module(
+                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
+            )
+        )
+        examples = [
+            SimpleNamespace(
+                input_data="classify this",
+                expected_output="urgent",
+                metadata={
+                    "id": "case-1",
+                    "source": "reviewed",
+                    "difficulty": "hard",
+                    "coverage": "priority",
+                    "split": "holdout",
+                    "metadata": {"rubric_branch": "priority"},
+                },
+            ),
+            SimpleNamespace(
+                input_data={
+                    "message": "classify that",
+                },
+                expected_output="normal",
+                metadata={},
+            ),
+        ]
+        loaded_paths = []
+        agent_calls = []
+        scorer_calls = []
+
+        class Dataset:
+            @staticmethod
+            def from_jsonl(path):
+                loaded_paths.append(path)
+                return SimpleNamespace(examples=examples)
+
+        def call_agent(message, config):
+            agent_calls.append((message, config))
+            return "urgent" if message == "classify this" else "normal", 0.25
+
+        def task_score(output, expected, input_data):
+            scorer_calls.append((output, expected, input_data))
+            return 1.0
+
+        namespace = {
+            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            "call_agent": call_agent,
+            "task_score": task_score,
+            "traigent": SimpleNamespace(Dataset=Dataset),
+        }
+        exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
+
+        config = {"model": "preserved-current-model"}
+        score, cost = namespace["evaluate_holdout"](config)
+
+        self.assertEqual(score, 1.0)
+        self.assertEqual(cost, 0.5)
+        self.assertEqual(loaded_paths, ["/project/traigent-runs/holdout.jsonl"])
+        self.assertEqual(
+            agent_calls,
+            [("classify this", config), ("classify that", config)],
+        )
+        self.assertEqual(
+            scorer_calls,
+            [
+                (
+                    "urgent",
+                    examples[0].expected_output,
+                    "classify this",
+                ),
+                (
+                    "normal",
+                    examples[1].expected_output,
+                    examples[1].input_data,
+                ),
+            ],
+        )
+
+        untracked_costs = iter((0.25, None))
+
+        def call_agent_with_untracked_cost(message, config):
+            output = "urgent" if message == "classify this" else "normal"
+            return output, next(untracked_costs)
+
+        namespace["call_agent"] = call_agent_with_untracked_cost
+        score, cost = namespace["evaluate_holdout"](config)
+        self.assertEqual(score, 1.0)
+        self.assertIsNone(cost)
+
+    def test_the_search_never_evaluates_the_reserved_rows(self) -> None:
+        """The separate file is the mechanism; the claim alone is not.
+
+        4531ae6 removed the held-out dataset *and* its plumbing, and the
+        first reinstatement restored only the dataset - so the natural
+        implementation was one 28-row `tuning.jsonl` with the reserved rows
+        inside the search, while stage 8 still printed a clean held-out line.
+        Nothing else catches that: preflight passes `dataset-split` on the
+        combined scoring file, readiness never sees the optimizer's input,
+        and no other check asserts what `eval_dataset` actually names.
+        """
+        text = SDK_EXECUTION.read_text()
+        assignments: dict[str, ast.expr] = {}
+        eval_datasets: list[ast.expr] = []
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.walk(ast.parse(source)):
+                if (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                ):
+                    assignments.setdefault(node.targets[0].id, node.value)
+                if isinstance(node, ast.Call):
+                    eval_datasets.extend(
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "eval_dataset"
+                    )
+
+        self.assertEqual(
+            len(eval_datasets),
+            1,
+            "exactly one call may declare the dataset the search evaluates",
+        )
+        evaluated = eval_datasets[0]
+        self.assertIsInstance(evaluated, ast.Name)
+        self.assertEqual(
+            evaluated.id,
+            "TUNING_DATASET",
+            "the search must evaluate the tuning file - naming the holdout "
+            "file, or a combined file carrying both splits, puts the reserved "
+            "rows back inside the selection they exist to sit outside of",
+        )
+
+        resolved = {}
+        for name in ("TUNING_DATASET", "HOLDOUT_DATASET"):
+            self.assertIn(name, assignments, f"the wrapper does not define {name}")
+            resolved[name] = eval(  # noqa: S307 - the wrapper's own expression
+                compile(
+                    ast.fix_missing_locations(ast.Expression(assignments[name])),
+                    "<sdk-dataset-paths>",
+                    "eval",
+                ),
+                {"RUN_DIR": Path("/project/traigent-runs")},
+            )
+        self.assertEqual(
+            resolved["TUNING_DATASET"], "/project/traigent-runs/tuning.jsonl"
+        )
+        self.assertEqual(
+            resolved["HOLDOUT_DATASET"], "/project/traigent-runs/holdout.jsonl"
+        )
+        self.assertNotEqual(
+            resolved["TUNING_DATASET"],
+            resolved["HOLDOUT_DATASET"],
+            "one file cannot both feed the search and be withheld from it",
+        )
+
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "write the reserved rows to their own file",
+            "two files, not one file with a column",
+            "`eval_dataset` names the tuning file only",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
 
     def test_customer_portal_experiments_are_retained_and_linked(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -7585,11 +7767,23 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, safety)
 
-    def test_optional_validation_is_not_part_of_the_default_run(self) -> None:
+    def test_held_out_set_is_part_of_the_default_run_and_disclosed_seamlessly(
+        self,
+    ) -> None:
+        """#127/#141: the holdout comes back, sized ten, disclosed once.
+
+        Israel's call: keep the held-out set (removing it hides the winner's-
+        curse evidence, not the problem), but never claim Traigent prevents
+        overfitting (holdout support is not yet a real SDK feature) and never
+        call a ten-row gap "overfitting" (it is inconclusive at that sample
+        size). The split is reserved at dataset creation - same as the tuning
+        rows - but its score stays undisclosed until stage 8's closing report,
+        never at the stage-7 local baseline checkpoint, so a first run shows
+        one comparison once rather than an empty promise twice.
+        """
         documents = {
             "guide": " ".join((ROOT / "GUIDE.md").read_text().casefold().split()),
             "skill": " ".join(SKILL.read_text().casefold().split()),
-            "sdk": " ".join(SDK_EXECUTION.read_text().casefold().split()),
             "dataset": " ".join(
                 (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
                 .read_text()
@@ -7605,25 +7799,824 @@ class SkillPackageTests(unittest.TestCase):
         }
         for name, text in documents.items():
             with self.subTest(document=name):
-                self.assertNotIn("18 tuning / 10 validation", text)
-                self.assertNotIn("28 rows split", text)
-                self.assertNotIn("create 28 examples by default", text)
+                self.assertNotIn("create 18 tuning examples by default", text)
+                self.assertNotIn("do not create a held-back validation set", text)
+                self.assertNotIn("optional follow-up evidence", text)
 
         dataset = documents["dataset"]
-        self.assertIn("create 18 tuning examples by default", dataset)
-        self.assertIn("do not create a held-back validation set", dataset)
-        self.assertIn("optional follow-up evidence", documents["glossary"])
+        for phrase in (
+            "create 28 examples by default: 18 tuning rows",
+            "10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard)",
+            "held-out set and claims",
+            "selecting on the tuning rows inflates the tuning score",
+            "ten rows cannot resolve a small gap",
+            "do not say traigent prevents or corrects this",
+            'do not call a gap in this range "overfitting,"',
+            "never surface a repository, issue, or tracker reference to the user",
+            "tuning set (<n> ex)",
+            "held-out set (<m> ex)",
+            "<m> examples cannot settle",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+        self.assertIn("28 rows split 18 tuning / 10 held-out", documents["glossary"])
+        # The glossary promised a check ten rows cannot perform, with no caveat
+        # - while the entry two lines below it carried one. It also called an
+        # 18/10 split "two halves" and offered the user three competing name
+        # pairs for the same rows.
+        glossary = documents["glossary"]
+        for phrase in (
+            "they cannot measure how much better one configuration is than another",
+            "it can show a winner still works outside the rows it was chosen on "
+            "and cannot measure by how much",
+            "two parts of your examples, not equal halves",
+            'say "tuning set" and "held-out set" to the user',
+        ):
+            with self.subTest(glossary_phrase=phrase):
+                self.assertIn(phrase, glossary)
+        self.assertNotIn("two halves of your examples", glossary)
+        self.assertIn("disclosed once, beside the", documents["glossary"])
+
+        skill = documents["skill"]
+        checkpoint_index = skill.find(
+            "do not disclose the held-out score before stage 8"
+        )
+        report_index = skill.find(
+            "the recommended configuration's held-out score and small-sample note, "
+            "shown here first"
+        )
+        self.assertGreaterEqual(checkpoint_index, 0)
+        self.assertGreaterEqual(report_index, 0)
+        self.assertLess(
+            checkpoint_index,
+            report_index,
+            "the stage-7 checkpoint's refusal to disclose must precede stage "
+            "8's actual disclosure, or the seamless ordering is not encoded",
+        )
+        self.assertIn("score only that one against the ten held-out rows", skill)
+        self.assertIn(
+            "verify the held-out score belongs to the one configuration this run "
+            "recommends",
+            skill,
+        )
+
+        self.assertIn(
+            "discloses the enhanced winner's held-out score here", documents["guide"]
+        )
 
         run_plan = " ".join(
             (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
         )
         for phrase in (
-            "tuning rows, coverage, and known limitations",
+            "tuning rows and held-out rows (default 10, reserved at creation)",
             "local baseline checkpoint",
             "successful cli url, or `local-only` with reason",
             "baseline-versus-enhanced comparison - measured tuning behavior",
+            "held-out score for the recommended configuration, the round it came "
+            "from, its tuning score, the held-out set's real/generated counts, "
+            "and the small-sample note",
         ):
-            self.assertIn(phrase, run_plan)
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, run_plan)
+
+    def test_ten_held_out_rows_are_the_design_not_a_placeholder(self) -> None:
+        """The owner's rule: ten rows, composed 2/3/3/2, topped up if needed.
+
+        The first reinstatement told the assistant that growing the split past
+        ten was tracked as a Traigent-owned follow-up, which made the size read
+        as a placeholder someone would fix. It is not. Every further row is
+        another paid call on the winner, and the honest answer to the noise
+        that leaves is to say so. The composition therefore applies wherever
+        the rows come from, real data is topped up rather than allowed to drop
+        a band, and the display quotes counts because a percentage on ten rows
+        claims ten times the resolution it has.
+
+        THE PUBLISHED REASON USED TO BE THE SCORER'S FLOOR, and it was wrong
+        twice over. The document said ten is "where the readiness score puts
+        its own floor: at nine comparable rows it raises
+        `dataset-below-measurable-size` and blocks the paid comparison". That
+        was true of the scorer on this branch and false on #149, which makes
+        the same cap advisory above zero scoreable rows - measured:
+        `power_ceiling(9).blocks` is True here and False there, while
+        `power_ceiling(0)` still blocks on both. So the customer-facing reason
+        for the owner's number was a scorer detail an open branch was already
+        changing, and the number is not changing.
+
+        The reason is difficulty coverage, which is a property of the split
+        itself and of nothing else: four bands, and the two that separate
+        configurations most carry three rows each. That is what is asserted
+        below - the arithmetic of the composition, executed, rather than the
+        presence of a slug in a sentence.
+
+        And that is the second half of the defect. This test used to prove the
+        rationale by finding the string `dataset-below-measurable-size` in the
+        prose. Greping a condition id out of a document asks whether somebody
+        WROTE the claim, never whether the code DOES it - so the document and
+        the scorer could disagree for as long as the sentence stayed put. The
+        scorer is called here instead, and the two things it is called about
+        are the two things the prose is now allowed to depend on.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            # Ten is a decision, with the reason the guide previously promised
+            # and never gave.
+            "ten rows is the design, not a placeholder",
+            "ten is what the composition costs",
+            "the full picture comes from running the whole dataset over a wider knob space",
+            # One composition, applied wherever the rows come from.
+            "that composition holds wherever the rows come from",
+            # Top up rather than drop a band - with what it costs.
+            "top each set up to its composition with generated rows rather than "
+            "dropping a band",
+            "cannot show that the winner generalizes to real inputs",
+            # A standard error is labelled as one, beside the interval.
+            "one *standard error*",
+            "a 95% interval is roughly twice that",
+            # Counts, at the size where a percentage lies.
+            "report counts, not percentages, while the split is this small",
+            "can land lower, level, or higher",
+            # The paired-count discipline belongs on the small case, not off it.
+            "this is required on the ten-row default, not only above it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        self.assertNotIn("growing the holdout past the default ten rows", dataset)
+        # No minimum detectable effect, per the same decision: the guide still
+        # refuses to invent a threshold before paired outcomes exist.
+        self.assertIn(
+            "never invent a percentage-point threshold before those outcomes exist",
+            dataset,
+        )
+        # "Ten" and "at least ten" are different rules, and the file carried
+        # both shapes: a fixed composition beside a sentence about adjusting
+        # size. Say which of the two the number is.
+        self.assertIn("ten is therefore exact in both directions", dataset)
+
+        # 1. THE ARITHMETIC, EXECUTED. The composition is read out of the
+        # document the assistant follows, not restated here, and then it is
+        # made to do what the paragraph claims: it sums to ten, it covers all
+        # four bands, and removing any single row drops some band to one. That
+        # last is the whole argument for ten over nine, and it is a fact about
+        # the split rather than about any scorer.
+        composition = re.search(
+            r"reserve (\d+) held-out rows \((\d+) easy, (\d+) medium, "
+            r"(\d+) hard, (\d+) very hard\)",
+            dataset,
+        )
+        self.assertIsNotNone(
+            composition,
+            "the held-out composition is no longer stated where a reader meets "
+            "the split, so nothing here can check what ten buys",
+        )
+        total, *bands = (int(group) for group in composition.groups())
+        self.assertEqual(sum(bands), total)
+        self.assertEqual(total, 10)
+        self.assertEqual(len(bands), 4)
+        # No band has a spare row: the smallest is exactly two, which is the
+        # smallest a band can be and still be measured rather than sampled. If
+        # any band had three or more to give, ten would not be the cost of this
+        # composition and the paragraph's reason would be wrong.
+        self.assertEqual(
+            min(bands),
+            2,
+            f"the smallest band holds {min(bands)} rows, so the split has a "
+            "spare and ten is not what this composition costs",
+        )
+        outer, middle = (bands[0], bands[3]), (bands[1], bands[2])
+        self.assertTrue(
+            min(middle) > max(outer),
+            f"the middle bands hold {middle} against the outer {outer}; the "
+            "paragraph says the two that separate configurations most carry "
+            "more, and they do not",
+        )
+
+        # 2. THE SCORER, ASKED RATHER THAN QUOTED. The published rationale used
+        # to cite `dataset-below-measurable-size` blocking at nine. It must not
+        # again, because that is the scorer's decision and #149 changes it -
+        # the number here does not move when it does. What IS pinned is the
+        # only claim the paragraph still leans on: the designed split is not
+        # sitting on a blocking cap.
+        self.assertNotIn("dataset-below-measurable-size", dataset)
+        self.assertNotIn("blocks the paid comparison", dataset)
+        designed = READINESS.power_ceiling(total)
+        self.assertFalse(
+            designed is not None and designed.blocks,
+            f"the designed {total}-row split is itself blocked by "
+            f"{designed.condition if designed else None}; the composition and "
+            "the scorer disagree about the size this guide reserves",
+        )
+        self.assertIn("never a floor to grow from", dataset)
+        # The one split that is not ten is a project's own, and the document no
+        # longer tells the reader what the scorer will do to it. It used to -
+        # "a split under ten comparable rows blocks the paid comparison
+        # wherever it came from" - which is the same borrowed-threshold defect
+        # a second time in the same paragraph, and false on #149 in the same
+        # way. What is said instead is the only thing this guide decides about
+        # somebody else's split: it is used as it stands.
+        self.assertIn("kept at the size it already has, whatever its composition", dataset)
+
+    def test_real_rows_are_divided_between_both_sets_before_anything_is_generated(
+        self,
+    ) -> None:
+        """The customer's rows go to both splits, in proportion, first.
+
+        "Top up the shortfall" says how many generated rows to add and is
+        silent on which set gets the real ones - so both degenerate fills were
+        available and neither was refused. The reserved split is cut "at
+        creation time, before any component design", which reads as reserve the
+        real rows first; "user-provided examples expanded into additional
+        tuning candidates" reads as the opposite. One of those leaves a
+        held-out set of nothing but generated rows, which cannot say anything
+        about real inputs - it only shows the winner survives rows the search
+        never saw - and the other leaves the search optimizing a task the
+        customer does not have.
+
+        So the division is stated as a rule with an arithmetic the assistant
+        cannot read two ways, and both failure directions are named beside it.
+        The proportion is the sets' own: at the 18/10 default, roughly two real
+        rows to tuning for every one held back.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "**real rows reach both sets before either is topped up.**", dataset
+        )
+        for phrase in (
+            # The rule, and the ordering that makes it a rule rather than a
+            # preference: divide before generating, not after.
+            "divide the real ones between them in the same proportion as the "
+            "sets themselves, rounding in the tuning set's favour, before a "
+            "single row is generated",
+            # The owner's own worked example, and the two smaller ones that
+            # pin the rounding direction.
+            "ten real rows split seven and three",
+            "four split three and one",
+            "two split one and one",
+            # Below two there is nothing to divide, and the tie-break is said
+            # rather than left to the reader.
+            "below two there is nothing to divide",
+            # Both degenerate fills are refused, not just the one that is
+            # easier to picture.
+            "in both directions",
+            "a held-out set of generated rows validates nothing about real inputs",
+            "a tuning set of generated rows searches a task the customer does not have",
+            # The composition survives the division.
+            "placing each real row in the band its own difficulty puts it in",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # And the closing report says the mixture out loud, because "held out"
+        # is a claim about what the search saw, not about where a row came
+        # from - a reader who is not told hears the second one.
+        self.assertIn(
+            "when the split was topped up, say so on the same line as its score",
+            dataset,
+        )
+        # The counts themselves are stated once, in the details layer that owns
+        # the whole mixture - see the row-provenance test below. The score line
+        # points at them rather than repeating them.
+        self.assertIn("the details layer below carries the counts", dataset)
+        self.assertIn(
+            "how many rows are the customer's and how many this run generated",
+            dataset,
+        )
+
+    def test_the_close_says_where_the_two_written_files_are(self) -> None:
+        """A user who wants the reserved rows gone has to be told where they are.
+
+        The run writes two files the user did not ask for. Naming them only as
+        `holdout.jsonl` tells a reader what the assistant called it, not where
+        to look on their own disk, so the path is absolute the way every other
+        path this guide asks a user to act on is absolute.
+
+        The offer is only safe because their own dataset was never edited, so
+        the conclusion is stated locally - not the preservation mandate, which
+        has a home. And it is placed: the closing summary leads with the
+        outcome and one recommendation, and file housekeeping competing with
+        that is the "menu instead of a recommendation" the flow already
+        refuses.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "name both written files in the closing summary's details layer, "
+            "by absolute path",
+            "`<project root>/traigent-runs/tuning.jsonl`",
+            "`<project root>/traigent-runs/holdout.jsonl`",
+            "so a user who wants them gone knows which file to open",
+            # Nothing is moved out and nothing is returned - the unease the
+            # owner named, answered with what the run actually does. Verified
+            # against the code: the bundled scripts write only the report path
+            # they are given, and every repair path is a working copy.
+            "both are derived: their dataset was read and rows were copied out of it",
+            "nothing was moved and nothing has to be put back",
+            "the original was never modified, lost no row, and stays the canonical copy",
+            # Safe rather than alarming: the local conclusion, not the mandate.
+            "so deleting either derived file loses nothing",
+            # Placed below the outcome, not beside it.
+            "it goes below the outcome and the recommendation, never beside them",
+            # The one thing that IS stranded, told rather than done. Nothing
+            # in the close said this before: the run repairs into a working
+            # copy, reports the better score, and the user's own file keeps
+            # the defect.
+            "only the user can carry it",
+            "their own dataset still has the defect this run worked around",
+            "name what changed and in which rows, and leave applying it to them",
+            "offer it; never write it",
+            # Three kinds of row, kept apart. A repaired row is the customer's
+            # with a field changed; a generated row is this run's. Collapsing
+            # them into one "modified" bucket answers a question nobody asked
+            # and loses the one they did.
+            "those are three kinds of row",
+            "a row the customer brought, a row of theirs this run repaired",
+            "and a row this run generated",
+            'merging them into one "modified" bucket destroys the only answer',
+            "a repair changed a field, not an origin, so that row is still theirs; "
+            "only a generated row is ours",
+            # The mixture is stated as a mixture, with counts and ids - and as
+            # counts rather than a path, because there is no third file.
+            "give each set its own line saying it as a mixture",
+            "how many rows are the customer's and how many this run generated, "
+            "with the generated ids",
+            "interleaved with the real ones; there is no third file to point at",
+            # Reusing what exists, per the owner: no new vocabulary, no new file.
+            "the provenance fields the rows already carry and the id lists this "
+            "run already writes",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
+    def test_the_close_says_what_a_full_capability_run_would_do(self) -> None:
+        """The ten rows are a teaching choice, said forwards rather than implied.
+
+        The size decision is unchanged - ten, exact in both directions, for the
+        reasons the sizing paragraphs above already give. What was missing is
+        the positive half: the guide left "this is only a walkthrough" to be
+        inferred from a caveat, which reads as a limitation being apologised
+        for rather than as a step being demonstrated cheaply.
+
+        Two brakes, because this sentence is the one most likely to become a
+        pitch. It may not apologise for the ten rows, and it may not say what a
+        larger run would return - only what it would do. The route to it is the
+        skills handoff the close already carries, pointed at rather than
+        restated.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "at full capability this same check runs over the customer's whole dataset",
+            "that is where real-world validation actually happens",
+            "showing the shape of that step cheaply rather than performing it",
+            "which is a choice and not a shortfall",
+            "without apologizing for the ten rows and without saying what a "
+            "larger run would find",
+            "the close's skills handoff is already the route to it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # It sits beside the small-sample caveat and does not replace it: the
+        # backward-looking half stays exactly as it was.
+        self.assertIn("ten rows cannot resolve a small gap", dataset)
+        self.assertLess(
+            dataset.index("keep the note only while one row still moves"),
+            dataset.index("at full capability this same check runs"),
+        )
+        # And it does not reopen the size decision it explains.
+        self.assertIn("ten is therefore exact in both directions", dataset)
+
+    def test_one_configuration_is_selected_on_tuning_and_only_it_is_held_out_scored(
+        self,
+    ) -> None:
+        """The held-out rows report on a choice; they never make one.
+
+        The owner asked what happens when a later measurement comes back
+        worse, and answered it with "run both at the very end of the test set".
+        Running two configurations on the reserved rows and keeping the better
+        one is selection, and a set used for selection is not held out - its
+        number would carry exactly the optimism the tuning score carries, which
+        is the one failure this split exists to prevent.
+
+        The intent underneath is right and was unmet: the recommendation was
+        the enhanced search's winner by position rather than by score, so a
+        baseline that still beat it on the tuning rows lost anyway. Both paid
+        measurements now compete, on the rows already spent on selection, and
+        exactly one configuration reaches the reserved rows.
+
+        The owner's Pareto instinct lands on the tuning side, where it is
+        legitimate: at equal score, prefer the cheaper configuration.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        skill = " ".join(SKILL.read_text().casefold().split())
+        # One configuration, selected on the tuning scores across both paid
+        # measurements - not on position.
+        for phrase in (
+            "score the held-out rows once, on one configuration: the one this run recommends",
+            "select it on the **tuning** scores across both of them",
+            "the enhanced search's winner is not the answer by position",
+            "when the baseline's best configuration still scores higher on the "
+            "tuning rows, that is the one this run recommends",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # The correction, stated plainly enough that the mechanism cannot be
+        # rebuilt by someone reading only this section.
+        self.assertIn("**the held-out rows arbitrate nothing.**", dataset)
+        self.assertIn(
+            "scoring two configurations on them and keeping whichever came back "
+            "higher is selection, and a set used for selection is not held out",
+            dataset,
+        )
+        self.assertIn("it does not choose one", dataset)
+        # The tie-break the owner asked for, kept on the side that may have it.
+        self.assertIn(
+            "when two configurations score the same on the tuning rows, prefer "
+            "the cheaper one; at equal cost prefer the stronger model",
+            dataset,
+        )
+        self.assertIn(
+            "that is a decision taken on the rows selection is allowed to use", dataset
+        )
+        # SKILL.md carries the ordering mandate, and says which rows may not
+        # decide it.
+        self.assertIn(
+            "select the configuration this run recommends on the **tuning** scores "
+            "across both paid measurements - never on the held-out rows, which "
+            "arbitrate nothing",
+            skill,
+        )
+        self.assertIn(
+            "verify the held-out score belongs to the one configuration this run "
+            "recommends, chosen on the tuning scores, and that no other candidate "
+            "was scored on those rows",
+            skill,
+        )
+
+    def test_two_files_is_a_recorded_choice_not_an_sdk_limitation(self) -> None:
+        """Why the reserved rows get a file, answered where the rule lives.
+
+        `eval_dataset` accepts rows as well as a path on the pinned SDK, so
+        "just choose which rows go where" is a real alternative rather than a
+        misunderstanding. It is declined for a reason the guide has to carry or
+        the next reader re-opens it: a filter is a predicate that has to keep
+        being right, and this package already lost the reserved rows exactly
+        once, when they sat inside the file the search was handed. Two files,
+        beside an untouched original, is also the honest answer to "sounds like
+        many files".
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "two files is a choice, not a limitation the sdk imposes", dataset
+        )
+        self.assertIn("`eval_dataset` also takes rows directly", dataset)
+        self.assertIn(
+            "a file the search was never given cannot leak a row however the "
+            "predicate drifts",
+            dataset,
+        )
+        self.assertIn("beside the user's untouched original", dataset)
+
+    def test_the_difficulty_ladder_has_four_rungs_and_one_home(self) -> None:
+        """Rank the rows before falling through to a random sample.
+
+        The ladder used to go difficulty tags -> coverage/scenario tags ->
+        seeded random, which discarded a judgement the assistant had already
+        made: it is reading the rows in order to pick from them, so it can rank
+        them, and it can ask whether the other tags differ in difficulty at all
+        rather than assuming they do. Two rungs go in between.
+
+        Both new rungs need a brake. "Clear" is a feeling unless something can
+        refute it, so the school-levels test asks the estimate to separate the
+        extremes rather than order the middle. And an estimate is the
+        assistant's opinion: declared through the provenance machinery this file
+        already has, and kept out of the scored `difficulty` field on rows the
+        user brought, because filling that field would clear a spread complaint
+        on the assistant's own judgement.
+
+        One home, because the ladder had two: the bounded subset and the
+        reserved split each stated it, which is the shape of every contradiction
+        this package has produced.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("### choosing rows when difficulty is not labelled", dataset)
+        for rung in (
+            "**the rows carry difficulty tags.** stratify on them.",
+            "**rank the rows yourself.**",
+            "**the rows carry other tags**",
+            "**neither holds.** take a seeded random sample",
+        ):
+            with self.subTest(rung=rung):
+                self.assertIn(rung, dataset)
+        # Rung 3 judges the tags before trusting them, and names what it got
+        # when they turn out not to differ.
+        self.assertIn(
+            "judge by that same test whether those groups actually differ in difficulty",
+            dataset,
+        )
+        self.assertIn("call that topical spread, not difficulty spread", dataset)
+        # The falsifier, in the owner's own framing.
+        for phrase in (
+            "difficulty is clear when the bands differ the way school levels differ",
+            "12-to-15-year-old",
+            "short single-table sql query against a long multi-join one",
+            '"clear" has to be falsifiable or it is a feeling',
+            "separate the extremes, not to order the middle",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        # An estimate is declared, and cannot buy the difficulty sub-score.
+        self.assertIn("`difficulty_provenance`", dataset)
+        self.assertIn(
+            "on rows the user brought, keep it out of the `difficulty` field itself",
+            dataset,
+        )
+        self.assertIn(
+            'filling it converts "declares no difficulty" into full band coverage',
+            dataset,
+        )
+        # The exemption is deliberate and is stated with its reason, so it
+        # cannot later read as an oversight and be closed: on a generated row
+        # the band is not an estimate about someone else's data, it is part of
+        # what was written, and the row already declares itself generated.
+        self.assertIn("a generated row is the other case", dataset)
+        self.assertIn("whoever wrote the question wrote its band too", dataset)
+        self.assertIn("the row already declares itself generated", dataset)
+        # One home: both call sites point at the ladder rather than restating
+        # it, and the restatements they replaced must not come back.
+        self.assertIn(
+            'work down the ladder in "choosing rows when difficulty is not labelled"',
+            dataset,
+        )
+        self.assertIn("work down the same ladder the bounded subset uses", dataset)
+        for restatement in (
+            "spread the pick across the coverage/scenario tags instead",
+            "fall back exactly as the bounded subset above does",
+        ):
+            with self.subTest(restatement=restatement):
+                self.assertNotIn(restatement, dataset)
+
+    # Engineering-rationale citations that predate this rule and are never
+    # instructed to be echoed to the user. Allowlisted by exact text so the
+    # corpus below can stay whole: narrowing the corpus to the documents that
+    # happen to be clean is how run-safety.md - which carries the customer
+    # facing approval copy - fell outside this check in the first place.
+    TRACKER_CITATION_ALLOWLIST = (
+        "(traigent-first-run#78)",
+        "Tracked upstream as Traigent/Traigent issue 1993.",
+        "Tracked upstream as Traigent/Traigent issue 2020.",
+    )
+    # Every shape a tracker citation is written in, not the two that happened to
+    # be in the tree when this was written. Those two were `traigent-first-run#N`
+    # and `traigent/traigent issue N`; measured against ten realistic spellings
+    # they caught two. `Traigent/Traigent#1993` walked straight through - the
+    # hash form of a string already on the allowlist above, spelled for the
+    # other repository - as did a full issue URL, an owner-qualified private
+    # repository, and a bare `issue #127`.
+    #
+    # What is deliberately NOT here is a bare `#\d+` on its own. That was the
+    # first repair attempted, on the theory that "`#` glued to digits is an
+    # issue reference and nothing else in customer-facing guidance". It is not:
+    # measured, it fails the standard markdown cross-link
+    # `[stage 3](../SKILL.md#3-complete-the-system)` - SKILL.md has eight
+    # numbered stage headings, so that anchor is correct authoring - and the
+    # ordinary sentence "If trial #3 fails, stop and report it", along with
+    # `run #1`, `configuration #7` and `step #2`. In a walkthrough that counts
+    # stages, trials, rows and configurations that is not an exotic input, and
+    # the failure message would have said "carries a tracker reference" about a
+    # sentence that carries none. A guard that misdiagnoses its own trigger
+    # teaches the author to route around it.
+    #
+    # The discriminating signal is a REPOSITORY, or a tracking word in front of
+    # the hash. Both are things a citation has and a count does not.
+    TRACKER_REFERENCE = re.compile(
+        # `traigent-first-run#78`, `Traigent/Traigent#2101`, and an owner
+        # segment followed by any sibling repository - which this comment
+        # cannot spell out, because the disclosure check further up this file
+        # refuses exactly that shape. The owner segment is optional.
+        r"(?:[\w.-]+/)?[\w.-]*traigent[\w.-]*#\d+"
+        # The prose form: `<repo> issue 1993`, `<repo> pull 42`.
+        r"|(?:[\w.-]+/)?traigent[\w.-]*\s+(?:issues?|prs?|pulls?|pull requests?)\s+#?\d+"
+        # A tracker URL on any forge: GitHub issues/pulls/discussions, and
+        # GitLab's `/-/issues/N`, whose extra path segment the first attempt's
+        # `issues|pull` alternation could not reach.
+        r"|[\w.-]+\.[a-z]{2,}/[\w.-]+/[\w./-]*?"
+        r"(?:issues|pull|pulls|discussions|merge_requests)/\d+"
+        # A bare hash introduced by a tracking word: `issue #127`, `see #2101`.
+        r"|\b(?:issues?|tickets?|bugs?|prs?|pull requests?"
+        r"|tracked(?:\s+(?:as|in|upstream(?:\s+as)?))?"
+        r"|fixe[sd]|closes|resolves|see)\s+#\d+",
+        re.IGNORECASE,
+    )
+    # Which repository a citation names, when it names one. A reference to THIS
+    # repository is public by definition; a reference to any other one is a
+    # disclosure, which is why the two are held to different corpora below.
+    TRACKER_REPOSITORY = re.compile(r"([\w.-]*traigent[\w.-]*)\s*(?:#|\s(?:issue|pr|pull))", re.IGNORECASE)
+    THIS_REPOSITORY = "traigent-first-run"
+    TRACKER_LINE = re.compile(r"^\s*tracking:", re.IGNORECASE | re.MULTILINE)
+
+    @classmethod
+    def foreign_tracker_references(cls, text: str) -> list[str]:
+        """Citations that name a repository other than this public one."""
+        found = []
+        for citation in cls.TRACKER_REFERENCE.findall(" ".join(text.split())):
+            named = cls.TRACKER_REPOSITORY.search(citation)
+            if named and named.group(1).casefold() != cls.THIS_REPOSITORY:
+                found.append(citation)
+        return found
+
+    def test_no_assistant_facing_document_leaks_a_tracker_reference(self) -> None:
+        """Customer-facing copy is pasted verbatim; a tracker link cannot ride along.
+
+        The disclosure note is copied into the user's chat by instruction
+        ("Report it as one line..."), so an issue reference anywhere in the
+        copy the assistant reads is one autocomplete away from a customer's
+        onboarding transcript. This is a public repository: internal repo,
+        issue, and tracker names have no place in guidance the user sees.
+
+        The corpus is every markdown document this repository publishes, from
+        `git ls-files`, rather than `assistant_facing_documents()`. That list
+        excluded README.md - the most-read file here, and the one a customer
+        reads before anything else - along with AGENTS.md, CLAUDE.md,
+        `templates/` and `reports/`.
+        """
+        for name, raw in published_prose_documents().items():
+            # Whitespace-normalized, because an allowlisted citation wraps
+            # across lines in the source and would otherwise never match.
+            allowed = " ".join(raw.split())
+            for citation in self.TRACKER_CITATION_ALLOWLIST:
+                allowed = allowed.replace(citation, "")
+            with self.subTest(document=name):
+                self.assertEqual(
+                    self.TRACKER_REFERENCE.findall(allowed),
+                    [],
+                    f"{name} carries a tracker reference outside the "
+                    "allowlisted engineering citations",
+                )
+                self.assertEqual(
+                    self.TRACKER_LINE.findall(raw),
+                    [],
+                    f"{name} carries a 'Tracking:' line, which the "
+                    "disclosure copy would paste to the user verbatim",
+                )
+
+    def test_no_published_file_names_another_repositorys_tracker(self) -> None:
+        """The disclosure half, and it reads everything git publishes.
+
+        Two different rules were being asked of one check. Copy hygiene - no
+        issue numbers in text a user is handed - belongs to the prose corpus
+        above. DISCLOSURE - no naming of a private repository's tracker -
+        belongs to everything published, scripts included, because a comment in
+        `readiness.py` ships inside the installed skill just as a sentence in
+        `run-safety.md` does.
+
+        Splitting them is what lets the corpus be whole without deleting
+        legitimate engineering context. Measured, the three shipped scripts
+        carry twelve `traigent-first-run#N` citations in code comments. Those
+        name THIS repository, which is public, and no user ever sees a code
+        comment - so the copy rule has no business there. A citation naming any
+        other repository is a different fact and fails everywhere.
+        """
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        offenders: dict[str, list[str]] = {}
+        for name in sorted(listed.stdout.split("\0")):
+            if not name or name.startswith("tests/"):
+                # `tests/` writes citations deliberately, as the inputs that
+                # prove this check can see one.
+                continue
+            try:
+                raw = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            # Normalized before the allowlist is applied, because these
+            # citations wrap across lines in the source and would otherwise
+            # never match the entry that excuses them.
+            raw = " ".join(raw.split())
+            for citation in self.TRACKER_CITATION_ALLOWLIST:
+                raw = raw.replace(citation, "")
+            foreign = self.foreign_tracker_references(raw)
+            if foreign:
+                offenders[name] = foreign
+        self.assertEqual(
+            offenders,
+            {},
+            "a published file names another repository's tracker",
+        )
+
+    def test_the_tracker_guard_sees_a_citation_and_not_a_count(self) -> None:
+        """Both directions, against invented text rather than the tree.
+
+        A clean tree says nothing about what this pattern can SEE, and the
+        pattern it replaced saw two of the ten spellings below. The second
+        group matters as much: a walkthrough that counts stages, trials, rows
+        and configurations writes `#` beside a number constantly, and the first
+        repair of this guard failed every one of them.
+        """
+        for citation in (
+            "traigent-first-run#78",
+            "Traigent/Traigent#2101",
+            "traigent/traigent#2101",
+            "Traigent/traigent-first-run#78",
+            # Assembled rather than written out: an owner segment followed by
+            # `Traigent` + CamelCase is exactly the private-repository shape the
+            # disclosure check in this same file refuses, so spelling one here
+            # would make this file fail that check. The demonstration is that
+            # the two guards agree.
+            "Traigent/" + "Traigent" + "Backend#2450",
+            "Traigent/Traigent#2100, #2101 and #2102",
+            "`traigent-first-run#78`",
+            "```\nsee Traigent/Traigent#2101\n```",
+            "Traigent/Traigent#2101 (comment)",
+            "Tracked upstream as Traigent/Traigent issue 1993.",
+            "Traigent/Traigent issues 1993",
+            "traigent-first-run pull 42",
+            "https://github.com/Traigent/Traigent/issues/2101",
+            "https://github.com/Traigent/traigent-first-run/issues/127",
+            "https://github.com/Traigent/traigent-first-run/pull/142",
+            "https://github.com/Traigent/Traigent/discussions/45",
+            "https://gitlab.example.com/group/proj/-/issues/45",
+            "see #2101 for why",
+            "issue #127",
+        ):
+            with self.subTest(citation=citation):
+                self.assertTrue(
+                    self.TRACKER_REFERENCE.search(" ".join(citation.split())),
+                    "an internal tracker citation the guard cannot see",
+                )
+
+        for legal in (
+            "https://github.com/Traigent/traigent-first-run",
+            "$traigent-first-run",
+            "## A markdown heading",
+            "traigent-first-run is the skill you install",
+            "issue 2101 of the newsletter",
+            # Standard markdown cross-links. SKILL.md has eight numbered stage
+            # headings, so this anchor form is how a reader is sent to one.
+            "[stage 3 of the flow](../SKILL.md#3-complete-the-system)",
+            "[why](skills/traigent-first-run/SKILL.md#3-complete-the-system)",
+            # Ordinary counting, in a walkthrough that counts constantly.
+            "If trial #3 fails, stop and report it before spending more.",
+            "run #1 finished before run #2",
+            "configuration #7 of 12",
+            "step #2 of the five-stage journey",
+        ):
+            with self.subTest(legal=legal):
+                self.assertIsNone(
+                    self.TRACKER_REFERENCE.search(" ".join(legal.split())),
+                    "the guard flags copy that carries no tracker reference",
+                )
+
+        # And the disclosure half distinguishes this repository from any other.
+        self.assertEqual(
+            self.foreign_tracker_references("tracked in traigent-first-run#78"), []
+        )
+        self.assertEqual(
+            self.foreign_tracker_references("tracked in Traigent/Traigent#2101"),
+            ["Traigent/Traigent#2101"],
+        )
+        # ACCEPTED RESIDUAL: a bare project-key form (`ABC-127`) is not matched.
+        # It cannot be, without a prefix denylist: the shape is identical to
+        # `RFC-9562` and `ISO-8601`, both of which this package's comments have
+        # reason to write, and a denylist of internal project keys published
+        # here would be the disclosure it is meant to prevent. Nothing in this
+        # repository uses that form today - verified by grep - and if one is
+        # ever adopted the fix is to add its exact prefix, deliberately.
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
         readme_source = (ROOT / "README.md").read_text()
@@ -10193,6 +11186,49 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "all six intended",
             ),
         ),
+        (
+            # #127/#141: the held-out set came back, and with it the two
+            # wrong things to say about the gap it exposes. Winner's-curse
+            # selection bias plus ten rows' sampling noise means the gap is
+            # inconclusive - not proof of overfitting, and not something
+            # holdout support (not yet a real SDK feature) already prevents.
+            "whether a tuning/held-out gap is called overfitting",
+            ('do not call a gap in this range "overfitting,"',),
+            ("small-data overfitting risk",),
+        ),
+        (
+            "whether traigent already prevents the held-out gap",
+            ("do not say traigent prevents or corrects this",),
+            ("traigent prevents overfitting", "traigent already prevents this"),
+        ),
+        (
+            # ML's conventional triple is train/validation/test, and this run
+            # has neither three splits nor any training: the search optimizes
+            # on one set, and the winner alone is scored on the other. The
+            # package was spending four names on those two - "held-out",
+            # "holdout", "validation", "test set" - so a reader met a third
+            # word before finishing the first. One pair in customer copy; the
+            # rest only to bridge to the reader's own vocabulary.
+            "what the two splits are called in customer copy",
+            ('say "tuning set" and "held-out set" to the user, and only that pair',),
+            (
+                "tuning split vs holdout (validation) split",
+                "tuning set / held-back test set",
+                "no tuning set and held-back test set",
+                "followed by held-back validation",
+                "shares examples with validation",
+                "missing or overlapping validation split",
+                # The stragglers the first sweep left behind. Each one is a
+                # third noun in copy the assistant reads and repeats: the
+                # exception clause for a project's own split, the instruction
+                # naming what to call an assistant-authored one, the synthetic
+                # evidence bullet, and the bounded-subset sampling rule.
+                "own independent validation split",
+                "held-back, non-blind validation",
+                "non-blind validation evidence",
+                "the held-out ten from the holdout split",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -10233,6 +11269,86 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "the comparison carries no information they can use "
                         "and reads as a discount on a price they never saw.",
                     )
+
+    # The two splits have one customer-facing name each. These are the other
+    # spellings, in the shape they appear when a script is talking ABOUT a
+    # split rather than naming a field: a bare `holdout` is the identifier
+    # vocabulary the guide deliberately kept (`holdout.jsonl`,
+    # `HOLDOUT_DATASET`, `dataset-tune-holdout-overlap`, and the split labels a
+    # user's own dataset may carry), so only the prose forms are banned.
+    THIRD_NOUNS = (
+        "validation set",
+        "validation split",
+        "test set",
+        "held-back",
+        "holdout row",
+        "holdout set",
+        "holdout split",
+        "holdout input",
+        "tuning and holdout",
+        "tuning/holdout",
+    )
+
+    def test_no_bundled_script_prints_a_third_name_for_the_two_splits(self) -> None:
+        """The registry above reads documents; the card and preflight print too.
+
+        Both spellings this package settled against reached the user through a
+        script rather than through prose - readiness printed "held-back test
+        set" on the card's own evidence line, and preflight printed "no
+        independent validation split was declared". A corpus of markdown files
+        could not see either, so the sweep that found them was manual and the
+        next one would have to be as well.
+
+        String literals, not the whole file: `HOLDOUT_DATASET`, `holdout.jsonl`
+        and the split labels a user's dataset may legitimately carry are the
+        identifier vocabulary the decision explicitly kept. What is banned is
+        prose - a script explaining a split to the reader in a third noun.
+        """
+        for path in sorted((SKILL_ROOT / "scripts").glob("*.py")):
+            literals = [
+                node.value
+                for node in ast.walk(ast.parse(path.read_text()))
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                # Prose has spaces; an identifier, a split label, and a check
+                # id do not.
+                and " " in node.value
+            ]
+            prose = " ".join(literals).casefold()
+            for noun in self.THIRD_NOUNS:
+                with self.subTest(script=path.name, noun=noun):
+                    self.assertNotIn(
+                        noun,
+                        prose,
+                        f"{path.name} says '{noun}' to the user. The pair is "
+                        '"tuning set" and "held-out set"; a third noun sends '
+                        "the reader looking for a third split.",
+                    )
+
+    def test_the_card_and_preflight_name_the_two_splits_the_settled_way(self) -> None:
+        """The other half: the replacements are pinned, not merely the absence.
+
+        A ban alone is satisfied by deleting the sentence. These are the four
+        places a user actually reads a split's name outside the guidance - the
+        power sub-score's two no-split branches, and preflight's split
+        findings.
+        """
+        readiness = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
+        for phrase in (
+            "tuning rows and no held-out set, so the ",
+            "no tuning set and held-out set, so the result would be ",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readiness)
+        for phrase in (
+            "inputs overlap the tuning and held-out splits",
+            "tuning and held-out inputs are disjoint",
+            "tuning-only dataset; no held-out split was declared",
+            "no explicit tuning/held-out split was found",
+            "held-out rows; one example changes the score by ",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, preflight)
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
         joined = " ".join(self.conversation().values())

@@ -153,7 +153,8 @@ the same thing. `reflect` is the usual name for the technique, and it pairs with
 `pre_action_reflect` now opposite it - plan before, revise after, a real axis.
 
 The synthesized walkthrough dataset contains 18 tuning rows: 3 easy, 5 medium, 5 hard, and 5 very
-hard. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
+hard, plus the ten held-out rows reserved at creation time in their own file, which no search
+ever evaluates. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
 space carries both: a baseline that ranks a lever the enhanced run will not use has measured nothing
 usable, which is what temperature became once it was pinned. Every baseline value is kept, so the
 baseline is a strict subset and the enhanced run never gets a model the baseline did not measure, so
@@ -321,6 +322,9 @@ from traigent.api.decorators import EvaluationOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
+# A separate file, not a column in the tuning one: only `eval_dataset=TUNING_DATASET`
+# below reaches the search, so a reserved row cannot be scored during selection.
+HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")
 BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
@@ -940,8 +944,8 @@ stop before baseline/search instead of scaling an untracked path.
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
 
-Keep the dataset path absolute, as `TUNING_DATASET` above already is (`str(RUN_DIR / "...")`).
-On the installed SDK (through 0.25.0) a *relative* dataset path that
+Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
+(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
 contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
 onto its own resolved parent by dataset validation and doubles into
 `.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
@@ -951,8 +955,7 @@ Generate `task_score` as an adapter around the preserved evaluator using the ins
 documented public `metric_functions` contract; the example reflects the inspected three-argument
 contract. Do not infer aliases or positional fallbacks from SDK internals. When grading requires
 example metadata or full control of agent execution, use the installed SDK's public custom
-evaluator instead. The baseline, search, and any later comparison run must use the same selected
-public evaluation path.
+evaluator instead.
 
 ## Small baseline sweep
 
@@ -1212,14 +1215,50 @@ exact-match accuracy rather than the wired scorer - so the floor silently become
 returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
 without moving anything the report shows.
 
+Score the reserved rows with the run's recommended configuration, when SKILL stage 7 says to,
+against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
+`references/evaluation-and-dataset.md` owns which configuration that is - one call of
+`evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
+cost joins the single running total exactly as a baseline phase does; `references/run-safety.md`
+owns what the approval discloses about those calls.
+
+```python
+def holdout_agent_input(input_data):
+    if isinstance(input_data, str):
+        return input_data
+    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
+        return input_data["message"]
+    raise TypeError(
+        "Holdout input does not match the inspected agent(message: str) contract"
+    )
+
+
+def evaluate_holdout(config: dict) -> tuple[float, float | None]:
+    scores = []
+    tracked_cost: float | None = 0.0
+    holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
+    for example in holdout.examples:
+        input_data = example.input_data
+        expected = example.expected_output
+        output, call_cost = call_agent(holdout_agent_input(input_data), config)
+        scores.append(task_score(output, expected, input_data))
+        if call_cost is None:
+            tracked_cost = None
+        elif tracked_cost is not None:
+            tracked_cost += call_cost
+    return sum(scores) / len(scores), tracked_cost
+```
+
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
 and direct portal links for every persisted run. Put the two results side by side, explain the
-knob differences, and state what changed in the measured tuning behavior. The baseline and
-enhanced search must use the same selected public evaluation path and the same installed public
+knob differences, and state what changed in the measured tuning behavior. The baseline, search,
+and holdout must use the same selected public evaluation path, using the same installed public
 `traigent.Dataset.from_jsonl` loader. This first-run comparison does not establish generalization
-or expected production improvement: a small tuning dataset can overfit. Consider independent
-validation later only when it would change a real decision.
+or expected production improvement, and the held-out score does not convert it into one: that
+split is assistant-visible, non-blind, and too small to settle a difference.
+`references/evaluation-and-dataset.md` owns the reservation, the disclosure format, and the
+small-sample caveat.
 
 Before reporting:
 
