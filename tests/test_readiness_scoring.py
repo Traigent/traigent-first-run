@@ -4785,8 +4785,15 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
     connect-real-data`, demanding real data from the one user who by
     construction has none.
 
-    Nothing here relaxes a ceiling. 65, 70, 74 and 75 still bind, still print,
+    Nothing here relaxes a ceiling. 65, 70, 74 and 74 still bind, still print,
     and still hold the score down; what goes away is the stop and the repair.
+
+    "The repair" is not "the remedy", and one of these four keeps its remedy.
+    An advisory ceiling recommends nothing where nothing is owed, which is why
+    three of these assert `proceed` - but `dataset-generated-answer-key` routes
+    to `review-answer-key`, a question whose answer changes the key the run is
+    graded against, and it carries `asks=True` so the payload still names it.
+    `status` is what this class is about and it stays OK in all four.
     """
 
     def _score(self, facts: "MODULE.DatasetFacts") -> "MODULE.ReadinessScore":
@@ -4838,7 +4845,15 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
             [("dataset-generated-answer-key", False)],
         )
         self.assertEqual(score.status, "OK")
-        self.assertEqual(score.recommended_action, "proceed")
+        # Bounded, not blocked - AND still routed. This asserted `proceed`,
+        # which was the reading `blocks=False` alone produced: a payload saying
+        # there is nothing to do about a dataset whose entire answer key was
+        # written by a model, beside SKILL.md's route for that same condition
+        # ("require that a person reviews a sample of the answers before a
+        # correctness claim"). `asks` is what carries the remedy without
+        # restoring the stop, and the stop is what this class is about: the
+        # cap is advisory, `status` is OK, and the ceiling is unchanged.
+        self.assertEqual(score.recommended_action, "review-answer-key")
         self.assertEqual(score.overall, MODULE.GENERATED_ANSWER_KEY_CEILING)
 
     def test_a_wiring_check_sized_dataset_is_bounded_not_blocked(self) -> None:
@@ -5543,6 +5558,209 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
             2,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+
+
+def cap_construction_field(source: str, field: str, default: object) -> dict[str, set]:
+    """Every `Cap(...)` in the scorer, mapped condition -> the values it names.
+
+    Read from the AST, for the reason the sibling reader in
+    `tests/test_skill_package.py` records: a scan of the module's attributes
+    reaches only the caps built at module level, and the two rungs that carry
+    this defect are not both there - `dataset-generated-answer-key` is a
+    module-level constant and `dataset-mostly-generated-answer-key` is built
+    inside `score_provenance`.
+
+    A constant value is returned as itself and anything else as its rendered
+    source, because a site may decide at runtime (`blocks=effective_n == 0`)
+    and an expression is not a verdict this reader may resolve. The default is
+    taken from the dataclass rather than written here, so changing it cannot
+    leave every unannotated site read as the wrong thing.
+    """
+    found: dict[str, set] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "Cap" or not node.args:
+            continue
+        condition = node.args[0]
+        if not isinstance(condition, ast.Constant) or not isinstance(
+            condition.value, str
+        ):
+            continue
+        value = default
+        for keyword in node.keywords:
+            if keyword.arg != field:
+                continue
+            value = (
+                keyword.value.value
+                if isinstance(keyword.value, ast.Constant)
+                else ast.unparse(keyword.value)
+            )
+        found.setdefault(condition.value, set()).add(value)
+    return found
+
+
+class OneRemedyOneQuestionTests(unittest.TestCase):
+    """Conditions sharing a remedy must agree on whether that remedy is asked.
+
+    The gap every existing table check is blind to. `CAP_CEILING`,
+    `ROUTE_CATEGORY`, `CAP_SEVERITY_ORDER` and `ACTION_FOR_CONDITION` are all
+    checked for membership and for order, and every one of those checks reads
+    a TABLE - so none of them can see a flag that lives on the cap rather than
+    in a table. `asks` is exactly that flag, and the state it hid was not
+    subtle: three conditions route to `review-answer-key`, one of them set
+    `asks=True`, and a dataset whose entire answer key was written by a model
+    emitted `recommended_action: "proceed"` beside SKILL.md's instruction to
+    have a person review a sample of the answers before a correctness claim.
+
+    So the assertion is at the level the flag is wrong at. `Cap.asks` says in
+    its own words that the flag "is a property of `review-answer-key` and not
+    of a size" - a property OF THE REMEDY - and `ACTION_FOR_CONDITION` is where
+    remedies are decided. Reading that table is therefore the whole guard: a
+    condition added to it inherits its siblings' answer, and a fourth
+    `review-answer-key` rung cannot ship asking nothing.
+
+    Deliberately `asks` and not every cap field. `blocks` disagrees under
+    `get-data` on purpose - `dataset-absent` waits, `dataset-coarse-resolution`
+    does not, and `dataset-below-measurable-size` decides at runtime - and
+    `ROUTE_CATEGORY`'s own comment records that disagreement as tracked and not
+    this rule's call. A ceiling is not remedy-keyed either, and that too is
+    written down beside `CAP_SEVERITY_ORDER`: `get-data` spans 20 to 89,
+    because "what should the user do" and "how much of the result survives"
+    are different questions. `asks` is the one cap field the remedy decides.
+    """
+
+    def _declared(self, field: str) -> dict[str, set]:
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        declared = cap_construction_field(
+            source, field, MODULE.Cap.__dataclass_fields__[field].default
+        )
+        self.assertTrue(declared, "found no Cap construction to check")
+        # Every condition observed, so a remedy group cannot be judged on the
+        # half of its members this reader happened to find.
+        self.assertEqual(
+            set(declared),
+            set(MODULE.ACTION_FOR_CONDITION),
+            "the conditions built and the conditions mapped are not the same set",
+        )
+        return declared
+
+    def test_conditions_sharing_a_remedy_agree_on_whether_it_asks(self) -> None:
+        declared = self._declared("asks")
+        by_remedy: dict[str, dict[str, set]] = {}
+        for condition, values in declared.items():
+            remedy = MODULE.ACTION_FOR_CONDITION[condition]
+            by_remedy.setdefault(remedy, {})[condition] = values
+        shared = {
+            remedy: group for remedy, group in by_remedy.items() if len(group) > 1
+        }
+        self.assertTrue(shared, "no remedy is carried by two conditions")
+        for remedy, group in sorted(shared.items()):
+            with self.subTest(remedy=remedy):
+                answers = {value for values in group.values() for value in values}
+                self.assertEqual(
+                    len(answers),
+                    1,
+                    f"the conditions routing to {remedy!r} disagree about "
+                    f"whether it is asked: "
+                    f"{ {c: sorted(map(repr, v)) for c, v in sorted(group.items())} }"
+                    " - `recommended_action` returns a remedy only for a cap "
+                    "that blocks or asks, so the siblings answering False emit "
+                    "`proceed` about the same finding the sibling answering "
+                    "True routes",
+                )
+
+    def test_un_porting_one_sibling_is_caught_here_and_by_no_table(self) -> None:
+        """The reverted decision, executed - and why the tables stay green on it.
+
+        The mutation is the state trunk was actually in: one
+        `review-answer-key` rung asking, the other two not. It is applied to a
+        real copy of the scorer and that copy is imported, so both halves of
+        the claim are measured rather than argued.
+
+        Every table survives it untouched, which is the point. A registry maps
+        conditions and a flag lives on the cap, so no amount of membership,
+        order or round-trip checking over `ACTION_FOR_CONDITION`, `CAP_CEILING`
+        or `ROUTE_CATEGORY` can reach it - and that is exactly how a wholly
+        model-written answer key came to emit `proceed` under a full green
+        suite.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        opener = "GENERATED_ANSWER_KEY_CAP = Cap(\n"
+        self.assertIn(opener, source, "the un-porting mutation point moved")
+        head, _, rest = source.partition(opener)
+        construction, closer, tail = rest.partition("\n)\n")
+        self.assertIn("asks=True,", construction, "the sibling no longer asks")
+        mutated = (
+            head
+            + opener
+            + construction.replace("asks=True,", "asks=False,", 1)
+            + closer
+            + tail
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "readiness_unported.py"
+            path.write_text(mutated, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("readiness_unported", path)
+            unported = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = unported
+            try:
+                spec.loader.exec_module(unported)
+            finally:
+                sys.modules.pop(spec.name, None)
+
+        # Half one: every table a check could read is identical, so every
+        # table-level check passes on the un-ported scorer.
+        for table in ("ACTION_FOR_CONDITION", "CAP_CEILING", "ROUTE_CATEGORY"):
+            with self.subTest(table=table):
+                self.assertEqual(getattr(unported, table), getattr(MODULE, table))
+        # And it still constructs: `Cap.__post_init__` fails closed on an
+        # unmapped, unranked, unclassified or blocking-and-asking cap, and an
+        # un-ported `asks` is none of those.
+        self.assertFalse(unported.GENERATED_ANSWER_KEY_CAP.asks)
+        self.assertFalse(unported.GENERATED_ANSWER_KEY_CAP.blocks)
+
+        # Half two: this guard's own reading sees it, and the payload does too.
+        declared = cap_construction_field(
+            mutated, "asks", MODULE.Cap.__dataclass_fields__["asks"].default
+        )
+        siblings = sorted(
+            condition
+            for condition, remedy in MODULE.ACTION_FOR_CONDITION.items()
+            if remedy == "review-answer-key"
+        )
+        self.assertGreater(len(siblings), 1)
+        self.assertEqual(
+            {value for condition in siblings for value in declared[condition]},
+            {False, True},
+            "the mutation no longer un-ports the sibling it names",
+        )
+        pillars = [
+            unported.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        reverted = unported.aggregate(
+            pillars,
+            [unported.GENERATED_ANSWER_KEY_CAP],
+            (),
+            dict(unported.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(reverted.recommended_action, unported.PROCEED)
+        kept = MODULE.aggregate(
+            [
+                MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+                for name in ("dataset", "evaluation", "agent")
+            ],
+            [MODULE.GENERATED_ANSWER_KEY_CAP],
+            (),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(kept.recommended_action, "review-answer-key")
+        # The ceiling and the verdict are the same on both sides: only the
+        # remedy moved, which is what `asks` was added to carry.
+        self.assertEqual(reverted.overall, kept.overall)
+        self.assertEqual(reverted.status, kept.status)
 
 
 class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):

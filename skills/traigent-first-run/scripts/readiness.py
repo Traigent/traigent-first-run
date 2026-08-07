@@ -743,6 +743,13 @@ ROUTE_CATEGORY: dict[str, str] = {
     # explicit by giving the cap `blocks=False` and `asks=True`, and the guard
     # below refuses any non-scoping route that does not block - so this is the
     # only category the merged behaviour admits.
+    #
+    # #187 set both flags on its own cap only, and the two siblings that
+    # predate it kept `asks=False` - so the argument this comment makes was
+    # true of all three and implemented on one, and a wholly model-written
+    # answer key emitted `proceed`. All three now carry `asks=True`, and the
+    # remedy-keyed guard in `tests/test_readiness_scoring.py` is what stops the
+    # next cap from being added to one of these tables and not the other flag.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # The sweep found a second one. A file is connected and no method could be
@@ -1981,7 +1988,18 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
 
 
 def size_points(effective_n: int | None) -> tuple[float, str]:
-    """Place the smaller scoreable split in a pre-run sample-size planning band.
+    """Place the scoreable rows THE SEARCH COMPARES ON in a planning band.
+
+    Not "the smaller scoreable split", which is what this said and what no
+    caller passes. All three sites in `score_dataset` hand over the scoreable
+    tuning count where a tuning split is declared, and the scoreable
+    whole-dataset count where none is - the holdout is deliberately absent from
+    every one of them, because `min(tuning, holdout, ...)` was removed on the
+    finding that the held-out set was bounding a number it does not produce
+    (the reasoning is beside that call site, not restated here). The old
+    sentence still described the removed reading, so it named the holdout as an
+    input to a band the holdout cannot reach: 10 tuning rows against 8 held out
+    reports "10 examples - small comparison set" through the CLI, not 8.
 
     Sample size alone cannot supply paired uncertainty or a detectable effect:
     both depend on completed paired outcomes. These ordinal bands reward more
@@ -2052,9 +2070,17 @@ GENERATED_ANSWER_KEY_SHARE = 1.0
 # user who by construction has none. The glossary says the opposite in so many
 # words: "synthetic data is fine for a first run but cannot prove real-world".
 #
-# The ceilings are untouched and still bind - 65, 70 and 75 are exactly how
+# The ceilings are untouched and still bind - 65, 70 and 74 are exactly how
 # "cannot prove real-world" is said in a number. `aggregate` takes the minimum
 # over all caps whatever their `blocks`.
+#
+# Advisory is not the same as silent, and only the third of them ASKS. The two
+# synthetic caps route to `connect-real-data`, which is a scope on the claim
+# and nothing the user is asked to do before this run; the answer-key cap
+# routes to `review-answer-key`, which is a question whose answer changes the
+# key the run is graded against. `asks` is a property of the remedy, so it is
+# set wherever that remedy is - and the guard in
+# `tests/test_readiness_scoring.py` reads `ACTION_FOR_CONDITION` to say so.
 FULLY_SYNTHETIC_CAP = Cap(
     "dataset-fully-synthetic",
     FULLY_SYNTHETIC_CEILING,
@@ -2075,6 +2101,20 @@ GENERATED_ANSWER_KEY_CAP = Cap(
     "Every expected answer was written by a model, so a score measures "
     "agreement with that model rather than correctness.",
     blocks=False,
+    # And ASKS - the half `blocks=False` alone deletes, ported here from the
+    # sibling that already carries it. `recommended_action` returns `proceed`
+    # unless a cap blocks or asks, so a dataset whose ENTIRE answer key is
+    # model-written was emitting "nothing to do" beside SKILL.md's route for
+    # this very condition: "require that a person reviews a sample of the
+    # answers before a correctness claim". Measured through the CLI on 28
+    # collected rows with 28 model-written answers: 59 WORKABLE / OK /
+    # `proceed` became 59 WORKABLE / OK / `review-answer-key` - the score, the
+    # band and the status are untouched and only the remedy appears.
+    #
+    # `blocks` stays False and that is not incidental: this ceiling bounds what
+    # the run may claim and does not stop it, which is the distinction
+    # `asks` exists to keep expressible rather than collapse.
+    asks=True,
 )
 # The reasons for the same two rungs of that ladder, reached by silence instead
 # of by a declaration. The ceilings are identical because the assumption IS
@@ -2363,6 +2403,13 @@ def score_provenance(
                     # not stop the run, exactly as the small-sample ceiling at
                     # the same number does not.
                     blocks=False,
+                    # And it asks, for the same reason the rung above does and
+                    # on the strength of the same route: SKILL.md sends this
+                    # one to "the same review, on the model-written answers
+                    # only". A remedy is a property of the condition, so two
+                    # conditions carrying one remedy cannot differ on whether
+                    # that remedy reaches the payload at all.
+                    asks=True,
                 )
             )
 
@@ -3134,11 +3181,18 @@ def score_dataset(
     caps.extend(provenance_caps)
     subs.append(SubScore("provenance", provenance, 10.0, True, evidence))
 
-    # Guarded by the same question the generated-answer-key cap asks: when the
-    # evaluator never reads an expected output, a wrong one cannot mis-rank
-    # anything, so there is nothing to withhold. A dataset with no expected
-    # outputs at all needs no guard - it already carries a ceiling of 30, well
-    # below this one, so this cap could never be the binding number there.
+    # Guarded on the same fact the generated-answer-key ladder above is guarded
+    # on - `uses_expected_outputs`, which is this `reference_free` read from the
+    # other side: when the evaluator never reads an expected output, a wrong one
+    # cannot mis-rank anything, so there is nothing to withhold. A dataset with
+    # no expected outputs at all needs no guard - it already carries a ceiling
+    # of 30, well below this one, so this cap could never be the binding number
+    # there.
+    #
+    # Not "the question that cap asks". `asks` is a flag on the cap and names
+    # what the CUSTOMER is asked once the cap has fired; this is a condition on
+    # whether it fires at all, and the two were one sentence here while the cap
+    # it named asked nothing.
     if not reference_free:
         unsound = unsound_answer_cap(review, run_rows(facts))
         if unsound is not None:
@@ -5505,12 +5559,32 @@ def _reject_synonym_spellings(knobs: dict[str, Any], knobs_key: str) -> None:
     reset. What it bought was a REFUSAL: two spellings of one search dimension
     are two dimensions to everything downstream, so declaring both doubled the
     reported size of the space and paid a second dimension's credit for it.
-    Deleting the table deleted the refusal with it, and measured end to end on
-    one document declaring `prompt_policy` and `prompt_style` over different
-    values, the scorer went from exit 2 to exit 0 with the agent pillar at 77
-    against 61 for the same space written once, 24 combinations against 12, and
-    a card reading `4 of 4 wired knobs actually vary`. A deletion that raises a
-    score is the shape this repository has been wrong about before.
+    Deleting the table deletes the refusal with it, and the measurement is
+    stated with the document that produces it, because it does not survive
+    being quoted without one:
+
+        temperature [0.0, 0.5, 1.0], prompt_style ["direct", "structured"],
+        model ["gpt-4o-mini", "gpt-4o"], every knob wired
+
+    written once scores exit 0 and `12 distinct configurations`. The same
+    document with `prompt_policy ["terse", "verbose"]` added and wired is
+    refused here - exit 2, no score at all - and against a copy of this file
+    whose body below returns instead of raising it scores exit 0 and `24
+    distinct configurations`. Doubling the reported space is the whole of what
+    that buys the author, which is what the refusal stops, and
+    a deletion that raises a score is the shape this repository has been wrong
+    about before.
+
+    An earlier revision also quoted an agent pillar of 77 against 61 and a card
+    line reading `4 of 4 wired knobs actually vary`. Both are deleted rather
+    than repaired: neither names the document it was read from, and neither can
+    be produced by this file at all. They were measured against the two-part
+    agent pillar - `knob-count` damped by the trial budget, blended 55/45 with
+    `variation` - which the note at the top of this module records as replaced
+    by the single `search-space` sub-score; that sub-score prints a
+    configuration count and no knob line, and re-measuring the space above
+    scores it 100. A number that cannot be re-derived from the text beside it
+    is not evidence, however carefully it was once taken.
 
     So the refusal stays and the substitution does not. `KNOB_SYNONYMS` is
     never read to rename anything: no name the author wrote is replaced, no
