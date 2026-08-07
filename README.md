@@ -215,6 +215,18 @@ effectively ignored when your project uses Git, asks for only the provider key b
 baseline, and activates a preserved Traigent key or asks you to add one after the checkpoint. Never
 paste secrets into chat.
 
+## License
+
+This repository - the walkthrough, the bundled skill, the scripts and the references - is
+**dual-licensed** on the same terms as the SDK it installs: the
+[GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`) **or** a
+[Traigent commercial license](COMMERCIAL-LICENSE.md) under a separate written agreement.
+SPDX: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`. Commercial inquiries: `legal@traigent.ai`.
+
+One licence covers both, so a project already holding commercial terms for the SDK needs nothing
+further to use this guide. External contributions require a signed CLA - see
+[CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md).
+
 ## SDK licensing
 
 The pinned requirements install `traigent==0.25.0`. The Traigent SDK is offered under the
