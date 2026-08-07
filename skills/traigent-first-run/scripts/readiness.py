@@ -5571,9 +5571,8 @@ def _reject_synonym_spellings(knobs: dict[str, Any], knobs_key: str) -> None:
     refused here - exit 2, no score at all - and against a copy of this file
     whose body below returns instead of raising it scores exit 0 and `24
     distinct configurations`. Doubling the reported space is the whole of what
-    that buys the author, which is what the refusal stops, and
-    a deletion that raises a score is the shape this repository has been wrong
-    about before.
+    that buys the author, which is what the refusal stops - and a deletion that
+    raises a score is the shape this repository has been wrong about before.
 
     An earlier revision also quoted an agent pillar of 77 against 61 and a card
     line reading `4 of 4 wired knobs actually vary`. Both are deleted rather
