@@ -351,8 +351,9 @@ current-run file enters closing readiness. A stopped, failed, or zero-trial sear
 the agent pillar remains honestly scored from absent evidence and its cap stays binding.
 
 These are the only fields the scorer reads and the only keys it accepts: any other key is refused
-by name (exit 2) with the closest declared field, because it cannot be told from a misspelling of
-one - `max_trial` for `max_trials` is one character, and it raised the band. A field that is
+by name (exit 2), listing the fields it may declare and naming the closest when there is one,
+because it cannot be told from a misspelling of one - `max_trial` for `max_trials` is one
+character, and it raised the band. A field that is
 present but malformed is refused with a message naming it (exit 2), never
 scored around - a document the scorer cannot read is not a document it may guess at. Refusal turns
 on the *value*, not on how JSON spelled it: an empty list, a `null` and a `0` where an object

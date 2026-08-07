@@ -1388,6 +1388,51 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         )
         MODULE.agent_facts_from_config_space({name: sample[name] for name in declared})
 
+    def test_the_undeclared_key_guard_reads_the_declaration_it_guards(self) -> None:
+        """The derivation has to be load-bearing today, not once a field moves.
+
+        The test above builds its document FROM `CONFIG_SPACE_FIELDS`, so it
+        proves the two agree - and two identical things agree whether one is
+        derived from the other or copied from it. Replacing
+        `{spec.name for spec in CONFIG_SPACE_FIELDS}` with a hand-written set
+        of the same six names fails nothing at all: measured, the whole suite
+        stays green apart from the behaviour lock, which is only stale because
+        the file's bytes changed. A guard whose mutation nothing catches is a
+        guard that documents an intention.
+
+        So the two sets are made to DIFFER here. A field is added to the
+        declaration at runtime and the same document is refused before and
+        accepted after; a copied list cannot follow that, and a hand-written
+        one fails on the second call.
+        """
+        document = {
+            "knobs": {"temperature": [0.0, 1.0]},
+            "wired": ["temperature"],
+            "a_field_declared_after_this_guard_was_written": "x",
+        }
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE._reject_undeclared_fields(document)
+
+        original = MODULE.CONFIG_SPACE_FIELDS
+        MODULE.CONFIG_SPACE_FIELDS = original + (
+            MODULE.ConfigSpaceField(
+                "a_field_declared_after_this_guard_was_written",
+                "string",
+                "no",
+                lambda field, value: value,
+            ),
+        )
+        try:
+            MODULE._reject_undeclared_fields(document)
+        finally:
+            MODULE.CONFIG_SPACE_FIELDS = original
+
+        # And back: the restore is part of the assertion, not cleanup. A guard
+        # that kept the added field would pass the line above for the wrong
+        # reason.
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE._reject_undeclared_fields(document)
+
     def test_candidate_values_are_scalars_not_containers(self) -> None:
         """A nested value crashed where the schema promised a named refusal.
 
