@@ -8383,13 +8383,22 @@ class SkillPackageTests(unittest.TestCase):
         disclosure = disclosures[0]
 
         # Inside the folder: every path the guidance instructs the run to write.
+        #
+        # Written with the `traigent-runs/` prefix, which is how the rest of
+        # this corpus names a run artifact and what the disclosure paragraph now
+        # says. A bare basename was ambiguous in both directions: `run-plan.md`
+        # is also the bundled template at `assets/run-plan.md`, and the guard
+        # that every named file must resolve reported all six as files nothing
+        # provides. What this test pins is unchanged - that the close names
+        # every file the run writes - and the prefix is the spelling that makes
+        # each one findable.
         for path in (
-            "`run-plan.md`",
-            "`config-space.json`",
-            "`calibration-cases.json`",
-            "`calibration-results.json`",
-            "`walkthrough_agent.py`",
-            "`evaluator.py`",
+            "`traigent-runs/run-plan.md`",
+            "`traigent-runs/config-space.json`",
+            "`traigent-runs/calibration-cases.json`",
+            "`traigent-runs/calibration-results.json`",
+            "`traigent-runs/walkthrough_agent.py`",
+            "`traigent-runs/evaluator.py`",
             "readiness report",
             "sdk run logs",
         ):
