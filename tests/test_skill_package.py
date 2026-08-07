@@ -501,6 +501,42 @@ def behavioral_harness():
     from behavioral import harness
 
     return harness
+def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]:
+    """Every `Cap(...)` in the scorer, mapped condition -> the `blocks` it names.
+
+    Read from the AST rather than from `vars(READINESS)`, because a scan of the
+    module's own attributes reaches only the caps built at module level. Two of
+    the five conditions the partition check named -
+    `dataset-below-measurable-size` and `dataset-coarse-resolution` - are
+    constructed INSIDE `power_ceiling` and never entered that loop, so forcing
+    `blocks=True` on the below-measurable-size branch left the guard green. The
+    class is wider than these two: any cap, constant or rule built inside a
+    function is invisible to a module-level scan.
+
+    The value is the rendered expression and not a bool, because a site can
+    decide at runtime: `blocks=effective_n == 0` is one condition with two
+    branches, and a routing bullet that states one of them states a falsehood
+    about the other. The default is passed in from the dataclass rather than
+    written down here, so a change to `Cap.blocks`'s default cannot leave this
+    reading every unannotated site as the wrong thing.
+    """
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "Cap" or not node.args:
+            continue
+        condition = node.args[0]
+        if not isinstance(condition, ast.Constant) or not isinstance(
+            condition.value, str
+        ):
+            continue
+        rendered = repr(default)
+        for keyword in node.keywords:
+            if keyword.arg == "blocks":
+                rendered = ast.unparse(keyword.value)
+        found.setdefault(condition.value, set()).add(rendered)
+    return found
 
 
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
@@ -1178,7 +1214,13 @@ class SkillPackageTests(unittest.TestCase):
             "total combination count beside the ceiling",
             "number of configurations actually tested and any concrete shortfall reason",
             "cannot yet support a trustworthy paid comparison",
-            "too little comparable evidence exists",
+            # This used to pin "too little comparable evidence exists" as a
+            # meaning of PAID RUN BLOCKED. The scorer no longer blocks on a
+            # small comparison set or on generated data - both are runs the
+            # guide sanctions, and both are now ceilings - so the phrase pinned
+            # a promise the card had stopped keeping. What the README must
+            # still carry is the boundary itself, from the other side.
+            "they do not stop the run or ask you to fix anything",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
@@ -1831,16 +1873,35 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("whenever at least one cap fired", glossary)
         self.assertNotIn("only a broken grading signal", glossary)
         self.assertNotIn("something is broken, and paid work", glossary)
+        # Three phrases left this list because the code stopped doing what they
+        # said. "fewer than ten comparable examples" was named here as a reason
+        # a cap blocks; a wiring-check-sized dataset is now an advisory ceiling,
+        # so the glossary was teaching the reader a rule the card had stopped
+        # following - and a glossary is what the assistant answers the user's
+        # question from. "too little comparable evidence" and "something is
+        # missing or invalid" went with it, because both were the same claim
+        # about what Blocked means. What replaces them is the boundary itself,
+        # which is what this test was always guarding.
         for phrase in (
-            "something is missing or invalid",
-            "too little comparable evidence for a trustworthy paid comparison",
-            "fewer than ten comparable examples",
+            "created or repaired before a paid comparison is worth making",
+            "nothing scoreable in the split the search would tune on",
             "limits what the result may claim without saying anything is wrong",
             "it does not mean every component is broken",
             "a cap that only limits the claim does not set it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)
+        # The cross-reference this branch adds points at the settings-document
+        # entry for why no document was provided, and that entry's answer is
+        # unconditional, not usual: SKILL.md mandates omitting every
+        # config-space file found before this run's enhanced search on every
+        # guided run, so `score_agent` takes the no-document branch at every
+        # opening score there is. Measured on a 60-row production-sourced
+        # dataset with a passing deterministic evaluator, the opening card
+        # still reads `1 of 3 checks measured`. "Usually" sends a reader who
+        # cannot find their document looking for a mistake they did not make.
+        self.assertIn("see that entry above for why one never is", glossary)
+        self.assertNotIn("for why one usually is", glossary)
 
     def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
         """#61: a stub agent satisfied the trigger and anchored nothing.
@@ -4110,6 +4171,94 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{safety} {sdk}")
 
+    def test_every_agent_cap_condition_has_a_documented_branch(self) -> None:
+        """The sibling below covers the dataset caps; nothing covered the agent one.
+
+        SKILL.md's own sentence says "evaluator and agent caps route through the
+        rules that already own them" and then routed no agent condition at all,
+        while SKILL.md separately forbids showing a condition id to the user. So
+        the assistant met the one cap that fires on every single run with no
+        branch to take and no words to say, and a sentence claiming completeness
+        is exactly what stops anyone checking.
+
+        Scoped to the agent conditions, not to all of `ACTION_FOR_CONDITION`.
+        The first draft here checked every condition the scorer can emit, which
+        made this branch's guard depend on a sentence a different branch owns -
+        `evaluator-timeout`'s route, which three open pull requests each wrote
+        differently and which the owner settled into #151. A guard that can only
+        pass after someone else's merge is not a guard on this change. Three
+        sibling checks - dataset, evaluator, agent - each live with the branch
+        that owns that rule, and together they still cover every condition.
+
+        Enumerated from the module rather than listed here, for the same reason
+        the dataset check pins its count: a second agent cap must be routed too.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("agent-")
+        }
+        self.assertEqual(conditions, {"agent-no-varying-knobs"})
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        # Split at the evaluator/agent sentence, not at the dataset one. This
+        # branch also teaches the dataset intro the blocks-vs-advisory rule in
+        # the same words ("an advisory ceiling, never a repair to route"), so a
+        # search from the dataset anchor finds that sentence first and the
+        # ordering assertion below reads a phrase 1_600 bytes before the
+        # condition it is supposed to be routing.
+        routing = normalized.split(
+            "evaluator and agent caps route through the rules that already own them", 1
+        )[1]
+        for condition, branch in (
+            ("agent-no-varying-knobs", "that run's own outcome to report"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(
+                    condition,
+                    routing,
+                    f"{condition} can stop or bound a run and the guidance "
+                    "never names it, so the assistant has no branch to take "
+                    "and no words to say - condition ids stay internal",
+                )
+                self.assertLess(routing.index(condition), routing.index(branch))
+
+    def test_the_advisory_claim_matches_which_branches_actually_block(
+        self,
+    ) -> None:
+        """SKILL.md routes by condition id, so a claim about one branch is a
+        claim about every branch sharing that id.
+
+        `agent-no-varying-knobs` was described as "an advisory ceiling, never a
+        repair to route", justified by the branch where no settings document
+        was provided - which is genuinely advisory (`blocks=False`). But the
+        condition has five other construction sites and every one of them
+        blocks, printing `FIX BEFORE PAID RUN` on the card while the routing
+        bullet an assistant reads by id says the opposite.
+
+        Read off the module rather than pinned: a sixth branch must be
+        classified too.
+        """
+        both = {True: [], False: []}
+        for name, value in vars(READINESS).items():
+            if isinstance(value, READINESS.Cap) and (
+                value.condition == "agent-no-varying-knobs"
+            ):
+                both[value.blocks].append(name)
+        self.assertTrue(both[False], "no advisory branch left to justify the claim")
+        self.assertTrue(both[True], "no blocking branch left; rewrite this check")
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split("evaluator and agent caps route through", 1)[1]
+        # The claim must be scoped, not stated of the condition as a whole.
+        self.assertNotIn(
+            "`agent-no-varying-knobs` is an advisory ceiling, never a repair to route",
+            routing,
+        )
+        self.assertIn("is an advisory ceiling only where", routing)
+        # And the blocking half must be stated, since that is what the card
+        # prints for five of the six branches.
+        self.assertIn("the same condition blocks", routing)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
@@ -4142,6 +4291,79 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(condition, conditions)
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
+        # And the rule that decides which routes stop the run, checked against
+        # the scorer rather than only quoted. Without it the routing list is
+        # nine branches a reader classifies one at a time, which is how four of
+        # them came to block while a fifth saying the same kind of thing did
+        # not. Deliberately paired with the module: guidance that says
+        # "advisory" over a scorer that blocks is the contradiction, not either
+        # half alone.
+        self.assertIn(
+            "a route asking for a creation or repair blocks the run; one that "
+            "only scopes what the result may claim is an advisory ceiling, "
+            "never a repair to route",
+            normalized,
+        )
+        blocking = {
+            "dataset-absent",
+            "dataset-no-expected-outputs",
+            "dataset-integrity-fail",
+            "dataset-tune-holdout-overlap",
+        }
+        scoping = {
+            "dataset-fully-synthetic",
+            "dataset-mostly-synthetic",
+            "dataset-generated-answer-key",
+            "dataset-coarse-resolution",
+        }
+        # The third category, and the reason it has to exist: one condition
+        # decides at runtime. `dataset-below-measurable-size` is advisory with
+        # examples to compare on and blocks with none, so it belongs in neither
+        # set above, and the routing bullet has to carry both halves - the same
+        # shape `agent-no-varying-knobs` was given by the sibling test below.
+        conditional = {"dataset-below-measurable-size"}
+        self.assertEqual(blocking | scoping | conditional, conditions)
+        sites = cap_construction_blocks(
+            source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
+        for condition in sorted(conditions):
+            with self.subTest(cap=condition):
+                declared = sites[condition]
+                if condition in blocking:
+                    self.assertEqual(
+                        declared,
+                        {"True"},
+                        f"SKILL.md routes {condition} to a creation or a "
+                        "repair, so every site must block",
+                    )
+                elif condition in scoping:
+                    self.assertEqual(
+                        declared,
+                        {"False"},
+                        f"SKILL.md routes {condition} by scoping the claim, "
+                        "so the scorer may bound the score and may not stop the "
+                        "run or demand a repair",
+                    )
+                else:
+                    # Neither literal. If a site ever settles on one, this
+                    # condition belongs in `blocking` or `scoping` above and the
+                    # bullet should stop carrying a half that cannot happen.
+                    self.assertNotIn(
+                        declared,
+                        ({"True"}, {"False"}),
+                        f"{condition} no longer decides at runtime; move it out "
+                        "of `conditional` and simplify its routing bullet",
+                    )
+                    # And the bullet must state both halves, because SKILL.md
+                    # routes by condition id: an assistant reading the advisory
+                    # sentence by id is told the opposite of what the card
+                    # prints for a 240-row dataset whose tuning side carries no
+                    # labels - measured `FIX BEFORE PAID RUN no example can be
+                    # scored`, status BLOCKED.
+                    bullet = routing.split(f"`{condition}`", 1)[1].split("- `", 1)[0]
+                    self.assertIn("only where", bullet)
+                    self.assertIn("the same condition blocks", bullet)
+                    self.assertIn("fix before paid run", bullet)
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()

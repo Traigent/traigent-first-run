@@ -356,7 +356,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 remedy. Present reasons in user language; keep machine vocabulary and condition ids internal.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
-rather than the condition id:
+rather than the condition id. A route asking for a creation or repair blocks the run; one that only
+scopes what the result may claim is an advisory ceiling, never a repair to route:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
@@ -369,7 +370,10 @@ rather than the condition id:
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
-- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
+- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons, only where
+  some example can be scored. Where none can, the same condition blocks and the card prints `FIX
+  BEFORE PAID RUN`; route that by its reason - nothing can be compared at all, so there is no
+  result to bound - and get labelled examples before any paid run.
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.
 
@@ -380,6 +384,14 @@ the absent-evidence reading in the opening readiness gate and the creation depen
 create or select. After any repair or substitute creation, re-run the affected checks, the
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
+
+`agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
+provided to the score: before the enhanced run there is no document to score, and afterwards a
+missing one is that run's own outcome to report, not a defect in the project. Where a document
+exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
+excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
+that by its reason, and mark the settings the agent actually uses or give one of them a second
+value.
 
 ### 5. Prepare the environment and finish free checks
 

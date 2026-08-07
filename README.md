@@ -142,11 +142,18 @@ deduction and not a refusal: the run continues, the pre-cap average stays in the
 number simply cannot claim more than the evidence supports.
 
 The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
-means the current components or evidence cannot yet support a trustworthy paid comparison - either
-something is missing or invalid, or too little comparable evidence exists. Follow the named repair
-or evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the
-available evidence bounds what the result may claim; it names the number so "why is this 89" has an
-answer on the same line.
+means the current components cannot yet support a trustworthy paid comparison and something has to
+be created or repaired first - no dataset, no expected answers, an evaluator that scores a wrong
+answer as well as a right one, a tuning set that shares examples with validation, nothing scoreable
+in the split the search would tune on. The condition itself is listed as `FIX BEFORE PAID RUN`;
+follow that named repair or evidence-gathering action first. `LIMITED TO 89` means the paid
+comparison can proceed, but the available evidence bounds what the result may claim; it names the
+number so "why is this 89" has an answer on the same line.
+
+Generated data and a small comparison set land on the second side, not the first. A walkthrough
+dataset is what this guide writes for a user who has none, and a handful of rows is a wiring check -
+both are runs worth making, and both are things the result may not claim too much from. So they
+lower the ceiling and say why; they do not stop the run or ask you to fix anything.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - at or below every other ceiling, and at or below your average. Two conditions can carry the

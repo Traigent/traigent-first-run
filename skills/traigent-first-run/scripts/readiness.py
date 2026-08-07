@@ -656,6 +656,22 @@ class Cap:
     # bounded. Conflating them marked a healthy 30-row dataset BLOCKED and told
     # the assistant not to proceed with a run that was worth doing - against the
     # guide's own rule that a low score never stops the walkthrough.
+    #
+    # Which one a condition is, is not decided here case by case. SKILL.md
+    # routes every cap by id, and the route already answers the question:
+    #
+    #   route asks for a creation or a repair   -> blocks (the run waits)
+    #   route scopes what the RESULT may claim  -> advisory (the run proceeds)
+    #
+    # Read off that table, `dataset-absent` ("enter the creation dependency
+    # matrix"), `dataset-no-expected-outputs`, `dataset-integrity-fail` and
+    # `dataset-tune-holdout-overlap` ("repair a disjoint split") block, and the
+    # three evaluator conditions block through the invalid-evaluator paragraph -
+    # "do not run paid optimization against it". The synthetic-provenance,
+    # generated-answer-key and small-sample conditions do not: their routes are
+    # "apply the walkthrough labeling rules", "scope the claim", "before a
+    # correctness claim", and "call rankings exploratory". Those are sentences
+    # about the claim, and a ceiling is how this module says them.
     blocks: bool = True
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -1226,6 +1242,22 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
                 if effective_n
                 else "no example can be scored, so nothing can be compared."
             ),
+            # The two reasons above are two different findings, and only one of
+            # them stops anything. With examples to compare on, this is the
+            # wiring check the guide itself sanctions - preflight WARNs rather
+            # than FAILs at this size, `size_points` calls it "a wiring check,
+            # not a score", and SKILL.md routes it to "call rankings
+            # exploratory, not stable comparisons". Blocking contradicted the
+            # cap's own last sentence on the same card: "treat any difference
+            # as a hint, not a result" is advice for a run that happens.
+            # Its 89-ceiling twin below already had this right.
+            #
+            # Zero scoreable examples is the other finding, and it keeps
+            # blocking: nothing can be compared at all, so there is no result
+            # to bound. That state is reachable with the aggregate label count
+            # non-zero - every label on one side of a declared split - where no
+            # other cap fires to stop it.
+            blocks=effective_n == 0,
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
@@ -1284,6 +1316,43 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
+# All three are advisory, by the rule on `Cap.blocks`: SKILL.md routes them to
+# "apply the walkthrough labeling rules", "scope the claim" and "before a
+# correctness claim" - sentences about what the result may say, not repairs the
+# run waits on. Blocking made the guide contradict itself at its own finish
+# line. Generated data is what the guide CREATES for a user who has none, so
+# `tests/behavioral/scenarios/partial-missing-dataset` - real agent, real
+# evaluator, an 18-row walkthrough dataset this guide wrote, and
+# `closing_beats_opening: true` - closed on "65/100 WORKABLE (PAID RUN
+# BLOCKED)" and "fix: connect-real-data", demanding real data from the one
+# user who by construction has none. The glossary says the opposite in so many
+# words: "synthetic data is fine for a first run but cannot prove real-world".
+#
+# The ceilings are untouched and still bind - 65, 70 and 75 are exactly how
+# "cannot prove real-world" is said in a number. `aggregate` takes the minimum
+# over all caps whatever their `blocks`.
+FULLY_SYNTHETIC_CAP = Cap(
+    "dataset-fully-synthetic",
+    FULLY_SYNTHETIC_CEILING,
+    "The dataset is generated, so a high score here measures the walkthrough, "
+    "not real-world readiness.",
+    blocks=False,
+)
+MOSTLY_SYNTHETIC_CAP = Cap(
+    "dataset-mostly-synthetic",
+    MOSTLY_SYNTHETIC_CEILING,
+    "Most of the dataset is generated, so the result mostly measures invented "
+    "examples rather than real traffic.",
+    blocks=False,
+)
+GENERATED_ANSWER_KEY_CAP = Cap(
+    "dataset-generated-answer-key",
+    GENERATED_ANSWER_KEY_CEILING,
+    "Every expected answer was written by a model, so a score measures "
+    "agreement with that model rather than correctness.",
+    blocks=False,
+)
+
 
 def _row_count(value: Any, name: str) -> int:
     """Read one provenance row count, refusing a present-but-impossible one.
@@ -1332,14 +1401,7 @@ def score_provenance(
             return (
                 SYNTHESISED_ROW_POINTS,
                 "fully generated - cannot represent production traffic",
-                [
-                    Cap(
-                        "dataset-fully-synthetic",
-                        FULLY_SYNTHETIC_CEILING,
-                        "The dataset is generated, so a high score here measures "
-                        "the walkthrough, not real-world readiness.",
-                    )
-                ],
+                [FULLY_SYNTHETIC_CAP],
             )
         if "unknown" in facts.sources or not facts.sources:
             return (
@@ -1372,25 +1434,11 @@ def score_provenance(
 
     synthesised_share = facts.synthesised_rows / counted
     if facts.synthesised_rows == counted:
-        caps.append(
-            Cap(
-                "dataset-fully-synthetic",
-                FULLY_SYNTHETIC_CEILING,
-                "The dataset is generated, so a high score here measures the "
-                "walkthrough, not real-world readiness.",
-            )
-        )
+        caps.append(FULLY_SYNTHETIC_CAP)
     elif synthesised_share > MOSTLY_SYNTHETIC_SHARE:
         # Without this the any()->all() correction would hand every mixture a
         # free pass: a 90%-generated dataset would lose its ceiling entirely.
-        caps.append(
-            Cap(
-                "dataset-mostly-synthetic",
-                MOSTLY_SYNTHETIC_CEILING,
-                "Most of the dataset is generated, so the result mostly "
-                "measures invented examples rather than real traffic.",
-            )
-        )
+        caps.append(MOSTLY_SYNTHETIC_CAP)
 
     # The expected answers are the ruler every score is measured against. When
     # all of them were written by a model, an accuracy number reports agreement
@@ -1404,14 +1452,7 @@ def score_provenance(
         >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
         and facts.synthesised_rows != counted
     ):
-        caps.append(
-            Cap(
-                "dataset-generated-answer-key",
-                GENERATED_ANSWER_KEY_CEILING,
-                "Every expected answer was written by a model, so a score "
-                "measures agreement with that model rather than correctness.",
-            )
-        )
+        caps.append(GENERATED_ANSWER_KEY_CAP)
 
     return (
         round(points, 2),
@@ -1969,6 +2010,29 @@ NOTHING_WIRED_CAP = Cap(
     "nothing to search.",
 )
 
+# Deliberately tense-neutral, and it took two drafts to get there. The first
+# said "has reached this score YET" and "the enhanced search WRITES that
+# document" - a claim that the search has not happened. This scorer cannot know
+# that: it reads a preflight file, a calibration file and a config-space file,
+# and those look identical at the opening gate and at the close. The guide
+# passes `--config-space` at the close only when the search emitted one, so a
+# stopped, failed, or zero-trial search lands here too - and there the future
+# tense is simply false. What IS true in both places is the mechanism: no
+# document was provided, and the enhanced run is what produces one. The reader
+# who has just watched their search fail is told that by the run's own outcome
+# report, not by this line.
+#
+# "provided", to match the pillar evidence beside it - two spellings of one
+# fact, fourteen lines apart, read as two findings.
+NOT_YET_MEASURED_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "No settings document was provided to this score, so the settings a search "
+    "would vary cannot be counted. The enhanced run writes that document when "
+    "it completes; nothing in your project needs repairing for this.",
+    blocks=False,
+)
+
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
     AGENT_NO_VARYING_KNOBS_CEILING,
@@ -2026,9 +2090,49 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         evidence = (
             "the settings document lists no settings"
             if facts.config_space_supplied
-            else "no settings document was provided to this score yet"
+            # No "yet": the same tense bug the cap reason beside it was fixed
+            # for. This branch is also reached at the CLOSE by a stopped,
+            # failed, or zero-trial search, and there "yet" claims the search
+            # has not happened - which this module cannot know and which is
+            # false exactly when the reader has just watched one fail. Two
+            # spellings of one fact, fourteen lines apart, and only one of them
+            # was made true at both gates.
+            else "no settings document was provided to this score"
         )
-        return nothing_to_search_pillar(evidence), [NOTHING_WIRED_CAP], []
+        # `blocks` answers "does this stop the run", not "is this true" - the
+        # comment on the field says so, and says every cap used to imply BLOCKED
+        # back when every cap meant something was broken. Both states here are
+        # true; only one of them stops anything.
+        #
+        # A supplied document that lists nothing IS a defect: the user handed
+        # over their wiring and there is nothing in it. No document at all is
+        # not - the guide withholds one found before this run's search, so the
+        # ordinary opening state is that none reached the score, and the very
+        # next step is the baseline, which runs regardless. Reporting that as
+        # BLOCKED told every project, including a perfect one, that its paid run
+        # was stopped, and set `recommended_action` to `vary-knobs` - a repair
+        # for a defect the user does not have - on the last card shown before
+        # they are asked to pay.
+        #
+        # The ceiling is unchanged and still applies: `aggregate` takes the
+        # minimum over all caps whatever their `blocks`, so the score stays
+        # capped at 45 until wiring evidence exists. Only the claim that the run
+        # is stopped goes away.
+        #
+        # The condition is "no document was supplied", which is WIDER than the
+        # argument above - that argument is about the opening gate, and this
+        # branch is also reached at the close by a stopped, failed, or zero-trial
+        # search, which emits no document either (`references/run-safety.md`,
+        # config-space document). Narrowing it would need a fact naming the
+        # phase, and this module has none: preflight, calibration and
+        # config-space are the whole input and all three look the same at both
+        # gates. Rather than infer one, the two artifacts that CAN tell the
+        # difference carry it - the cap's reason says nothing that is false
+        # after a failed search, and run-safety.md tells the assistant that at
+        # the close this cap's silence is not a verdict on the search, whose
+        # outcome is reported from the run itself.
+        cap = NOTHING_WIRED_CAP if facts.config_space_supplied else NOT_YET_MEASURED_CAP
+        return nothing_to_search_pillar(evidence), [cap], []
 
     if facts.wired is None:
         # Declared knobs, unattested wiring. The document lists controls but
@@ -2596,9 +2700,20 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # already names each cap by its internal condition id, and the card
         # deliberately does not - the guide keeps that vocabulary out of
         # user-facing lines. Both are machine-readable artifacts here.
-        return (
-            f"- **{cap.condition}** ({effect}, fix: `{cap.action_kind}`): {cap.reason}"
-        )
+        #
+        # Only for a cap that blocks, though. `action_kind` is keyed by
+        # CONDITION, so all three `agent-no-varying-knobs` sites share
+        # `vary-knobs` - and printing "fix: `vary-knobs`" under "What limits how
+        # high this can score" hands a perfect project a repair for a defect it
+        # does not have, in the durable artifact, which is the exact line this
+        # change set out to stop showing. `dataset-coarse-resolution` had the
+        # same shape ("fix: `get-data`" for a healthy 15-row set), so both are
+        # fixed here rather than one: it is one rule, not two instances.
+        # `--json` still carries `action_kind` on every cap for consumers that
+        # want it; what goes away is the word "fix" over a state that is not
+        # broken.
+        remedy = f", fix: `{cap.action_kind}`" if cap.blocks else ""
+        return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
         lines.extend(["## What is blocking a trustworthy result", ""])
