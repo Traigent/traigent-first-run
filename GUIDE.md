@@ -41,12 +41,8 @@ run, compare that identity with the recorded artifact. If it differs, label the 
 **historical — different agent** and do not quote its scores as the current result.
 If none is credible, use `Agent: none discovered`; replace it before later results.
 
-An already-supplied local credential file is an availability inventory, not an agent selection. If
-the user explicitly identifies a different owner-only local file as the credential handoff for
-this run, use that same file for the run and, after its safety checks, add only a genuinely
-missing key there. Never print, copy, or ask them to paste a value already in it. Keep the agent,
-dataset, evaluator, and run artifacts in the chosen project. If no such source was identified,
-use the chosen project's local `.env` handoff.
+An already-supplied local credential file is an availability inventory, not an agent selection.
+Keep the agent, dataset, evaluator, and run artifacts in the chosen project.
 
 Use the bundled tools:
 
@@ -57,10 +53,11 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
-When a credential handoff is needed, use the selected credential source: normally the chosen
-project-root `.env`, or the external local file the user explicitly named for this run - the same
-file for the Traigent key after the baseline. Follow the skill's `references/run-safety.md` for
-the handoff itself, for which address each account state gets, and the two 10-day windows.
+One file carries every credential this run needs, including the Traigent key after the baseline.
+The skill's `references/run-safety.md` selects that file and owns every rule about it - which
+file, when and how it may be opened, and what may be written there. Follow it too for which
+address each account state gets, and the two 10-day windows. This document states none of that a
+second time.
 
 ## User-facing promise
 

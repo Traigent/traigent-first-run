@@ -52,6 +52,80 @@ def conversation_contract_documents() -> list[Path]:
     ]
 
 
+def instructional_documents() -> dict[str, str]:
+    """Every markdown document this repository publishes AS INSTRUCTION.
+
+    From `git ls-files`, not a curated list, because a curated list is only
+    ever right about the documents somebody remembered.
+    `conversation_contract_documents()` names six paths; the repository
+    publishes seventeen markdown documents, and `README.md` - the most-read
+    file here - was outside the one-home checks below until this corpus
+    replaced them. A rule can be restated anywhere that gets published.
+
+    Two directories are excluded, and each exclusion is a claim about what the
+    document IS rather than about whether it happens to pass:
+
+    * `tests/` plants restated mandates deliberately, as the inputs that prove
+      a check can see one. Scanning them would flag a guard's own fixtures.
+    * `reports/` records what past runs did, and quotes superseded guidance
+      verbatim on purpose - `first-run-field-test.md` quotes a GUIDE.md step
+      that no longer exists. A record of what was once written is not a second
+      statement of the rule; treating it as one would make correcting the
+      guidance require rewriting the history of having corrected it.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {
+        name: (ROOT / name).read_text(encoding="utf-8")
+        for name in sorted(listed.stdout.split("\0"))
+        if name and not name.startswith(("tests/", "reports/"))
+    }
+
+
+# A markdown block-level opener. Statements are cut at these as well as at
+# sentence punctuation: a bullet ends at the newline and carries no full stop,
+# so joining a block into one string makes two adjacent bullets a single
+# "sentence" - and this guidance states the rungs as bullets.
+_BLOCK_OPENER = re.compile(r"\s*(?:[-*+]\s|\d+[.)]\s|\||#{1,6}\s|>)")
+
+
+def prose_statements(text: str) -> list[str]:
+    """One document, cut into the statements a reader actually reads.
+
+    Wrapped lines are rejoined first, because this guidance hard-wraps and a
+    sentence routinely spans three source lines; splitting on newlines alone
+    would tear a statement in half and report each half as saying nothing.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            blocks.append(" ".join(" ".join(current).split()))
+            current.clear()
+
+    for line in text.splitlines():
+        if not line.strip():
+            flush()
+            continue
+        if _BLOCK_OPENER.match(line):
+            flush()
+        current.append(line)
+    flush()
+    return [
+        sentence
+        for block in blocks
+        for sentence in re.split(r"(?<=[.!?])\s+", block)
+        if sentence.strip()
+    ]
+
+
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
@@ -1799,14 +1873,55 @@ class SkillPackageTests(unittest.TestCase):
         ("open it with the available graphical handler", "graphical session"),
         ("print the absolute path and stop", "print the absolute path as the fallback"),
     )
-    # The removed middle rung, matched by every spelling the repository has
-    # actually carried plus the general shape. Anchored on "IDE or editor" and
-    # on the association with the project directory, because those are what the
-    # rung claimed and neither is a mechanism anything here implements.
+    # The removed middle rung: an editor or IDE resolved from the project. Two
+    # spellings were matched at first - `fall back to the ide` and "associated
+    # with the project directory" - which closed the shape that broke rather
+    # than the class. Measured, "Otherwise open it in the project's own editor."
+    # passed both. So the signature is the CLAIM: an editor or IDE within a
+    # clause of the thing it is supposedly resolved from, in either order,
+    # because nothing here resolves a project to an editor however it is worded.
     _MIDDLE_RUNG = re.compile(
-        r"fall back to the ide|"
-        r"(?:ide|editor)[^.]{0,60}?associated with the[^.]{0,30}?project directory"
+        r"\b(?:ide|editor)\b[^.]{0,80}?\b(?:project|workspace|repository|repo"
+        r"|directory|folder)\b"
+        r"|\b(?:project|workspace|repository|repo|directory|folder)\b[^.]{0,80}?"
+        r"\b(?:ide|editor)\b",
+        re.IGNORECASE,
     )
+    # What performs the open, and what to do when nothing can. Naming any of
+    # these IS stating the mechanism, whatever verb surrounds it - which is the
+    # class the two-spelling regex above could not reach. Re-adding a first rung
+    # ("Open it using the first available GUI editor.") restores a mechanism to
+    # a document that must not carry one, and measured, the earlier check passed
+    # that too: it only ever looked for the rung that had been deleted.
+    #
+    # The opening VERB is deliberately absent. "Before opening it, require mode
+    # `0600`" is a rule about the file, not about who opens it, and a check that
+    # flagged it would push the mode rule out of the document that owns it.
+    _OPENING_AGENT = re.compile(
+        r"\bgui\b|\bgraphical\b|\bheadless\b|\bxdg-open\b|\bstart-process\b"
+        r"|\bopener\b|\beditor\b|\bide\b|\bdesktop\b|\bwindow manager\b",
+        re.IGNORECASE,
+    )
+    # ...but only where the credential file is the subject. `glossary.md` calls
+    # the coding agent "the assistant running in your editor or terminal", which
+    # names an editor and has nothing to do with this handoff.
+    _CREDENTIAL_FILE = re.compile(
+        r"`?\.env`?\b|credential (?:file|handoff|source)|handoff file"
+        r"|traigent_api_key",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def credential_opening_mechanism(cls, documents: dict[str, str]) -> dict[str, list]:
+        """Every document that says HOW the credential file gets opened."""
+        found: dict[str, list[str]] = {}
+        for name, text in documents.items():
+            for sentence in prose_statements(text):
+                if not cls._CREDENTIAL_FILE.search(sentence):
+                    continue
+                if cls._OPENING_AGENT.search(sentence):
+                    found.setdefault(name, []).append(sentence)
+        return found
 
     def test_the_credential_handoff_has_two_rungs_and_exactly_one_home(self) -> None:
         """The middle rung named a mechanism nothing in this repository has.
@@ -1830,12 +1945,8 @@ class SkillPackageTests(unittest.TestCase):
         stated where it is performed, `SKILL.md` points at that reference, and
         `GUIDE.md` says nothing about how the file gets opened.
         """
-        documents = {
-            path.relative_to(ROOT).as_posix(): " ".join(
-                path.read_text().casefold().split()
-            )
-            for path in assistant_facing_documents()
-        }
+        raw = instructional_documents()
+        documents = {name: " ".join(text.casefold().split()) for name, text in raw.items()}
         owner = RUN_SAFETY.relative_to(ROOT).as_posix()
 
         # 1. The middle rung is gone, everywhere - including from the owner.
@@ -1868,16 +1979,153 @@ class SkillPackageTests(unittest.TestCase):
         positions = [rules.index(phrase) for _label, phrase in self._HANDOFF_RUNGS]
         self.assertEqual(positions, sorted(positions))
 
-        # 4. SKILL.md carries a pointer, not the mechanism; GUIDE.md carries
-        # neither. GUIDE.md is checked over the opener's whole vocabulary
-        # because it states no rule SKILL.md does not, and the mechanism is not
-        # in SKILL.md either.
-        skill = documents[SKILL.relative_to(ROOT).as_posix()]
-        self.assertIn("follow that reference's single ordered handoff", skill)
-        guide = documents["GUIDE.md"]
-        for word in ("gui editor", "graphical", "headless", "xdg-open", "opener"):
-            with self.subTest(word=word):
-                self.assertNotIn(word, guide)
+        # 4. No document but the owner says how the file is opened, in any
+        # words. The previous revision checked GUIDE.md against five spellings,
+        # which is the same defect one level up: it closed the two sentences
+        # that had been there rather than the class, so "Otherwise open it in
+        # the project's own editor" and a re-added "Open it using the first
+        # available GUI editor" both passed - the second being a rung the branch
+        # had just deleted. Naming an opening agent at all, in a sentence about
+        # the credential file, is what fails now.
+        stated = self.credential_opening_mechanism(raw)
+        self.assertEqual(
+            sorted(stated),
+            [owner],
+            "the credential file's opening mechanism is stated in "
+            f"{sorted(stated)}. It has one home - the reference that performs "
+            "the handoff - and every other document points there: "
+            + " || ".join(
+                f"{name}: {sentence}"
+                for name, sentences in sorted(stated.items())
+                if name != owner
+                for sentence in sentences
+            ),
+        )
+        # SKILL.md carries the pointer that replaced the mechanism, so "no
+        # mechanism here" is not satisfied by dropping the subject entirely.
+        self.assertIn(
+            "follow that reference's single ordered handoff",
+            documents[SKILL.relative_to(ROOT).as_posix()],
+        )
+
+    def test_the_handoff_mechanism_check_sees_a_rung_written_any_way(self) -> None:
+        """Invented documents, because the tree only ever holds the fixed state.
+
+        Running the check over the repository proves the fix, not the check.
+        Each string below was measured against the previous revision of this
+        guard: every one in the first group PASSED it, which is why that
+        revision could be satisfied by a paraphrase of what it had just removed.
+        """
+        for label, planted in (
+            # The reviewer's paraphrase of the deleted middle rung.
+            ("paraphrased middle rung", "Otherwise open the `.env` in the "
+             "project's own editor."),
+            # The deleted middle rung, worded as the repository once had it.
+            ("original middle rung", "If that is unavailable, open the `.env` "
+             "with the IDE or editor associated with the chosen project "
+             "directory."),
+            # A FIRST rung put back into a document that must not carry one.
+            # The old check looked only for the rung that had been deleted, so
+            # restoring a different one was invisible.
+            ("restored first rung", "Open the `.env` using the first available "
+             "GUI editor."),
+            ("restored fallback rung", "If headless, print the full `.env` path "
+             "and stop."),
+            ("windows spelling", "Hand off the credential file with "
+             "`Start-Process`."),
+            ("posix spelling", "Launch `xdg-open` on the credential file."),
+            ("desktop spelling", "On a desktop session, pop the `.env` open for "
+             "the user."),
+        ):
+            with self.subTest(planted=label):
+                self.assertEqual(
+                    sorted(self.credential_opening_mechanism({"GUIDE.md": planted})),
+                    ["GUIDE.md"],
+                    f"a {label} in GUIDE.md is invisible to this check, so the "
+                    "mechanism this branch gave one home can be given a second "
+                    "just by wording it differently",
+                )
+
+        # The other direction. Each of these is a legitimate statement ABOUT the
+        # credential file that names no opening agent, and a check that flagged
+        # one would push the rule it belongs to out of the document that owns
+        # it - which is how the mechanism ended up restated in three documents
+        # in the first place.
+        for label, legal in (
+            ("the mode rule", "Before opening it, require mode `0600` on POSIX."),
+            ("the pointer", "`references/run-safety.md` selects the credential "
+             "handoff file and owns every rule about it."),
+            ("the when-to-open rule", "Stop once only when a key is truly "
+             "missing."),
+            ("the coding agent", "Your agent is the assistant running in your "
+             "editor or terminal."),
+            ("the tracked-file check", "Run the git-tracked-file safety check "
+             "on the `.env` before secret entry."),
+        ):
+            with self.subTest(legal=label):
+                self.assertEqual(
+                    self.credential_opening_mechanism({"GUIDE.md": legal}),
+                    {},
+                    f"{label} is not a statement of the opening mechanism; "
+                    "flagging it teaches authors to route around this check",
+                )
+
+        # `_MIDDLE_RUNG` runs over whole documents rather than over sentences
+        # about the credential file, because the rung it names describes a
+        # mechanism nothing here implements - so it must not exist anywhere, in
+        # any context, whether or not the sentence around it mentions `.env`.
+        for label, planted in (
+            ("as first written", "fall back to the IDE or editor associated "
+             "with the chosen project directory"),
+            ("paraphrased", "otherwise open it in the project's own editor"),
+            ("reordered", "the editor the workspace is already open in"),
+            ("renamed", "hand it to the repository's configured IDE"),
+        ):
+            with self.subTest(middle_rung=label):
+                self.assertTrue(
+                    self._MIDDLE_RUNG.search(planted),
+                    f"the middle rung written {label} is invisible, so removing "
+                    "it from three documents did not stop it coming back",
+                )
+        for legal in (
+            "the assistant running in your editor or terminal",
+            "keep every tool's working directory at the user's project root",
+        ):
+            with self.subTest(legal=legal):
+                self.assertIsNone(self._MIDDLE_RUNG.search(legal))
+
+    def test_the_one_home_corpus_is_what_this_repository_publishes(self) -> None:
+        """A one-home check is only as good as the set of documents it opens.
+
+        The earlier corpus was `assistant_facing_documents()`, which is the
+        skill bundle plus GUIDE.md. `README.md` is not in it - the most-read
+        file in a public repository - nor are `AGENTS.md`, `CLAUDE.md` or
+        `templates/`. Measured, the deleted rung pasted verbatim into README.md
+        passed the previous revision of the check above.
+        """
+        published = instructional_documents()
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        self.assertEqual(
+            sorted(published),
+            sorted(
+                name
+                for name in listed
+                if not name.startswith(("tests/", "reports/"))
+            ),
+            "the corpus has drifted from what git publishes",
+        )
+        for expected in ("README.md", "AGENTS.md", "CLAUDE.md", "GUIDE.md"):
+            with self.subTest(document=expected):
+                self.assertIn(expected, published)
+        self.assertTrue(
+            any(name.startswith("templates/") for name in published),
+            "nothing under templates/ is in the corpus",
+        )
 
     # Where the user is sent, and how they get there. Both belong to the
     # reference that performs the handoff; GUIDE.md's paragraph points at it and
