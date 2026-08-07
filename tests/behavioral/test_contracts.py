@@ -473,6 +473,60 @@ class CommandTimeoutDerivationTests(unittest.TestCase):
             )
             self.assertEqual(harness.calibration_budget_ceiling_seconds(script), 600)
 
+    def test_a_ceiling_that_is_not_a_literal_raises_rather_than_being_skipped(
+        self,
+    ) -> None:
+        """The one failure mode on this path with no test of its own.
+
+        `ast.literal_eval` refuses a name, a call or an expression over other
+        constants, and the alternative to raising is to `continue` past it. That
+        would be the worst outcome available: a calibrator whose ceiling is
+        `BASE * 2` would leave `ceilings` empty and be reported as declaring no
+        ceiling at all - a message that sends the next reader to add a constant
+        that is already there - or, if a second literal ceiling existed, would
+        silently derive the bound from the smaller one.
+
+        Both spellings, because the annotated form takes a different branch to
+        the plain assignment and only one of them was reachable from any test.
+        """
+        for spelling in (
+            "CALIBRATION_TIMEOUT_CEILING_SECONDS = BASE_SECONDS * 2",
+            "CALIBRATION_TIMEOUT_CEILING_SECONDS: int = BASE_SECONDS * 2",
+        ):
+            with self.subTest(spelling=spelling):
+                with tempfile.TemporaryDirectory() as raw:
+                    script = Path(raw) / "computed_calibrator.py"
+                    script.write_text(f"BASE_SECONDS = 300\n{spelling}\n")
+                    with self.assertRaisesRegex(
+                        harness.ContractError, "non-literal"
+                    ) as caught:
+                        harness.calibration_budget_ceiling_seconds(script)
+                # The message must name the constant it could not read, or it
+                # sends the reader to the wrong line of a file it just parsed.
+                self.assertIn(
+                    "CALIBRATION_TIMEOUT_CEILING_SECONDS", str(caught.exception)
+                )
+
+    def test_a_ceiling_that_is_a_literal_of_the_wrong_type_raises(self) -> None:
+        """A literal `ast.literal_eval` accepts but a wall-clock bound cannot be.
+
+        Disjoint from `test_a_non_positive_ceiling_raises` above, which owns the
+        sign. This owns the type, and `True` is the trap worth naming:
+        `isinstance(True, int)` is true in Python, so a check for a positive
+        integer alone accepts it and bounds the calibrator at one second.
+        """
+        for value in ("True", '"600"', "600.0"):
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as raw:
+                    script = Path(raw) / "mistyped_calibrator.py"
+                    script.write_text(
+                        f"CALIBRATION_TIMEOUT_CEILING_SECONDS = {value}\n"
+                    )
+                    with self.assertRaisesRegex(
+                        harness.ContractError, "positive number of seconds"
+                    ):
+                        harness.calibration_budget_ceiling_seconds(script)
+
     def test_a_calibrator_that_does_not_parse_raises_a_contract_error(self) -> None:
         """One question, one exception type.
 

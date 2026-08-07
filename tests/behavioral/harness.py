@@ -14,6 +14,7 @@ import fnmatch
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -89,6 +90,12 @@ CALIBRATION_CEILING_SUFFIX = "_TIMEOUT_CEILING_SECONDS"
 # timeout payload all happen *after* the budget is spent, and the harness must
 # still be waiting when they do.
 CALIBRATION_TIMEOUT_HEADROOM_SECONDS = 60
+# Added to the single-command bound to get the floor a CI job must declare, so
+# that the harness always reaches its own timeout - and writes the partial
+# output that explains the hang - before GitHub cancels the job around it. See
+# `minimum_ci_job_timeout_minutes` for why the two numbers have to be related
+# rather than both written down.
+CI_JOB_MARGIN_MINUTES = 3
 # How much of a killed command's output the timeout diagnostic carries. Enough
 # to hold a traceback or the last progress lines; short enough that a runaway
 # printer cannot bury the message that names the command.
@@ -616,6 +623,41 @@ def command_timeout_seconds(argv: list[str]) -> int:
     if budget is None:
         budget = calibration_budget_ceiling_seconds()
     return budget + CALIBRATION_TIMEOUT_HEADROOM_SECONDS
+
+
+def worst_case_command_timeout_seconds() -> int:
+    """The longest one allowlisted command can hold a CI job.
+
+    `harness.py --all` calls the calibrator with no `--timeout`, so it takes the
+    derived branch and gets the ceiling plus the headroom - the largest bound
+    `command_timeout_seconds` can return for any invocation this repository
+    itself makes. An invocation that passes `--timeout` can ask for more, but
+    only a caller outside this repository does that, and no CI job runs one.
+    """
+    return calibration_budget_ceiling_seconds() + CALIBRATION_TIMEOUT_HEADROOM_SECONDS
+
+
+def minimum_ci_job_timeout_minutes() -> int:
+    """Whole minutes a CI job must declare for the harness bound to fire first.
+
+    The reason this exists as a derivation rather than as a number written into
+    the workflow: a job cap BELOW the harness bound destroys the diagnostic the
+    bound exists to produce. GitHub kills the job, the runner reports a bare
+    cancellation, and the partial stdout and stderr that `run_command` collects
+    from the killed child - the only evidence of *why* it hung - is never
+    written. Both numbers were hardcoded and they disagreed: the derived bound
+    was 660s against a 600s `validate` cap and a 300s `offline-contract` cap, so
+    on the derived path the job died 60s and 360s respectively before the
+    harness could say anything.
+
+    The margin sits on top of the single-command bound rather than inside it,
+    because it pays for different work: checkout, the docker pull or the three
+    `pip install` calls, and every other test in the job. Measured over every
+    successful job on `first-run-guide` from 2026-07-20 to 2026-08-06, the
+    slowest whole job of either kind is 104s, so three minutes is a little over
+    twice the slowest run ever recorded of everything that is not this command.
+    """
+    return math.ceil(worst_case_command_timeout_seconds() / 60) + CI_JOB_MARGIN_MINUTES
 
 
 def clean_capture(value: str) -> str:
