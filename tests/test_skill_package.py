@@ -4270,9 +4270,9 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # A tenth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the nine that exist today.
-        self.assertEqual(len(conditions), 9)
+        # An eleventh dataset cap must be routed too, so pin the count rather
+        # than spot-checking the ten that exist today.
+        self.assertEqual(len(conditions), 10)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -4285,6 +4285,12 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "dataset-generated-answer-key",
                 "a person reviews a sample of the answers",
+            ),
+            # The rung between "none of it" and "all of it", which the ladder
+            # did not have: with one rung the cap turned on the last row.
+            (
+                "dataset-mostly-generated-answer-key",
+                "the same review, on the model-written answers only",
             ),
         ):
             with self.subTest(condition=condition):

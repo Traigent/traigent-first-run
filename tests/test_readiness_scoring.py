@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -98,6 +99,7 @@ class KnobVariationTests(unittest.TestCase):
 class BandAndAggregationTests(unittest.TestCase):
     def test_band_boundaries_are_exact(self) -> None:
         for score, expected in (
+            (0, "NOT READY"),
             (29, "NOT READY"),
             (30, "PARTIAL"),
             (54, "PARTIAL"),
@@ -111,6 +113,45 @@ class BandAndAggregationTests(unittest.TestCase):
             with self.subTest(score=score):
                 band, _ = MODULE.band_for(score, 1.0)
                 self.assertEqual(band, expected)
+
+    def test_the_documented_bands_match_the_thresholds(self) -> None:
+        """The customer reads the ranges in prose; the code reads the tuple.
+
+        `BAND_THRESHOLDS` states exclusive upper bounds and its last entry is a
+        sentinel one past the top of the scale, which reads as "you need 101 to
+        be excellent" to anyone who has not traced `band_for`. The glossary
+        states the same bands as inclusive ranges for the user. Two statements
+        of one fact is a thing that drifts, so the prose is derived from the
+        tuple here rather than trusted - and a renumbering that forgets the
+        glossary fails rather than shipping a card whose own guide misdescribes
+        it.
+        """
+        expected: dict[str, tuple[int, int]] = {}
+        low = 0
+        for threshold, name in MODULE.BAND_THRESHOLDS:
+            # The last entry's bound is a sentinel past the end of the scale;
+            # a band cannot be documented as reaching further than 100.
+            expected[name.casefold()] = (low, min(threshold - 1, 100))
+            low = threshold
+        self.assertEqual(expected["excellent"], (90, 100), "EXCELLENT is reachable")
+
+        glossary = (
+            ROOT / "skills" / "traigent-first-run" / "references" / "glossary.md"
+        ).read_text(encoding="utf-8")
+        documented = {
+            name.strip().casefold(): (int(start), int(end))
+            for name, start, end in re.findall(
+                r"([A-Za-z][A-Za-z ]*?) \((\d+)-(\d+)\)", glossary
+            )
+        }
+        for name, band_range in expected.items():
+            with self.subTest(band=name):
+                self.assertIn(
+                    name,
+                    documented,
+                    "the glossary documents the bands and does not name this one",
+                )
+                self.assertEqual(documented[name], band_range)
 
     def test_low_confidence_demotes_a_top_band(self) -> None:
         band, limited = MODULE.band_for(95, 0.4)
@@ -209,7 +250,16 @@ class DatasetScoringTests(unittest.TestCase):
             next(s.value for s in pillar.subscores if s.name == "provenance"), 5
         )
 
-    def test_power_is_driven_by_the_smaller_split_not_total_rows(self) -> None:
+    def test_power_is_driven_by_the_tuning_split_not_total_rows(self) -> None:
+        """Not total rows, and not the holdout either.
+
+        This asserted the opposite - that a 96/4 split scored BELOW a 20/20
+        one - because the holdout used to bound resolution. It does not: 96
+        rows to compare on is a sharper comparison than 20, and reserving four
+        rows to check the winner does not make it blunter. What still holds is
+        that total rows are not the measure, which is what the second pair
+        pins.
+        """
         wide = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True, rows=100, labelled_rows=100, tuning_rows=96, holdout_rows=4
@@ -222,7 +272,16 @@ class DatasetScoringTests(unittest.TestCase):
         )[0]
         wide_power = next(s.value for s in wide.subscores if s.name == "power")
         balanced_power = next(s.value for s in balanced.subscores if s.name == "power")
-        self.assertLess(wide_power, balanced_power)
+        self.assertGreater(wide_power, balanced_power)
+
+        # 100 rows both times, and the one that tunes on fewer scores lower.
+        thin_tuning = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True, rows=100, labelled_rows=100, tuning_rows=20, holdout_rows=80
+            )
+        )[0]
+        thin_power = next(s.value for s in thin_tuning.subscores if s.name == "power")
+        self.assertLess(thin_power, wide_power)
 
     def test_untagged_difficulty_is_unmeasured_not_zero(self) -> None:
         """Real production data rarely carries difficulty tags.
@@ -268,10 +327,21 @@ class DatasetScoringTests(unittest.TestCase):
         for unsupported in ("+/-", "detect", "resolve"):
             self.assertNotIn(unsupported, power.evidence.casefold())
 
-    def test_power_uses_the_smaller_labelled_split_not_the_smaller_total_split(
+    def test_power_is_the_tuning_split_s_scoreable_size_and_not_the_holdout_s(
         self,
     ) -> None:
-        """The comparison is only as sharp as the thinner *scoreable* side."""
+        """Resolution is a property of the comparison, and the holdout is not one.
+
+        This used to take the minimum across BOTH splits, so the held-back set
+        bounded a number it takes no part in producing. The search compares
+        configurations on the tuning rows; the holdout checks the one winner
+        those rows already picked, once, and it is deliberately small. With the
+        walkthrough's ten held-out rows that minimum was ten for every project
+        that used it, `power_ceiling(10)` fired every time, and EXCELLENT was
+        structurally unreachable - a perfect 990/10 project scored 89 with a
+        permanent `dataset-coarse-resolution` cap and no action that could
+        clear it.
+        """
         lopsided = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True,
@@ -284,10 +354,10 @@ class DatasetScoringTests(unittest.TestCase):
             )
         )[0]
         power = next(s for s in lopsided.subscores if s.name == "power")
-        # The smaller total split is 40 (18.0 points); the smaller labelled
-        # split is 20, which is the number that decides anything.
+        # 60 tuning rows of which 20 are scoreable. The holdout's 40 do not
+        # enter it in either direction.
         self.assertEqual(power.value, 12.0)
-        self.assertIn("20/40 scoreable", power.evidence)
+        self.assertIn("20 scoreable", power.evidence)
 
         one_sided = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -300,13 +370,19 @@ class DatasetScoringTests(unittest.TestCase):
                 holdout_labelled_rows=0,
             )
         )[0]
-        collapsed = next(s for s in one_sided.subscores if s.name == "power")
-        self.assertEqual(collapsed.value, 5.0)
-        self.assertEqual(
-            collapsed.evidence,
-            "50 to tune on / 50 held back, 50/0 scoreable; 0 comparable examples - "
-            "a wiring check, not a score",
+        # A holdout with nothing scoreable in it used to collapse power to
+        # zero. It no longer does, because it never described the comparison's
+        # resolution - 50 tuning rows are 50 tuning rows. It IS a real problem
+        # (nothing can check the winner), so it is stated on the card rather
+        # than expressed as a number about a different question.
+        unscoreable_holdout = next(
+            s for s in one_sided.subscores if s.name == "power"
         )
+        self.assertEqual(unscoreable_holdout.value, 22.0)
+        self.assertIn(
+            "none of the held-back rows can be scored", unscoreable_holdout.evidence
+        )
+        self.assertIn("50 examples", unscoreable_holdout.evidence)
 
     def test_the_clamp_never_raises_the_power_subscore(self) -> None:
         """Clamping is one-directional over the whole grid, not just on examples.
@@ -1912,6 +1988,11 @@ PREFLIGHT_RECORDS = [
             "labelled_rows": 40,
             "sources": ["reviewed-production"],
             "synthetic": False,
+            "collected_rows": 40,
+            "synthesised_rows": 0,
+            "undeclared_rows": 0,
+            "answerable_rows": 40,
+            "generated_answer_rows": 0,
         },
     },
     {
@@ -2609,6 +2690,110 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertIsNone(MODULE.power_ceiling(None))
 
 
+class AModelWrittenAnswerKeyCannotPresentAsStrongTests(unittest.TestCase):
+    """The owner's rule: synthesised material may be workable, never good.
+
+    `GENERATED_ANSWER_KEY_CEILING` was 75 - the STRONG threshold itself - so a
+    dataset whose entire ruler was written by a model could present as STRONG,
+    against the module's own convention that a ceiling making a claim about a
+    band sits one point below that band's edge. #159 found it and left the
+    number alone because the value is the owner's call; the owner then decided
+    it: "as synthesised data - no good, no strong."
+
+    These tests pin the DECISION and never the number. Asserting `== 74` would
+    pass just as happily if the bands were renumbered and 74 landed inside
+    STRONG again, which is the exact defect being fixed - a literal that agreed
+    with the intent on the day it was written. So each assertion asks the
+    module where its own STRONG band starts and checks the ceiling against
+    that.
+    """
+
+    def _generated_key_cap(self) -> object:
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=200,
+            labelled_rows=200,
+            collected_rows=200,
+            answerable_rows=200,
+            generated_answer_rows=200,
+        )
+        _pillar, caps = MODULE.score_dataset(facts, "exact")
+        cap = next(
+            (cap for cap in caps if cap.condition == "dataset-generated-answer-key"),
+            None,
+        )
+        self.assertIsNotNone(
+            cap, "a dataset whose every expected answer is a model's raised no cap"
+        )
+        return cap
+
+    def test_the_ceiling_lands_below_the_band_the_module_calls_strong(self) -> None:
+        """The whole guarantee, expressed against the band table itself."""
+        cap = self._generated_key_cap()
+        band, _limited = MODULE.band_for(cap.ceiling, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            f"a fully model-written answer key is capped at {cap.ceiling}, "
+            f"which the module reports as {band} - at or above STRONG, so the "
+            "ceiling permits the one claim it exists to refuse",
+        )
+
+    def test_an_otherwise_perfect_project_is_held_under_strong(self) -> None:
+        """End to end, on the shape that made this worth fixing.
+
+        A project excellent on every other dimension is exactly the one the
+        ceiling has to bind: a deduction would be absorbed and the run would
+        report STRONG anyway. `weighted_average` is asserted to be in STRONG
+        territory so the test cannot pass merely because the project was weak.
+        """
+        cap = self._generated_key_cap()
+        pillars = [
+            MODULE.combine(name, [MODULE.SubScore("x", 10.0, 10.0, True, "")])
+            for name in ("agent", "dataset", "evaluation")
+        ]
+        score = MODULE.aggregate(pillars, [cap], [], dict(MODULE.DEFAULT_WEIGHTS))
+        uncapped_band, _limited = MODULE.band_for(score.weighted_average, 1.0, 1.0)
+        self.assertGreaterEqual(
+            MODULE.BAND_ORDER.index(uncapped_band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            "the fixture no longer scores into STRONG before the cap, so it "
+            "cannot demonstrate that the cap is what holds it back",
+        )
+        self.assertLess(
+            MODULE.BAND_ORDER.index(score.band),
+            MODULE.BAND_ORDER.index("STRONG"),
+            f"scored {score.weighted_average} before the cap and presented as "
+            f"{score.band} after it",
+        )
+
+    def test_no_provenance_ceiling_reaches_the_strong_band(self) -> None:
+        """The rung below the last one may not overtake it either.
+
+        The decision is about model-supplied material, not about one condition:
+        a dataset more invented than this one must not be allowed to present
+        better. Reads the three ceilings off the module so a fourth rung added
+        later is covered without editing this test.
+        """
+        strong = MODULE.BAND_ORDER.index("STRONG")
+        strong_floor = min(
+            score
+            for score in range(101)
+            if MODULE.BAND_ORDER.index(MODULE.band_for(score, 1.0, 1.0)[0]) >= strong
+        )
+        for name in (
+            "FULLY_SYNTHETIC_CEILING",
+            "MOSTLY_SYNTHETIC_CEILING",
+            "GENERATED_ANSWER_KEY_CEILING",
+        ):
+            with self.subTest(ceiling=name):
+                self.assertLess(
+                    getattr(MODULE, name),
+                    strong_floor,
+                    f"{name} reaches the STRONG band, so generated data can "
+                    "present as good rather than merely workable",
+                )
+
 def _cap_constructions() -> list[tuple[str, ast.expr]]:
     """Every `Cap(...)` written in readiness.py, as (condition, ceiling node).
 
@@ -3116,6 +3301,203 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
                 self.assertIn(f"LIMITED TO {score.overall}", card)
 
 
+class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
+    """`combine` renormalized over measured sub-scores, so withholding paid.
+
+    Dropping an unmeasured check from the denominator is right when this tool
+    could not look, and wrong when the run was asked for the evidence and did
+    not answer: the check vanishes, and the pillar is scored over what is left.
+    Measured on one 200-row project, omitting against declaring:
+
+        --task-kind omitted   evaluation 100   declared a poor fit    83
+        probe scores omitted  evaluation 100   declared a narrow spread 87
+        no difficulty tag     dataset     92   one band declared        82
+
+    Each row is the same defect: the weakest possible honest answer scored
+    lower than saying nothing. These assert the ORDERING - absence at or below
+    every declaration - rather than any of those numbers, because the numbers
+    are arithmetic and the ordering is the rule.
+    """
+
+    def _evaluation(self, **kwargs: object) -> object:
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                calibration_present=True,
+                checks=(
+                    {"good_passes": True, "bad_fails": True, "non_constant": True},
+                ),
+                **kwargs,
+            )
+        )
+        return pillar
+
+    def test_an_undeclared_task_kind_scores_no_better_than_a_poor_fit(self) -> None:
+        fits = self._evaluation(task_kind="short-answer")
+        poor = self._evaluation(task_kind="code")
+        omitted = self._evaluation()
+        self.assertGreater(fits.score, poor.score)
+        self.assertLessEqual(
+            omitted.score,
+            poor.score,
+            "omitting --task-kind scored better than declaring a kind the "
+            "method is a poor ruler for",
+        )
+        # And it is still reported as unchecked, which is what it is.
+        task_fit = next(s for s in omitted.subscores if s.name == "task-fit")
+        self.assertFalse(task_fit.measured)
+        self.assertTrue(task_fit.withheld)
+        self.assertLess(omitted.confidence, 1.0)
+
+    def test_absent_probe_scores_score_no_better_than_a_narrow_spread(self) -> None:
+        wide = self._evaluation(
+            task_kind="short-answer", probe_scores=((1.0, 0.0),)
+        )
+        narrow = self._evaluation(
+            task_kind="short-answer", probe_scores=((0.55, 0.45),)
+        )
+        omitted = self._evaluation(task_kind="short-answer")
+        self.assertGreater(wide.score, narrow.score)
+        self.assertLessEqual(
+            omitted.score,
+            narrow.score,
+            "reporting no probe scores beat reporting a narrow spread",
+        )
+
+    def test_an_untagged_dataset_scores_no_better_than_one_thin_band(self) -> None:
+        def dataset(**kwargs: object) -> object:
+            pillar, _caps = MODULE.score_dataset(
+                MODULE.DatasetFacts(
+                    exists=True,
+                    rows=200,
+                    labelled_rows=200,
+                    collected_rows=200,
+                    synthesised_rows=0,
+                    undeclared_rows=0,
+                    answerable_rows=200,
+                    generated_answer_rows=0,
+                    **kwargs,
+                ),
+                "normalized-exact",
+            )
+            return pillar
+
+        four_bands = dataset(
+            difficulty_tagged_rows=200,
+            difficulty_bands=("easy", "medium", "hard", "very-hard"),
+        )
+        one_band = dataset(difficulty_tagged_rows=200, difficulty_bands=("easy",))
+        # A DECLARED zero: preflight looked at every row and found no tag. That
+        # is a measurement whose value is nothing, and truthiness read it as
+        # "the check never ran".
+        declared_none = dataset(difficulty_tagged_rows=0, difficulty_bands=())
+        never_ran = dataset(difficulty_tagged_rows=None)
+        self.assertGreater(four_bands.score, one_band.score)
+        self.assertLessEqual(declared_none.score, one_band.score)
+        self.assertLessEqual(never_ran.score, one_band.score)
+        declared = next(
+            s for s in declared_none.subscores if s.name == "difficulty"
+        )
+        self.assertTrue(declared.measured, "a declared zero is a measurement")
+        self.assertEqual(declared.value, 0.0)
+
+    def test_a_check_this_tool_could_not_run_still_renormalizes(self) -> None:
+        """The false-red direction, and the reason `withheld` is its own flag.
+
+        An unrecognized `agent_type` leaves coverage unmeasured because THIS
+        TOOL has no catalog for it, not because the run withheld anything. That
+        one still renormalizes: charging the user for our missing catalog would
+        be the same defect pointed the other way.
+        """
+        pillar, _caps, _knobs = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(
+                {
+                    "agent_type": "bespoke-thing",
+                    "knobs": {
+                        "temperature": [0.0, 0.5, 1.0],
+                        "prompt_policy": ["direct", "structured", "criteria_first"],
+                    },
+                    "wired": ["temperature", "prompt_policy"],
+                    "max_trials": 12,
+                }
+            )
+        )
+        coverage = next(s for s in pillar.subscores if s.name == "coverage")
+        self.assertFalse(coverage.measured)
+        self.assertFalse(coverage.withheld)
+        self.assertGreater(pillar.score, 0)
+
+
+class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):
+    """A ceiling one row removes is not a ceiling.
+
+    `GENERATED_ANSWER_KEY_SHARE` was 1.0 and it was the only rung, so the cap
+    turned on the last row: on one 200-row project, 200 of 200 model-written
+    answers scored 74/WORKABLE/BLOCKED and 199 of 200 scored 94/EXCELLENT with
+    no cap at all. The sibling ladder never had that shape -
+    `MOSTLY_SYNTHETIC_SHARE` is 0.5 - and the reference promises graduated
+    treatment for both.
+    """
+
+    def _caps(self, generated: int, answerable: int = 200) -> list[str]:
+        _pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=answerable,
+                labelled_rows=answerable,
+                collected_rows=answerable,
+                synthesised_rows=0,
+                undeclared_rows=0,
+                answerable_rows=answerable,
+                generated_answer_rows=generated,
+            ),
+            "normalized-exact",
+        )
+        return [cap.condition for cap in caps]
+
+    def test_one_human_written_answer_no_longer_clears_the_ladder(self) -> None:
+        self.assertIn("dataset-generated-answer-key", self._caps(200))
+        self.assertIn("dataset-mostly-generated-answer-key", self._caps(199))
+        self.assertIn("dataset-mostly-generated-answer-key", self._caps(101))
+        # Half is not most, exactly as on the synthetic ladder.
+        self.assertEqual(self._caps(100), [])
+        self.assertEqual(self._caps(0), [])
+
+    def test_the_middle_rung_bounds_the_claim_without_stopping_the_run(
+        self,
+    ) -> None:
+        _pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                collected_rows=200,
+                synthesised_rows=0,
+                undeclared_rows=0,
+                answerable_rows=200,
+                generated_answer_rows=199,
+            ),
+            "normalized-exact",
+        )
+        cap = next(
+            cap
+            for cap in caps
+            if cap.condition == "dataset-mostly-generated-answer-key"
+        )
+        self.assertFalse(cap.blocks)
+        self.assertEqual(cap.action_kind, "review-answer-key")
+        # It states the share, because "most" is the claim and the reader needs
+        # the number behind it.
+        self.assertIn("199 of 200", cap.reason)
+        # And it obeys the owner's rule the rung above obeys: model-supplied
+        # material may be workable and may not be good.
+        band, _limited = MODULE.band_for(cap.ceiling, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band), MODULE.BAND_ORDER.index("STRONG")
+        )
+
+
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
     """traigent-first-run#98 - the payload named the problem, never the fix."""
 
@@ -3445,8 +3827,9 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
         power_of = lambda pillar: next(  # noqa: E731
             sub for sub in pillar.subscores if sub.name == "power"
         )
-        # 5 scoreable against 50: the judge must be credited the whole split.
-        self.assertIn("5/5 scoreable", power_of(reference_based).evidence)
+        # 5 scoreable of the 50 tuning rows: the judge must be credited the
+        # whole tuning split, the reference-based method only its labelled part.
+        self.assertIn("5 scoreable", power_of(reference_based).evidence)
         self.assertIn("50 examples", power_of(reference_free).evidence)
         self.assertGreater(
             power_of(reference_free).value, power_of(reference_based).value

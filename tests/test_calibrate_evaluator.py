@@ -1500,7 +1500,14 @@ class TimeoutIsReportableTests(unittest.TestCase):
                             "metrics": {
                                 "rows": 40,
                                 "labelled_rows": 40,
+                                # Every count preflight emits together: the
+                                # scorer refuses a payload missing any of them
+                                # rather than reading absence as zero.
                                 "collected_rows": 40,
+                                "synthesised_rows": 0,
+                                "undeclared_rows": 0,
+                                "answerable_rows": 40,
+                                "generated_answer_rows": 0,
                             },
                         }
                     ]

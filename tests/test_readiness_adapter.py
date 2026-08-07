@@ -120,6 +120,16 @@ def _declared_split_records(
                 "labelled_rows": 50,
                 "synthetic": False,
                 "sources": ["production"],
+                # Every count preflight emits together, because the scorer now
+                # refuses a payload missing any of them: the fallback that read
+                # an absent count as 0 was a backward-compatibility decision
+                # against a version that never shipped, and it opened the
+                # generated-answer-key gate for free.
+                "collected_rows": 100,
+                "synthesised_rows": 0,
+                "undeclared_rows": 0,
+                "answerable_rows": 50,
+                "generated_answer_rows": 0,
             },
         },
     ]
@@ -165,6 +175,11 @@ def _tuning_only_records() -> list[dict]:
                 "labelled_rows": 18,
                 "synthetic": True,
                 "sources": ["synthetic-walkthrough"],
+                "collected_rows": 0,
+                "synthesised_rows": 18,
+                "undeclared_rows": 0,
+                "answerable_rows": 18,
+                "generated_answer_rows": 0,
             },
         },
         {
@@ -580,11 +595,18 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             conditions = {cap["condition"] for cap in score["caps"]}
             self.assertNotIn("dataset-integrity-fail", conditions)
 
-    def test_labels_on_one_side_of_a_declared_split_collapse_power(self) -> None:
-        """C5: a holdout nothing can score is not a holdout.
+    def test_a_holdout_nothing_can_score_is_said_rather_than_scored(self) -> None:
+        """C5, re-decided: it is a real problem about a different question.
 
-        50 labelled tuning rows against 50 unscoreable holdout rows compare
-        exactly zero examples, however large the split looks.
+        50 labelled tuning rows against 50 unscoreable holdout rows used to
+        collapse power to zero, on the reading that the two splits compare
+        zero examples between them. They do not compare anything between them:
+        the search compares configurations on the tuning rows, and the holdout
+        checks the winner those rows picked. 50 tuning rows are 50 tuning rows.
+
+        What is true is that nothing can check the winner, and that is stated
+        on the card instead of expressed as a resolution number about a
+        comparison it does not describe.
         """
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -611,8 +633,8 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
-            self.assertEqual(power["value"], 5.0)
-            self.assertIn("50/0 scoreable", power["evidence"])
+            self.assertEqual(power["value"], 22.0)
+            self.assertIn("none of the held-back rows can be scored", power["evidence"])
 
     def test_a_none_valued_class_label_does_not_clamp_power(self) -> None:
         """C6: a fully labelled dataset must not be reported as half unscoreable.
@@ -674,7 +696,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
             self.assertEqual(power["value"], 12.0)
-            self.assertIn("25/25 scoreable", power["evidence"])
+            self.assertIn("25 scoreable", power["evidence"])
 
     def test_old_preflight_json_without_labelled_split_counts_fails_loudly(
         self,
@@ -1270,9 +1292,31 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         self.assertIn("synthesised_rows", process.stderr)
         self.assertIn("re-run preflight.py --json", process.stderr)
 
-        # Absent counts are the version-skew case and must still be accepted.
+        # An ABSENT count is refused for the same reason, and this is the
+        # direction that used to pass. There is no version skew to be
+        # compatible with - nothing has been published - and reading a missing
+        # count as 0 short-circuited the generated-answer-key ladder, so a
+        # payload with `answerable_rows` deleted scored better than the real
+        # one it was derived from.
         metrics.pop("synthesised_rows")
-        metrics.pop("collected_rows")
+        refused_absent = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(record),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(refused_absent.returncode, 0)
+        self.assertIn("synthesised_rows", refused_absent.stderr)
+
+        # The false-red direction: a complete payload still scores.
+        metrics.update(
+            {
+                "synthesised_rows": 0,
+                "undeclared_rows": 0,
+                "answerable_rows": 50,
+                "generated_answer_rows": 0,
+            }
+        )
         accepted = subprocess.run(
             [sys.executable, str(READINESS), "--preflight", "-", "--json"],
             input=json.dumps(record),

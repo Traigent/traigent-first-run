@@ -172,12 +172,21 @@ def render_text(plan: ReadinessPlan) -> str:
 # which it was looking at.
 SCHEMA_VERSION = 2
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
+# Read each entry as "score BELOW this number is that band" - these are
+# exclusive upper bounds, not the score a band requires. The last entry is an
+# upper sentinel one past the top of a 0-100 scale, so EXCELLENT is 90-100 and
+# nothing needs 101. Written out because the bare tuple invites exactly the
+# opposite reading - "you need 101 to be excellent" - and a band table a reader
+# has to reverse-engineer is a band table that gets misquoted. The inclusive
+# range is on each line so the table can be read without running it, and
+# `test_the_documented_bands_match_the_thresholds` holds the glossary's
+# customer-facing copy of these ranges to the same numbers.
 BAND_THRESHOLDS = (
-    (30, "NOT READY"),
-    (55, "PARTIAL"),
-    (75, "WORKABLE"),
-    (90, "STRONG"),
-    (101, "EXCELLENT"),
+    (30, "NOT READY"),  # 0-29
+    (55, "PARTIAL"),  # 30-54
+    (75, "WORKABLE"),  # 55-74
+    (90, "STRONG"),  # 75-89
+    (101, "EXCELLENT"),  # 90-100; 101 is the sentinel, not a requirement
 )
 BAND_ORDER = ["NOT READY", "PARTIAL", "WORKABLE", "STRONG", "EXCELLENT"]
 CONFIDENCE_BAND_CEILING = "WORKABLE"
@@ -353,6 +362,23 @@ class SubScore:
     maximum: float
     measured: bool
     evidence: str
+    # Whether the evidence for this check was THIS RUN'S to supply and was not
+    # supplied.
+    #
+    # `combine` renormalizes over measured sub-scores, which is right when the
+    # tool could not look - no catalog exists for this agent type - and wrong
+    # when the run simply did not say. Renormalizing there deletes the check
+    # from the denominator, so silence pays: omitting `--task-kind` scored the
+    # evaluation pillar 100 where declaring a poorly-fitting kind scored it 83,
+    # and omitting the probe scores scored 100 where declaring a narrow spread
+    # scored 87. Withholding evidence outscored supplying it, on the same
+    # project, by up to 5 points overall.
+    #
+    # A withheld check keeps its full weight in the denominator and earns
+    # nothing, so absence can never beat a declaration. It stays `measured=
+    # False`, so confidence still reports it as unchecked and the card still
+    # marks it - what changes is only that it stops being free.
+    withheld: bool = False
 
 
 # What the user should DO about each cap, as a closed vocabulary.
@@ -384,6 +410,12 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-fully-synthetic": "connect-real-data",
     "dataset-mostly-synthetic": "connect-real-data",
     "dataset-generated-answer-key": "review-answer-key",
+    # The same remedy as the rung above, deliberately: both say a person has to
+    # look at the answer key before the number means anything, and a consumer
+    # already routing `review-answer-key` needs no second slug for "most of it"
+    # against "all of it". A second spelling for one remedy is the drift this
+    # table exists to remove.
+    "dataset-mostly-generated-answer-key": "review-answer-key",
     "evaluator-absent": "connect-evaluator",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
@@ -393,6 +425,18 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
 
+# What a ceiling is FOR, and the one sentence the ordering was missing.
+#
+# A ceiling answers "how good is this data now", not "what could this become".
+# That is the owner's decision and it settles the objection the ranking keeps
+# attracting: a broken real dataset is capped harder (35) than a fully
+# generated one (65), which looks inverted if you read the numbers as a claim
+# about real-world basis. It is not one. A broken dataset cannot be run at all;
+# a generated one can be run today and corrected by a person afterwards. Grade
+# the current state, and the order comes out the way it is.
+#
+# Do not reorder these on the strength of the potential reading - it was put to
+# the owner and rejected.
 # Every ceiling, in one ordered place, with the basis for each number beside it.
 #
 # TWO THINGS ARE RECORDED HERE, and they are different claims.
@@ -489,10 +533,43 @@ WIRING_CHECK_CEILING = 74
 # block: the claim is about what the result may PRESENT as, and under ten
 # comparable examples it may not present as STRONG. See
 # `WIRING_CHECK_EXAMPLES`.
-GENERATED_ANSWER_KEY_CEILING = 75
+GENERATED_ANSWER_KEY_CEILING = 74
 # The questions are real and there are enough of them; only the answer key was
 # written by a model, so the score reports agreement with that model. Above
-# both synthetic ceilings because strictly more of the data was observed.
+# both synthetic ceilings because strictly more of the data was observed - and
+# 74 rather than 75, because 75 IS the STRONG threshold: at 75 a dataset whose
+# entire ruler was written by a model could present as STRONG, which is the one
+# claim this ceiling exists to refuse. Synthesised material may be workable; it
+# may not be good.
+#
+# Two of the three ceilings on this ladder are not derived and are not meant to
+# be. 65 and 70 are relative positions - ordered against each other because
+# strictly more invented data may not be the less capped, and placed inside
+# WORKABLE because that is the band the ladder intends. Only this rung states a
+# claim about a BAND, so only this rung takes the band edge's number, the same
+# way `WIRING_CHECK_CEILING` and `COARSE_RESOLUTION_CEILING` do. Do not
+# "correct" 65 and 70 onto a band edge: they answer a different question.
+#
+# It lands equal to `WIRING_CHECK_CEILING`, which is a coincidence of the same
+# band edge rather than a shared cause, exactly as `evaluator-absent` and
+# `evaluator-unresolved` already do at 40.
+MOSTLY_GENERATED_ANSWER_KEY_CEILING = 74
+# The rung the ladder was missing, and the reason it needed one: with the rung
+# above as the only one, the cap turned on the LAST row. 200 of 200 model-
+# written answers scored 74/WORKABLE/BLOCKED and 199 of 200 scored 94/EXCELLENT
+# with no cap at all, on the same dataset - a ceiling one row removes is not a
+# ceiling. The sibling ladder never had that shape: `MOSTLY_SYNTHETIC_SHARE` is
+# 0.5, so generated ROWS have always been graded in two steps.
+#
+# EQUAL to the rung above, and that is the whole available room. The owner's
+# rule is that data a model supplied may be workable and may not be good, so
+# every ceiling on this ladder sits below the STRONG edge at 75; the rung above
+# already takes 74, the highest number that satisfies it. A ladder cannot
+# graduate a value it has no room to graduate, so this rung graduates the OTHER
+# thing a cap decides: the run does not wait. All of the key being a model's
+# stops the run until a person has looked; most of it bounds what the result
+# may claim and lets the run proceed, because the questions are all real and a
+# person did write part of the key.
 COARSE_RESOLUTION_CEILING = 89
 # One below the EXCELLENT boundary at 90, derived the same way as 74: under
 # thirty comparable examples a small difference may be chance, so the result
@@ -526,6 +603,10 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
             ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
+            (
+                "dataset-mostly-generated-answer-key",
+                MOSTLY_GENERATED_ANSWER_KEY_CEILING,
+            ),
             ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
         ),
     ),
@@ -594,6 +675,8 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-no-expected-outputs", "dataset-below-measurable-size"),
     # All of it generated is also most of it generated.
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
+    # And the same on the answer-key ladder, which now has the same two rungs.
+    ("dataset-generated-answer-key", "dataset-mostly-generated-answer-key"),
     # Under ten comparable examples is also under thirty.
     ("dataset-below-measurable-size", "dataset-coarse-resolution"),
 )
@@ -629,10 +712,6 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     ),
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
-    ),
-    "dataset-generated-answer-key": (
-        "guarded by `synthesised_rows != counted`, so it is mutually exclusive "
-        "with dataset-fully-synthetic rather than implied by it"
     ),
 }
 
@@ -1018,7 +1097,16 @@ def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
             subscores=tuple(sorted(subscores, key=lambda item: item.name)),
         )
     earned = sum(item.value for item in measured)
-    score = round_half_up(100.0 * earned / measured_weight)
+    # Withheld checks stay in the denominator and earn nothing. Renormalizing
+    # over the measured ones is right when this tool could not look, and wrong
+    # when the run was asked for the evidence and did not give it - there,
+    # dropping the check from the denominator made silence score better than an
+    # honest answer. See `SubScore.withheld`. Confidence below is unchanged and
+    # still reports them as unchecked, because they are.
+    scored_weight = measured_weight + sum(
+        item.maximum for item in subscores if item.withheld and not item.measured
+    )
+    score = round_half_up(100.0 * earned / scored_weight)
     confidence = measured_weight / total_weight if total_weight else 0.0
     return Pillar(
         name=name,
@@ -1311,9 +1399,17 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # 2.8, so a fully generated dataset that was perfect everywhere else still
 # reported 93 and read as production-ready.
 #
-# The three ceilings these shares raise are defined with every other ceiling in
+# The four ceilings these shares raise are defined with every other ceiling in
 # `CAP_SEVERITY_ORDER`; only the shares that trigger them live here.
+#
+# Both ladders now graduate in two steps, and the answer-key one did not. Its
+# single rung fired at 1.0 exactly, so the cap turned on the last row: 200 of
+# 200 model-written answers scored 74/WORKABLE/BLOCKED and 199 of 200 scored
+# 94/EXCELLENT with no cap at all. `MOSTLY_GENERATED_ANSWER_KEY_SHARE` is the
+# missing rung, and it is 0.5 for the same reason its sibling is: "most of it"
+# is the one share boundary that means something to a reader.
 MOSTLY_SYNTHETIC_SHARE = 0.5
+MOSTLY_GENERATED_ANSWER_KEY_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
 # All three are advisory, by the rule on `Cap.blocks`: SKILL.md routes them to
@@ -1354,11 +1450,25 @@ GENERATED_ANSWER_KEY_CAP = Cap(
 )
 
 
-def _row_count(value: Any, name: str) -> int:
-    """Read one provenance row count, refusing a present-but-impossible one.
+def _row_count(value: Any, name: str, *, required: bool = True) -> int:
+    """Read one provenance row count, refusing an absent or impossible one.
 
-    An absent key means the preflight JSON predates the field, and falls back to
-    0 so an older payload keeps scoring as it did. A key that IS present and
+    An absent key used to fall back to 0, on the rationale that "the preflight
+    JSON predates the field, so an older payload keeps scoring as it did". That
+    is a backward-compatibility decision, and this repository has published
+    nothing for anyone to be compatible with - there is no older payload. What
+    the fallback bought instead was a gate that fails open: `answerable_rows`
+    guards the whole generated-answer-key ladder, and a 0 short-circuits it, so
+    a preflight JSON with the key deleted scored the same 200-row dataset
+    EXCELLENT with no cap where the real payload capped it at 74. Silence was
+    the highest-scoring input.
+
+    So absence is refused, with the same message the impossible values below
+    already carry. `required=False` is for a count whose CHECK is conditional -
+    `dataset-output-placeholders` is emitted only when placeholders exist, so
+    its absence is a measured "none", not a missing field.
+
+    A key that IS present and
     carries a negative or non-integer count is a different thing: it reaches the
     arithmetic, shifts the denominator every share is computed over, and can
     push the sub-score past its own 10-point maximum (`-1` synthesised rows
@@ -1368,7 +1478,14 @@ def _row_count(value: Any, name: str) -> int:
     file already has an issue open about (traigent-first-run#69).
     """
     if value is None:
-        return 0
+        if not required:
+            return 0
+        raise PreflightInputError(
+            f"dataset-provenance carries no {name} count - every count this "
+            "score reads is emitted together by preflight.py, so this JSON was "
+            "edited or predates the current preflight.py; re-run preflight.py "
+            "--json from the same version as this script"
+        )
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise PreflightInputError(
             f"dataset-provenance carries no usable {name} count - row counts "
@@ -1445,14 +1562,49 @@ def score_provenance(
     # with that model's opinion, not correctness - believable, and unfalsifiable
     # from inside the run. The questions are still real, so this ceiling sits
     # above both synthetic ones.
-    if (
-        facts.answerable_rows
-        and uses_expected_outputs
-        and facts.generated_answer_rows
-        >= facts.answerable_rows * GENERATED_ANSWER_KEY_SHARE
-        and facts.synthesised_rows != counted
-    ):
-        caps.append(GENERATED_ANSWER_KEY_CAP)
+    #
+    # Two rungs, the same shape as the synthetic ladder above, because one rung
+    # made this a cliff rather than a ceiling: it fired at 1.0 exactly, so 199
+    # of 200 model-written answers cleared it entirely and scored EXCELLENT on
+    # a ruler 99.5% of which was a model's. Deleting one row is not a remedy.
+    #
+    # `answerable_rows` is read through `_row_count`, which refuses an absent
+    # count rather than reading it as zero - a zero here short-circuits the
+    # whole ladder, and silence used to buy that for free.
+    #
+    # Both rungs are advisory. #161 wrote the upper one with `Cap`'s default,
+    # which is `blocks=True`; #149 had already decided the opposite for this
+    # exact condition, because SKILL.md routes it to "a person reviews a sample
+    # before a correctness claim" - a scope on what may be said, not a repair
+    # the run waits on. Taking #161's construction verbatim would have re-armed
+    # the stop that #149 exists to remove, on the walkthrough dataset this
+    # guide writes for a user who has no data. So the module-level
+    # `GENERATED_ANSWER_KEY_CAP` is kept for the full rung and the new rung is
+    # built here, because its reason quotes counts and cannot be a constant.
+    if uses_expected_outputs and facts.synthesised_rows != counted:
+        generated_key_share = (
+            facts.generated_answer_rows / facts.answerable_rows
+            if facts.answerable_rows
+            else 0.0
+        )
+        if generated_key_share >= GENERATED_ANSWER_KEY_SHARE:
+            caps.append(GENERATED_ANSWER_KEY_CAP)
+        elif generated_key_share > MOSTLY_GENERATED_ANSWER_KEY_SHARE:
+            caps.append(
+                Cap(
+                    "dataset-mostly-generated-answer-key",
+                    MOSTLY_GENERATED_ANSWER_KEY_CEILING,
+                    f"{facts.generated_answer_rows} of "
+                    f"{facts.answerable_rows} expected answers were written by "
+                    "a model, so most of what this score is measured against "
+                    "is a model's opinion rather than an observed answer.",
+                    # A real comparison on real questions, most of whose ruler
+                    # a person did not write. That bounds the claim; it does
+                    # not stop the run, exactly as the small-sample ceiling at
+                    # the same number does not.
+                    blocks=False,
+                )
+            )
 
     return (
         round(points, 2),
@@ -1634,32 +1786,51 @@ def score_dataset(
         )
 
     if facts.tuning_rows is not None and facts.holdout_rows is not None:
-        split_floor = min(facts.tuning_rows, facts.holdout_rows)
+        # Resolution is a property of the TUNING split, and the holdout is
+        # exempt from it.
+        #
+        # This used to take `min(tuning, holdout, ...)`, so the held-back set
+        # bounded a number it does not participate in producing. The search
+        # compares configurations against each other on the tuning rows; that
+        # comparison's resolution is how many rows it has. The holdout is not a
+        # second comparison - it checks the one winner the search already
+        # picked, once, and it is deliberately small.
+        #
+        # The cost of the old reading was structural rather than marginal. The
+        # walkthrough reserves ten held-out rows, so `min` was ten for every
+        # project that used it, `power_ceiling(10)` fired every time, and
+        # EXCELLENT became unreachable: a perfect 1,000-row project scored 89
+        # with a permanent `dataset-coarse-resolution` cap it could not clear
+        # by any action - other than deleting the holdout, which is the one
+        # thing the guide asks for. It also inverted the incentive the sweep
+        # above is about: declaring a split scored WORSE than declaring none.
+        #
+        # The holdout keeps every other job it has. Its own size is stated to
+        # the user where the result is read, the overlap cap still fires on a
+        # leaky split, and nothing here claims ten rows can settle a question -
+        # only that they do not set the tuning comparison's resolution.
         if reference_free:
-            # A judge that needs no reference scores every row in the smaller
-            # split, so the labelled counts do not bound this comparison at all.
-            # Reached for a DECLARED split, which is the common shape - applying
-            # the method only to the no-split branch left the fix dead exactly
-            # where most datasets land.
-            effective = split_floor
-            marker = f"{split_floor} scoreable"
-        elif (
-            facts.tuning_labelled_rows is not None
-            and facts.holdout_labelled_rows is not None
-        ):
-            effective = min(
-                split_floor, facts.tuning_labelled_rows, facts.holdout_labelled_rows
-            )
-            marker = (
-                f"{facts.tuning_labelled_rows}/{facts.holdout_labelled_rows} scoreable"
-            )
+            # A judge that needs no reference scores every tuning row, so the
+            # labelled counts do not bound this comparison at all.
+            effective = facts.tuning_rows
+            marker = f"{facts.tuning_rows} scoreable"
+        elif facts.tuning_labelled_rows is not None:
+            effective = min(facts.tuning_rows, facts.tuning_labelled_rows)
+            marker = f"{facts.tuning_labelled_rows} scoreable"
         else:
-            effective = scoreable(split_floor, labelled)
+            effective = scoreable(facts.tuning_rows, labelled)
             marker = f"{labelled} scoreable"
         points, evidence = size_points(effective)
         prefix = f"{facts.tuning_rows} to tune on / {facts.holdout_rows} held back"
-        if effective < split_floor:
+        if effective < facts.tuning_rows:
             prefix = f"{prefix}, {marker}"
+        # Exempt from setting the resolution is not exempt from being reported.
+        # A held-back set with nothing scoreable in it cannot check the winner
+        # it exists to check, and taking it out of `effective` above is what
+        # stopped that from showing up in the number - so it is said here
+        # instead, on the card, where a user can act on it.
+        if not reference_free and facts.holdout_labelled_rows == 0:
+            prefix = f"{prefix}; none of the held-back rows can be scored"
         evidence = f"{prefix}; {evidence}"
     elif facts.tuning_rows is not None:
         tuning_labelled = (
@@ -1697,7 +1868,13 @@ def score_dataset(
     if ceiling is not None:
         caps.append(ceiling)
 
-    if facts.difficulty_tagged_rows:
+    # `is not None`, not truthiness. A declared zero means preflight looked at
+    # every row and found no difficulty tag, which is a measurement with a
+    # value of nothing; truthiness read it as "the check never ran" and dropped
+    # it from the denominator, so a dataset that tags nothing scored the
+    # pillar 92 where one that honestly tags a single band scored 82. The
+    # weaker dataset won by ten points for saying less.
+    if facts.difficulty_tagged_rows is not None:
         bands = set(facts.difficulty_bands)
         fraction = len(bands & {"easy", "medium", "hard", "very-hard"}) / 4.0
         subs.append(
@@ -1706,7 +1883,12 @@ def score_dataset(
                 round(15.0 * fraction, 2),
                 15.0,
                 True,
-                f"bands present: {', '.join(sorted(bands)) or 'none'}",
+                (
+                    f"bands present: {', '.join(sorted(bands))}"
+                    if bands
+                    else f"no row of {facts.rows} carries a difficulty tag, so "
+                    "no spread is evidenced"
+                ),
             )
         )
     else:
@@ -1717,6 +1899,7 @@ def score_dataset(
                 15.0,
                 False,
                 "no rows carry a difficulty tag - spread is unverified, not absent",
+                withheld=True,
             )
         )
 
@@ -1916,6 +2099,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 25.0,
                 False,
                 "task kind not declared - fit is unverified",
+                # Withheld, not unavailable: the run is asked for
+                # `--task-kind` and chose not to answer. Renormalized away, not
+                # answering scored the pillar 100 against 83 for declaring a
+                # kind the method is a poor ruler for.
+                withheld=True,
             )
         )
 
@@ -1964,6 +2152,10 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 15.0,
                 False,
                 "not yet measured how far apart it scores a right and a wrong answer",
+                # Same shape as task-fit: calibration is this run's to perform,
+                # and reporting no probe scores used to score the pillar 100
+                # against 87 for reporting a narrow spread honestly.
+                withheld=True,
             )
         )
 
@@ -2601,13 +2793,20 @@ def render_card(
         lines.append("")
     if score.band_limited_by_confidence:
         # Grounded in the rows above rather than in a percentage: the reader can
-        # see which checks did not run and why. Direction matters - skipping a
-        # check *raises* the renormalized score, so the honest plain sentence is
-        # "a partial check can read better", never "your real score is higher".
+        # see which checks did not run and why.
+        #
+        # The sentence used to say a partial check can read BETTER than a full
+        # one, which was true of every unmeasured check and is now true only of
+        # the ones this run could not obtain - a check whose evidence the run
+        # was asked for and did not supply keeps its full weight and earns
+        # nothing (`SubScore.withheld`). So the line no longer makes a claim
+        # about the direction, which now differs between two kinds of gap, and
+        # says the thing that is true of both: the evidence is thin, and a thin
+        # score is held at this band.
         unchecked = marker_unmeasured(unicode_ok)
         lines.append(
-            f"  {palette.dim}Some checks could not run (marked {unchecked} above). "
-            f"A partial check can read better than a full one, so this stays "
+            f"  {palette.dim}Some checks could not run (marked {unchecked} above), "
+            f"so this score rests on less evidence than a full one and stays "
             f"at {score.band}.{palette.reset}"
         )
     lines.append(
@@ -2959,6 +3158,10 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         placeholder_rows=_row_count(
             metrics.get("dataset-output-placeholders", {}).get("placeholder_rows"),
             "placeholder_rows",
+            # Emitted only when at least one placeholder exists, so an absent
+            # count here is preflight saying "none", not preflight saying
+            # nothing.
+            required=False,
         ),
         collected_rows=_row_count(provenance.get("collected_rows"), "collected_rows"),
         synthesised_rows=_row_count(
