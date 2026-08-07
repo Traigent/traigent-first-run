@@ -5157,6 +5157,38 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # preserved baseline or generated twelve-row sweep" is still checked.
     NOT_THE_GENERATED_SWEEP = ("preserved ", "proceed with a ", "user-owned ")
 
+    # The other quantity in this package that is counted in ROWS and sized by
+    # a default: the held-out split. `evaluation-and-dataset.md` writes "the
+    # ten-row default" of it, which `(\w+)-row default` matches exactly as
+    # readily as SKILL.md's "generated twelve-row default" - and the preceding
+    # words there are "required on the", so the prefix exemption above cannot
+    # see it. Merged with the branch that owns the split, this guard failed
+    # with "these documents state {'evaluation-and-dataset.md': [10]}" on
+    # prose that is right: the fix belongs to the pattern, not to a sentence
+    # about the held-out set.
+    #
+    # Scoped to the SENTENCE rather than to a fixed window, because the words
+    # that identify the subject sit wherever the author put them - in that
+    # sentence, the only signal is "the split has", eleven words after the
+    # quantity. Every true positive in the corpus is checked against this and
+    # none of them names the split, which is the property that makes the
+    # exemption safe rather than convenient.
+    HELD_OUT_SPLIT = re.compile(r"held-?out|the split")
+    # ...and the guard against the exemption widening: a sentence that names
+    # BOTH the held-out split and the generated sweep is a sentence stating
+    # the sweep's size, so it stays checked. Without this, adding "held-out"
+    # anywhere in "the preserved baseline or generated twelve-row sweep" would
+    # silently switch that statement off.
+    STILL_THE_GENERATED_SWEEP = re.compile(r"generated|swept|grid")
+
+    def _states_the_held_out_split(self, text: str, start: int, end: int) -> bool:
+        opening = text.rfind(". ", 0, start) + 2
+        closing = text.find(". ", end)
+        sentence = text[opening : closing if closing != -1 else len(text)]
+        return bool(self.HELD_OUT_SPLIT.search(sentence)) and not bool(
+            self.STILL_THE_GENERATED_SWEEP.search(sentence)
+        )
+
     def test_no_document_states_a_generated_space_size_the_fence_denies(self) -> None:
         """A size the assistant reads may not disagree with the size it runs.
 
@@ -5196,6 +5228,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         for match in re.finditer(pattern, text):
                             preceding = text[max(0, match.start() - 24) : match.start()]
                             if preceding.endswith(self.NOT_THE_GENERATED_SWEEP):
+                                continue
+                            if self._states_the_held_out_split(
+                                text, match.start(), match.end()
+                            ):
                                 continue
                             stated.setdefault(name, set()).add(
                                 _quantity(match.group(1))
@@ -5489,8 +5525,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # What was bought: the enhanced space is now 3 models x 4 binary
         # behaviour knobs = 48 configurations and the baseline 3 models x 2
-        # prompt styles = 6, both stated as exact numbers and both asserted in
-        # the template. That is two new knobs (`thinking_shape`, `reflect`)
+        # prompt styles x 2 thinking shapes = 12, both stated as exact numbers
+        # and both asserted in the template. (This sentence said "= 6" until
+        # the size was re-settled at twelve four commits later, which put the
+        # exact phrasing the CONTRADICTIONS registry BANS 480 lines below the
+        # ban list carrying it. The registry cannot catch that and should not
+        # try: `conversation()` reads the guidance, and adding this file to
+        # that corpus would make every entry fail against its own banned
+        # phrases. A ledger that restates a decision has to be corrected with
+        # the decision, which is what this is.)
+        # That is two new knobs (`thinking_shape`, `reflect`)
         # with their prompt branches, the derivation of why four behaviour
         # knobs replace a temperature sweep, and the subset/pin/size asserts -
         # none of which existed to be reworded.
