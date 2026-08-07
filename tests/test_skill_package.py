@@ -214,6 +214,99 @@ class SkillPackageTests(unittest.TestCase):
         # cites any more is removed, not left to quietly widen what passes.
         self.assertEqual(sorted(set(unshipped) - cited), [])
 
+        # A CLEAN TREE PROVES NOTHING ABOUT WHAT THE GUARD CAN SEE, and this
+        # one is neuterable by a single token: drop `md` from `_NAMES_A_FILE`
+        # and every backticked markdown reference stops being a reference at
+        # all - including `GUIDE.md`, the exact defect this test was written
+        # for, whose docstring says most of this guidance names a file in
+        # backticks. So the guard is handed the defect it exists to catch, in
+        # the form it actually took, and must report it.
+        planted = "The operating contract lives in `GUIDE.md`; read it first."
+        with self.subTest(direction="the defect is seen"):
+            self.assertEqual(
+                list(unresolved(Path("SKILL.md"), planted, [("", shipped)])),
+                ["SKILL.md names 'GUIDE.md', which nothing here provides"],
+                "an installed skill naming GUIDE.md - a file the installer does "
+                "not copy - is invisible to this check",
+            )
+        # And the other direction, because a guard tightened until it flags
+        # working references teaches authors to route around it: the same
+        # sentence naming a file that IS shipped resolves silently.
+        with self.subTest(direction="a working reference is not flagged"):
+            self.assertEqual(
+                list(
+                    unresolved(
+                        Path("SKILL.md"),
+                        "The handoff lives in `references/run-safety.md`.",
+                        [("", shipped)],
+                    )
+                ),
+                [],
+            )
+
+    def test_the_reference_extractor_sees_every_kind_of_file_it_claims_to(
+        self,
+    ) -> None:
+        """One token in `_NAMES_A_FILE` is the whole reach of the check above.
+
+        Each extension there is a class of reference the guidance actually
+        writes, and removing any one of them silently empties the check for that
+        class rather than failing anything. `md` is the load-bearing one - the
+        defect that started this was a backticked `GUIDE.md` - but `.py` names
+        the three scripts, `.json`/`.jsonl` the config space and the dataset,
+        `.txt` the pinned requirements and `.yml`/`.yaml` the agent definition.
+
+        The near-misses matter as much: a version number, a decimal, and a
+        sentence-ending abbreviation are not files, and a check that called them
+        files would fail on prose nobody can rewrite.
+        """
+        for name in (
+            "GUIDE.md",
+            "SKILL.md",
+            "references/run-safety.md",
+            "scripts/readiness.py",
+            "assets/requirements-first-run.txt",
+            "traigent-runs/config-space.json",
+            "traigent-runs/tuning.jsonl",
+            "agents/openai.yaml",
+            "agents/openai.yml",
+        ):
+            with self.subTest(reference=name):
+                self.assertEqual(
+                    self._file_references(f"Open `{name}` before you continue."),
+                    [name],
+                    "a backticked file reference is not recognised as one, so "
+                    "every check built on this extractor is empty for it",
+                )
+        # Written the way prose writes them: with an anchor, in a link, and at
+        # the end of a sentence.
+        self.assertEqual(
+            self._file_references("See `GUIDE.md#start-here` for the order."),
+            ["GUIDE.md#start-here"],
+        )
+        self.assertEqual(
+            self._reference_path("GUIDE.md#start-here"),
+            "GUIDE.md",
+        )
+        self.assertEqual(
+            self._file_references("[the handoff](references/run-safety.md)"),
+            ["references/run-safety.md"],
+        )
+        # Not files, and each is something this guidance genuinely writes.
+        for innocent in (
+            "Pinned to `0.25.0` for the first run.",
+            "Costs `$5.00` at most.",
+            "Set `TRAIGENT_API_KEY=` in the file.",
+            "Roughly `0.75` of the rows.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertEqual(self._file_references(innocent), [])
+        # A fenced example is illustration, not an instruction to open a file.
+        self.assertEqual(
+            self._file_references("```\ncat some-file-that-does-not-exist.md\n```\n"),
+            [],
+        )
+
     # Fenced blocks are stripped: an illustrative path inside a code sample is
     # not an instruction to open a file, and treating it as one makes the check
     # fail on its own examples.
@@ -1068,7 +1161,28 @@ class SkillPackageTests(unittest.TestCase):
         # GUIDE.md keeps the cloned-repo reader pointed at it, and states it
         # only once: a second copy is a rule that can be changed in one place.
         self.assertIn('five-stage journey under "opening message"', guide)
-        self.assertNotIn("welcome to traigent onboarding!", guide)
+
+        # "Only once" is asserted over the tracked tree, not over GUIDE.md.
+        # Checking the one document the script just left proves it left; it says
+        # nothing about README.md, `templates/` or `reports/`, and README.md is
+        # the most-read file this repository publishes and already describes the
+        # journey. A second copy there would be exactly the defect this branch
+        # removed, in the file most likely to be edited by somebody who never
+        # opens SKILL.md.
+        homes = sorted(
+            name
+            for name in tracked_files()
+            if not name.startswith("tests/")
+            and "welcome to traigent onboarding!"
+            in " ".join((ROOT / name).read_text(errors="ignore").casefold().split())
+        )
+        self.assertEqual(
+            homes,
+            ["skills/traigent-first-run/SKILL.md"],
+            f"the opening script is written out in {homes}. It has one home - "
+            "the installed skill, which is the only reader that has to perform "
+            "it - and everything else points there.",
+        )
 
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
