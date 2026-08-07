@@ -1218,7 +1218,14 @@ class DiversityCheck:
     # first in the unchecked line reads as a finding the check never made.
     found_label: str
     looking_for_label: str
+    # What it says when it ran and found nothing. A third label rather than a
+    # negation of the first, because "no rows at least 90% similar to another
+    # row" is not English a first-time reader gets on one pass.
+    clean_label: str
     points: float
+    # Whether this question has a subject at all when the evaluator needs no
+    # reference answer. A question with no subject is not an unrun check.
+    needs_expected_outputs: bool = False
 
 
 # The questions the diversity sub-score speaks for, each with the points it is
@@ -1252,6 +1259,9 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
             f"whether rows repeat each other at {NEAR_DUPLICATE_PERCENT}% "
             "similarity or more"
         ),
+        clean_label=(
+            f"no repeated questions at {NEAR_DUPLICATE_PERCENT}% similarity or more"
+        ),
         points=7.0,
     ),
     DiversityCheck(
@@ -1259,7 +1269,16 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
         certifier="answer_dominance_status",
         found_label="one expected output dominates",
         looking_for_label="whether one expected output dominates",
+        clean_label="no single answer used by most rows",
         points=6.0,
+        # Under a reference-free judge there are no expected outputs, so this
+        # question has no subject - it is not a check that did not run, it is a
+        # check that does not apply. Scoring it as "did not run" discarded the
+        # near-duplicate PASS beside it and put the whole sub-score into the
+        # unmeasured branch: a 40-row input-only dataset measured DATASET
+        # 81/100 (3 of 5 checks) before this branch and 70/100 (2 of 5) after,
+        # a false red on a configuration the guide fully supports.
+        needs_expected_outputs=True,
     ),
 )
 # A preflight status only counts as evidence when it is one of these. Everything
@@ -1268,8 +1287,15 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
 MEASURED_STATUSES = frozenset({"PASS", "WARN", "FAIL"})
 
 
-def diversity_subscore(facts: DatasetFacts) -> SubScore:
+def diversity_subscore(
+    facts: DatasetFacts, *, uses_expected_outputs: bool = True
+) -> SubScore:
     """Score duplication and answer dominance, claiming only what actually ran.
+
+    `uses_expected_outputs` is the same context `score_provenance` takes on the
+    adjacent line, and it was the one this function did not get. Without it,
+    "cannot apply" and "did not run" were the same answer here, which is the
+    defect this function exists to remove pointed the other way.
 
     One rule, and it is the whole point of this function: a check that did not
     run must never read as a check that passed.
@@ -1306,7 +1332,16 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
     problems: list[str] = []
     unchecked: list[str] = []
     earned = 20.0
-    for check in DIVERSITY_CHECKS:
+    # A check whose subject this run does not have is not part of the question.
+    # It keeps its points - there is nothing here for it to find - and it is
+    # never named as unrun, because "we did not look at your expected outputs"
+    # is not a gap on a run that has none.
+    applicable = [
+        check
+        for check in DIVERSITY_CHECKS
+        if uses_expected_outputs or not check.needs_expected_outputs
+    ]
+    for check in applicable:
         statuses = [getattr(facts, name) for name in check.detectors]
         if any(status in ("FAIL", "WARN") for status in statuses):
             # Deduct once, however many detectors saw it. Naming each of them
@@ -1320,7 +1355,7 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
             unchecked.append(check.looking_for_label)
 
     not_checked = f"not checked: {', '.join(unchecked)}"
-    if len(unchecked) == len(DIVERSITY_CHECKS):
+    if len(unchecked) == len(applicable):
         return SubScore("diversity", 0.0, 20.0, False, "duplication was not checked")
     if problems:
         evidence = "; ".join(problems)
@@ -1336,13 +1371,16 @@ def diversity_subscore(facts: DatasetFacts) -> SubScore:
             f"{not_checked} - the checks that did run found nothing, which is "
             "not the same as clean",
         )
+    # Built from the questions that applied, never from a fixed sentence. A
+    # run with no expected outputs must not be told that no single answer
+    # dominates them - that was the original defect, and a hard-coded clean
+    # line reintroduces it the moment a question stops applying.
     return SubScore(
         "diversity",
         20.0,
         20.0,
         True,
-        f"no repeated questions at {NEAR_DUPLICATE_PERCENT}% similarity or "
-        "more, and no single answer used by most rows",
+        ", and ".join(check.clean_label for check in applicable),
     )
 
 
@@ -1514,7 +1552,7 @@ def score_dataset(
             )
         )
 
-    subs.append(diversity_subscore(facts))
+    subs.append(diversity_subscore(facts, uses_expected_outputs=not reference_free))
 
     provenance, evidence, provenance_caps = score_provenance(
         facts, uses_expected_outputs=not reference_free
@@ -2507,6 +2545,38 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+def _failed(statuses: dict[str, str], check: str) -> bool:
+    """Whether `check` FAILed, refusing to answer for a check that ran and could not.
+
+    The un-ported half of this module's own rule. `diversity_subscore` was
+    taught that a check which did not run must never read as a check that
+    passed; two lines in this adapter kept doing exactly that, with
+    `statuses.get(name) == "FAIL"` - every status that is not the word FAIL,
+    including a SKIP and including a status this version has never heard of,
+    came out as the clean answer and fed a cap that then did not fire.
+
+    An ABSENT record is a different statement and is deliberately still read as
+    clean. `check_dataset` emits `dataset-split` only where a split can be
+    looked for and `dataset-ids` only where ids exist to compare - an unlabelled
+    150-row dataset legitimately carries neither - so absence here means the
+    question did not arise, not that it was ducked. What is refused is a record
+    that IS present and says the check could not answer, because that is the
+    reading this module has already paid for once.
+    """
+    status = statuses.get(check)
+    if status is None:
+        return False
+    if status not in MEASURED_STATUSES:
+        raise PreflightInputError(
+            f"{check} reports {status!r}, which is not a result this score can "
+            "read - a check that could not answer must not be scored as one "
+            "that passed. Re-run preflight.py --json from the same version as "
+            "this script, and if the check genuinely cannot run on this "
+            "dataset, say so rather than emitting a status nothing consumes"
+        )
+    return status == "FAIL"
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
@@ -2669,8 +2739,8 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         duplicate_status=statuses.get("dataset-duplicates"),
         near_duplicate_status=statuses.get("dataset-near-duplicates"),
         answer_dominance_status=_answer_dominance_status(statuses),
-        split_overlap=statuses.get("dataset-split") == "FAIL",
-        integrity_failed=structurally_failed or statuses.get("dataset-ids") == "FAIL",
+        split_overlap=_failed(statuses, "dataset-split"),
+        integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),
         placeholder_rows=_row_count(

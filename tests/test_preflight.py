@@ -744,19 +744,101 @@ class StaticPreflightTests(unittest.TestCase):
         """Out of budget with nothing found is unchecked, not clean."""
         token_sets = [{"a", "b", "c"} for _ in range(50)]
         pairs, complete = MODULE.near_duplicate_pairs(
-            token_sets, max_comparisons=0, limit=10
+            token_sets, max_work=0, limit=10
         )
         self.assertEqual(pairs, [])
         self.assertFalse(complete)
 
     def test_a_truncated_near_duplicate_scan_still_reports_its_findings(self) -> None:
-        """Pairs found before the budget ran out are a finding, not a SKIP."""
+        """Pairs found before the budget ran out are a finding, not a SKIP.
+
+        The budget is in token operations, so it has to buy at least one whole
+        comparison: a posting step plus both rows' token counts.
+        """
         token_sets = [{"a", "b", "c"} for _ in range(50)]
         pairs, complete = MODULE.near_duplicate_pairs(
-            token_sets, max_comparisons=5, limit=10
+            token_sets, max_work=10, limit=10
         )
         self.assertTrue(pairs)
         self.assertFalse(complete)
+
+    def test_the_budget_is_spent_on_the_work_and_not_on_the_pair_count(
+        self,
+    ) -> None:
+        """The bound has to bound what the loop actually spends.
+
+        It used to count distinct candidate PAIRS, which is not the cost: each
+        pair is found with one posting-list step and then settled with a union
+        and an intersection over both rows' whole token sets. So a few very
+        long rows cost a great deal and counted as almost nothing. Measured on
+        2,000 RAG-shaped rows of 300 tokens: 1.7M candidate pairs - 34% of a
+        5,000,000 pair budget, so the bound never fired - and 1.03 billion
+        token operations, which ran 45 s with no output and no timeout and then
+        answered PASS. Trunk answered in 0.24 s.
+
+        Asserted on the accounting rather than on a clock, which would be
+        flaky. Three rows are three candidate pairs however long they are, so
+        a budget of 100 stops this scan only if the row length is being
+        charged for.
+        """
+        long_rows = [{f"token{index}" for index in range(1000)} for _ in range(3)]
+        pairs, complete = MODULE.near_duplicate_pairs(long_rows, max_work=100)
+        self.assertFalse(
+            complete,
+            "three 1,000-token rows are three candidate pairs and about six "
+            "thousand token operations; a budget of 100 that still completes "
+            "is counting pairs",
+        )
+        # The false-red direction: the same three pairs with short rows are
+        # cheap, and must still finish inside the same budget.
+        short_rows = [{"a", "b", "c"} for _ in range(3)]
+        _pairs, short_complete = MODULE.near_duplicate_pairs(
+            short_rows, max_work=100
+        )
+        self.assertTrue(short_complete)
+
+    def test_one_row_is_not_charged_for_an_answer_spread_it_cannot_have(
+        self,
+    ) -> None:
+        """Dominance needs two answers to be a statement about anything.
+
+        One row's single answer holds 100% of the rows by arithmetic, and
+        reporting that charged a 1-row dataset 6 of its 20 diversity points -
+        14.0 against 20.0, dataset 64 against 71 - for a finding no dataset of
+        that size can avoid, and told its owner to diversify answers they have
+        one of. The row count IS the problem and `dataset-size` already says
+        so, loudly.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "one.jsonl"
+            dataset.write_text(
+                json.dumps({"id": "r1", "input": "only question", "output": "only"})
+                + "\n"
+            )
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertNotIn("dataset-ceiling-risk", checks)
+        self.assertEqual(checks["dataset-outputs"].status, MODULE.PASS)
+        self.assertIn("too few", checks["dataset-outputs"].detail)
+        # And the size itself is still reported as the problem it is.
+        self.assertEqual(checks["dataset-size"].status, MODULE.WARN)
+
+    def test_two_identical_answers_are_still_a_finding(self) -> None:
+        """The false-red direction: the guard is about one row, not about two."""
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "two.jsonl"
+            dataset.write_text(
+                "\n".join(
+                    json.dumps(
+                        {"id": f"r{index}", "input": f"question {index}", "output": "x"}
+                    )
+                    for index in range(2)
+                )
+                + "\n"
+            )
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertIn("dataset-ceiling-risk", checks)
 
     def test_an_exhausted_budget_emits_skip_rather_than_a_clean_result(self) -> None:
         """The one remaining way this check can fail to run must say so.
@@ -783,7 +865,7 @@ class StaticPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-            with mock.patch.object(MODULE, "MAX_NEAR_DUPLICATE_COMPARISONS", 0):
+            with mock.patch.object(MODULE, "MAX_NEAR_DUPLICATE_WORK", 0):
                 MODULE.check_dataset(dataset)
         near = next(
             result
@@ -793,12 +875,13 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(near.status, MODULE.SKIP, near.detail)
         self.assertIn("UNCHECKED", near.detail)
         self.assertNotIn("no high-similarity", near.detail)
-        # And it must account for the wait. This is the one slow path in the
-        # script - 5000 rows over a 60-word vocabulary measured 12.5 s to reach
-        # this emit, against 0.04 s for ordinary wording - so the user has just
-        # waited and is then told the check did not run. The detail has to name
-        # both the cost and what causes it, or the pause reads as a hang.
-        self.assertIn("take several seconds", near.detail)
+        # And it must account for the wait, in terms of the dataset the reader
+        # is holding. This is the one slow path in the script, so they have just
+        # waited and are then told the check did not run; the detail has to name
+        # what causes it or the pause reads as a hang. It must name BOTH causes:
+        # the text used to name only a small vocabulary, and the slower way in
+        # is long rows with an entirely ordinary one.
+        self.assertIn("length of each one", near.detail)
         self.assertIn("vocabulary", near.detail)
 
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:

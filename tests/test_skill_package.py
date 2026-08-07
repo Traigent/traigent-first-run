@@ -2399,6 +2399,39 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(f"repeat when {percent}% or more of their words match", glossary)
         self.assertIn(f"{percent}% is a chosen line", glossary)
 
+    def test_no_document_states_the_similarity_line_as_its_own_number(
+        self,
+    ) -> None:
+        """The fourth home the docstring above names, found in the same commit.
+
+        The branch that welded three homes together created two more: an
+        assistant-facing instruction in evaluation-and-dataset.md reading
+        "near-duplicates at or above 90% shared words", inside no guard at all,
+        and four `"90%"` literals across the test suite. A number welded in
+        three places and written out in five is not welded.
+
+        The rule is that only the two documents the guard above pins may state
+        the number, and they state it BECAUSE they are pinned to the constant.
+        Anywhere else names the check instead of the value.
+        """
+        percent = READINESS.NEAR_DUPLICATE_PERCENT
+        pinned = {SKILL_ROOT / "references" / "glossary.md"}
+        for document in assistant_facing_documents():
+            if document in pinned:
+                continue
+            with self.subTest(document=document.name):
+                text = " ".join(document.read_text().split())
+                for phrase in (f"{percent}% shared words", f"{percent}% similar"):
+                    # `assertNotIn` would print the whole document on failure,
+                    # so the membership test is done here and the message says
+                    # only what is wrong.
+                    self.assertFalse(
+                        phrase in text,
+                        f"{document.name} states the similarity line as the "
+                        f"literal {phrase!r}, in no guard - name the check "
+                        "that prints it instead",
+                    )
+
     def test_readiness_receives_only_a_grounded_task_kind(self) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())
         quality = " ".join(

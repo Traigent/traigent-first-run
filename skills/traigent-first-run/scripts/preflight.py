@@ -42,16 +42,33 @@ NEAR_DUPLICATE_THRESHOLD = 0.9
 # of tuples.
 MAX_NEAR_DUPLICATE_PAIRS = 1000
 # A ceiling on the WORK the near-duplicate join may do - never on the number of
-# rows it will look at. The join below is exact, so this bounds a pathological
-# dataset (every row drawn from one tiny vocabulary, so the filter admits
-# everything), not the ordinary path. Reaching it cannot produce a clean result:
-# the caller emits SKIP, and readiness reads a SKIP as unchecked.
+# rows it will look at. The join below is exact, so this bounds the datasets it
+# cannot finish, not the ordinary path. Reaching it cannot produce a clean
+# result: the caller emits SKIP, and readiness reads a SKIP as unchecked.
 #
 # This replaced a 500-row ceiling above which the check emitted SKIP and stopped
 # running. Nothing downstream distinguished that SKIP from a pass, so every
 # dataset over 500 rows silently lost near-duplicate detection - precisely the
 # size at which duplicates become likely (traigent-first-run#151).
-MAX_NEAR_DUPLICATE_COMPARISONS = 5_000_000
+#
+# COUNTED IN TOKEN OPERATIONS, and that is the correction. It used to count
+# distinct candidate PAIRS, which is not what the loop spends: a pair costs one
+# posting-list step to find and then a set union and intersection over both
+# rows' tokens, so a row of 300 tokens costs 600 units where a row of 12 costs
+# 24. Bounding the pair count therefore bounded nothing on exactly the datasets
+# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M candidate
+# pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03 BILLION
+# token operations, which ran for 45 s with no output and no timeout and then
+# answered PASS. Trunk took 0.24 s on the same file.
+#
+# The number is derived from wall clock and nothing else. This loop sustains
+# 15-22M token operations per second across the shapes measured (2,000x300 RAG
+# chunks, 5,000 rows over a 60-word vocabulary, 5,000 short rows), so 60M is
+# about three to four seconds - long enough that no ordinary dataset reaches it
+# and short enough that a user is not left watching a script that will not
+# answer. Re-derive it if the loop's inner work changes; do not move it because
+# a dataset wanted more.
+MAX_NEAR_DUPLICATE_WORK = 60_000_000
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
@@ -515,7 +532,7 @@ def near_duplicate_pairs(
     threshold: float = NEAR_DUPLICATE_THRESHOLD,
     *,
     limit: int | None = None,
-    max_comparisons: int | None = None,
+    max_work: int | None = None,
 ) -> tuple[list[tuple[int, int]], bool]:
     """Find every pair of rows at or above `threshold` Jaccard similarity.
 
@@ -533,9 +550,7 @@ def near_duplicate_pairs(
     the signature's defaults, which bind once at import and cannot then be moved.
     """
     limit = MAX_NEAR_DUPLICATE_PAIRS if limit is None else limit
-    max_comparisons = (
-        MAX_NEAR_DUPLICATE_COMPARISONS if max_comparisons is None else max_comparisons
-    )
+    max_work = MAX_NEAR_DUPLICATE_WORK if max_work is None else max_work
     pairs: list[tuple[int, int]] = []
 
     # Rows whose input has no word characters at all ("?", "-", "..."). Their
@@ -560,19 +575,34 @@ def near_duplicate_pairs(
     }
 
     index_by_token: dict[str, list[int]] = {}
-    comparisons = 0
+    work = 0
     for position, tokens in enumerate(token_sets):
         if not tokens:
             continue
         prefix = near_duplicate_prefix(tokens, rank, threshold)
         seen: set[int] = set()
         for token in prefix:
-            for other in index_by_token.get(token, ()):
+            postings = index_by_token.get(token, ())
+            # Two charges, because there are two costs, and the old accounting
+            # counted neither of them.
+            #
+            # Walking a posting list costs one step per entry whether or not
+            # the entry is a candidate this row has already seen - charged here
+            # in one O(1) step, before the walk, so the accounting itself is
+            # not what makes this slow.
+            work += len(postings)
+            if work > max_work:
+                return sorted(pairs), False
+            for other in postings:
                 if other in seen:
                     continue
                 seen.add(other)
-                comparisons += 1
-                if comparisons > max_comparisons:
+                # And the exact check costs a union and an intersection over
+                # both rows' whole token sets. This is where the time actually
+                # goes: 1.7M candidate pairs of 300-token rows is 1.03 billion
+                # token operations, and counting the pairs alone said 1.7M.
+                work += len(tokens) + len(token_sets[other])
+                if work > max_work:
                     return sorted(pairs), False
                 union = tokens | token_sets[other]
                 if len(tokens & token_sets[other]) / len(union) >= threshold:
@@ -1183,21 +1213,27 @@ def check_dataset(
         # "found nothing". The only way here is a dataset so repetitive that the
         # filter admits everything; say that this is unchecked, never clean.
         #
-        # And say why it took so long. Getting here is the one slow path in
-        # this script: 5000 rows drawn from a 60-word vocabulary measured 12.5 s
-        # to reach this emit, against 0.04 s for the same 5000 rows with
-        # ordinary wording. So the user has just waited, and is then told the
-        # check did not run. Without the second sentence that reads as the
-        # script having hung and given up on their dataset.
+        # And say why it took so long, in terms of the dataset the user is
+        # holding. Getting here is the one slow path in this script, so they
+        # have just waited and are then told the check did not run; without the
+        # second sentence that reads as the script having hung on their data.
+        #
+        # The sentence that used to be here named only one of the two ways in -
+        # "a vocabulary small enough to make nearly every pair a candidate" -
+        # and a 2,000-row set of 300-word RAG chunks, which has an ordinary
+        # vocabulary, is the other and the slower one. A user reading the old
+        # text about their own file would have concluded it did not apply.
         emit(
             "dataset-near-duplicates",
             SKIP,
-            f"the near-duplicate scan passed its {MAX_NEAR_DUPLICATE_COMPARISONS} "
-            "comparison budget before examining every candidate pair, so this "
-            "dataset is UNCHECKED for near-duplicates - not clean. Reaching that "
-            "budget can take several seconds, and only a dataset whose rows are "
-            "drawn from a vocabulary small enough to make nearly every pair a "
-            "candidate can exhaust it",
+            "the near-duplicate scan reached its work budget before comparing "
+            "every candidate pair, so this dataset is UNCHECKED for "
+            "near-duplicates - not clean. The exact check compares whole word "
+            "sets, so cost grows with both the number of rows and the length of "
+            "each one: long rows (documents, transcripts, retrieved chunks) "
+            "reach it soonest, and so do many short rows drawn from a small "
+            "vocabulary. Split long inputs, or scan a sample, if you need this "
+            "answered",
         )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
@@ -1231,6 +1267,20 @@ def check_dataset(
                 "dataset-outputs",
                 FAIL,
                 f"{len(unlabelled)}/{len(rows)} expected outputs are empty",
+            )
+        elif len(scoreable_outputs) < 2:
+            # Dominance needs at least two answers to be a statement about
+            # anything. One row's single answer holds 100% of the rows by
+            # arithmetic, and reporting that charged a 1-row dataset 6 of its
+            # 20 diversity points for a finding no dataset of that size can
+            # avoid - and told its owner to diversify answers they have one of.
+            # The size problem is real and `dataset-size` already says it.
+            emit(
+                "dataset-outputs",
+                PASS,
+                f"{len(scoreable_outputs)} expected output, which is too few "
+                "for answer spread to mean anything; the row count is the "
+                "finding here",
             )
         elif len(output_counts) == 1:
             emit(

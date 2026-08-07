@@ -271,7 +271,7 @@ class DatasetScoringTests(unittest.TestCase):
         # Named once, and named with the threshold the customer is being
         # judged against - not as two findings.
         self.assertEqual(both.evidence.count(";"), 0, both.evidence)
-        self.assertIn("90%", both.evidence)
+        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}%", both.evidence)
 
     def test_the_exact_check_can_still_report_what_the_near_scan_missed(self) -> None:
         """Why the exact check is kept as a detector rather than deleted.
@@ -306,7 +306,7 @@ class DatasetScoringTests(unittest.TestCase):
             answer_dominance_status="PASS",
         )
         self.assertFalse(sub.measured, sub.evidence)
-        self.assertIn("90%", sub.evidence)
+        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}%", sub.evidence)
 
     def test_an_unrun_check_cannot_raise_the_pillar_above_a_run_one(self) -> None:
         """Unmeasured must never pay better than measured-and-clean.
@@ -410,6 +410,11 @@ class DatasetScoringTests(unittest.TestCase):
                             "status": status,
                             "metrics": {},
                         },
+                        # Both emitted for every dataset preflight can read,
+                        # and both now required: their absence used to be
+                        # scored as the clean answer.
+                        {"check": "dataset-split", "status": "WARN", "metrics": {}},
+                        {"check": "dataset-ids", "status": "PASS", "metrics": {}},
                     ]
                 )
                 self.assertEqual(facts.answer_dominance_status, status)
@@ -428,7 +433,7 @@ class DatasetScoringTests(unittest.TestCase):
         )
         self.assertTrue(sub.measured)
         self.assertEqual(sub.value, 13.0)
-        self.assertIn("90% similar", sub.evidence)
+        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}% similar", sub.evidence)
         self.assertIn("not checked", sub.evidence)
 
     def test_power_is_driven_by_the_smaller_split_not_total_rows(self) -> None:
@@ -2112,6 +2117,11 @@ PREFLIGHT_RECORDS = [
         "status": "PASS",
         "metrics": {"malformed_rows": 0},
     },
+    # Emitted for every dataset preflight can read, and required: an absent
+    # record used to be scored as "the splits do not overlap" and "the ids are
+    # unique", neither of which anything had established.
+    {"check": "dataset-split", "status": "WARN", "metrics": {}},
+    {"check": "dataset-ids", "status": "PASS", "metrics": {}},
 ]
 
 
@@ -2488,6 +2498,104 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_an_unknown_size_is_not_capped(self) -> None:
         """No size reported is not the same claim as a small size."""
         self.assertIsNone(MODULE.power_ceiling(None))
+
+
+class ADiversityQuestionWithNoSubjectIsNotAnUnrunCheckTests(unittest.TestCase):
+    """`score_provenance` gets the method's context on the adjacent line; this did not.
+
+    Under a reference-free judge there are no expected outputs, so "does one
+    expected output dominate" has no subject. Scored as "did not run", it put
+    the whole sub-score into the unmeasured branch and took the near-duplicate
+    PASS beside it down too: a 40-row input-only dataset measured DATASET
+    81/100 (3 of 5 checks) before that branch existed and 70/100 (2 of 5)
+    after - a false red on a configuration the guide fully supports.
+    """
+
+    def _sub(self, uses_expected_outputs: bool) -> object:
+        return MODULE.diversity_subscore(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=40,
+                labelled_rows=0,
+                duplicate_status="PASS",
+                near_duplicate_status="PASS",
+                answer_dominance_status=None,
+            ),
+            uses_expected_outputs=uses_expected_outputs,
+        )
+
+    def test_a_reference_free_run_keeps_the_check_that_did_run(self) -> None:
+        sub = self._sub(False)
+        self.assertTrue(sub.measured)
+        self.assertEqual(sub.value, sub.maximum)
+
+    def test_it_says_nothing_about_expected_outputs_it_has_none_of(self) -> None:
+        sub = self._sub(False)
+        self.assertNotIn("expected output", sub.evidence)
+        self.assertNotIn("no single answer", sub.evidence)
+        self.assertNotIn("not checked", sub.evidence)
+
+    def test_a_reference_based_run_still_refuses_to_call_it_clean(self) -> None:
+        """The false-red direction, and the defect this must not undo.
+
+        With expected outputs the question DOES apply, and an absent dominance
+        status still means nothing looked - so the sub-score stays unmeasured
+        rather than claiming a spread nobody examined.
+        """
+        sub = self._sub(True)
+        self.assertFalse(sub.measured)
+        self.assertIn("not checked", sub.evidence)
+
+
+class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
+    """The un-ported half of `diversity_subscore`'s own rule.
+
+    Two lines in the adapter read `statuses.get(name) == "FAIL"`, so every
+    status that is not that word - a SKIP, or one this version has never heard
+    of - came out as the clean answer and fed a cap that then did not fire.
+    """
+
+    def _facts(self, **records: str) -> object:
+        payload = [
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "metrics": {"rows": 40, "labelled_rows": 40},
+            }
+        ]
+        payload.extend(
+            {"check": check.replace("_", "-"), "status": status, "metrics": {}}
+            for check, status in records.items()
+        )
+        return MODULE.dataset_facts_from_preflight(payload)
+
+    def test_a_skipped_split_check_is_refused_rather_than_read_as_disjoint(
+        self,
+    ) -> None:
+        for check in ("dataset-split", "dataset-ids"):
+            with self.subTest(check=check):
+                with self.assertRaises(MODULE.PreflightInputError) as caught:
+                    self._facts(**{check.replace("-", "_"): "SKIP"})
+                self.assertIn(check, str(caught.exception))
+
+    def test_an_absent_record_is_still_read_as_the_question_not_arising(
+        self,
+    ) -> None:
+        """The false-red direction, and why absence is not the same statement.
+
+        `check_dataset` emits `dataset-split` only where a split can be looked
+        for - an unlabelled dataset legitimately carries no record - so absence
+        means the question did not arise. Refusing it would break every such
+        dataset for a reading that is honest there.
+        """
+        facts = self._facts()
+        self.assertFalse(facts.split_overlap)
+        self.assertFalse(facts.integrity_failed)
+
+    def test_a_real_failure_still_reads_as_a_failure(self) -> None:
+        facts = self._facts(dataset_split="FAIL", dataset_ids="FAIL")
+        self.assertTrue(facts.split_overlap)
+        self.assertTrue(facts.integrity_failed)
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):

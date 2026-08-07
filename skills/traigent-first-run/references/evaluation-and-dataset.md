@@ -378,8 +378,8 @@ Every generated row must:
 Run quality checks:
 
 - Usable count and corrupted-row percentage.
-- Repeated inputs: exact duplicates, and near-duplicates at or above 90% shared words - one
-  finding, scored once.
+- Repeated inputs: exact duplicates, and near-duplicates at or above the similarity line
+  `preflight.py` prints on the check's own line - one finding, scored once.
 - Duplicate IDs.
 - Normalized duplicate outputs/labels where diversity is expected.
 - Missing difficulty bands.
