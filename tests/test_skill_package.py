@@ -3492,13 +3492,20 @@ class SkillPackageTests(unittest.TestCase):
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
 
         for phrase in (
-            "baseline evidence decides the next step",
             "proceed with read-only inspection after stating the plan",
             "do not make the user approve safe discovery",
             "stop only for:",
         ):
             with self.subTest(guide=phrase):
                 self.assertIn(phrase, guide)
+        # The trailer moved with the blockquote it trails. #154 took the
+        # promise out of GUIDE.md so the opening script is self-contained in
+        # the document the assistant loads, and this sentence is the one that
+        # makes the five items a sequence rather than a menu - so it is pinned
+        # where the items now are, not where they used to be. Asserting it
+        # against GUIDE.md would only be satisfiable by restoring the second
+        # home this whole check exists to prevent.
+        self.assertIn("baseline evidence decides the next step", skill)
         self.assertIn(
             "perform safe, read-only discovery without asking for approval",
             skill,
