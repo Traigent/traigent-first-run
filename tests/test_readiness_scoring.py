@@ -1487,9 +1487,10 @@ class AgentScoringTests(unittest.TestCase):
 
         # The count beside it named a denominator the document contradicts:
         # "0 of 0 wired knobs" against a `wired` list holding one name.
-        knob_count = next(sub for sub in pillar.subscores if sub.name == "knob-count")
-        self.assertIn("seed", knob_count.evidence)
-        self.assertIn("not counted", knob_count.evidence)
+        # #189 replaced `knob-count` with `search-space`; the guarantee that
+        # the excluded knob is NAMED beside the count moved with it.
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn("seed", space.evidence)
 
     def test_an_excluded_knob_beside_real_ones_keeps_the_ordinary_reason(
         self,
@@ -1517,21 +1518,17 @@ class AgentScoringTests(unittest.TestCase):
         facts = MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
-        # 35/35 knob-count + 20/40 variation + 25/25 coverage. Was 90 while the
-        # `knob_variation` scores a categorical knob at FULL breadth from two
-        # distinct values, and the numeric-without-a-canonical-range path keeps
-        # the old `(distinct - 1) / 2`. So the four binary behaviour knobs
-        # score 1.0 each and `model` 1.0; the shortfall is the pinned
-        # `temperature`, which earns the 0.1 pin credit and drags the mean to
-        # 0.85. That is the cost of an
-        # exactly predictable 48, paid in the one sub-score that measures
-        # breadth of values rather than usefulness of knobs.
+        # Full marks, and the number is the guide's own recommended shape
+        # scoring as such: 48 distinct configurations against a 12-trial
+        # budget, so the run compares twelve of them - `SEARCH_SPACE_FULL`,
+        # which is what this guide's own baseline sweep enumerates - and 48 is
+        # four times the budget rather than twenty.
         #
-        # 93 rather than 94 since `coverage` was removed: it scored this space
-        # 25/25, and the remaining two were re-weighted 55/45 - so the
-        # variation shortfall is measured against 45 points instead of 40 and
-        # costs one point more.
-        self.assertEqual(pillar.score, 93)
+        # It was 93 while the pillar also averaged a per-knob quality blend,
+        # where the shortfall was the deliberately pinned `temperature`. A
+        # space losing points for obeying the guide's own instruction to pin
+        # temperature is the shape that sub-score kept producing.
+        self.assertEqual(pillar.score, 100)
         self.assertEqual(pillar.confidence, 1.0)
 
     def test_the_reasoning_branch_is_the_same_document(self) -> None:
@@ -1541,8 +1538,9 @@ class AgentScoringTests(unittest.TestCase):
         in that branch: the ordinary space was 54 configurations and the
         reasoning one 18, and only this test recorded the second number
         anywhere. Temperature is now pinned in both, so the branch produces a
-        byte-identical document and the same 80. Asserted rather than deleted,
-        because "the two branches agree" is the claim that replaced it.
+        byte-identical document and the same score. Asserted rather than
+        deleted, because "the two branches agree" is the claim that replaced
+        it.
         """
         reasoning = dict(
             WALKTHROUGH_CONFIG_SPACE,
@@ -1553,7 +1551,7 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(reasoning)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 93)
+        self.assertEqual(pillar.score, 100)
 
     # REMOVED ON THE MERGE, not lost. #157 added
     # `test_the_two_spellings_refusal_names_both_written_spellings` to pin the
@@ -1749,10 +1747,17 @@ class AgentScoringTests(unittest.TestCase):
         """
         absent = MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}})
         self.assertIsNone(absent.max_trials)
-        pillar, _, _ = MODULE.score_agent(absent)
-        # The document attests no `wired` knobs, so the pillar fails closed -
-        # which is a statement about `wired`, not about the absent budget.
-        self.assertLess(pillar.confidence, 1.0)
+        pillar, caps, _ = MODULE.score_agent(absent)
+        # This used to assert `confidence < 1.0`, and #189's own review found
+        # why that was worthless: it passed on the `coverage` sub-score being
+        # unmeasured, then kept passing after #182 deleted `coverage`, on the
+        # unrelated fact that the fixture declares no `wired` list. With every
+        # remaining sub-score measured the confidence is now 1.0, so the claim
+        # is restated as the one this fixture actually makes - the document
+        # attests no wired knob, so it is CAPPED, and that is a statement about
+        # `wired` rather than about the absent budget.
+        self.assertEqual(pillar.confidence, 1.0)
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
 
     def test_malformed_knob_and_bounds_entries_are_refused_not_dropped(self) -> None:
         """Dropping a typo silently made the score *better* and the reason false.
@@ -1798,9 +1803,9 @@ class AgentScoringTests(unittest.TestCase):
         """The bounds guard must not refuse a shape that scored before it.
 
         This adapter has always read bounds through `float()`, so a document
-        with `{"low": "1", "high": "5"}` scored 56. A guard that turns a working
-        document into a hard exit-2 failure is worse than the silence it
-        replaced, so a numeric string stays legal while `"x"` does not.
+        with `{"low": "1", "high": "5"}` has always scored. A guard that turns
+        a working document into a hard exit-2 failure is worse than the silence
+        it replaced, so a numeric string stays legal while `"x"` does not.
         """
         document = {
             "knobs": {"retrieval_k": [1, 5]},
@@ -1811,7 +1816,8 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual(facts.bounds, {"retrieval_k": {"low": 1.0, "high": 5.0}})
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 63)
+        # One knob, two values a 1-5 range can tell apart: a space of two.
+        self.assertEqual(pillar.score, 35)
         numeric = MODULE.agent_facts_from_config_space(
             dict(document, bounds={"retrieval_k": {"low": 1, "high": 5}})
         )
@@ -1967,7 +1973,7 @@ class AgentScoringTests(unittest.TestCase):
                 }
             )
             pillar, _, _ = MODULE.score_agent(facts)
-            count = next(sub for sub in pillar.subscores if sub.name == "knob-count")
+            count = next(sub for sub in pillar.subscores if sub.name == "search-space")
             return pillar.score, count.evidence
 
         without, _ = agent_score(dict(base))
@@ -1991,14 +1997,18 @@ class AgentScoringTests(unittest.TestCase):
             "sweeping max_tokens must earn exactly nothing - it was worth +6",
         )
 
-        # Not hidden, either. The runs really do double, and the line says so
-        # while staying addable: three varying knobs cannot make 16.
-        self.assertIn("8 combinations", evidence)
+        # Not hidden, either. #189 rewrote this line as a sentence and the two
+        # guarantees survive the rewrite: the space is stated at its true size,
+        # and the knob that multiplies the spend is NAMED.
+        self.assertIn("8 distinct configurations", evidence)
         self.assertIn("max_tokens", evidence)
-        self.assertIn("16 runs", evidence)
-        # And not called "repeats". Two max_tokens values are two different
-        # requests, not one configuration run twice.
-        self.assertNotIn("repeats", evidence)
+        # And not called a repeat. Two `max_tokens` values are two different
+        # requests, not one configuration run twice - #189's sentence said
+        # "each repeated N times over 'seed'" for every excluded knob, which
+        # is false for this one and names the wrong knob besides.
+        self.assertNotIn("repeated", evidence)
+        self.assertNotIn("'seed'", evidence)
+        self.assertIn("multiplied", evidence)
 
         # The note beside the knob is the knob's OWN reason. Telling an author
         # their max_tokens sweep measures run-to-run variance would be false:
@@ -2061,14 +2071,14 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], [])
         # The walkthrough document's own score; the point here is that the
         # float spelling reaches it rather than exiting 2.
-        self.assertEqual(pillar.score, 93)
+        self.assertEqual(pillar.score, 100)
         self.assertEqual(
             pillar.score,
             MODULE.score_agent(
                 MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
             )[0].score,
         )
-        # the trial cap still dampens knob-count points identically either way
+        # the trial cap still damps the search-space points identically either way
         crowded = {"knobs": {f"k{i}": [1, 2, 3, 4] for i in range(6)}}
         self.assertEqual(
             MODULE.score_agent(
@@ -2101,7 +2111,9 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.agent_facts_from_config_space(sweeping)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 41)
+        # Two values a noise floor can tell apart, so a space of two - and a
+        # run that compares both of them.
+        self.assertEqual(pillar.score, 35)
         for edges in (
             {"low": "-inf", "high": "inf"},
             {"low": "nan", "high": "nan"},
@@ -2130,21 +2142,89 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual([knob.name for knob in knobs], ["temperature"])
 
-    def test_knob_count_plateaus_rather_than_ramping(self) -> None:
-        four = MODULE.knob_count_points(4, 16, 12)
-        twelve = MODULE.knob_count_points(12, 4096, 12)
-        self.assertGreater(four, twelve)
+    def test_more_knobs_is_not_the_measure_and_never_was(self) -> None:
+        """Sixteen configurations beat 4096 against the same twelve trials.
+
+        The retired ladder said this by counting knobs and then damping, which
+        made the count carry a claim it could not support: four knobs of two
+        values and two knobs of four are the same search. The size says it
+        directly, and says nothing about how the size was reached.
+        """
+        self.assertGreater(
+            MODULE.search_space_points(16, 12), MODULE.search_space_points(4096, 12)
+        )
+        # Same space, reached two ways - one number, because it is one search.
+        self.assertEqual(
+            MODULE.search_space_points(16, 12), MODULE.search_space_points(16, 12)
+        )
 
     def test_space_far_larger_than_the_trial_budget_is_penalized(self) -> None:
         # Against the declared floor rather than a point total: the ladder is
-        # shares of `KNOB_COUNT_WEIGHT`, so re-weighting the pillar must not
+        # shares of `SEARCH_SPACE_WEIGHT`, so re-weighting the pillar must not
         # look like the damping getting weaker or stronger.
         self.assertLessEqual(
-            MODULE.knob_count_points(5, 5000, 12),
-            MODULE.KNOB_COUNT_WEIGHT * MODULE.KNOB_COUNT_OVERSIZED,
+            MODULE.search_space_points(5000, 12),
+            MODULE.SEARCH_SPACE_WEIGHT * MODULE.SEARCH_SPACE_PARTIAL,
         )
         self.assertLess(
-            MODULE.knob_count_points(5, 5000, 12), MODULE.knob_count_points(5, 16, 12)
+            MODULE.search_space_points(5000, 12), MODULE.search_space_points(16, 12)
+        )
+
+    def test_omitting_the_budget_never_scores_above_declaring_one(self) -> None:
+        """An absent field must not outscore a present one.
+
+        This assertion used to run the other way - `search_space_points(5000,
+        None)` was pinned EQUAL to full credit, on the reasoning that with no
+        budget declared nothing says the space is too large for anything. That
+        reasoning is about the document, not about the space: nothing in a
+        document that omits `max_trials` says the run will compare the whole
+        space either, and the top rung is a claim that it will.
+
+        Measured on the assessment, not just the sub-score: one identical
+        10 000-configuration space scored the card 88 STRONG with `max_trials:
+        12` and 96 EXCELLENT with the field deleted. Deleting a line bought a
+        band, and it penalised this guide's own producer, which always emits
+        `max_trials`.
+
+        Swept rather than spot-checked, because the defect was a single `if
+        budget` guard and a spot check at one size is what let it through.
+        """
+        for configurations in (2, 4, 11, 12, 13, 48, 200, 5000, 10_000):
+            omitted = MODULE.search_space_points(configurations, None)
+            for budget in (1, 2, 12, 48, 500, 10_000):
+                declared = MODULE.search_space_points(configurations, budget)
+                if declared >= omitted:
+                    continue
+                # A LOWER declared score is only legitimate when the budget
+                # itself is the bad news - a real measurement of a run that
+                # compares less. Silence is not that measurement.
+                self.assertLess(
+                    min(configurations, budget),
+                    MODULE.SEARCH_SPACE_FULL,
+                    f"{configurations} configurations scored {omitted} with no "
+                    f"budget and {declared} with max_trials={budget}: omitting "
+                    "the field beat declaring a budget that reaches the full "
+                    "rung, so an absent field outscored a present one",
+                )
+
+    def test_a_declared_zero_budget_is_not_an_absent_one(self) -> None:
+        """`if not max_trials` could not tell `0` from "nobody said".
+
+        Both left `configuration_budget` returning `None`, so a document
+        declaring it would try zero configurations was scored - and DESCRIBED,
+        in the evidence line - as one that declared no budget at all.
+
+        `_read_trial_budget` refuses a zero, so no config-space document
+        reaches this; `AgentFacts` is built directly elsewhere, and a guard
+        that only holds because of a check in another function is one edit away
+        from not holding.
+        """
+        self.assertIsNone(MODULE.configuration_budget(None, 1))
+        self.assertEqual(MODULE.configuration_budget(0, 1), 0)
+        self.assertEqual(MODULE.search_space_points(5000, 0), 0.0)
+        self.assertIn(
+            "try up to 0 of them",
+            MODULE.search_space_evidence(5000, 5000, 1, 0),
         )
 
     def test_omitting_the_trial_budget_never_outscores_declaring_one(self) -> None:
@@ -2362,12 +2442,188 @@ class AgentScoringTests(unittest.TestCase):
             },
             wired=("model", "temperature", "prompt_style"),
         )
-        self.assertEqual(
-            sorted(sub.name for sub in pillar.subscores), ["knob-count", "variation"]
-        )
+        self.assertEqual(sorted(sub.name for sub in pillar.subscores), ["search-space"])
         for sub in pillar.subscores:
             with self.subTest(subscore=sub.name):
                 self.assertNotIn("max_tokens", sub.evidence)
+
+
+class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
+    """The agent pillar scores one thing: how big the search actually is.
+
+    This guide is an onboarding taste guide. Whether four wide knobs beat ten
+    narrow ones is what the run is FOR, and no arithmetic over a JSON document
+    can rank it before a trial has been spent - so the pillar stopped trying,
+    and measures the one thing that is both countable and load-bearing.
+
+    The table below is the whole claim, stated as shapes rather than as a
+    formula, because a formula can be right about numbers nobody would ever
+    write.
+    """
+
+    BUDGET = 12
+
+    def _shape(self, knobs, **facts) -> tuple:
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.AgentFacts(
+                knobs=knobs,
+                wired=tuple(sorted(knobs)),
+                max_trials=facts.pop("max_trials", self.BUDGET),
+                config_space_supplied=True,
+                **facts,
+            )
+        )
+        space = next(s for s in pillar.subscores if s.name == "search-space")
+        return pillar.score, space.evidence, [cap.condition for cap in caps]
+
+    def test_the_pillar_reports_one_sub_score(self) -> None:
+        """Two numbers only need weighing while there are two of them.
+
+        `knob-count` and `variation` are gone with the 55/45 that weighed them.
+        Asserted on the pillar rather than on the absence of a constant,
+        because a re-introduced sub-score under a new name is the same defect.
+        """
+        pillar, _, _ = self._pillar({"model": ["a", "b", "c"]})
+        self.assertEqual([sub.name for sub in pillar.subscores], ["search-space"])
+        self.assertEqual(pillar.subscores[0].maximum, MODULE.SEARCH_SPACE_WEIGHT)
+        self.assertEqual(MODULE.SEARCH_SPACE_WEIGHT, 100.0)
+        for retired in ("KNOB_COUNT_WEIGHT", "VARIATION_WEIGHT", "knob_count_points"):
+            with self.subTest(retired=retired):
+                self.assertFalse(hasattr(MODULE, retired))
+
+    def _pillar(self, knobs, **facts):
+        return MODULE.score_agent(
+            MODULE.AgentFacts(
+                knobs=knobs,
+                wired=tuple(sorted(knobs)),
+                max_trials=facts.pop("max_trials", self.BUDGET),
+                config_space_supplied=True,
+                **facts,
+            )
+        )
+
+    def test_the_representative_shapes_are_ordered_by_what_the_run_compares(
+        self,
+    ) -> None:
+        """Every shape the owner named, against one twelve-trial budget.
+
+        The two entries that carry the argument are the last pair. A
+        1024-configuration space scores BELOW a 48-configuration one because
+        the twelve trials are the same twelve either way and the larger report
+        describes a sample nobody chose - and a 48 and a 12 score the SAME,
+        because which of them is the better search is exactly what this scorer
+        cannot know before the run.
+        """
+        pinned = self._shape(
+            {"model": ["a"], "temperature": [0], "prompt_style": ["direct"]}
+        )
+        one_knob = self._shape({"model": ["a", "b"]})
+        tight = self._shape(
+            {
+                "model": ["a", "b", "c"],
+                "prompt_style": ["direct", "structured"],
+                "thinking_shape": ["direct", "cot"],
+            }
+        )
+        walkthrough = self._shape(
+            {
+                "model": ["a", "b", "c"],
+                "temperature": [0],
+                "prompt_style": ["direct", "structured"],
+                "pre_action_reflect": [False, True],
+                "thinking_shape": ["direct", "cot"],
+                "reflect": [False, True],
+            }
+        )
+        oversized = self._shape({f"k{index}": ["a", "b"] for index in range(10)})
+
+        self.assertEqual(pinned[0], 0)
+        self.assertIn("agent-no-varying-knobs", pinned[2])
+        self.assertEqual(one_knob[0], 35)
+        self.assertEqual(tight[0], 100)
+        self.assertEqual(walkthrough[0], 100)
+        self.assertEqual(oversized[0], 70)
+
+        self.assertLess(oversized[0], walkthrough[0])
+        self.assertEqual(tight[0], walkthrough[0])
+        self.assertLess(one_knob[0], tight[0])
+        self.assertLess(pinned[0], one_knob[0])
+
+    def test_a_fake_sweep_does_not_buy_a_bigger_space(self) -> None:
+        """The one piece of the retired `variation` sub-score that had to live.
+
+        `temperature: [0.1, 0.115]` is two values wearing one hat. Counting
+        them as two would let any space grow by declaring values nothing can
+        tell apart - which is precisely what `variation` existed to refuse, so
+        the refusal moved INSIDE the count rather than being paid for
+        afterwards.
+        """
+        fake = self._shape({"temperature": [0.1, 0.115], "model": ["a", "b"]})
+        honest = self._shape({"model": ["a", "b"]})
+        self.assertEqual(fake[0], honest[0])
+        self.assertIn("your space has 2 distinct configurations", fake[1])
+        # And the sentence does not contradict a file the reader can count.
+        self.assertIn(
+            "(4 declared - values too close to tell apart count once)", fake[1]
+        )
+        # The diagnosis is still raised where it can be acted on.
+        _, _, knobs = self._pillar({"temperature": [0.1, 0.115], "model": ["a", "b"]})
+        temperature = next(knob for knob in knobs if knob.name == "temperature")
+        self.assertEqual(temperature.effective_values, 1)
+        self.assertIn("the same configuration in practice", " ".join(temperature.notes))
+
+    def test_the_evidence_line_says_something_a_person_can_act_on(self) -> None:
+        """A bare number is not guidance.
+
+        Two facts in one sentence, in this order: how big the space is, and
+        what this run will do with it. The second is the one a reader can
+        change cheaply, and neither is inferable from a score of 70.
+        """
+        self.assertEqual(
+            self._shape({f"k{index}": ["a", "b"] for index in range(10)})[1],
+            "your space has 1024 distinct configurations; this run will try up "
+            "to 12 of them; the space is over 20x what that budget reaches, "
+            "which holds this one step below full credit",
+        )
+        # No declared budget is its own sentence rather than a silent
+        # unbounded pass - and it no longer claims "the run may try all of
+        # them", which nothing here establishes and which was the sentence
+        # that made the old full-credit score sound earned.
+        self.assertEqual(
+            self._shape({"model": ["a", "b"]}, max_trials=None)[1],
+            "your space has 2 distinct configurations; no trial budget was "
+            "declared, so nothing here says how much of it this run compares; "
+            "2 more would reach the 4 this guide scores as room for two "
+            "settings to interact",
+        )
+
+    def test_the_step_the_score_sits_on_is_named_not_silent(self) -> None:
+        """The ladder is a step function, so the cliff has to be visible.
+
+        Four values and no others - 0, 35, 70, 100 - which means one extra
+        value in one knob can be worth a band while the sentence beside the
+        number moves by a single digit. Measured: 11 compared configurations
+        score the pillar 70 and the card 88 STRONG; 12 score it 100 and the
+        card 96 EXCELLENT.
+
+        The plateau itself is kept deliberately. Every threshold in it is a
+        number this guide already uses elsewhere, and smoothing it would invent
+        a scale - the exact mistake the retired `variation` sub-score made. So
+        the repair is disclosure: say which step this is and what reaches the
+        next one.
+        """
+        just_under = MODULE.search_space_evidence(11, 11, 1, 48)
+        self.assertIn("1 more would reach the 12", just_under)
+        self.assertIn("complete search", just_under)
+        # And at the top rung there is no next step to name, so nothing is
+        # appended - the clause must not become decoration on every line.
+        self.assertNotIn("would reach", MODULE.search_space_evidence(12, 12, 1, 48))
+        # The two ways to sit below full credit at full SIZE have different
+        # repairs, so they are different sentences.
+        self.assertIn(
+            "declaring `max_trials`", MODULE.search_space_evidence(50, 50, 1, None)
+        )
+        self.assertIn("over 20x", MODULE.search_space_evidence(5000, 5000, 1, 12))
 
 
 class ConfigSpaceSchemaTests(unittest.TestCase):
@@ -2648,10 +2904,15 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
             dict(sweeping, bounds={"widget": {"low": 1, "high": 50}})
         )
         self.assertEqual(facts.bounds, {"widget": {"low": 1.0, "high": 50.0}})
-        self.assertEqual(MODULE.score_agent(facts)[0].score, 63)
+        # A space of two either way now: how WIDELY the two values sweep is a
+        # per-knob diagnostic rather than a sub-score, so the declared bounds
+        # change the knob's notes and not the pillar. What they still change is
+        # whether the two values are two at all - that is the noise floor, and
+        # it is inside the configuration count.
+        self.assertEqual(MODULE.score_agent(facts)[0].score, 35)
         self.assertEqual(
             MODULE.score_agent(MODULE.agent_facts_from_config_space(sweeping))[0].score,
-            41,
+            35,
         )
 
     def test_bounds_width_must_be_a_number_the_scorer_can_use(self) -> None:
@@ -2698,7 +2959,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                     dict(sweeping, bounds={"k": {"low": 1, "high": 50}})
                 )
             )[0].score,
-            63,
+            35,
         )
 
     def test_a_large_integer_trial_budget_scores_like_any_other(self) -> None:
@@ -2728,7 +2989,14 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
             }
         )
         pillar, _, _ = MODULE.score_agent(crowded)
-        self.assertGreater(pillar.score, 0)
+        # It scores rather than raising, which is what this test is about, and
+        # it scores zero: a budget of one trial compares nothing, whatever the
+        # space around it holds. The evidence line is the actionable half.
+        self.assertEqual(pillar.score, 0)
+        self.assertIn(
+            "this run will try up to 1 of them",
+            next(s for s in pillar.subscores if s.name == "search-space").evidence,
+        )
 
     def test_two_spellings_with_different_values_are_refused(self) -> None:
         """One dimension cannot have two answers, and picking one silently is
@@ -2758,9 +3026,10 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                 {"knobs": {"a": [1, 1.0]}, "wired": ["a"]}
             )
         )
-        count = next(s for s in pillar.subscores if s.name == "knob-count")
+        space = next(s for s in pillar.subscores if s.name == "search-space")
         self.assertEqual(
-            count.evidence, "0 of 1 wired knobs actually vary; 1 combinations"
+            space.evidence,
+            "your space has 1 distinct configuration; every trial would be identical",
         )
         self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
 
@@ -2769,21 +3038,19 @@ class DocumentedSchemaTests(unittest.TestCase):
     def test_the_walkthrough_document_still_scores_and_clears_the_cap(self) -> None:
         """The pin the alias change could have moved, measured rather than assumed.
 
-               The shipped space declares only `prompt_style`, so collapsing the alias
-               leaves its six dimensions and 48 combinations untouched and the 80
-        stands. The variation shortfall is not binary knobs: since #174 a categorical
-        knob earns FULL breadth from two distinct values, so the four behaviour knobs
-        score 1.0 each. What costs points is the pinned `temperature`, at the 0.1 pin
-        credit.
+        The shipped space declares only `prompt_style`, so collapsing the alias
+        leaves its six dimensions and 48 configurations untouched.
         """
         pillar, caps, _ = MODULE.score_agent(
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         )
         self.assertEqual([cap.condition for cap in caps], [])
-        self.assertEqual(pillar.score, 93)
-        count = next(s for s in pillar.subscores if s.name == "knob-count")
+        self.assertEqual(pillar.score, 100)
+        space = next(s for s in pillar.subscores if s.name == "search-space")
         self.assertEqual(
-            count.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
+            space.evidence,
+            "your space has 48 distinct configurations; this run will try up to "
+            "12 of them",
         )
 
     def test_absent_wired_attests_nothing_rather_than_everything(self) -> None:
@@ -2800,23 +3067,33 @@ class DocumentedSchemaTests(unittest.TestCase):
         self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
         self.assertEqual(pillar.score, 0)
         self.assertEqual(knobs, [])
+        # A document arrived and named knobs, so the search space WAS read -
+        # it holds one configuration, because nothing in it is attested as
+        # wired. Measured, and measured at zero.
         measured = {s.name: s.measured for s in pillar.subscores}
-        self.assertEqual(measured, {"knob-count": True, "variation": False})
+        self.assertEqual(measured, {"search-space": True})
 
     def test_declared_knobs_without_wiring_score_like_no_document(self) -> None:
         """The declaration on its own is worth exactly zero points.
 
-        Confidence is asserted alongside the score because the two can diverge:
-        an earlier draft scored both at 0 but reported the declared-knobs run at
-        confidence 0.00 against 0.35 for no document at all, which is the
-        inversion `nothing_to_search_pillar` exists to prevent.
+        The score is the same 0 either way, because a space nothing varies in
+        holds one configuration however the document spells it.
+
+        Confidence is NOT the same, and that is the point of asserting it
+        rather than deleting it. A document naming knobs is a search space
+        somebody read; no document at all is a search space nobody read, and
+        the pillar reporting 55% evidence coverage for the second was the
+        opening card claiming to have looked at a file this guide deliberately
+        withholds. The direction is the constraint - see
+        `test_a_config_space_never_lowers_agent_confidence`.
         """
         declared, _, _ = MODULE.score_agent(
-            MODULE.AgentFacts(knobs={"model": ["a", "b"]})
+            MODULE.AgentFacts(knobs={"model": ["a", "b"]}, config_space_supplied=True)
         )
         absent, _, _ = MODULE.score_agent(MODULE.AgentFacts())
         self.assertEqual(declared.score, absent.score)
-        self.assertEqual(declared.confidence, absent.confidence)
+        self.assertEqual(declared.confidence, 1.0)
+        self.assertEqual(absent.confidence, 0.0)
 
     def test_a_config_space_never_lowers_agent_confidence(self) -> None:
         """Monotonicity: more input must never report as less observed.
@@ -2864,18 +3141,11 @@ class DocumentedSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(knobs, [])
                 self.assertEqual(pillar.score, 0)
-                # 0.55, not 0.35: confidence is the share of the pillar's
-                # weight that was measured, and `coverage` - always the
-                # unmeasured one on this path - is gone. Nothing knows more
-                # than it did; the denominator shrank.
-                self.assertEqual(
-                    pillar.confidence,
-                    round(
-                        MODULE.KNOB_COUNT_WEIGHT
-                        / (MODULE.KNOB_COUNT_WEIGHT + MODULE.VARIATION_WEIGHT),
-                        2,
-                    ),
-                )
+                # Fully measured. A document that lists no settings is a
+                # search space this scorer read off a file the customer handed
+                # over: it holds one configuration. There is nothing further
+                # to observe about it, so the pillar does not claim there is.
+                self.assertEqual(pillar.confidence, 1.0)
                 self.assertEqual(
                     {s.evidence for s in pillar.subscores},
                     {"the settings document lists no settings"},
@@ -2884,18 +3154,18 @@ class DocumentedSchemaTests(unittest.TestCase):
     def test_explicit_empty_wired_is_an_attested_zero(self) -> None:
         """`"wired": []` states something an absent list does not.
 
-        It names zero wired knobs, so knob-count is a counted zero - and the
-        evidence must not repeat the empty-document line, because knobs
+        It names zero wired knobs, so the search space is a counted one - and
+        the evidence must not repeat the empty-document line, because knobs
         *are* declared here; zero of them are attested as wired.
         """
         pillar, caps, _ = MODULE.score_agent(
             MODULE.AgentFacts(knobs={"temperature": [0.0, 1.0]}, wired=())
         )
         self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
-        knob_count = next(s for s in pillar.subscores if s.name == "knob-count")
-        self.assertTrue(knob_count.measured)
+        space = next(s for s in pillar.subscores if s.name == "search-space")
+        self.assertTrue(space.measured)
         self.assertEqual(
-            knob_count.evidence,
+            space.evidence,
             "0 of 1 listed settings are marked as ones the agent uses",
         )
 
@@ -3117,7 +3387,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 93)
+        self.assertEqual(agent["score"], 100)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )
@@ -3188,8 +3458,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(with_document["band"], without["band"])
         # ...and must not cost anything either. The first draft of this fix
         # reported 0.49 without the document and 0.40 with it, so supplying more
-        # input read as having observed less.
-        self.assertEqual(with_document["confidence"], without["confidence"])
+        # input read as having observed less. The constraint is the DIRECTION,
+        # and it is not equality: a document naming a knob is a search space
+        # somebody read, and no document is one nobody read. Confidence rises,
+        # the score does not, and the band is unchanged either way because the
+        # 45 ceiling binds in both runs.
+        self.assertGreater(with_document["confidence"], without["confidence"])
         conditions = {cap["condition"] for cap in with_document["caps"]}
         self.assertEqual(conditions, {cap["condition"] for cap in without["caps"]})
         self.assertIn("agent-no-varying-knobs", conditions)
@@ -5202,15 +5476,14 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
                 max_trials=max_trials,
             )
         )
-        return next(sub for sub in pillar.subscores if sub.name == "knob-count")
+        return next(sub for sub in pillar.subscores if sub.name == "search-space")
 
-    def test_an_excluded_knob_does_not_inflate_the_combination_count(self) -> None:
+    def test_an_excluded_knob_does_not_inflate_the_configuration_count(self) -> None:
         """`seed` is excluded from scoring, so it cannot be inside the count.
 
-        The evidence line pairs a knob count with a combination count, and the
-        combination count multiplied over EVERY knob while the knob count
-        excluded `seed` - so two two-valued knobs printed "2 of 2 wired knobs
-        actually vary; 24 combinations". Two of those knobs make four.
+        Sweeping a seed re-runs a configuration; it does not make a new one.
+        The count used to multiply over EVERY knob, so two two-valued knobs
+        printed "24 combinations". Two of those knobs make four.
         """
         two_knobs = {"temperature": [0.0, 1.0], "model": ["a", "b"]}
         with_seed = self._agent(
@@ -5218,25 +5491,21 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
             ("temperature", "model", "seed"),
             12,
         )
-        self.assertIn("4 combinations", with_seed.evidence)
-        self.assertNotIn("24 combinations", with_seed.evidence)
-        # Not hidden either: the run really is 24 trials, and the line says so
-        # in terms the knob count can account for - and it names the knob that
-        # caused the multiplier, which is the only way a reader can reconcile a
-        # budget penalty with knobs the multiplier is by construction not among.
-        #
-        # "6 repeats" was the wording until `max_tokens` joined the exclusion
-        # list. It was true of `seed` alone and false the moment a second,
-        # non-repeat knob could produce the same multiplier: two `max_tokens`
-        # values are two different requests, not one configuration run twice.
-        # One line cannot call both of them repeats, so it calls neither.
-        self.assertIn("6 uncredited values (seed)", with_seed.evidence)
-        self.assertIn("24 runs", with_seed.evidence)
+        self.assertIn("your space has 4 distinct configurations", with_seed.evidence)
+        self.assertNotIn("24 distinct", with_seed.evidence)
+        # Not hidden either. The seed sweep is what the budget is being spent
+        # on, so it is named and it is visible in the reachable count: twelve
+        # trials at six repeats each reach two of the four.
+        self.assertIn("try up to 2 of them", with_seed.evidence)
+        self.assertIn("each repeated 6 times over 'seed'", with_seed.evidence)
 
-        # A space with nothing excluded says exactly what it said before.
+        # A space with nothing excluded reaches all four.
         plain = self._agent(two_knobs, ("temperature", "model"), 12)
         self.assertEqual(
-            plain.evidence, "2 of 2 wired knobs actually vary; 4 combinations"
+            plain.evidence,
+            "your space has 4 distinct configurations; this run will try up to "
+            "4 of them; 8 more would reach the 12 this guide scores as a "
+            "complete search",
         )
 
     def test_the_budget_penalty_still_counts_the_trials_seed_really_costs(
@@ -5244,25 +5513,31 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
     ) -> None:
         """Excluding `seed` from the COUNT must not exclude it from the SPEND.
 
-        The SDK runs every combination once per seed, so a 4-combination space
-        swept over 6 seeds is 24 paid trials. Scoring the budget against 4 would
-        trade one wrong number for another.
+        The SDK runs every configuration once per seed, so a 4-configuration
+        space swept over 6 seeds costs 24 trials. A twelve-trial budget
+        therefore buys two configurations, not twelve - `configuration_budget`
+        is where the two facts are held together, and scoring against the raw
+        trial count would trade one wrong number for another.
         """
         swept = self._agent(
             {"temperature": [0.0, 1.0], "model": ["a", "b"], "seed": list(range(6))},
             ("temperature", "model", "seed"),
-            1,
+            12,
         )
         unswept = self._agent(
             {"temperature": [0.0, 1.0], "model": ["a", "b"]},
             ("temperature", "model"),
-            1,
+            12,
         )
         self.assertLess(
             swept.value,
             unswept.value,
-            "24 trials against a 1-trial budget is over-large, and must still say so",
+            "6 seeds against a 12-trial budget reaches a quarter of the space, "
+            "and must still say so",
         )
+        self.assertEqual(MODULE.configuration_budget(12, 6), 2)
+        self.assertEqual(MODULE.configuration_budget(12, 1), 12)
+        self.assertIsNone(MODULE.configuration_budget(None, 6))
 
     def test_a_ceiling_costing_nothing_is_not_the_first_thing_to_fix(self) -> None:
         """The ranked gaps are documented as ordered by cost, so order by cost.

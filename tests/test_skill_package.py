@@ -2037,19 +2037,23 @@ class SkillPackageTests(unittest.TestCase):
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
         readiness = importlib.import_module("readiness")
-        points = readiness.knob_count_points
-        best = max(points(count, 0, None) for count in range(1, 20))
-        plateau = [n for n in range(1, 20) if points(n, 0, None) == best]
-        self.assertEqual([points(n, 0, None) for n in (4, 5, 6)], [best] * 3)
-        self.assertLess(points(7, 0, None), best)
+        # #189 replaced `knob_count_points` - a ramp over how MANY knobs - with
+        # `search_space_points`, a ladder over how much of the space the run
+        # will actually compare. The rule's arithmetic is re-read against the
+        # function that now decides it, rather than against one that is gone.
+        points = readiness.search_space_points
+        best = points(readiness.SEARCH_SPACE_FULL, readiness.SEARCH_SPACE_FULL)
+        # Full credit starts at twelve reachable configurations, which is the
+        # number the rule quotes; one below it is a lower rung.
+        self.assertEqual(points(12, 12), best)
+        self.assertLess(points(11, 12), best)
         # 240 is 20 x the default cap, and it is the threshold the rule quotes:
-        # a space at it is unpunished and a space past it is damped to the floor.
-        # The floor is the ramp's own asymptote, taken from the ramp rather
-        # than written down again here.
-        floor = points(100, 0, None)
-        self.assertLess(floor, best)
-        self.assertEqual(points(4, 240, 12), best)
-        self.assertEqual(points(4, 241, 12), floor)
+        # a space at it is unpunished and a space past it is damped.
+        self.assertEqual(points(240, 12), best)
+        self.assertLess(points(241, 12), best)
+        # And an undeclared budget is damped where an oversized space is, which
+        # is what stops deleting the field from buying the top rung.
+        self.assertLess(points(1000, None), best)
 
         # The cost the rule exists to prevent, run through the real scorer so
         # the docstring's two numbers cannot go stale in silence. The knobs are
@@ -2106,15 +2110,27 @@ class SkillPackageTests(unittest.TestCase):
             "nine": 9,
             "ten": 10,
         }
-        self.assertEqual(
-            [spelled[word.casefold()] for word in stated.groups()],
-            [plateau[0], plateau[-1]],
-            "SKILL.md's knob-count bound and the scorer's knob_count_points "
-            "plateau have drifted apart",
-        )
+        # The bound used to be compared against `knob_count_points`' plateau,
+        # which was where it came from. #189 removed that ramp, so the bound is
+        # no longer DERIVABLE from the scorer - and pretending otherwise would
+        # be the drift this test exists to catch, pointed inward. What is
+        # checked instead is that both ends of the stated bound still reach the
+        # top rung against the default cap, and that a space below it does not.
+        low, high = (spelled[word.casefold()] for word in stated.groups())
+        self.assertLess(low, high, "the bound must name a range, low end first")
+        for knobs_ in (low, high):
+            with self.subTest(knobs=knobs_):
+                self.assertEqual(
+                    points(2**knobs_, readiness.SEARCH_SPACE_FULL),
+                    best,
+                    f"{knobs_} binary knobs must still reach full search-space "
+                    "credit against the default cap, or SKILL.md's bound and "
+                    "the scorer have drifted apart",
+                )
+        self.assertLess(points(2 ** (low - 1), readiness.SEARCH_SPACE_FULL), best)
         # ...and run-safety.md carries the arithmetic behind it without stating
         # the mandate a second time, which is the defect CLAUDE.md names.
-        self.assertIn("plateau at four to six varying knobs and fall from seven", rule)
+        self.assertIn("twelve reachable", rule)
         self.assertNotIn("aim at", rule.casefold())
 
         # 5. The separation margin is calibration's, not a number invented for
@@ -8562,35 +8578,69 @@ class SkillPackageTests(unittest.TestCase):
         assert match is not None
         pillar, conditions = score_config_space(json.loads(match.group(1)))
         self.assertEqual(conditions, [])
-        # The pillar's own score, re-measured rather than carried over, and the
-        # drop from 90 is a real trade this space made on purpose, recorded so
-        # nobody reads it as a regression.
+        # The pillar's own score, re-measured rather than carried over.
         #
-        # `knob_variation` scores a categorical knob at FULL breadth from two
-        # distinct values, and the numeric-without-a-canonical-range path keeps
-        # the old `(distinct - 1) / 2`. So the four binary behaviour knobs
-        # score 1.0 each and `model` 1.0; the shortfall is the pinned
-        # `temperature`, which earns the 0.1 pin credit and drags the mean to
-        # 0.85, which is 38.25 of 45. The 90 came from three-valued
-        # `prompt_style` and `temperature` sweeps, which scored the variation
-        # sub-score better and bought the search nothing the owner wanted:
-        # temperature adds surface noise an exact-match evaluator punishes.
+        # It reads 100 now, and the previous 93 is worth recording because of
+        # what it was docking. The pillar used to average a per-knob quality
+        # blend, and the shortfall in this space was the deliberately pinned
+        # `temperature` - a knob this guide instructs authors to pin, because
+        # sweeping it adds surface noise an exact-match evaluator punishes. The
+        # sub-score therefore charged the walkthrough seven points for
+        # following the walkthrough, and the note beside it warned readers not
+        # to fix that by adding a third value to a two-value knob. A measure
+        # that needs a warning against acting on it is not a measure.
         #
-        # So this is a predictable-space decision paid for in one sub-score
-        # that measures breadth of values rather than usefulness of knobs. It
-        # is stated here rather than smoothed over, and it is not a reason to
-        # add a third value to a knob that has two real settings.
-        #
-        # 93 rather than 94 since `coverage` was removed: it scored this space
-        # 25/25, and the remaining two were re-weighted 55/45 - so the
-        # variation shortfall is measured against 45 points instead of 40 and
-        # costs one point more.
-        self.assertEqual(pillar.score, 93)
-        counted = next(s for s in pillar.subscores if s.name == "knob-count")
+        # What earns the 100 is the shape rather than the taste: 48 distinct
+        # configurations against a 12-trial budget, so the run compares twelve
+        # of them, and 48 is four times the budget rather than twenty.
+        self.assertEqual(pillar.score, 100)
+        space = next(s for s in pillar.subscores if s.name == "search-space")
         self.assertEqual(
-            counted.evidence, "5 of 6 wired knobs actually vary; 48 combinations"
+            space.evidence,
+            "your space has 48 distinct configurations; this run will try up to "
+            "12 of them",
         )
         self.assertEqual(pillar.confidence, 1.0)
+
+    def test_the_qualitative_knob_rules_are_guidance_and_not_arithmetic(
+        self,
+    ) -> None:
+        """Three rules the scorer used to approximate, now addressed to a reader.
+
+        Each was in the arithmetic and each was wrong there in a way the code
+        could not see: the noise floor only collapses knobs it has a range for,
+        the alias table only knows the spellings it was told, and `wired` is a
+        claim rather than a measurement. So they are stated where the one
+        reader who can check them against the customer's actual agent will
+        read them - beside the knob catalog that chooses the knobs - and the
+        scorer keeps only what it can count.
+
+        Pinned because "moved into guidance" is exactly the change that
+        silently becomes "deleted" a branch later.
+        """
+        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn("Judging a space before you send it", sdk)
+        self.assertIn("Values too close together are not two values", sdk)
+        self.assertIn("Two knobs naming one dimension are one knob", sdk)
+        self.assertIn("A knob the agent never reads is not a lever", sdk)
+        # And each names why the scorer cannot settle it.
+        self.assertIn("it has no range for an unfamiliar knob", sdk)
+        self.assertIn("only knows the spellings it has been told about", sdk)
+        self.assertIn("your claim rather than a measurement", sdk)
+        # The pillar it describes is one number, and the document says which.
+        self.assertIn(
+            "how many distinct configurations the space holds, against how "
+            "many the run has budget to try",
+            sdk,
+        )
+        self.assertEqual(
+            sorted(
+                name
+                for name in READINESS.CHECK_DISPLAY_NAMES
+                if name in {"knob-count", "variation", "search-space"}
+            ),
+            ["search-space"],
+        )
 
     def test_config_space_document_is_serialized_before_but_written_after(self) -> None:
         """The document must not be able to drift *or* outlive a failed search.
@@ -8895,7 +8945,7 @@ class SkillPackageTests(unittest.TestCase):
         """
         printed = {
             READINESS.CHECK_DISPLAY_NAMES[name]
-            for name in ("knob-count", "variation")
+            for name in ("knob-count", "variation", "search-space")
             if name in READINESS.CHECK_DISPLAY_NAMES
         }
         glossary = (SKILL_ROOT / "references" / "glossary.md").read_text()
