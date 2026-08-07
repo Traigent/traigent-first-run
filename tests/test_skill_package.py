@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -1164,6 +1165,236 @@ class SkillPackageTests(unittest.TestCase):
                 with self.subTest(document=document.name, target=target):
                     self.assertTrue((document.parent / relative).exists())
 
+    def test_every_file_the_guidance_names_is_a_file_that_exists(self) -> None:
+        """A named file the reader cannot open is an instruction they cannot follow.
+
+        The link check above reads SKILL.md only, and only markdown-link syntax,
+        so a path written in backticks - which is how most of this guidance names
+        a file - was outside every check. `GUIDE.md` was named that way in
+        SKILL.md's operating contract while living at the repository root, which
+        the Agent Skill installer does not copy: the installed skill instructed
+        the assistant to open a document it did not have, and nothing failed.
+
+        Each document is resolved from where its reader actually stands. An
+        installed run has the skill directory and nothing else, so a shipped
+        document resolves against what git publishes under it. GUIDE.md is read
+        from a clone, and its own "Start here" section sends the reader into the
+        resolved skill directory for bundled files, so it resolves against the
+        repository and that directory both - which is also why it must say which
+        one it means when it names a bundled file.
+        """
+        shipped = shipped_skill_files()
+        repository = tracked_files()
+        # Source-repository paths that are deliberately not installed. Named
+        # rather than pattern-excluded, because a silent exclusion is how the
+        # defect above got in. Each is addressed to a maintainer editing this
+        # package and is never opened during a run.
+        unshipped = {
+            "tests/test_skill_package.py": (
+                "names the check that keeps run-safety.md's config-space table "
+                "welded to readiness.py's declaration"
+            ),
+        }
+        cited: set[str] = set()
+
+        def unresolved(document: Path, text: str, roots: list[tuple[str, set[str]]]):
+            """Report every reference in one document that resolves nowhere."""
+            for raw in self._file_references(text):
+                target = self._reference_path(raw)
+                if not target or "://" in target:
+                    continue
+                # A path in the user's project that this run creates. It never
+                # resolves in a guidance corpus and must not: no run artifact
+                # is shipped, and none exists before the run makes it.
+                if target.startswith("traigent-runs/"):
+                    continue
+                if target in unshipped:
+                    cited.add(target)
+                    continue
+                if any(
+                    self._resolves(document, target, base, files)
+                    for base, files in roots
+                ):
+                    continue
+                yield f"{document} names {target!r}, which nothing here provides"
+
+        dangling: list[str] = []
+        for name in sorted(shipped):
+            if name.endswith(".md"):
+                dangling += unresolved(
+                    Path(name), (SKILL_ROOT / name).read_text(), [("", shipped)]
+                )
+        dangling += unresolved(
+            Path("GUIDE.md"),
+            (ROOT / "GUIDE.md").read_text(),
+            [("", repository), (SKILL_PREFIX, repository)],
+        )
+        self.assertEqual(
+            dangling,
+            [],
+            "guidance names a file its reader cannot open",
+        )
+        # The escape hatch gets the same treatment as the rule: an entry nothing
+        # cites any more is removed, not left to quietly widen what passes.
+        self.assertEqual(sorted(set(unshipped) - cited), [])
+
+        # A CLEAN TREE PROVES NOTHING ABOUT WHAT THE GUARD CAN SEE, and this
+        # one is neuterable by a single token: drop `md` from `_NAMES_A_FILE`
+        # and every backticked markdown reference stops being a reference at
+        # all - including `GUIDE.md`, the exact defect this test was written
+        # for, whose docstring says most of this guidance names a file in
+        # backticks. So the guard is handed the defect it exists to catch, in
+        # the form it actually took, and must report it.
+        planted = "The operating contract lives in `GUIDE.md`; read it first."
+        with self.subTest(direction="the defect is seen"):
+            self.assertEqual(
+                list(unresolved(Path("SKILL.md"), planted, [("", shipped)])),
+                ["SKILL.md names 'GUIDE.md', which nothing here provides"],
+                "an installed skill naming GUIDE.md - a file the installer does "
+                "not copy - is invisible to this check",
+            )
+        # And the other direction, because a guard tightened until it flags
+        # working references teaches authors to route around it: the same
+        # sentence naming a file that IS shipped resolves silently.
+        with self.subTest(direction="a working reference is not flagged"):
+            self.assertEqual(
+                list(
+                    unresolved(
+                        Path("SKILL.md"),
+                        "The handoff lives in `references/run-safety.md`.",
+                        [("", shipped)],
+                    )
+                ),
+                [],
+            )
+
+    def test_the_reference_extractor_sees_every_kind_of_file_it_claims_to(
+        self,
+    ) -> None:
+        """One token in `_NAMES_A_FILE` is the whole reach of the check above.
+
+        Each extension there is a class of reference the guidance actually
+        writes, and removing any one of them silently empties the check for that
+        class rather than failing anything. `md` is the load-bearing one - the
+        defect that started this was a backticked `GUIDE.md` - but `.py` names
+        the three scripts, `.json`/`.jsonl` the config space and the dataset,
+        `.txt` the pinned requirements and `.yml`/`.yaml` the agent definition.
+
+        The near-misses matter as much: a version number, a decimal, and a
+        sentence-ending abbreviation are not files, and a check that called them
+        files would fail on prose nobody can rewrite.
+        """
+        for name in (
+            "GUIDE.md",
+            "SKILL.md",
+            "references/run-safety.md",
+            "scripts/readiness.py",
+            "assets/requirements-first-run.txt",
+            "traigent-runs/config-space.json",
+            "traigent-runs/tuning.jsonl",
+            "agents/openai.yaml",
+            "agents/openai.yml",
+        ):
+            with self.subTest(reference=name):
+                self.assertEqual(
+                    self._file_references(f"Open `{name}` before you continue."),
+                    [name],
+                    "a backticked file reference is not recognised as one, so "
+                    "every check built on this extractor is empty for it",
+                )
+        # Written the way prose writes them: with an anchor, in a link, and at
+        # the end of a sentence.
+        self.assertEqual(
+            self._file_references("See `GUIDE.md#start-here` for the order."),
+            ["GUIDE.md#start-here"],
+        )
+        self.assertEqual(
+            self._reference_path("GUIDE.md#start-here"),
+            "GUIDE.md",
+        )
+        self.assertEqual(
+            self._file_references("[the handoff](references/run-safety.md)"),
+            ["references/run-safety.md"],
+        )
+        # Not files, and each is something this guidance genuinely writes.
+        for innocent in (
+            "Pinned to `0.25.0` for the first run.",
+            "Costs `$5.00` at most.",
+            "Set `TRAIGENT_API_KEY=` in the file.",
+            "Roughly `0.75` of the rows.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertEqual(self._file_references(innocent), [])
+        # A fenced example is illustration, not an instruction to open a file.
+        self.assertEqual(
+            self._file_references("```\ncat some-file-that-does-not-exist.md\n```\n"),
+            [],
+        )
+
+    # Fenced blocks are stripped: an illustrative path inside a code sample is
+    # not an instruction to open a file, and treating it as one makes the check
+    # fail on its own examples.
+    _FENCE = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+    _INLINE_CODE = re.compile(r"`([^`]+)`")
+    _MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)\)")
+    _NAMES_A_FILE = re.compile(r"\.(?:md|py|txt|json|jsonl|ya?ml)$")
+
+    @classmethod
+    def _file_references(cls, text: str) -> list[str]:
+        """Every token in one document that names a file, as written."""
+        body = cls._FENCE.sub("", text)
+        found = [
+            token
+            for span in cls._INLINE_CODE.findall(body)
+            for token in span.split()
+            if cls._NAMES_A_FILE.search(cls._reference_path(token))
+        ]
+        return found + cls._MARKDOWN_LINK.findall(body)
+
+    @staticmethod
+    def _reference_path(raw: str) -> str:
+        """The path a reader would open, without the sentence around it.
+
+        A reference is written into prose, so it arrives carrying an anchor, a
+        comma, or the quotes of the shell line it sits in. Matching the raw
+        token instead means `GUIDE.md#start-here` - the natural way to write the
+        defect this test exists to catch, since GUIDE.md has a `## Start here` -
+        is not recognised as a reference at all.
+        """
+        target = raw.split("#", 1)[0].split("?", 1)[0]
+        # Trailing punctuation is stripped separately from leading, so that a
+        # sentence-ending `SKILL.md.` loses its full stop while a dotfile keeps
+        # its leading one.
+        target = target.lstrip("\"'`(*").rstrip("\"'`),;:!?.")
+        # `.../a/b` is this guidance's elision for "under some absolute prefix".
+        return target[4:] if target.startswith(".../") else target
+
+    @staticmethod
+    def _resolves(document: Path, target: str, base: str, files: set[str]) -> bool:
+        """Does `target`, read in `document`, name a file that exists?
+
+        Candidates are paths, never basenames: a basename fallback passes
+        `assets/glossary.md` for a file that lives in `references/`, which is
+        not checking the reference the reader was given. The bundle root and its
+        two directories are candidates because that is how these documents cite
+        each other - `run-safety.md` from a sibling reference, `readiness.py`
+        from SKILL.md - and each is a real directory, not a wildcard.
+        """
+        # A `..` climbs out of the bundle, and one of the candidate prefixes
+        # would then let it climb back in - `scripts/../scripts/readiness.py`
+        # normalizes onto a real file. Guidance never needs to write one.
+        if ".." in target.split("/"):
+            return False
+        for prefix in ("", str(document.parent) + "/", "references/", "scripts/"):
+            candidate = posixpath.normpath(
+                posixpath.join(base, prefix.lstrip("./"), target)
+            )
+            if candidate.startswith(("..", "/")):
+                continue
+            if candidate in files:
+                return True
+        return False
+
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
             "SKILL.md",
@@ -1946,16 +2177,13 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_free_readiness_research_is_not_presented_as_a_result(self) -> None:
         """Automatic checks validate readiness, not model performance."""
-        guide_text = " ".join(
-            (ROOT / "GUIDE.md").read_text().casefold().split()
-        ).replace(" > ", " ")
-        skill_text = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("run free readiness research", guide_text)
+        skill_text = " ".join(SKILL.read_text().casefold().split()).replace(" > ", " ")
+        self.assertIn("run free readiness research", skill_text)
         self.assertIn(
-            "score and setup—not agent accuracy or an optimization result", guide_text
+            "score and setup—not agent accuracy or an optimization result", skill_text
         )
-        self.assertIn("i explain details", guide_text)
-        self.assertIn("only if action is needed", guide_text)
+        self.assertIn("i explain details", skill_text)
+        self.assertIn("only if action is needed", skill_text)
         self.assertIn("the rendered readiness card is the summary", skill_text)
         self.assertIn(
             "do not separately explain passed calibration/mock wiring", skill_text
@@ -2800,15 +3028,46 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("reaching that ceiling is a decision point", normalized)
 
     def test_user_journey_is_numbered_and_reports_measured_progress(self) -> None:
+        """The opening script lives where an installed run can actually read it.
+
+        It was written in GUIDE.md and referenced from SKILL.md, and GUIDE.md is
+        not part of what the Agent Skill installer copies - so the installed
+        skill told the assistant to open with a document it did not have.
+        """
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("welcome to traigent onboarding!", guide)
+        self.assertIn("welcome to traigent onboarding!", skill)
         for stage in ("inspect", "readiness", "baseline", "optimize", "results"):
-            self.assertIn(f"**{stage}**", guide)
+            self.assertIn(f"**{stage}**", skill)
         self.assertIn("stage <n>/5", skill)
-        self.assertIn("with measured numbers when available", guide)
+        self.assertIn("with measured numbers when available", skill)
         self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
         self.assertIn("finished stages as compact checkmarks", skill)
+        # GUIDE.md keeps the cloned-repo reader pointed at it, and states it
+        # only once: a second copy is a rule that can be changed in one place.
+        self.assertIn('five-stage journey under "opening message"', guide)
+
+        # "Only once" is asserted over the tracked tree, not over GUIDE.md.
+        # Checking the one document the script just left proves it left; it says
+        # nothing about README.md, `templates/` or `reports/`, and README.md is
+        # the most-read file this repository publishes and already describes the
+        # journey. A second copy there would be exactly the defect this branch
+        # removed, in the file most likely to be edited by somebody who never
+        # opens SKILL.md.
+        homes = sorted(
+            name
+            for name in tracked_files()
+            if not name.startswith("tests/")
+            and "welcome to traigent onboarding!"
+            in " ".join((ROOT / name).read_text(errors="ignore").casefold().split())
+        )
+        self.assertEqual(
+            homes,
+            ["skills/traigent-first-run/SKILL.md"],
+            f"the opening script is written out in {homes}. It has one home - "
+            "the installed skill, which is the only reader that has to perform "
+            "it - and everything else points there.",
+        )
 
     def test_the_opening_card_states_its_blank_lines_without_hedging(self) -> None:
         """Four hedges over a state the scorer produces unconditionally.
