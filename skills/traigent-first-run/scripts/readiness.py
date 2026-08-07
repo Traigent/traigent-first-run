@@ -268,13 +268,27 @@ MODEL_BREADTH_FULL = 3
 # settings that matter most". It was not a redundant measure of the right
 # thing; it was a confident measure of the wrong thing.
 #
-# And it punished better knobs. Measured on this scorer: `model, temperature,
-# prompt_style` (the general catalog, exactly) scores coverage 25/25 and the
-# pillar 90, while `model, thinking_shape, reflect, self_consistency` scores
-# 8.33/25 and the pillar 78 - twelve points for bringing four levers instead of
-# three, with an evidence line reading `not tuning: temperature, prompt_style`,
-# which tells the customer to sweep the knob this guide now pins at 0 and calls
-# surface noise.
+# And it punished better knobs. Measured on the scorer this branch replaces,
+# with the shapes stated so both sides can be re-derived - the previous figures
+# here were 90 and 78, and named no shape, which is how they survived being
+# unreachable:
+#
+#   {model: 3 values, temperature: [0.0, 1.0], prompt_style: 2 values}
+#     - the general catalog, exactly - coverage 25/25, pillar 91
+#   {model: 3 values, thinking_shape / reflect / self_consistency: 2 each}
+#     - coverage 8.33/25, pillar 83, evidence `not tuning: temperature,
+#       prompt_style`
+#
+# Eight points for bringing four levers instead of three, and an evidence line
+# telling the customer to sweep the knob this guide now pins at 0 and calls
+# surface noise. The gap is smaller than 78 claimed and the direction is the
+# whole argument; 78 was not merely imprecise, it is unreachable - swept
+# exhaustively over one to four values on each of those four knobs, that shape
+# scores one of {12, 29, 33, 52, 56, 61, 65, 79, 83} and never 78. Narrow the
+# temperature sweep to the `[0.0, 0.2]` of this guide's own worked example and
+# the catalog shape scores 85, so the gap is two - the penalty for better knobs
+# is real at every width, and its size depends on a value the catalog shape
+# happens to carry, which is itself the argument against scoring names.
 #
 # The remaining two are NOT scaled proportionally. 35:40 became 55:45, so the
 # order of the two swapped, and the reason is this branch's base. Categorical
@@ -289,10 +303,21 @@ MODEL_BREADTH_FULL = 3
 # 55/45 and not 60/40, because `variation` is still the only place a fake sweep
 # is refused - the numeric noise floor that scores `temperature: [0.1, 0.115]`
 # at zero, and the pinned-knob credit - and the two shapes that test the gap
-# stay ordered correctly at 55/45 and start to compress past it: a ten-knob
-# space of two-value categoricals measures 83 against the tight three-knob
-# space's 85, and at 60/40 that margin is 81 against 84 while the one-knob
-# space it should also be beaten by falls to 61.
+# stay ordered correctly at 55/45 and start to compress past it. Measured
+# against this walkthrough's own `max_trials=12`, which is what damps the wide
+# space and is therefore load-bearing for both figures:
+#
+#   ten two-value categoricals (1024 configurations)  55/45: 83   60/40: 81
+#   {model: 3, prompt_style: 2, thinking_shape: 2}    55/45: 86   60/40: 85
+#   {model: 3 values} alone                           55/45: 64   60/40: 61
+#
+# The three-point margin at 55/45 becomes four at 60/40 while the one-knob
+# space falls seven, which is the compression. (The tight space's figures here
+# read 85 and 84 before this correction, and the `max_trials` they were
+# measured under was not stated - without it the ten-knob space is not damped
+# at all and scores 87, above the tight space, which inverts the ordering the
+# whole argument rests on. The ordering holds; it holds because of a cap the
+# sentence did not name.)
 #
 # Not 50/50 either. Equal weights are the same reflex as scaling: a number that
 # looks neutral, chosen because it needs no argument.
@@ -312,6 +337,13 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # the answer to `finish_reason == "length"`, scores it 0, and silently crowns a
 # weaker model the winner. That makes it a capacity guard, not a quality lever -
 # so a space that obeys the safety rule must not be docked for not sweeping it.
+#
+# DEAD as of this branch. `coverage` was the only reader, and with the
+# sub-score gone nothing consults these catalogs - the exclusion above is now a
+# note about a decision rather than a rule anything enforces, and `max_tokens`
+# is excluded from a table no code reads while still carrying a `CANONICAL_
+# RANGES` entry that earns `variation` credit. Deleted by #189, which is why
+# this branch must not land alone; #168 removes the canonical range.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -2986,14 +3018,18 @@ def _read_trial_budget(field: str, value: Any) -> int:
 
 
 def _read_agent_type(field: str, value: Any) -> str:
-    """`agent_type`: which high-impact catalog coverage is scored against.
+    """`agent_type`: read, type-checked, and scored against nothing.
 
-    An unrecognized *string* stays legal: it names an agent this scorer has no
-    catalog for, which is a real situation and not a typo the scorer can
-    detect. Coverage then goes unmeasured, and because `combine` renormalizes
-    over the measured sub-scores that *raises* the pillar's score while
-    dropping its confidence - the "agent type not recognized" gap line is what
-    carries the news, not the number. A non-string cannot even be looked up.
+    It selected the high-impact catalog `coverage` graded against. That
+    sub-score is gone as of this branch, so no number on the card moves with
+    this field, no gap line mentions it, and an unrecognized value is now
+    indistinguishable from a recognized one. It is parsed only so that a
+    document declaring it is not rejected.
+
+    That makes the field dead, and #185 deletes it. This branch must not land
+    alone: on its own it leaves a field the schema still documents, a
+    `HIGH_IMPACT_KNOBS` catalog no scoring code reads, and a type error raised
+    on the way to nowhere.
     """
     if not isinstance(value, str):
         raise ConfigSpaceInputError(
