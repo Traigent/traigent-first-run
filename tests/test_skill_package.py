@@ -8256,6 +8256,250 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
+    def test_the_close_lists_every_file_this_run_wrote(self) -> None:
+        """Two of the files were disclosed; the rest were not written by nobody.
+
+        The disclosure above named the two dataset splits, which is the pair a
+        reader is most likely to worry about - but the run also writes a run
+        plan, a config-space document, two calibration files, sometimes a
+        substitute agent or evaluator, sometimes a readiness report, and the
+        SDK's own logs. A user who wants to know where everything went, to keep
+        it or to delete it, should not have to ask a second time.
+
+        The writes OUTSIDE `traigent-runs/` are the half that needs a guard
+        rather than a phrase, because "delete the folder and nothing is lost"
+        is true of the folder and false of every one of them, and an omission
+        there reads exactly like completeness.
+
+        The count is checked against SKILL.md's authorization table, not
+        against a tuple written here. Comparing the prose to this test's own
+        list is the producer agreeing with itself: it fails when an instruction
+        disappears and passes silently when SKILL.md gains a new write outside
+        the folder, which is exactly what happened twice. Installing the pinned
+        set into an environment this run did NOT create mutates site-packages
+        wherever that environment lives - SKILL.md authorises it behind one
+        confirmation, and run-safety.md says a current-project environment
+        managed outside the root is an external candidate - and the credential
+        handoff to a user-named file is outside the project by definition.
+        Neither was disclosed, and the sentence said "three".
+
+        So every row of that table is classified here, on one side or the
+        other, and a row that is neither fails. That is the shape
+        `CAP_NO_IMPLICATION` already uses in the scorer, for the same reason: a
+        list of positives cannot tell "checked, and it writes nothing outside"
+        from "nobody looked".
+        """
+        # One entry per WRITE, not per table row, because the count in the prose
+        # counts writes and one row authorises two of them. Each names the
+        # SKILL.md action-class cell that authorises it, so a reworded row fails
+        # here until it is re-classified rather than dropping out of the check.
+        writes_outside_the_run_folder = (
+            (
+                "the /traigent-runs/ ignore line",
+                "Create `traigent-runs/` artifacts; when the project root is "
+                "inside a Git worktree, add `/traigent-runs/` to the "
+                "project-root `.gitignore`",
+                ("`.gitignore`",),
+            ),
+            (
+                # When the file did not exist, the run wrote all of it, so the
+                # disclosure owes the stronger true statement.
+                "the provider key in .env",
+                "Create or update a minimal `.env`",
+                ("`.env`", "whole file"),
+            ),
+            (
+                # Same row, different write: "use the user-named handoff or
+                # target `.env`", and a file the user names is outside the
+                # project by definition.
+                "the credential handoff to a user-named file",
+                "Create or update a minimal `.env`",
+                ("the user named a file of their own",),
+            ),
+            (
+                "the virtual environment this run created",
+                "Create an isolated environment",
+                ("`.venv`",),
+            ),
+            (
+                # Not the environment - the packages. Deleting a run-created
+                # `.venv` undoes this; installing into a reused one, which
+                # SKILL.md authorises behind one confirmation and run-safety.md
+                # says may sit outside the project root, leaves it behind.
+                "the pinned packages in an environment this run did not create",
+                "Install dependencies in the isolated environment",
+                ("an environment this run did not create",),
+            ),
+        )
+        # Rows that write nothing the close has to hand over: nothing at all,
+        # only inside `traigent-runs/`, or only where the user already decided.
+        writes_nothing_to_disclose_here = {
+            "Read-only discovery and static validation",
+            "Repair a working copy after the user chooses repair",
+            "Change real labels, expected answers, examples, or rubric policy",
+            "Execute an evaluator or mock check",
+            "Make provider, private-data, connected Traigent, or external calls "
+            "other than the narrow dependency fetch",
+            "Perform destructive or production-affecting actions",
+        }
+        authorization = (
+            SKILL.read_text()
+            .split("## Action authorization", 1)[1]
+            .split("\n## ", 1)[0]
+        )
+        rows = []
+        for line in authorization.splitlines():
+            line = line.strip()
+            if not line.startswith("|") or set(line) <= set("|- "):
+                continue
+            action = " ".join(line.strip("|").split("|")[0].split())
+            if action.casefold() == "action class":
+                continue
+            rows.append(action)
+        self.assertTrue(rows, "the authorization table is no longer parseable")
+        self.assertEqual(
+            set(rows),
+            {row for _, row, _ in writes_outside_the_run_folder}
+            | writes_nothing_to_disclose_here,
+            "an authorization row is on neither side: say whether it can leave "
+            "something outside `traigent-runs/`, and disclose it in the close "
+            "if it can",
+        )
+        counts = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+
+        text = (
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+        )
+        paragraphs = [" ".join(block.split()) for block in text.split("\n\n")]
+        disclosures = [
+            p for p in paragraphs if "not the only files this run wrote" in p
+        ]
+        self.assertEqual(len(disclosures), 1, "the file disclosure has one home")
+        disclosure = disclosures[0]
+
+        # Inside the folder: every path the guidance instructs the run to write.
+        for path in (
+            "`run-plan.md`",
+            "`config-space.json`",
+            "`calibration-cases.json`",
+            "`calibration-results.json`",
+            "`walkthrough_agent.py`",
+            "`evaluator.py`",
+            "readiness report",
+            "sdk run logs",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, disclosure)
+        for phrase in (
+            # Only what exists - the run does not write all of these every time.
+            "name only what was actually written",
+            "that whole folder is git-ignored and can be deleted without losing anything",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, disclosure)
+
+        # Outside the folder: the artifacts deleting it does not remove.
+        head, _, outside = disclosure.partition("writes sit outside the folder")
+        self.assertTrue(
+            outside, "the close must still say what survives deleting `traigent-runs/`"
+        )
+        for write, action, disclosed in writes_outside_the_run_folder:
+            for token in disclosed:
+                with self.subTest(write=write, token=token):
+                    self.assertIn(
+                        token.casefold(),
+                        outside,
+                        f"SKILL.md authorises {action!r}, which leaves {write} "
+                        "outside `traigent-runs/`, and the close does not "
+                        "disclose it",
+                    )
+        stated = head.split()[-1]
+        self.assertIn(stated, counts, f"the count of outside writes reads {stated!r}")
+        self.assertEqual(
+            counts[stated],
+            len(writes_outside_the_run_folder),
+            "the stated count and SKILL.md's authorization table disagree about "
+            "how many writes land outside `traigent-runs/`",
+        )
+
+    def test_an_installed_skill_is_disclosed_as_needing_a_fresh_session(self) -> None:
+        """A skill installed mid-run is not usable in the run that installed it.
+
+        Skills load when a session starts, so the handoff hands over something
+        that does nothing until the user restarts - and "installed" reads as
+        "ready" to everyone who has not been told otherwise. It sits with the
+        file list because that is where the user is already asking what this
+        run left behind and what to do with it - which is also why it has to
+        say where the install landed and that removing it means deleting that
+        directory: it is the one artifact that lands outside the project.
+
+        Where it lands is the assistant's to read off the install, not this
+        repository's to state: no document here records an install path, so a
+        literal one in the guidance would be invented. That is asserted as an
+        absence, because a fabricated path is indistinguishable from a real
+        one to every reader who has not gone looking.
+        """
+        text = (
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+        )
+        paragraphs = [" ".join(block.split()) for block in text.split("\n\n")]
+        handoffs = [
+            p for p in paragraphs if "inert in the session that installed it" in p
+        ]
+        self.assertEqual(
+            len(handoffs), 1, "the installed-skill disclosure has one home"
+        )
+        handoff = handoffs[0]
+        for phrase in (
+            "skills load when a session starts",
+            "start a new session, or refresh this one, and they are available",
+            # Located, and removable - not just discussed.
+            "name the absolute directory the install wrote to",
+            "it is outside the project",
+            "removing a skill means deleting that directory",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, handoff)
+        invented = re.search(r"[~/][\w.\-/]*skills", handoff)
+        self.assertIsNone(
+            invented,
+            f"the close names an install path this repository never documents: {invented}",
+        )
+
+    def test_generated_rows_are_not_re_judged_against_their_own_inputs(self) -> None:
+        """The logical row check is for rows a human wrote, not rows we wrote.
+
+        Re-judging a generated row asks the model to grade its own homework,
+        and it buys no claim the corpus could make anyway: the synthetic
+        ceiling already bounds what a generated dataset may be quoted for, so
+        a second model judgement on top of it changes nothing and can only add
+        a false sense of having verified something.
+
+        Scoped in exactly one place, because a rule repeated as a caveat in
+        several is the drift these tests exist to catch.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "runs on rows the customer brought and skips rows this run generated",
+            "the synthetic ceiling already bounds what a generated corpus may claim",
+            "the model marking its own homework",
+            # Named positively too, so the scope reads as a purpose rather than
+            # as an exemption someone can argue back out of.
+            "that check exists for the other case, where a human wrote the pairing",
+            "stated once, here",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+
     def test_the_close_says_what_a_full_capability_run_would_do(self) -> None:
         """The ten rows are a teaching choice, said forwards rather than implied.
 
