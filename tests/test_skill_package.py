@@ -2915,8 +2915,8 @@ class SkillPackageTests(unittest.TestCase):
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
-        Separately, the SDK exposes no supported id for the run just completed
-        (Traigent/Traigent#2020), and the fix for that belongs upstream: this
+        Separately, the SDK exposes no supported id
+        for the run just completed, and the fix for that belongs upstream: this
         repo must not work around it by reading the SDK's private storage
         layout.
         """
@@ -2927,7 +2927,10 @@ class SkillPackageTests(unittest.TestCase):
             "do not inspect private storage",
             "baseline_results.sync_session_id",
             "successful sync json",
-            "traigent/traigent issue 2020",
+            # Was "traigent/traigent issue 2020". The guidance may not carry an
+            # internal issue number at all, so what is pinned is the decision -
+            # the fix is upstream's and this repo must not route around it.
+            "tracked upstream and the fix belongs there",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -3673,18 +3676,28 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(restatement=restatement):
                 self.assertNotIn(restatement, dataset)
 
-    # Engineering-rationale citations that predate this rule and are never
-    # instructed to be echoed to the user. Allowlisted by exact text so the
-    # corpus below can stay whole: narrowing the corpus to the documents that
-    # happen to be clean is how run-safety.md - which carries the customer
-    # facing approval copy - fell outside this check in the first place.
-    TRACKER_CITATION_ALLOWLIST = (
-        "(traigent-first-run#78)",
-        "Tracked upstream as Traigent/Traigent issue 1993.",
-        "Tracked upstream as Traigent/Traigent issue 2020.",
-    )
+    # Every shape an internal tracker reference is written in, not the two
+    # that happened to be in the tree when this guard was written. Those two
+    # were `traigent-first-run#N` and `traigent/traigent issue N`, and the
+    # commonest spelling of all - `Traigent/Traigent#N` - walked straight
+    # through: the hash form was only ever spelled for one of the two repos.
+    # That is this repository's recurring defect in its mirror image. Usually a
+    # guard flags legitimate content; this one missed legitimate targets. Both
+    # are the same mistake - closing the shape that broke instead of the class.
+    #
+    # So the hash form is matched with no repository prefix at all. `#` glued
+    # to digits is an issue reference and nothing else in customer-facing
+    # guidance, which makes every prefix variant - owner-qualified,
+    # bare-repo, backticked, inside a fence, or a trailing `#2101` in a list -
+    # one pattern rather than one alternative each. Prose and URL forms are
+    # spelled out beside it. There is no allowlist: a citation that must not
+    # reach a customer is not made safe by being old, and with nothing ever
+    # published there is no citation this repository is stuck with.
     TRACKER_REFERENCE = re.compile(
-        r"traigent-first-run#\d+|traigent/traigent issue \d+", re.IGNORECASE
+        r"#\d+"
+        r"|(?:[\w.-]+/)?traigent[\w.-]*\s+(?:issue|issues|pr|pull)s?\s+\#?\d+"
+        r"|github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+",
+        re.IGNORECASE,
     )
     TRACKER_LINE = re.compile(r"^\s*tracking:", re.IGNORECASE | re.MULTILINE)
 
@@ -3699,23 +3712,75 @@ class SkillPackageTests(unittest.TestCase):
         """
         for path in assistant_facing_documents():
             raw = path.read_text()
-            # Whitespace-normalized, because an allowlisted citation wraps
-            # across lines in the source and would otherwise never match.
-            allowed = " ".join(raw.split())
-            for citation in self.TRACKER_CITATION_ALLOWLIST:
-                allowed = allowed.replace(citation, "")
+            # Whitespace-normalized, because a citation can wrap across lines
+            # in the source and would otherwise never match.
             with self.subTest(document=path.name):
                 self.assertEqual(
-                    self.TRACKER_REFERENCE.findall(allowed),
+                    self.TRACKER_REFERENCE.findall(" ".join(raw.split())),
                     [],
-                    f"{path.name} carries a tracker reference outside the "
-                    "allowlisted engineering citations",
+                    f"{path.name} carries a tracker reference; this is a "
+                    "public repository and the copy is pasted verbatim",
                 )
                 self.assertEqual(
                     self.TRACKER_LINE.findall(raw),
                     [],
                     f"{path.name} carries a 'Tracking:' line, which the "
                     "disclosure copy would paste to the user verbatim",
+                )
+
+    def test_the_tracker_guard_sees_every_form_a_citation_is_written_in(
+        self,
+    ) -> None:
+        """The guard is only worth its corpus if it recognizes the citation.
+
+        It did not. `TRACKER_REFERENCE` spelled the hash form for one
+        repository (`traigent-first-run#N`) and the prose form for the other
+        (`traigent/traigent issue N`), so `Traigent/Traigent#2101` - the
+        commonest spelling, and the one an open branch adds to sdk-execution.md
+        in three places - matched nothing. Both branches passed, and three
+        internal tracker references would have reached a public repository with
+        no test failing anywhere.
+
+        A guard nobody probes with the input it exists to catch is a guard that
+        documents an intention. So it is probed here with every form a citation
+        gets written in, and with the near-misses that must stay legal.
+        """
+        for citation in (
+            "traigent-first-run#78",
+            "Traigent/Traigent#2101",
+            "traigent/traigent#2101",
+            "Traigent/traigent-first-run#78",
+            "Traigent/Traigent#2100, #2101 and #2102",
+            "`traigent-first-run#78`",
+            "```\nsee Traigent/Traigent#2101\n```",
+            "Traigent/Traigent#2101 (comment)",
+            "Tracked upstream as Traigent/Traigent issue 1993.",
+            "Traigent/Traigent issues 1993",
+            "traigent-first-run pull 42",
+            "https://github.com/Traigent/Traigent/issues/2101",
+            "https://github.com/Traigent/traigent-first-run/pull/142",
+            "see #2101 for why",
+        ):
+            with self.subTest(citation=citation):
+                self.assertTrue(
+                    self.TRACKER_REFERENCE.search(" ".join(citation.split())),
+                    "an internal tracker citation the guard cannot see",
+                )
+
+        # Near-misses that are not citations. The corpus legitimately names the
+        # public repository and the skill; flagging those would push authors to
+        # narrow the corpus, which is how run-safety.md escaped this check once.
+        for legal in (
+            "https://github.com/Traigent/traigent-first-run",
+            "$traigent-first-run",
+            "## A markdown heading",
+            "traigent-first-run is the skill you install",
+            "issue 2101 of the newsletter",
+        ):
+            with self.subTest(legal=legal):
+                self.assertIsNone(
+                    self.TRACKER_REFERENCE.search(" ".join(legal.split())),
+                    "the guard flags copy that carries no tracker reference",
                 )
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
