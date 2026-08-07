@@ -516,7 +516,7 @@ account request:
   executed and failed trial counts. Report cost or latency as `not measured` when the provider or
   SDK does not supply it.
 - Show this grid's own accuracy-cost frontier beside the winner, read from the trials it just
-  paid for. Six trials is a small frontier, and it is still the user's own measured evidence
+  paid for. A fixed grid is a small frontier, and it is still the user's own measured evidence
   rather than a note about whether the two happen to trade off.
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase

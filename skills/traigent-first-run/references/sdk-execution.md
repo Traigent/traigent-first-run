@@ -943,7 +943,7 @@ def frontier_at_or_above(trials, metric_name, floor):
     `metric_name` is this run's own objective name - the key wired through
     `metric_functions`, which is `"task_success"` in this reference's worked
     example - and never `"accuracy"`, which can sit in the same metrics map
-    without being the scorer this run wired (Traigent/Traigent#2101).
+    while being built-in exact match rather than the scorer this run wired.
 
     `floor` is the incumbent trial's value under this same `metric_name`, so
     both sides of the comparison are the same measurement. Never pass the
@@ -995,7 +995,11 @@ indistinguishable in the metrics map from a genuine free route, and `references/
 makes measured cost a precondition for the read.
 
 Do not pass `strategy=` or `strategy_params` to obtain this: the frontier is the function above and
-nothing else. See Traigent/Traigent#2100, #2101 and #2102 for why those presets are unused here.
+nothing else. The presets are unused here because a strategy can replace the objectives the
+decorator declared without raising or warning, and because the cost-floor preset floors on built-in
+exact-match accuracy rather than the wired scorer - so the floor silently becomes `0.0` and it
+returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
+without moving anything the report shows.
 
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
