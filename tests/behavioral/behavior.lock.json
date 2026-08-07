@@ -1,5 +1,5 @@
 {
-  "digest": "bcdbbed71cb10728aedba6d794e4833d66c238297ac4103b08a6d3a30a6b6d3d",
+  "digest": "f2dcd893acdc1cbaa28c27ebbc5a3f7720f26c1638e17a05aa58c38123fa468e",
   "paths": [
     {"path": "GUIDE.md", "sha256": "5bb8ec149ab87683250f9d152a6f2ec1046ad44a9f30742f18da7c73dea18721", "size": 9580},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "8b721f5c07a62a4d57b362e72f2ec370eef0a5856374fc527df679cbebefd458", "size": 52719},
@@ -7,7 +7,7 @@
     {"path": "skills/traigent-first-run/assets/requirements-first-run.txt", "sha256": "d8508c0a91aa3360fb4742fe360c64700411805f398fb682c98831424eb3de45", "size": 54},
     {"path": "skills/traigent-first-run/assets/run-plan.md", "sha256": "c0c4d4d9fdaa33440bca6e80a648f6d8e2a0dfa3611b94e49655003f79439abc", "size": 2786},
     {"path": "skills/traigent-first-run/references/component-creation.md", "sha256": "3d5faab08e65965c304930cc7724a32ac7222c09069b66209b4d39f972930c95", "size": 7035},
-    {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "3ab574777e825c4d7d830862c032a747cc9286dfc6a12c4a27a871ea969db015", "size": 49703},
+    {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "353fbe2cf613cdffee52915dbdd502589a089d9021cfacaff3cb8ce88733033c", "size": 49859},
     {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "08c2091a16e0e133aa23e549a9aff75863acba79e751923f205d73927bc29b25", "size": 20209},
     {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "acf68f6fed38f7741ba3a20f3668c210876b85a9bef3af6e8382888539bafc47", "size": 60213},
     {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "df652de4a7af01d364fce9eb13b823da1340b0b4b92d8396b1d3d89eb3de3dd7", "size": 51705},
