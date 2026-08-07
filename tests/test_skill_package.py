@@ -536,6 +536,9 @@ def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]
             if keyword.arg == "blocks":
                 rendered = ast.unparse(keyword.value)
         found.setdefault(condition.value, set()).add(rendered)
+    return found
+
+
 def prose_sentences(text: str) -> list[str]:
     """Split markdown prose into sentences without gluing list items together.
 
@@ -5521,7 +5524,14 @@ class SkillPackageTests(unittest.TestCase):
         for expected in ("README.md", "AGENTS.md", "CLAUDE.md", "GUIDE.md"):
             with self.subTest(document=expected):
                 self.assertIn(expected, published)
-        for directory in ("skills/", "templates/", "reports/"):
+        # `templates/` is NOT in this list, and its absence is the decision
+        # rather than an oversight: #192 deleted the directory - the two
+        # compatibility templates in it were a second home for the run plan and
+        # the preflight script, which is the duplicate this very check exists
+        # to refuse. A directory that no longer exists cannot be "reachable",
+        # and asserting it here would only be satisfied by putting the
+        # duplicates back.
+        for directory in ("skills/", "reports/"):
             with self.subTest(directory=directory):
                 self.assertTrue(
                     any(name.startswith(directory) for name in published),
@@ -6678,6 +6688,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "what a binary partial probe has to score",
             ("partial output above `--bad-maximum`",),
             ("in `binary` mode, partial output receiving a passing score",),
+        ),
+        (
             # SKILL.md stage 5 asks, recommends preserving the agent's route,
             # and requires recipient disclosure before changing it. GUIDE.md
             # described the same situation as resolved silently in favour of
