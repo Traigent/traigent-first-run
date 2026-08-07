@@ -427,6 +427,36 @@ def guidance_budget_ceilings(
     return ceilings
 
 
+SKILL_PREFIX = "skills/traigent-first-run/"
+
+
+def tracked_files() -> set[str]:
+    """Every repository-relative path git publishes.
+
+    From git rather than a filesystem walk, for the same reason the internal
+    tooling check below uses git: the question is what gets PUBLISHED, not what
+    happens to sit in the working tree.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {name for name in listed.stdout.split("\0") if name.strip()}
+
+
+def shipped_skill_files() -> set[str]:
+    """Every file the Agent Skill installer copies, as skill-relative paths."""
+    return {
+        name[len(SKILL_PREFIX) :]
+        for name in tracked_files()
+        if name.startswith(SKILL_PREFIX)
+    }
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
