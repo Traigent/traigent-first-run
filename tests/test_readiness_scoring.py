@@ -1043,8 +1043,12 @@ class DatasetScoringTests(unittest.TestCase):
             s for s in one_sided.subscores if s.name == "power"
         )
         self.assertEqual(unscoreable_holdout.value, 22.0)
+        # "held-out", not "held-back": `THIRD_NOUNS` in test_skill_package bans
+        # the prose form "held-back" from every bundled script and names this
+        # evidence line as the defect behind the ban. Only the split's settled
+        # name changed here; the guarantee is the same one.
         self.assertIn(
-            "none of the held-back rows can be scored", unscoreable_holdout.evidence
+            "none of the held-out rows can be scored", unscoreable_holdout.evidence
         )
         self.assertIn("50 examples", unscoreable_holdout.evidence)
 

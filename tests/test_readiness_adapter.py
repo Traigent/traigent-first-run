@@ -993,7 +993,12 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             score = _score(dataset, self._healthy_context(directory))
             power = _dataset_subscore(score, "power")
             self.assertEqual(power["value"], 22.0)
-            self.assertIn("none of the held-back rows can be scored", power["evidence"])
+            # "held-out", not "held-back": `THIRD_NOUNS` in test_skill_package
+            # bans the prose form "held-back" from every bundled script, and
+            # names this very evidence line as the defect that produced the
+            # ban. The guarantee here is unchanged - an unscoreable holdout is
+            # SAID on the card - only the settled name for the split is.
+            self.assertIn("none of the held-out rows can be scored", power["evidence"])
 
     def test_a_none_valued_class_label_does_not_clamp_power(self) -> None:
         """C6: a fully labelled dataset must not be reported as half unscoreable.

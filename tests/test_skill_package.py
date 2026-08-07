@@ -1370,7 +1370,18 @@ class SkillPackageTests(unittest.TestCase):
                 # A path in the user's project that this run creates. It never
                 # resolves in a guidance corpus and must not: no run artifact
                 # is shipped, and none exists before the run makes it.
-                if target.startswith("traigent-runs/"):
+                #
+                # Matched on the `traigent-runs/` SEGMENT rather than on the
+                # start of the string, because guidance that tells the
+                # assistant to name a written file "by absolute path" writes it
+                # under a placeholder root - `<project root>/traigent-runs/
+                # holdout.jsonl`. The reference extractor splits an inline-code
+                # span on whitespace, so that arrives here as
+                # `root>/traigent-runs/holdout.jsonl`, which is still the same
+                # run artifact and still must not be looked for on disk. A
+                # `startswith` check reported both written splits as dangling
+                # files while the instruction naming them was correct.
+                if target == "traigent-runs" or "traigent-runs/" in target:
                     continue
                 if target in unshipped:
                     cited.add(target)
@@ -3155,9 +3166,41 @@ class SkillPackageTests(unittest.TestCase):
         dataset_text = (
             SKILL_ROOT / "references" / "evaluation-and-dataset.md"
         ).read_text()
-        default = re.search(r"create (\d+) tuning examples by default", dataset_text)
+        # The construction rule now states TWO numbers - the generated total and
+        # the tuning rows inside it - because the walkthrough reserves a
+        # held-out set at creation time. Both are read from the rule, and the
+        # rule is made to agree with itself, so neither can drift from the other
+        # or from the restatements swept below.
+        default = re.search(
+            r"create (\d+) examples by default: (\d+) tuning rows", dataset_text
+        )
         self.assertIsNotNone(default, "the generated dataset size is no longer stated")
-        expected = int(default.group(1))
+        generated_total = int(default.group(1))
+        expected = int(default.group(2))
+
+        # The held-out split's size and composition, also read from the rule
+        # rather than pinned here. Ten rows at 2/3/3/2 is settled; this reads it
+        # so that the sweep below can tell a held-out breakdown apart from a
+        # tuning one instead of demanding every breakdown sum to the same total.
+        reserve = re.search(
+            r"Reserve (\d+) held-out rows "
+            r"\((\d+) easy, (\d+) medium, (\d+) hard, (\d+) very hard\)",
+            dataset_text,
+        )
+        self.assertIsNotNone(reserve, "the held-out split's composition is no longer stated")
+        held_out = int(reserve.group(1))
+        held_out_bands = [int(value) for value in reserve.groups()[1:]]
+        self.assertEqual(
+            sum(held_out_bands),
+            held_out,
+            "the held-out split's own breakdown does not sum to its stated size",
+        )
+        self.assertEqual(
+            generated_total,
+            expected + held_out,
+            f"the rule builds {generated_total} rows but describes {expected} "
+            f"tuning plus {held_out} held-out, which is {expected + held_out}",
+        )
 
         counted = re.compile(
             r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
@@ -3167,12 +3210,15 @@ class SkillPackageTests(unittest.TestCase):
         for path in assistant_facing_documents():
             for match in counted.finditer(path.read_text()):
                 statements.append((path.name, int(match.group(1))))
-        # The rule plus its three restatements. Pinned so that DELETING a
+        # The rule plus its four restatements. Pinned so that DELETING a
         # restatement is a decision someone makes, not a way for this sweep to
-        # quietly cover less than it did.
+        # quietly cover less than it did. Raised from four when the held-out
+        # split arrived: the sampling rule that draws the tuning rows from the
+        # tuning split states the count a fifth time, and a new statement is
+        # welded here rather than left uncovered.
         self.assertEqual(
             len(statements),
-            4,
+            5,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -3190,8 +3236,17 @@ class SkillPackageTests(unittest.TestCase):
         # has to add up to the same number. A breakdown summing to something
         # else is the same defect one level down, and it is the half a count
         # check cannot see.
+        #
+        # Two breakdowns are legitimate now, not one: the tuning rows' and the
+        # held-out set's. Requiring every breakdown to sum to the tuning count
+        # would report the settled ten-row split as an error - the split is
+        # correct and the guard would be wrong - so each breakdown is matched
+        # against whichever set it describes. A held-out-sized one must also BE
+        # the settled composition, which is stricter than the old sweep, not
+        # looser: before, the ten-row split escaped this check entirely by
+        # writing its bands without the word "and".
         bands = re.compile(
-            r"(\d+) easy,\s*(\d+) medium,\s*(\d+) hard,? and (\d+) very[ -]hard"
+            r"(\d+) easy,\s*(\d+) medium,\s*(\d+) hard,?(?: and)? (\d+) very[ -]hard"
         )
         breakdowns = [
             (path.name, [int(value) for value in match.groups()])
@@ -3199,13 +3254,30 @@ class SkillPackageTests(unittest.TestCase):
             for match in bands.finditer(" ".join(path.read_text().split()))
         ]
         self.assertTrue(breakdowns, "the difficulty breakdown is no longer stated")
+        self.assertTrue(
+            any(sum(counts) == expected for _, counts in breakdowns),
+            "no document states the tuning rows' difficulty breakdown",
+        )
+        self.assertTrue(
+            any(counts == held_out_bands for _, counts in breakdowns),
+            "no document states the held-out split's difficulty breakdown",
+        )
         for name, counts in breakdowns:
             with self.subTest(document=name, breakdown=counts):
+                if sum(counts) == held_out:
+                    self.assertEqual(
+                        counts,
+                        held_out_bands,
+                        f"{name} states a {held_out}-row breakdown of {counts}, "
+                        f"but the held-out split is {held_out_bands}",
+                    )
+                    continue
                 self.assertEqual(
                     sum(counts),
                     expected,
-                    f"{name}'s difficulty breakdown sums to {sum(counts)}, not "
-                    f"the {expected} rows the rule builds",
+                    f"{name}'s difficulty breakdown sums to {sum(counts)}, "
+                    f"which is neither the {expected} tuning rows the rule "
+                    f"builds nor the {held_out} it holds out",
                 )
 
     def test_the_calibration_reject_list_states_what_actually_rejects(self) -> None:
@@ -5587,7 +5659,31 @@ class SkillPackageTests(unittest.TestCase):
             "one, and the score claim with paired outcome counts",
         ):
             self.assertIn(phrase, text)
-        self.assertLessEqual(len(text.splitlines()), 60)
+        # 61, raised from 60 when the held-out branch merged, and the raise is
+        # the part that needs an argument rather than the line.
+        #
+        # The cap is shared, and twice a trunk branch measured itself against
+        # the open held-out branch and gave a line back for it: 4ba2311 folded
+        # the record's two frontier lines into one ("the cap is shared, and the
+        # one that can spend less should"), and 351f312 rejoined the
+        # connected-run field, "which wrapped for width rather than for
+        # meaning". Both reserves were then spent by later trunk work - the
+        # width wrap returned in 3f57acf, and the repaired/generated row-ids
+        # field took the other - so trunk arrived at this merge holding 60 of
+        # 60 with no reserve left, and the held-out score is a 61st line.
+        #
+        # It is not a line that can be given back the same way. Every bullet in
+        # the template is now one physical line and one distinct field, so the
+        # only remaining saving is folding two fields into one - which is a
+        # decision about what the run record must keep separate, not a
+        # reflow. The held-out score for the recommended configuration is the
+        # result the holdout exists to produce, so the field stays and the
+        # budget moves by exactly one.
+        #
+        # OWNER: if the record should stay at 60, the fold to make is a
+        # judgement call about the two readiness-score lines under "Quality
+        # evidence"; this raise is the reversible choice, not the settled one.
+        self.assertLessEqual(len(text.splitlines()), 61)
         for removed_detail in (
             "provider retry count",
             "provider-request timeout",
