@@ -258,8 +258,10 @@ The lines under each pillar on the card
   Why two lines are blank at the start: they are "checked on known-good and
   known-bad" and "separates good answers from bad", which both come from
   calibrating the evaluator - that happens later in the run, so at the opening
-  score they have not been done yet. Both are reported as not measured rather
-  than as zero, and neither is something you were supposed to bring.
+  score they have not been done yet. Both are named as not measured, and neither is
+  something you were supposed to bring. Unmeasured is not free, though: a
+  check the run will do later keeps its weight, so the pillar reads under 100
+  until calibration. That is why 2 of 4 measured is not 100.
 
   The Agent pillar is the third thing missing from an opening card, and it no
   longer has to be. Every config-space file found before this run's search is
