@@ -1255,6 +1255,56 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("something is broken and paid work", readme)
         self.assertNotIn("then 10-13 connected managed trials", readme)
 
+    def test_the_blocked_gloss_admits_every_state_that_actually_blocks(self) -> None:
+        """`PAID RUN BLOCKED` may not be glossed as "create or repair something".
+
+        One blocking condition is keyed on a row COUNT rather than on anything
+        being absent or malformed. `power_ceiling` blocks below
+        `WIRING_CHECK_EXAMPLES` scoreable rows, and its remedy is `get-data` -
+        gather more evidence, which is neither creating a thing nor repairing
+        one. Reproduced end to end through the real
+        `preflight.py --json | readiness.py --preflight -` pipeline: six
+        collected, labelled, well-formed rows per split with a healthy
+        calibration and a healthy config space score 74/100 WORKABLE and print
+        `PAID RUN BLOCKED`, carrying exactly one cap -
+        `dataset-below-measurable-size`, ceiling 74, `blocks=True`,
+        `action_kind='get-data'`. Nothing is missing and nothing is invalid, so
+        a gloss offering only "create or repair" describes no available action
+        for the card the reader is holding.
+
+        Gated on the scorer rather than pinned as a phrase, which is the point:
+        traigent-first-run#149 turns that condition into a ceiling except at
+        zero scoreable rows. On the day it merges, thin evidence stops blocking,
+        the branch below flips, and this test asks for the shorter gloss instead
+        of silently continuing to accept a sentence the card no longer earns. It
+        fails today if the evidence-gathering half is dropped, and it fails
+        after #149 if the half is kept - the sentence and the behaviour cannot
+        drift apart in either direction.
+        """
+        # n starts at 1: zero scoreable rows really is "something is missing",
+        # which the other half of the gloss already covers. What has to be
+        # covered here is a dataset that is present, valid and merely small.
+        thin_evidence_blocks = False
+        remedy = None
+        for scoreable in range(1, READINESS.COARSE_RESOLUTION_EXAMPLES):
+            cap = READINESS.power_ceiling(scoreable)
+            if cap is not None and cap.blocks:
+                thin_evidence_blocks = True
+                remedy = cap.action_kind
+                break
+
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        gloss = readme.split("`paid run blocked` is the headline", 1)[1].split(
+            "`limited to 89` means", 1
+        )[0]
+        if thin_evidence_blocks:
+            # Not create, not repair: the closed remedy vocabulary says so.
+            self.assertEqual(remedy, "get-data")
+            self.assertIn("or too little comparable evidence exists", gloss)
+            self.assertIn("repair or evidence-gathering action", gloss)
+        else:
+            self.assertNotIn("too little comparable evidence", gloss)
+
     def test_generated_artifacts_and_secrets_are_ignored_only_for_git_projects(
         self,
     ) -> None:
@@ -1438,6 +1488,425 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
         self.assertIn("is not silently demoted", dataset_text)
 
+    def test_the_provenance_vocabulary_is_read_from_preflight_not_retyped(
+        self,
+    ) -> None:
+        """A hand-typed roster drifted, and drifted in the silent direction.
+
+        The prose listed 13 synthesised words against the module's 20, 10
+        collected against 16, and framed the classification as binary - while
+        `preflight.py` has a third class, `UNDECLARED_SOURCE_TOKENS`. A row
+        declaring `provenance: "n/a"` therefore scored 6.0/10 with no vocabulary
+        warning, which the documented two-list rule cannot account for. So the
+        prose now names the three declarations and quotes no roster, and this
+        checks the naming is real rather than decorative - the same weld
+        `test_the_documented_schema_table_is_read_from_the_declaration` applies
+        to the config-space table, which is the one prose table that never
+        drifted.
+        """
+        spec = importlib.util.spec_from_file_location(
+            "first_run_preflight_for_prose", SKILL_ROOT / "scripts" / "preflight.py"
+        )
+        preflight = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = preflight
+        spec.loader.exec_module(preflight)
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        text = " ".join(source.casefold().split())
+
+        for constant in (
+            "SYNTHESISED_SOURCE_PREFIXES",
+            "COLLECTED_SOURCE_PREFIXES",
+            "UNDECLARED_SOURCE_TOKENS",
+        ):
+            with self.subTest(constant=constant):
+                self.assertIn(constant, source, "the prose names no such constant")
+                self.assertTrue(
+                    hasattr(preflight, constant),
+                    "the prose names a declaration preflight.py does not have",
+                )
+        # The third class is what the two-list framing hid, so the example
+        # tokens must really belong to it.
+        for token in ("n/a", "tbd"):
+            self.assertIn(token, preflight.UNDECLARED_SOURCE_TOKENS)
+        self.assertIn("raises no vocabulary warning", text)
+        self.assertNotIn("a word on neither list", text)
+        # The glossary is what the assistant phrases from, and it defined an
+        # undeclared row as one that "does not record where it came from" -
+        # false of the row that records `n/a`, which the card then prints as
+        # `declared sources: n/a` beside that very word.
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        entry = glossary.split("undeclared row -", 1)[1].split(" - ", 1)[0]
+        self.assertIn("`n/a`", entry)
+        self.assertNotIn("a row that does not record where it came from", glossary)
+        # And the same sentence in the CARD, which is the artifact the customer
+        # actually reads. The glossary was corrected for this and readiness.py
+        # kept the false wording, so the fix reached the document a reader has
+        # to go and look up and not the line printed in front of them: the card
+        # said the row "does not record where it came from" and then printed
+        # `declared sources: n/a` - what the row recorded - in the same
+        # sentence. Pinned against readiness.py rather than a rendered card so
+        # this cannot pass by the phrase merely moving.
+        card_source = _READINESS.read_text()
+        self.assertNotIn("the row does not record where it came from", card_source)
+        self.assertIn("the row names no real source", card_source)
+        # A retyped roster is what drifted; refuse its return. Counted over the
+        # section, since one or two examples are explanation and a dozen is a
+        # copy.
+        section = source.split("### Declaring provenance", 1)[1].split("###", 1)[0]
+        quoted = set(re.findall(r"`([a-z0-9/_-]+)`", section.casefold()))
+        declared = set(preflight.SYNTHESISED_SOURCE_PREFIXES) | set(
+            preflight.COLLECTED_SOURCE_PREFIXES
+        )
+        self.assertLessEqual(
+            len(quoted & declared),
+            3,
+            "the vocabulary is being retyped here again; preflight.py declares it",
+        )
+
+    def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
+        """`component-creation.md`'s example is a line the customer sees.
+
+        It showed "24 varied synthetic cases prepared" against the 18 every
+        other document states, so an assistant copying the model announced a
+        dataset size the run does not build. Read from the construction rule
+        rather than pinned here, so the two cannot drift apart again.
+
+        Swept over the whole corpus rather than over that one file, because
+        fixing the instance left the class open: the count is restated three
+        more times - SKILL.md's pricing scope, sdk-execution.md's walkthrough
+        paragraph, and the rule itself - and a guard naming one restatement
+        passed while another said something else. Probed: changing
+        sdk-execution.md's copy to 24 and relocking left the suite green.
+
+        The sweep is keyed on the PHRASINGS a row count is written in, not on a
+        list of files, so a document that gains one of those sentences is
+        covered without this test being edited.
+        """
+        dataset_text = (
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        ).read_text()
+        default = re.search(r"create (\d+) tuning examples by default", dataset_text)
+        self.assertIsNotNone(default, "the generated dataset size is no longer stated")
+        expected = int(default.group(1))
+
+        counted = re.compile(
+            r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
+            r"|rows by default)"
+        )
+        statements: list[tuple[str, int]] = []
+        for path in assistant_facing_documents():
+            for match in counted.finditer(path.read_text()):
+                statements.append((path.name, int(match.group(1))))
+        # The rule plus its three restatements. Pinned so that DELETING a
+        # restatement is a decision someone makes, not a way for this sweep to
+        # quietly cover less than it did.
+        self.assertEqual(
+            len(statements),
+            4,
+            f"the walkthrough row count is now stated {len(statements)} times "
+            f"({statements}); one home is better, but a new one must be welded "
+            "here and a removed one accounted for",
+        )
+        for name, stated in statements:
+            with self.subTest(document=name):
+                self.assertEqual(
+                    stated,
+                    expected,
+                    f"{name} states {stated} walkthrough rows against the "
+                    f"construction rule's {expected}",
+                )
+
+        # And the difficulty breakdown, which is restated beside two of them and
+        # has to add up to the same number. A breakdown summing to something
+        # else is the same defect one level down, and it is the half a count
+        # check cannot see.
+        bands = re.compile(
+            r"(\d+) easy,\s*(\d+) medium,\s*(\d+) hard,? and (\d+) very[ -]hard"
+        )
+        breakdowns = [
+            (path.name, [int(value) for value in match.groups()])
+            for path in assistant_facing_documents()
+            for match in bands.finditer(" ".join(path.read_text().split()))
+        ]
+        self.assertTrue(breakdowns, "the difficulty breakdown is no longer stated")
+        for name, counts in breakdowns:
+            with self.subTest(document=name, breakdown=counts):
+                self.assertEqual(
+                    sum(counts),
+                    expected,
+                    f"{name}'s difficulty breakdown sums to {sum(counts)}, not "
+                    f"the {expected} rows the rule builds",
+                )
+
+    def test_the_calibration_reject_list_states_what_actually_rejects(self) -> None:
+        """Two of its items did not describe the helper that runs them.
+
+        `binary` partial was written as "receiving a passing score", while the
+        check is `partial <= --bad-maximum`: a binary partial at 0.50 is below
+        the passing score and still exits 1, and the same file tells authors not
+        to rely on unstated CLI defaults. And the exception item said "reject",
+        twenty lines above the paragraph saying the advisory "never changes the
+        authored probes' PASS" - which is what the helper does: a scorer with
+        `except Exception: return 0.0` returns `"passed": true` and exit 0.
+        """
+        spec = importlib.util.spec_from_file_location(
+            "first_run_calibrate_for_prose",
+            SKILL_ROOT / "scripts" / "calibrate_evaluator.py",
+        )
+        calibrate = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = calibrate
+        spec.loader.exec_module(calibrate)
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            f"partial output above `--bad-maximum` (`{calibrate.BAD_MAXIMUM}`)", text
+        )
+        self.assertNotIn("in `binary` mode, partial output receiving a passing", text)
+        self.assertIn("nothing enforces this one", text)
+        self.assertIn("the advisory never changes the authored probes' pass", text)
+
+    # Every prose statement of the reasoning-headroom numbers, wherever it is
+    # written. Fences are stripped first: `"max_tokens": 4096` inside a code
+    # sample is the number being USED, not a claim about where it came from.
+    _FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+    _HEADROOM_NUMBER = re.compile(r"\b(?:2048|4096)\b")
+    # The vocabulary of a number that came from somewhere. This is the shape the
+    # deleted citation had - not its wording - so a differently phrased retelling
+    # ("the safety reference's measured minimum", "the derived high-effort
+    # bound") fails on the same rule.
+    _CLAIMS_A_DERIVATION = re.compile(
+        r"\b(?:bound|bounds|derived|derivation|measured|benchmark\w*|computed|"
+        r"calibrated|established|requirement|required)\b"
+    )
+    # The sentence has to be about the headroom floor itself, and it has to
+    # name no source outside this package. Both narrowings exist because the
+    # digits are not owned by this rule: `4096` appears in provider limits,
+    # context windows and vendor documentation, and a sentence sourcing the
+    # number to one of those is making a claim that HAS support. Refusing
+    # those too would put a tripwire under nineteen contending branches for a
+    # defect none of them is committing.
+    _ABOUT_THE_HEADROOM_FLOOR = re.compile(r"max_tokens|headroom|reasoning effort")
+    _NAMES_AN_OUTSIDE_SOURCE = re.compile(
+        r"\b(?:provider|providers|vendor|vendors|api|apis|litellm|openai|"
+        r"anthropic|upstream|documented|documentation|docs|context window|"
+        r"model card|release note\w*)\b"
+    )
+
+    def _headroom_citation_offence(self, sentence: str) -> str | None:
+        """Return the derivation word a sentence claims without support, if any."""
+        if not self._HEADROOM_NUMBER.search(sentence):
+            return None
+        lowered = sentence.casefold()
+        if not self._ABOUT_THE_HEADROOM_FLOOR.search(lowered):
+            return None
+        if self._NAMES_AN_OUTSIDE_SOURCE.search(lowered):
+            return None
+        claimed = self._CLAIMS_A_DERIVATION.search(lowered)
+        return claimed.group(0) if claimed else None
+
+    def test_the_reasoning_headroom_numbers_are_never_cited_as_derived(self) -> None:
+        """The `max_tokens` numbers are a judgement, and one file cited them as a result.
+
+        `run-safety.md` asserts `max_tokens` of at least 2048, and 4096 with
+        high reasoning effort, and derives neither from anything - no
+        measurement, no vendor limit, no trial. `sdk-execution.md` then cited
+        that assertion as "the safety reference's high-effort bound", which is
+        circular: the only support for the number was the sentence being cited,
+        and "bound" tells a reader it has support it does not have. The fix was
+        to stop claiming a derivation, not to invent one, so what has to hold
+        afterwards is that NO document reintroduces the claim - in any wording.
+
+        Pinned by shape rather than by the one phrase that was removed. A
+        future "the measured 4096 floor" or "the derived headroom bound" fails
+        here even though neither contains the deleted words. The positive half
+        is asserted too: the owning statement must still say the numbers are
+        unmeasured, so the rule cannot be satisfied by deleting the honesty
+        along with the citation.
+
+        Scoped, though, to the claim it is actually about. The first version of
+        this guard checked every sentence anywhere in the corpus that merely
+        contained `2048` or `4096`, which put a veto over two digits this rule
+        does not own: "4096 is required by this provider" is a real derivation
+        from a real source and would have failed. So a sentence offends only
+        when it is about the headroom floor AND sources the number to nothing
+        outside this package. Both examples are asserted below, because a
+        widened pattern that starts refusing the legitimate one is the
+        regression, and it would otherwise show up as somebody else's branch
+        failing for a reason this test never explained.
+        """
+        # The sentence this rule was actually written against, verbatim from
+        # the commit that removed it.
+        self.assertEqual(
+            self._headroom_citation_offence(
+                "Set `max_tokens` at least 4096 (the safety reference's "
+                "high-effort bound, applied flat here)."
+            ),
+            "bound",
+        )
+        # And a retelling that shares none of its words.
+        self.assertEqual(
+            self._headroom_citation_offence(
+                "2048 is the measured answer headroom floor."
+            ),
+            "measured",
+        )
+        self.assertIsNone(
+            self._headroom_citation_offence(
+                "A `max_tokens` of 4096 is required by this provider."
+            )
+        )
+        self.assertIsNone(
+            self._headroom_citation_offence(
+                "The retry budget is derived from 4096 recorded runs."
+            )
+        )
+
+        offenders: list[str] = []
+        for document in assistant_facing_documents():
+            body = self._FENCED_BLOCK.sub("", document.read_text())
+            for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
+                claimed = self._headroom_citation_offence(sentence)
+                if claimed:
+                    offenders.append(
+                        f"{document.relative_to(ROOT).as_posix()}: "
+                        f"{claimed!r} in {sentence!r}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "a reasoning-headroom number is presented as derived from "
+            "something; it is an unmeasured defensive floor, and the only "
+            "support for it is the sentence asserting it",
+        )
+        owner = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("unmeasured defensive floor", owner)
+
+    # The sentence that chooses grid over random, wherever it is written. A
+    # threshold reintroduced as "40 configurations per trial" or "ten times the
+    # trial cap" fails the same way the deleted "roughly twenty" did.
+    _GRID_TO_RANDOM = re.compile(r"\bgrid\b.{0,400}?\brandom\b", re.IGNORECASE)
+    _A_RATIO = re.compile(
+        r"\b(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"twelve|twenty|fifty|hundred)\b\s*(?:x|times|-fold|per|configurations?\s+per)"
+        r"|\bper\s+(?:allowed\s+)?trial\b|\btimes\s+the\s+trial\s+cap\b",
+        re.IGNORECASE,
+    )
+
+    def test_the_grid_to_random_switch_is_not_stated_as_a_threshold(self) -> None:
+        """`sdk-execution.md` named a crossover nothing in this repository computes.
+
+        It said a preserved baseline moves from `grid` to `random` above
+        "roughly twenty configurations per allowed trial". No code chooses an
+        algorithm anywhere in this package - the scripts are offline scorers,
+        and the choice is prose the assistant follows - so the number had no
+        derivation, no test, and no other document to agree with. It is the
+        same defect as the `max_tokens` citation above, one step worse: that
+        one at least cited a sentence.
+
+        The digit is the trap. `readiness.py` damps the knob-count sub-score
+        when `space_size > 20 * max_trials`, and that is a DIFFERENT
+        subsystem - it lowers a readiness number, it does not decide how a
+        search is run. Reading across from it would manufacture the derivation
+        this fix removed, out of a coincidence. So the rule here is stated
+        qualitatively, and this test refuses any threshold, including the one
+        that would look like a match.
+
+        Pinned by shape, like the headroom rule: any ratio in the sentence that
+        chooses between the two algorithms fails, not just the phrase deleted.
+        The positive half holds the qualitative rule in place so the check
+        cannot be satisfied by deleting the guidance instead of the number.
+        """
+        offenders: list[str] = []
+        for document in assistant_facing_documents():
+            body = self._FENCED_BLOCK.sub("", document.read_text())
+            for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
+                if not self._GRID_TO_RANDOM.search(sentence):
+                    continue
+                ratio = self._A_RATIO.search(sentence)
+                if ratio:
+                    offenders.append(
+                        f"{document.relative_to(ROOT).as_posix()}: "
+                        f"{ratio.group(0)!r} in {sentence!r}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "the grid-to-random choice is stated as a numeric threshold. "
+            "Nothing in this repository computes one - readiness.py's "
+            "20 * max_trials damps a score in another subsystem and is not "
+            "this rule - so the number would have no support but itself",
+        )
+        owner = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        self.assertIn("could not reach most of it", owner)
+
+    # An authoring label: the artifact ordinal and template letter a drafter
+    # uses to say which block this is, which is not a thing the reader knows
+    # about. Matched by shape, because the one that leaked ("Artifact-2
+    # template A:") is one of a family, and the next will carry a different
+    # ordinal or letter.
+    _AUTHORING_LABEL = re.compile(
+        r"\bartifact[\s-]?\d+\b|\btemplate\s+[A-Z]\b\s*:", re.IGNORECASE
+    )
+
+    def test_no_document_carries_an_authoring_label_into_what_the_user_sees(
+        self,
+    ) -> None:
+        """`Artifact-2 template A:` was a drafting marker, printed as guidance.
+
+        It sat at the head of a paragraph telling the assistant what to show
+        after portal registration, so the passage the user is quoted began with
+        an internal ordinal naming a template nothing in this repository
+        defines. There is no artifact numbering here to resolve it against; it
+        was residue from how the passage was written, and it was removed rather
+        than explained.
+
+        Checked over the whole corpus and by shape, for the reason the deletion
+        exists: the label is not wrong about anything, so nothing else fails
+        when one reappears, and the next one will be `Artifact-3` or `template
+        B`. Both spellings of the family are refused, in every document that can
+        reach a user.
+        """
+        labelled: list[str] = []
+        for document in conversation_contract_documents():
+            for match in self._AUTHORING_LABEL.finditer(document.read_text()):
+                labelled.append(
+                    f"{document.relative_to(ROOT).as_posix()}: {match.group(0)!r}"
+                )
+        self.assertEqual(
+            labelled,
+            [],
+            "a drafting label naming an artifact ordinal or template letter is "
+            "in prose the assistant reads out; nothing here defines that "
+            "numbering, so it names a thing the reader cannot look up",
+        )
+
+    def test_the_card_labels_the_readme_documents_are_the_ones_it_prints(
+        self,
+    ) -> None:
+        """README named three labels; the code prints four.
+
+        `PAID RUN BLOCKED` is the headline flag, and every blocking condition
+        beneath it prints `FIX BEFORE PAID RUN` - the line that actually tells
+        the reader what to do, and the only one the public explanation omitted.
+        """
+        readme = (ROOT / "README.md").read_text()
+        card_source = _READINESS.read_text()
+        for label in (
+            "PAID RUN BLOCKED",
+            "FIX BEFORE PAID RUN",
+            "LIMITED TO",
+            "WOULD LIMIT TO",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(label, card_source)
+                self.assertIn(label, readme)
+
     def test_progress_promises_are_observable(self) -> None:
         """A synchronous run cannot promise a checkpoint it cannot expose."""
         normalized = " ".join(SKILL.read_text().casefold().split())
@@ -1464,6 +1933,205 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("with measured numbers when available", guide)
         self.assertIn("readiness score, rows checked, calls/trials, cost", skill)
         self.assertIn("finished stages as compact checkmarks", skill)
+
+    def test_the_opening_card_states_its_blank_lines_without_hedging(self) -> None:
+        """Four hedges over a state the scorer produces unconditionally.
+
+        SKILL.md mandates omitting *every* config-space file found before this
+        run's enhanced search, on every guided run including a zero-anchor one.
+        So no settings document ever reaches an opening score: `score_agent`
+        takes the no-document branch every time, `nothing_to_search_pillar`
+        marks two of its three sub-scores unmeasured behind one shared evidence
+        string, and the opening card reads `1 of 3 checks measured` for a
+        perfect project as readily as for a broken one. Measured against a
+        60-row production-sourced dataset and a passing deterministic
+        evaluator: `45/100 PARTIAL`, agent `1 of 3`, evaluation `2 of 4`.
+
+        The glossary called that "usually", and counted two blank lines where
+        the card prints three - the third being the whole Agent pillar, which
+        never names its own three checks because they collapse into that one
+        line. A reader who is told "usually" goes looking for what they did
+        wrong; there is nothing to find.
+        """
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        for phrase in (
+            # Unconditional, because the mandate is.
+            "an opening score always reports that none was provided yet",
+            "why three lines are blank at the start, every time",
+            # The third blank named, and named as a pillar rather than a check.
+            "the third is the whole agent pillar",
+            "no settings document ever reaches an opening score",
+            # Why its three named lines never print by name.
+            "one absent input is one finding, not three",
+            # And the point of the paragraph, which survives the correction.
+            "none of them is something you were supposed to bring",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, glossary)
+        for hedge in (
+            "an opening score usually reports",
+            "why two of them are usually blank",
+        ):
+            with self.subTest(hedge=hedge):
+                self.assertNotIn(hedge, glossary)
+
+        # The mandate this is read off, so the two cannot drift apart silently.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "explicitly omit every config-space file found before this run's "
+            "enhanced search",
+            skill,
+        )
+        self.assertIn("every guided run does this", skill)
+
+    def _opening_card(self, evaluation: int, dataset: int) -> tuple[int, str]:
+        """Score one modelled opening card: no settings document, so 45 caps it.
+
+        The opening card is defined by what it lacks - SKILL.md mandates that no
+        config space is supplied on the first pass - so `agent-no-varying-knobs`
+        is always among its caps and the agent pillar always scores 0. The other
+        two pillars are what a real project varies, so they are the sweep.
+        """
+        pillars = [
+            READINESS.Pillar(
+                name="dataset", score=dataset, confidence=1.0, subscores=()
+            ),
+            READINESS.Pillar(
+                name="evaluation", score=evaluation, confidence=1.0, subscores=()
+            ),
+            READINESS.Pillar(name="agent", score=0, confidence=1.0, subscores=()),
+        ]
+        scored = READINESS.aggregate(
+            pillars,
+            caps=[READINESS.NOTHING_WIRED_CAP],
+            knobs=(),
+            weights=dict(READINESS.DEFAULT_WEIGHTS),
+        )
+        return scored.overall, scored.band
+
+    def test_the_band_sentence_matches_what_calibration_can_actually_move(
+        self,
+    ) -> None:
+        """README told a first-time reader to calibrate and watch the band move.
+
+        The band does not move past Partial there, and the code says why before
+        any run: the opening card has no settings document by mandate, so
+        `agent-no-varying-knobs` caps the whole score at 45, and 45 is Partial.
+
+        Two later corrections, both measured on this sweep of 121 modelled
+        opening shapes (dataset and evaluation pillars over 0..100 by 10):
+
+        * 45 is an UPPER BOUND, not the score. No shape lands above it and 79
+          of the 121 land below - 0, 4, 12, 35 and so on - held there by the
+          weighted average rather than by the cap. "Holds the whole score at
+          45" was true of 42 shapes and false of the other 79.
+        * "It moves the band only once the score is clear of every ceiling" was
+          false in the same sweep: calibrating moves the number in 76 of the 79
+          below-ceiling shapes and the BAND in 39 of them, all NOT READY ->
+          PARTIAL, while the 45 ceiling is still the binding limit. Measured
+          end to end as well: 12 rows, undeclared provenance, `llm-judge-rubric`
+          and no config space score 35/100 PARTIAL at the opening and 45/100
+          PARTIAL after calibration - the number moved 10 points.
+
+        What survives both is the ceiling: nothing calibration does can carry
+        the card past 45, so Partial is the best the opening can report, and at
+        the ceiling itself the card is genuinely unchanged (0 of the 42 shapes
+        already at 45 move at all). That is the property asserted here, rather
+        than the sentence's spelling - and the README requirement is derived
+        from the sweep, so retuning the cap into an exact score, or widening it,
+        fails this test instead of quietly outdating the paragraph.
+        """
+        self.assertEqual(READINESS.CONFIDENCE_BAND_CEILING, "WORKABLE")
+        order = READINESS.BAND_ORDER
+        self.assertLess(order.index("PARTIAL"), order.index("WORKABLE"))
+        # 45 really is PARTIAL, so the sentence's arithmetic is the code's.
+        self.assertEqual(READINESS.band_for(45, 1.0)[0], "PARTIAL")
+        # And a band at or below the ceiling is never lifted by more
+        # evidence, nor demoted for the lack of it: thin or full, 45 is
+        # PARTIAL, which is why the ceiling is what bounds the opening card.
+        self.assertEqual(READINESS.band_for(45, 0.35, 0.35), ("PARTIAL", False))
+
+        shapes = [
+            (evaluation, dataset)
+            for evaluation in range(0, 101, 10)
+            for dataset in range(0, 101, 10)
+        ]
+        landings = {self._opening_card(*shape)[0] for shape in shapes}
+        # A ceiling, so nothing reaches past it, and the band it allows is the
+        # best the opening card can print.
+        self.assertEqual(max(landings), READINESS.NOTHING_WIRED_CAP.ceiling)
+        self.assertEqual(READINESS.band_for(max(landings), 1.0)[0], "PARTIAL")
+
+        at_ceiling = [s for s in shapes if self._opening_card(*s)[0] == max(landings)]
+        below = [s for s in shapes if self._opening_card(*s)[0] < max(landings)]
+        # Calibrating the evaluator is modelled as that pillar reaching 100.
+        moved_at_ceiling = [
+            s
+            for s in at_ceiling
+            if self._opening_card(100, s[1]) != self._opening_card(*s)
+        ]
+        moved_below = [
+            s for s in below if self._opening_card(100, s[1]) != self._opening_card(*s)
+        ]
+        self.assertEqual(moved_at_ceiling, [])
+
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for phrase in (
+            "the card names which pillar is thin",
+            "`evaluation 100/100 (2 of 4 checks measured)`",
+            "calibrating the evaluator is what fills that one in",
+            "cannot carry the band past partial",
+            "leaves `45/100 partial` exactly where it was",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readme)
+        self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+
+        # The two claims this test now derives rather than restates. Each
+        # branch is reachable: a cap that pinned the score would make `below`
+        # empty, and one that never bound anything would make `at_ceiling`
+        # empty, and either would demand the other sentence here.
+        if below:
+            self.assertIn("holds the whole score to at most 45", readme)
+            self.assertNotIn("holds the whole score at 45", readme)
+        else:
+            self.assertIn("holds the whole score at 45", readme)
+        if moved_below:
+            # Something below the ceiling does move, so the README may not
+            # claim the opening card is frozen until every ceiling is cleared.
+            self.assertNotIn("only once the score is clear of every ceiling", readme)
+            self.assertIn("where 45 is already the number", readme)
+        else:
+            self.assertIn("only once the score is clear of every ceiling", readme)
+
+    def test_local_example_retention_is_stated_the_same_way_in_both_homes(
+        self,
+    ) -> None:
+        """A retention claim a customer reads must not be softer than the rule.
+
+        `run-safety.md` states the fact correctly - the SDK writes example
+        `query`, `response` and `expected` text to local logs **by default**,
+        which is precise because `TRAIGENT_LOG_EXAMPLE_CONTENT` controls it.
+        README said "normally", which reads as a tendency rather than a
+        setting, in the one paragraph a reader consults to decide whether their
+        prompts and answers stay on their machine. Same fact, same words.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        claim = (
+            "`query`, `response`, and `expected` text to local optimization "
+            "logs by default"
+        )
+        for text in (readme, safety):
+            with self.subTest(document="readme" if text is readme else "run-safety"):
+                self.assertIn(claim, text)
+        self.assertNotIn("normally writes each example's", readme)
+        # The env var is what makes "by default" the right word, so both homes
+        # have to keep naming it.
+        for text in (readme, safety):
+            self.assertIn("traigent_log_example_content=false", text)
 
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
@@ -5664,6 +6332,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "treat it as invalid; repair a working copy from the",
                 "none of its rows could be read",
             ),
+            # The reject list said the helper rejects a swallowed exception;
+            # twenty lines below, the advisory paragraph says it never changes
+            # PASS - and the helper agrees with the second: a scorer with
+            # `except Exception: return 0.0` returns `"passed": true`, exit 0.
+            "whether a swallowed evaluator exception fails calibration",
+            ("nothing enforces this one",),
+            ("an ordinary zero. for deterministic calibration",),
+        ),
+        (
+            # Binary partial is held to `--bad-maximum`, not to "not passing":
+            # a partial at 0.50 is below the passing score and still exits 1.
+            "what a binary partial probe has to score",
+            ("partial output above `--bad-maximum`",),
+            ("in `binary` mode, partial output receiving a passing score",),
         ),
     )
 

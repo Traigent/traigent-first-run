@@ -131,8 +131,13 @@ worth explaining and which are worth fixing first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
-it is the card declining to call a project Strong on evidence it has not seen. Calibrating the
-evaluator is usually what moves it.
+it is the card declining to call a project Strong on evidence it has not seen. The card names which
+pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
+what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
+the opening card the missing settings document holds the whole score to at most 45, inside Partial,
+so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
+already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent wait for
+the close, on a score no ceiling is capping.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
@@ -142,11 +147,12 @@ deduction and not a refusal: the run continues, the pre-cap average stays in the
 number simply cannot claim more than the evidence supports.
 
 The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
-means the current components cannot yet support a trustworthy paid comparison and something has to
-be created or repaired first - no dataset, no expected answers, an evaluator that scores a wrong
-answer as well as a right one, a tuning set that shares examples with validation, nothing scoreable
-in the split the search would tune on. The condition itself is listed as `FIX BEFORE PAID RUN`;
-follow that named repair or evidence-gathering action first. `LIMITED TO 89` means the paid
+is the headline, and each blocking condition is listed under it as `FIX BEFORE PAID RUN` with the
+thing to fix. It means the current components cannot yet support a trustworthy paid comparison and
+something has to be created or repaired first - no dataset, no expected answers, an evaluator that
+scores a wrong answer as well as a right one, a tuning set that shares examples with validation,
+nothing scoreable in the split the search would tune on, or too little comparable evidence exists.
+Follow the named repair or evidence-gathering action first. `LIMITED TO 89` means the paid
 comparison can proceed, but the available evidence bounds what the result may claim; it names the
 number so "why is this 89" has an answer on the same line.
 
@@ -225,8 +231,8 @@ content-free labels inside the agent; raw prompt text is not used as a configura
 walkthrough does not independently audit network packets; it stops if observed runtime behavior
 contradicts that contract.
 
-That backend boundary is separate from local retention. SDK 0.25.0 normally writes each example's
-`query`, `response`, and `expected` text to local optimization logs. The walkthrough sets
+That backend boundary is separate from local retention. SDK 0.25.0 writes each example's `query`,
+`response`, and `expected` text to local optimization logs by default. The walkthrough sets
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps
 assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined

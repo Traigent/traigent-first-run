@@ -202,7 +202,7 @@ The lines under each pillar on the card
                                  agent actually reads. The run writes one after
                                  a search completes; a file left by an earlier
                                  run is deliberately not counted, so an opening
-                                 score usually reports that none was provided
+                                 score always reports that none was provided
                                  yet rather than that your agent has none.
     optional tuning set / held-back test set
                                - when your project already has a separate test
@@ -238,11 +238,17 @@ The lines under each pillar on the card
                                  first, so the card omits it rather than
                                  spending a line to say nothing changes.
 
-  Why two of them are usually blank at the start: "checked on known-good and
-  known-bad" and "separates good answers from bad" both come from calibrating
-  the evaluator, which happens later in the run. At the opening score they have
-  not been done yet, so they are reported as not measured rather than as zero -
-  they are not something you were supposed to bring.
+  Why three lines are blank at the start, every time: two of them are
+  "checked on known-good and known-bad" and "separates good answers from bad",
+  which both come from calibrating the evaluator - that happens later in the
+  run, so at the opening score they have not been done yet. The third is the
+  whole Agent pillar. Every config-space file found before this run's search is
+  omitted on every guided run, so no settings document ever reaches an opening
+  score, and the pillar reports `1 of 3 checks measured` behind one shared line
+  rather than naming "settings that vary", "how widely each setting varies" and
+  "the settings that matter most" separately - one absent input is one finding,
+  not three. All three blanks are reported as not measured rather than as zero,
+  and none of them is something you were supposed to bring.
 
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is

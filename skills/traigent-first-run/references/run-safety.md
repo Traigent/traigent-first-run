@@ -195,7 +195,7 @@ never switch to a different email address to collect a second access period - no
 access, and the last one is what the one-period-per-account rule exists to prevent. Only a purchase
 on the existing account brings the run back.
 
-Artifact-2 template A: once portal registration has completed, you may show one short note - "Your
+Once portal registration has completed, you may show one short note - "Your
 Traigent address was already confirmed, so there is no second confirmation email; your account is
 active and your 10-day portal access period has started. Next, create your API key from the key
 control in the top bar - grant it full access, and save it when it appears, because it is shown
@@ -662,8 +662,10 @@ silently present a two-row generated run as the intended comparison.
 Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
 (at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
 answer text, so a tight cap truncates the answer to `finish_reason == "length"`, scores it 0, and
-silently crowns a weaker model the winner. Scan every trial for `finish_reason == "length"`, and do
-not sweep low `max_tokens` values in any space that contains a reasoning model.
+silently crowns a weaker model the winner. Both are an unmeasured defensive floor; raise them for
+long answers. Scan every trial for
+`finish_reason == "length"`, and do not sweep low `max_tokens` values in any space that contains a
+reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 

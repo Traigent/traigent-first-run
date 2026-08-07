@@ -35,7 +35,7 @@ import sys
 import traceback
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Callable, Iterable, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -2010,6 +2010,14 @@ def provenance_evidence(
         # the word "collected" on a line about undeclared inputs, because a
         # reader skimming it takes the word for a claim that the rows are real -
         # which is the misreading this whole sub-score exists to prevent.
+        # "does not record where it came from" was false of exactly the row
+        # this line most often describes. A row carrying `provenance: "n/a"`
+        # DID record something - `n/a` is in `UNDECLARED_SOURCE_TOKENS` - and
+        # the same line then prints `declared sources: n/a`, so the card told
+        # the reader the row recorded nothing directly beside what it recorded.
+        # The glossary's entry was corrected for this; the card, which is what
+        # the customer actually reads, kept the sentence. Say what is true of
+        # both rows that reach here: no field at all, and a non-answer in one.
         mixture += (
             " (undeclared means the row records no source this run can read - "
             "either none at all, or a word its vocabulary does not know - so "
@@ -2026,9 +2034,17 @@ def provenance_evidence(
             f"expected answers written by a model, not observed{unverified}"
         )
     if not facts.synthesised_rows:
-        return (
-            f"{mixture}; declared sources: {', '.join(facts.sources)}" f"{unverified}"
-        )
+        # Only when there is a source to name. Preflight used to substitute the
+        # literal `unknown` for a row carrying no provenance field, so this line
+        # printed `declared sources: unknown` about a declaration nobody made,
+        # directly after the clause saying the rows declare nothing. With the
+        # substitution gone the list is genuinely empty in that case, and the
+        # mixture clause above already says so.
+        if facts.sources:
+            return (
+                f"{mixture}; declared sources: {', '.join(facts.sources)}"
+                f"{unverified}"
+            )
     return f"{mixture}{unverified}"
 
 

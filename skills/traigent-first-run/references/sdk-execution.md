@@ -145,7 +145,7 @@ setting the other models were never given on equal terms, and no report footnote
 when every model faces exactly the same variations, the winner is clear and the enhanced run's
 insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
 identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
-least 4096 (the safety reference's high-effort bound, applied flat here), and no sampling
+least 4096 (the safety reference's defensive floor, applied flat here), and no sampling
 parameters such a model rejects - and, since temperature is then
 inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
@@ -779,9 +779,9 @@ reproduce in front of someone else is worth more than one they cannot, so state 
 actually ran rather than implying the managed one did.
 
 Grid also cannot enumerate a continuous parameter, so every baseline knob stays an explicit list of
-values. If a preserved user space is far larger than its trial cap - more than roughly twenty
-configurations per allowed trial - grid would only ever reach a corner of it; use `random` there
-instead and say why.
+values. If a preserved user space is large enough that its trial cap could not reach most of it,
+grid would only ever cover the corner it starts from; use `random` there instead, and say which
+one ran and why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
 truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
