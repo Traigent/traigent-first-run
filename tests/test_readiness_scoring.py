@@ -3425,6 +3425,24 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             cap for cap in caps if cap.condition == "dataset-unsound-expected-outputs"
         )
 
+    def _both_answer_key_caps(self) -> list["MODULE.Cap"]:
+        """One dataset that raises BOTH `review-answer-key` conditions.
+
+        Every answer written by a model (the provenance cap) and some of them
+        disagreeing with their own questions (the row-level cap) are not
+        alternatives - a generated key is exactly where unsound rows come from,
+        so this is the ordinary case, not a contrived one.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10, generated_answer_rows=28)
+        _, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=3)
+        )
+        return [
+            cap
+            for cap in caps
+            if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
+        ]
+
     def test_the_run_is_not_stopped_and_the_ceiling_still_binds(self) -> None:
         """Bounding is not silence: the number moves, the run does not stop."""
         cap = self._cap(reviewed=28, unsound=3)
@@ -3439,11 +3457,21 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         """The routing half of the argument, read off the table not a comment.
 
         `review-answer-key` is a question put to the customer, and
-        `dataset-generated-answer-key` already carries it. Whether each
-        PROVENANCE cap blocks is decided beside those caps and is not
-        re-decided here; what this asserts is that the two conditions share one
-        remedy, which is what makes disagreeing about `blocks` a defect rather
-        than a preference.
+        `dataset-generated-answer-key` already carries it. What this asserts is
+        that the two conditions share one remedy AND one verdict.
+
+        The earlier version stopped at the slug and then checked one side, and
+        that gap is exactly where the defect lived: this branch shipped
+        `dataset-generated-answer-key` blocking and
+        `dataset-unsound-expected-outputs` not, under a single remedy - and the
+        blocking one carried the LOOSER ceiling, so the stricter finding
+        proceeded while the weaker one stopped the run. The docstring above
+        already said "one remedy slug may not carry two opposite behaviours";
+        nothing executed it.
+
+        So both sides are read from the caps the scorer actually builds, not
+        from the table. A remedy is a claim about what the customer should do
+        next, and a consumer routing on it cannot act on two answers.
         """
         siblings = sorted(
             condition
@@ -3453,6 +3481,16 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         self.assertEqual(
             siblings,
             ["dataset-generated-answer-key", "dataset-unsound-expected-outputs"],
+        )
+        verdicts = {cap.condition: cap.blocks for cap in self._both_answer_key_caps()}
+        self.assertEqual(
+            sorted(verdicts), siblings, "both sibling caps must be observed"
+        )
+        self.assertEqual(
+            len(set(verdicts.values())),
+            1,
+            f"one remedy, two verdicts: {verdicts} - a consumer routing on "
+            "`review-answer-key` cannot act on two answers",
         )
         self.assertFalse(self._cap(reviewed=28, unsound=3).blocks)
 

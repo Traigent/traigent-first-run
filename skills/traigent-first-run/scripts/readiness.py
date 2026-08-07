@@ -1377,6 +1377,22 @@ def score_provenance(
                 GENERATED_ANSWER_KEY_CEILING,
                 "Every expected answer was written by a model, so a score "
                 "measures agreement with that model rather than correctness.",
+                # Advisory, for the reason this branch already gives for its
+                # own sibling: `review-answer-key` is a question put to the
+                # customer, not a creation and not a repair, and under the rule
+                # on `Cap.blocks` a question bounds a claim rather than
+                # cancelling a run.
+                #
+                # It was left at the dataclass default here, which made this
+                # branch ship the one state its own guarding test forbids: two
+                # conditions under ONE remedy slug with opposite verdicts, and
+                # the STRICTER ceiling (75) proceeding while the looser one
+                # (70) blocked. On this branch's own base both were True; the
+                # `False` was expected to arrive with #149, which reaches the
+                # same conclusion independently and sets exactly this line. If
+                # that lands first the two edits agree, so the conflict
+                # resolves to the value both sides already chose.
+                blocks=False,
             )
         )
 
