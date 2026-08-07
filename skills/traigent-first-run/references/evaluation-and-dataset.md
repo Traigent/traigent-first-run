@@ -726,8 +726,8 @@ Five rules make the subset honest:
    data wear the run's limitation: measured on 500 labelled, difficulty-tagged production rows, the
    dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row subset sees
    only 8 and calls it `a wiring check, not a score`. That sentence
-   is true of the run and false of the dataset, and the recorded opening-to-closing transition would
-   show an 18-point drop that is nothing but our own sampling. Difficulty and diversity survive a
+   is true of the run and false of the dataset, and the gate re-score would read 18 points below
+   the opening one on nothing but our own sampling. Difficulty and diversity survive a
    compliant sample; evidence volume collapses, so that limitation must be attributed correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small

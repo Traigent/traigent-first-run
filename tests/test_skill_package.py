@@ -4070,7 +4070,12 @@ class SkillPackageTests(unittest.TestCase):
             "what the score measures",
             "the strongest evidence",
             "the one limitation that most affects the next action",
-            "<opening> → <current>",
+            # A re-score used to be presented as `<opening> → <current>`. The
+            # arrow was the whole claim: it read as the project improving when
+            # what had changed was that this run wrote the missing pieces. What
+            # a re-score is allowed to present now is the gate result.
+            "a re-score is a gate result: lead with the caps that cleared, never with a "
+            "new score beside the opening one",
             "do not animate with invented progress",
         ):
             self.assertIn(phrase, presentation)
@@ -4579,10 +4584,10 @@ class SkillPackageTests(unittest.TestCase):
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
         """Motivation for a further run must come from measured evidence.
 
-        The report already carries the readiness transition; what this pins is
-        that the close names the gaps still open and what each costs, rather
-        than offering encouragement or implying a further run fixes a gap the
-        walkthrough cannot close.
+        The close reads the post-run caps without reporting their score; what
+        this pins is that it names the gaps still open and what each costs,
+        rather than offering encouragement or implying a further run fixes a gap
+        the walkthrough cannot close.
         """
         skill_text = " ".join(SKILL.read_text().casefold().split())
 
@@ -4626,9 +4631,9 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(state=state):
                 self.assertIn(state, skill_text)
-        # It closes on the opening score, so it must follow the readiness
-        # transition and precede the optional next steps.
-        transition = skill_text.index("the readiness transition")
+        # It ranks from the remaining caps, so it must follow the paragraph that
+        # reads them and precede the optional next steps.
+        transition = skill_text.index("do not close on a second number")
         motivation = skill_text.index("saying what a further run would be worth")
         next_steps = skill_text.index(
             "these are available whenever the user wants them"
@@ -5683,37 +5688,38 @@ class SkillPackageTests(unittest.TestCase):
             # survives.
             "accuracy-cost frontier for each run - its points, the recommended "
             "one, and the score claim with paired outcome counts",
+            # The safety half of the readiness re-score. The narrative half was
+            # removed from this record; this field is what may not follow it,
+            # because a repair that was never rechecked is how a paid run gets
+            # made against a component only believed fixed.
+            "revalidation gate results - which caps cleared, and on what evidence",
         ):
             self.assertIn(phrase, text)
-        # 61, raised from 60 when the held-out branch merged, and the raise is
-        # the part that needs an argument rather than the line.
+        # 60, lowered from 61, and the lowering is what needs the argument.
         #
-        # The cap is shared, and twice a trunk branch measured itself against
-        # the open held-out branch and gave a line back for it: 4ba2311 folded
-        # the record's two frontier lines into one ("the cap is shared, and the
-        # one that can spend less should"), and 351f312 rejoined the
-        # connected-run field, "which wrapped for width rather than for
-        # meaning". Both reserves were then spent by later trunk work - the
-        # width wrap returned in 3f57acf, and the repaired/generated row-ids
-        # field took the other - so trunk arrived at this merge holding 60 of
-        # 60 with no reserve left, and the held-out score is a 61st line.
+        # 61 was bought for the held-out score when that branch merged, over a
+        # trunk that had arrived holding 60 of 60 with no reserve left. The
+        # raise came with an OWNER note offering one way back: fold the two
+        # readiness-score lines under "Quality evidence". The owner did not take
+        # the fold. They removed the second field instead - a re-score taken
+        # after this run has created or repaired components mostly measures
+        # those substitutes, so the record was carrying a number it should not
+        # have been reporting, plus a transition line under "Interpretation"
+        # restating the pair.
         #
-        # It is not a line that can be given back the same way. Every bullet in
-        # the template is now one physical line and one distinct field, so the
-        # only remaining saving is folding two fields into one - which is a
-        # decision about what the run record must keep separate, not a
-        # reflow. The held-out score for the recommended configuration is the
-        # result the holdout exists to produce, so the field stays and the
-        # budget moves by exactly one.
-        #
-        # OWNER: if the record should stay at 60, the fold to make is a
-        # judgement call about the two readiness-score lines under "Quality
-        # evidence"; this raise is the reversible choice, not the settled one.
-        self.assertLessEqual(len(text.splitlines()), 61)
+        # So the line came back, but not as a reserve and not by a reflow. The
+        # "Interpretation" transition line went because the decision deleted the
+        # field it summarised, and the surviving revalidation field was rewritten
+        # to record the gate - which caps cleared, on what evidence - rather than
+        # a score. 61 - 1 = 60, measured, and the ceiling follows the template
+        # down rather than sitting above it as unspent room for the next field
+        # nobody argued for.
+        self.assertLessEqual(len(text.splitlines()), 60)
         for removed_detail in (
             "provider retry count",
             "provider-request timeout",
             "aggregate budget ledger",
+            "latest revalidated readiness score",
         ):
             self.assertNotIn(removed_detail, text)
 
@@ -7069,8 +7075,8 @@ class SkillPackageTests(unittest.TestCase):
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "close the loop on the readiness score the run opened with",
-            "show opening beside closing",
+            "do not close on a second number",
+            "never show that score or set it beside the opening one",
             "which remaining gap to close first",
             "one action selected from the latest closing evidence",
             "re-rank the remaining closing caps",
@@ -9934,17 +9940,26 @@ class SkillPackageTests(unittest.TestCase):
             "history is made of",
         )
 
-    def test_run_record_keeps_the_readiness_transition(self) -> None:
+    def test_run_record_keeps_the_opening_score_and_the_gate_results(self) -> None:
+        """One score of the customer's own material, and the gate above it.
+
+        The record used to carry three readiness fields: the opening score, the
+        latest re-score, and a transition line pairing them. The pair was the
+        defect - a re-score taken after this run has written the missing dataset
+        or evaluator mostly grades those substitutes, so `25 → 78` reads as the
+        project having improved when nothing of theirs changed. What the run
+        genuinely needs from a re-score is the safety half: whether the repair
+        cleared the blocking condition, and on what evidence, before money is
+        spent against a component believed fixed and never rechecked.
+        """
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
-            # both entries must keep the three fields the audited before/after
-            # transition is made of, not just their headings
             "opening readiness score before any creation or repair - overall, "
             "band, binding caps:",
-            "latest revalidated readiness score - overall, band, binding caps, "
-            "and what changed:",
-            "readiness transition",
-            "`🛠️` substitute",
+            # the gate half, pinned so the removal above cannot take it too: a
+            # repair that clears a cap has to be recorded as clearing it, with
+            # the evidence that says so
+            "revalidation gate results - which caps cleared, and on what evidence:",
             # the record has to have somewhere to put what this run changed on
             # the customer's behalf, or the obligation to name it lands in
             # free text and stops being auditable
@@ -9953,22 +9968,41 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
-        # a transition needs a fixed baseline: without this rule the opening
-        # entry can be updated in place and the before/after becomes after/after
+        self.assertNotIn("readiness transition", text)
+        # the opening entry is the one score taken on material this run did not
+        # write, so updating it in place would leave the record with no honest
+        # reading of what the customer arrived with
         self.assertIn(
             "never overwrite the recorded opening score",
             " ".join(SKILL.read_text().casefold().split()),
         )
 
-    def test_final_report_shows_the_readiness_transition(self) -> None:
+    def test_the_close_explains_the_substitutes_instead_of_scoring_them(self) -> None:
+        """Prose now carries what the closing number used to.
+
+        Removing the transition only works if the close still says what was
+        created or repaired and what that does to the claim - the owner's
+        condition on the removal. Two statements do that work and are pinned
+        here: generated examples are weaker evidence than collected ones, and a
+        generated evaluation method is a starting point the customer may want to
+        move in either direction rather than the product's grading policy.
+        """
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "the recorded opening score beside the closing one",
-            "naming cleared and remaining caps",
-            "treat every gain from a `🛠️` substitute as walkthrough setup",
+            "what this run created or repaired, and what that costs the claim",
+            "examples it wrote are weaker evidence than examples collected from the product",
+            "an evaluation method it wrote is a starting point rather than the "
+            "product's grading policy - one a person may want to move in either direction",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        for removed in (
+            "the readiness transition",
+            "the recorded opening score beside the closing one",
+            "show opening beside closing",
+        ):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, normalized)
 
     def test_repair_paths_require_rescoring_and_active_branches(self) -> None:
         def norm(name: str) -> str:
@@ -11040,7 +11074,7 @@ class SkillPackageTests(unittest.TestCase):
         # closing recap - otherwise there is nothing for the closing score to read
         self.assertLess(
             skill.index("traigent-runs/config-space.json"),
-            skill.index("close the loop on the readiness score the run opened with"),
+            skill.index("do not close on a second number"),
         )
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
@@ -11431,6 +11465,35 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "whether the readiness score is taken on the run's subset",
             ("score the dataset, not the subset",),
             ("select before preflight, not after",),
+        ),
+        (
+            # The score was re-run for two purposes that read as one. The gate
+            # half - did this repair clear the blocking condition, before money
+            # is spent against a component only believed fixed - is a safety
+            # requirement and stayed. The narrative half was `25 → 78`, and the
+            # owner removed it: after the walkthrough has written the missing
+            # dataset or evaluator, most of what a second score grades is those
+            # substitutes, so the arrow reads as the customer's project having
+            # improved when nothing of theirs changed. What carries the weight
+            # instead is prose - what was created or repaired, and what that
+            # costs the claim.
+            #
+            # Five documents stated the transition, which is why it is worth a
+            # registry entry: SKILL.md's presentation line and report bullet,
+            # the run record's two readiness fields, README.md's promise that
+            # the report "shows the transition", and the glossary. Any one of
+            # them coming back reinstates the claim on its own.
+            "whether the report shows a closing readiness score beside the opening one",
+            ("never show that score or set it beside the opening one",),
+            (
+                "the readiness transition:",
+                "show opening beside closing",
+                "the recorded opening score beside the closing one",
+                "the same score is taken again at the end",
+                "latest revalidated readiness score",
+                "opening/latest scores",
+                "<opening> → <current>",
+            ),
         ),
         (
             "who creates temporary walkthrough components",
