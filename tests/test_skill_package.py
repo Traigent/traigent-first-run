@@ -2211,9 +2211,11 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "twelve baseline rows and a 12-trial enhanced cap",
             "adds two more real one-call controls: pre-action reflect and reflect",
-            # The doubled baseline is disclosed in the words the customer reads,
-            # not left for them to derive from two numbers.
-            "this doubles the baseline's paid trials",
+            # The count is disclosed in the words the customer reads, and as a
+            # COUNT rather than as a change from an earlier release of this
+            # walkthrough - which is our changelog, on the card where they
+            # approve spending money, about a run they have never made.
+            "the baseline runs 12 paid trials, one for every configuration",
             "`12` is therefore the ceiling and not a floor beneath a higher count",
             "max_trials` is a cap rather than an sdk-enforced minimum",
             # The 10 floor stays here and only here on the reference side: it
@@ -5137,6 +5139,45 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
     )
+
+    # Our own release history, in the words a customer reads. Every one of
+    # these is a comparison to a run they have never made.
+    OUR_CHANGELOG = (
+        "previous version of this walkthrough",
+        "earlier version of this walkthrough",
+        "this walkthrough used to",
+        "used to spend",
+        "previous version of this guide",
+        "in an earlier release",
+    )
+
+    def test_no_customer_facing_document_cites_our_release_history(self) -> None:
+        """A first-run customer has no previous run to be compared against.
+
+        The instance that produced this check was on the paid-spend approval
+        card: `sdk-execution.md` told the assistant to say the baseline
+        "doubles the baseline's paid trials against the previous version of
+        this walkthrough", and `run-safety.md` repeated it as "double the 6
+        this walkthrough used to spend, and the approval card says so in those
+        words". A customer reading that is being asked to approve money against
+        our changelog - a fact about our repository, presented as a fact about
+        their run, on the one card where the number has to be about them.
+
+        The rule is narrower than "never mention history": engineering
+        rationale in a code comment is fine, and the ban is on the documents
+        the assistant reads to the customer.
+        """
+        for name, text in self.conversation().items():
+            for phrase in self.OUR_CHANGELOG:
+                with self.subTest(document=name, phrase=phrase):
+                    self.assertNotIn(
+                        phrase,
+                        text,
+                        f"{name} compares this run to an earlier release of "
+                        "this walkthrough. The customer has never run it, so "
+                        "the comparison carries no information they can use "
+                        "and reads as a discount on a price they never saw.",
+                    )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
         joined = " ".join(self.conversation().values())

@@ -128,9 +128,11 @@ never as "roughly" or "about"; the asserts beside the spaces below enforce both:
 - enhanced: **3 models × 4 binary behaviour knobs = 48 configurations**, a quarter of it reachable
   within the 12-trial cap and inside the 4-6 varying knobs the readiness scorer pays full marks for.
 
-Say on the approval card, plainly: **this doubles the baseline's paid trials** against the previous
-version of this walkthrough. What the second axis buys is that the enhanced knobs are chosen from
-evidence about two levers rather than one. The user approves the doubled number before it is spent.
+Say on the approval card, plainly: **the baseline runs 12 paid trials, one for every configuration
+in its space**, and what the second axis buys is that the enhanced knobs are then chosen from
+evidence about two levers rather than one. State it as a count, never as a change from whatever
+this guide did before: a first-run customer has no run of ours to compare against, and our release
+history is not a fact about their spend. The user approves the count itself before it is spent.
 
 Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
 wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
