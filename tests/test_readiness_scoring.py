@@ -715,7 +715,18 @@ class DatasetScoringTests(unittest.TestCase):
                         {
                             "check": "dataset-provenance",
                             "status": "PASS",
-                            "metrics": {"rows": 40, "labelled_rows": 40},
+                            "metrics": {
+                                "rows": 40,
+                                "labelled_rows": 40,
+                                # Emitted together by preflight.py, and
+                                # required since #161 - an absent count is
+                                # refused rather than read as zero.
+                                "collected_rows": 40,
+                                "synthesised_rows": 0,
+                                "undeclared_rows": 0,
+                                "generated_answer_rows": 0,
+                                "answerable_rows": 40,
+                            },
                         },
                         {"check": "dataset-outputs", "status": "PASS", "metrics": {}},
                         {
@@ -4334,7 +4345,18 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
             {
                 "check": "dataset-provenance",
                 "status": "PASS",
-                "metrics": {"rows": 40, "labelled_rows": 40},
+                "metrics": {
+                                "rows": 40,
+                                "labelled_rows": 40,
+                                # Emitted together by preflight.py, and
+                                # required since #161 - an absent count is
+                                # refused rather than read as zero.
+                                "collected_rows": 40,
+                                "synthesised_rows": 0,
+                                "undeclared_rows": 0,
+                                "generated_answer_rows": 0,
+                                "answerable_rows": 40,
+                            },
             }
         ]
         payload.extend(
