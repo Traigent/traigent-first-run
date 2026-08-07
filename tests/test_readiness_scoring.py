@@ -3174,23 +3174,88 @@ class RowLevelSanityTests(unittest.TestCase):
         self.assertLess(after.overall, before.overall)
         # Same weighted average - the pillars did not move. Only the ceiling did.
         self.assertEqual(after.weighted_average, before.weighted_average)
-        # The score drops and the run is not stopped: `status` stays OK and the
-        # one-thing-to-do-next stays `proceed`, because only a blocking cap
-        # displaces it. The question still reaches the user - the cap is on the
-        # card carrying `review-answer-key`, and SKILL.md routes it by id.
+        # The score drops, the run is not stopped, AND the remedy is still
+        # named. That third state is the one the payload could not express:
+        # `blocks=True` said stop-and-fix, `blocks=False` alone said carry-on
+        # with nothing to do, and this condition is neither. `status` stays OK
+        # - the run is worth making - while `recommended_action` carries the
+        # question, because doing it changes the answer key the run is about to
+        # be graded against.
         self.assertEqual(after.status, "OK")
         self.assertEqual(before.status, "OK")
-        self.assertEqual(after.recommended_action, "proceed")
+        self.assertEqual(after.recommended_action, "review-answer-key")
         self.assertEqual(before.recommended_action, "proceed")
-        self.assertIn(
-            "review-answer-key",
-            [cap.action_kind for cap in after.caps],
+        cap = next(
+            cap
+            for cap in after.caps
+            if cap.condition == "dataset-unsound-expected-outputs"
         )
+        # The two flags, asserted in both directions, because no test asserted
+        # either one and the default gave this cap the opposite of both.
+        self.assertFalse(cap.blocks, "a reading of the answer key stopped a paid run")
+        self.assertTrue(cap.asks, "the remedy would not reach the payload")
+        self.assertEqual(cap.action_kind, "review-answer-key")
         # And a clean reading of the same dataset changes neither.
         clean = total(_review(reviewed=28))
         self.assertEqual(clean.overall, before.overall)
         self.assertEqual(clean.band, before.band)
         self.assertEqual(clean.recommended_action, before.recommended_action)
+
+    def test_a_bounded_cap_that_asks_still_names_its_remedy(self) -> None:
+        """The third state, asserted where the payload expresses it.
+
+        `blocks` alone had two values and this condition needs a third reading.
+        `True` stopped a paid run over the assistant's own opinion; `False` on
+        its own returned `recommended_action` to `proceed`, so the payload said
+        there was nothing to do about a finding whose entire content is a
+        question for the user.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        cap = MODULE.unsound_answer_cap(_review(reviewed=28, unsound=3))
+        score = MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "review-answer-key")
+
+    def test_a_ceiling_that_asks_nothing_still_recommends_nothing(self) -> None:
+        """The false-red direction, and the conflation this must not restore.
+
+        A small dataset is bounded and has no question behind it. Telling a
+        customer with 25 rows to go and get more before their first run is the
+        defect `blocks` was added to end, so an advisory ceiling that does not
+        ask keeps `proceed`.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        advisory = MODULE.power_ceiling(25)
+        self.assertFalse(advisory.blocks)
+        self.assertFalse(advisory.asks)
+        score = MODULE.aggregate(pillars, [advisory], (), dict(MODULE.DEFAULT_WEIGHTS))
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_a_blocking_cap_still_wins_over_one_that_only_asks(self) -> None:
+        """A run that is waiting has nothing else as its next step."""
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        asking = MODULE.unsound_answer_cap(_review(reviewed=28, unsound=3))
+        blocking = MODULE.Cap("evaluator-invalid", 25, "broken")
+        score = MODULE.aggregate(
+            pillars, [asking, blocking], (), dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "repair-evaluator")
+
+    def test_a_cap_cannot_both_block_and_ask(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            MODULE.Cap("evaluator-invalid", 25, "broken", blocks=True, asks=True)
+        self.assertIn("both blocks and asks", str(caught.exception))
 
     def test_the_cap_reads_the_share_of_what_was_actually_read(self) -> None:
         """The share is over reviewed rows, which is the only population it saw."""
