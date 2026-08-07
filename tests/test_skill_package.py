@@ -1151,6 +1151,22 @@ class SkillPackageTests(unittest.TestCase):
         # and are checked against it, so this needs to know nothing secret to
         # fail closed on a name nobody has seen yet.
         internal_repo_shape = re.compile(r"\bTraigent[A-Z][A-Za-z0-9]*")
+        # ACCEPTED RESIDUAL, recorded here rather than left for the next reader
+        # to rediscover: the three rules above are anchored on an organisation
+        # segment (`<owner>/<repo>`) or on the `Traigent` + CamelCase shape, so a
+        # private repository whose name carries NEITHER is invisible to all of
+        # them. Bare lowercase-and-hyphens and bare snake_case names exist in
+        # this organisation, and written on their own - no owner segment, no
+        # capital - only the hashed denylist can reach them. That denylist
+        # stores eight window lengths, which does not span every such name, so
+        # some are not covered at all.
+        # This is not a bug to be fixed here, and the fix that suggests itself
+        # is worse than the gap: a complete denylist of private names would have
+        # to be written into this published file, which discloses exactly what
+        # it is protecting. The structural rules are deliberately the ones that
+        # can be stated in public without leaking; the residual is the price.
+        # What closes it is a private pre-publish scan, not a rule in this file.
+        # Do not "repair" this by adding names.
         # The two canonical documentation placeholders (RFC 9562 nil and max).
         # A guide that documents experiment and session identifiers has to be
         # able to show the shape of one, and a guard that answers "you leaked a
