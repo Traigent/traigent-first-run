@@ -414,7 +414,16 @@ as "effective" depends on whether the knob has a range at all:
 - A numeric knob with **no** canonical range and no `bounds` entry is scored on breadth alone. Any
   two distinct values clear the cap, however close together they are - `[1, 1.01]` counts. There is
   no range to measure a noise floor against, so nothing collapses them.
-- A categorical or boolean knob needs two distinct values.
+- A categorical or boolean knob needs two distinct values. Two is also where it scores FULL
+  breadth, not half: for a categorical knob there is no knowable "how many values exist" to divide
+  by - `thinking_shape` may have two shapes today and four next year - so a denominator invented
+  here would only underprice an honest two-value comparison. `model` is the one exception and keeps
+  a ladder, because there more choices genuinely is better: 3 or more scores 100, 2 scores 60.
+- Any knob declared with exactly ONE value scores 10, whatever its type. It adds nothing to the
+  search, so it earns almost nothing; it is not zero because pinning can be the right call made on
+  purpose - `temperature: [0]` on a task that must be reproducible is a decision, not an omission.
+  Several values that collapse into one is a different case and still scores 0: that author did not
+  pin the knob, they tried to sweep it and the sweep does not exist.
 - `seed` never counts, however many values it lists, because sweeping it measures run-to-run
   variance rather than quality.
 - `max_tokens` never counts either, for the neighbouring reason: it is a resource limit, not a
@@ -487,20 +496,26 @@ Three honesty rules govern the file:
   survive the next one failing, the wrapper deletes it before each search rather than relying on
   the next write to replace it - staleness is removed by the run, not by the reader noticing.
 
-The walkthrough's document, after the placeholder temperature is replaced by the winner-bracketing
-neighbor:
+The walkthrough's document - 3 models x 4 binary behaviour knobs, with temperature declared at its
+one pinned value because the agent does consume it. A pinned knob scores 10 of 100 on breadth
+rather than 0: declaring it says the author considered the knob and decided, which is worth a
+little, and worth only a little because the search still gets one value:
 
 ```json
 {
   "agent_type": "general",
   "knobs": {
     "model": ["provider/current", "provider/alternative", "provider/strong"],
-    "prompt_style": ["direct", "structured", "criteria_first"],
-    "self_check": [false, true],
-    "temperature": [0.0, 0.2, 0.1]
+    "prompt_style": ["plain", "structured"],
+    "pre_action_reflect": [false, true],
+    "thinking_shape": ["direct", "chain_of_thought"],
+    "reflect": [false, true],
+    "temperature": [0.0]
   },
   "max_trials": 12,
-  "wired": ["model", "temperature", "prompt_style", "self_check"]
+  "wired": [
+    "model", "temperature", "prompt_style", "pre_action_reflect", "thinking_shape", "reflect"
+  ]
 }
 ```
 
@@ -511,7 +526,7 @@ Use two short, contextual approvals; do not ask the user to design budgets, retr
 Before the provider-paid baseline, show only its immediate scope:
 
 - Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
-  preserved baseline or generated six-row sweep, tuning rows and limitations, configurations,
+  preserved baseline or generated twelve-row sweep, tuning rows and limitations, configurations,
   calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
   `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
@@ -629,18 +644,25 @@ Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoin
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
-space unchanged, even when it contains one row. For a generated walkthrough, the default small
-space is three credible models by two safe temperature values, with prompt policy and self-check
-fixed to ordinary/off values; the models are the fast, mid, and strong rungs of the walkthrough
-model ladder from the selected route - the strong rung one step below the vendor's newest
-flagship, at a pinned effort in both runs when it is a reasoning model, and never the flagship
-itself. A reasoning-model strong rung also drops temperature as a swept knob for the whole
-walkthrough - two prompt styles form the baseline's second axis instead, so every knob stays real
-for every model. The enhanced space keeps the identical model list, extends swept ranges around
-the baseline's top rows while retaining every baseline value, and adds multiple prompt
-policies plus a native boolean self-check branch, keeping the space materially larger than the
-12 configurations Traigent may test by default - so an enhanced win is attributable to knobs and
-the managed search, never to a model the baseline did not measure. Explain this generated-only
+space unchanged, even when it contains one row. The generated walkthrough's two spaces have exact
+sizes, stated as exact numbers and never as "roughly": the baseline is **3 models x 2 prompt
+styles x 2 thinking shapes = 12 configurations** and the enhanced space is **3 models x 4 binary
+behaviour knobs = 48 configurations**, both holding whether or not the strong rung reasons. The
+baseline's 12 trials are one per configuration, and the approval card names that count - as a
+count, never as a change from whatever this guide did before, which the customer has never run.
+`references/sdk-execution.md` owns the spaces, the derivation, and the asserts.
+
+The four behaviour knobs are prompt style, pre-action reflect, thinking shape (direct or
+chain-of-thought), and reflect; temperature is pinned at 0, so every swept knob is real for every
+model. They are four of a twelve-knob catalog `references/sdk-execution.md` owns; the customer sees
+the catalog and pays for four. `self_check` is not among them - it and `reflect` were one knob
+under two names, and `reflect` is the one that stayed. The
+models are the fast, mid, and strong rungs of the walkthrough model
+ladder from the selected route - the strong rung one step below the vendor's newest flagship, at a
+pinned effort in both runs when it is a reasoning model, and never the flagship itself. The
+enhanced space keeps the identical model list and every baseline value, so the baseline is a strict
+subset of it and an enhanced win is attributable to knobs and the managed search, never to a model
+the baseline did not measure. Explain this generated-only
 ladder in one line before the
 approval: skipping the flagship keeps the first run faster and cheaper, and the flagship stays
 available for a separately disclosed later comparison if the evidence supports one. A preserved
@@ -677,14 +699,56 @@ Fill the freed slots from the failure-mode levers below, once the customer's evi
 seated: where the evidence ties, keep theirs - they know their agent. The connected-stage approval
 preview above is where that record reaches them, before they pay for a space that excluded it.
 
-Native boolean knobs use `[True, False]`, never string encodings. Pin temperature to 0 for frail exact/case-
-sensitive metrics unless the evaluator explicitly tolerates surface variation; use other safe
-controls to keep an assistant-prepared baseline meaningful in that case. Preserve a user-owned
+Twelve trials split across a knob's two values is at most six observations a side, so state it as
+`the baseline's best combination used X` and never as `X is better`, and never as proof that a replaced
+knob does nothing. Where the evidence ties, the customer's own knob wins over one of this guide's
+suggestions.
+
+**The baseline result chooses the enhanced space's values, not only its knobs.** Which knobs fill
+the four slots is decided by the baseline-evidence selection above. Which *two values* each slot
+carries is decided here, from the same 12 rows, by reading the combination that scored **lowest**:
+the values distinguishing it are the ones the baseline showed least for, and re-testing them spends
+trials on territory already measured as poor. The gap between that lowest score and the best one
+picks between two moves, measured with the **0.05 normalized separation margin** that calibration
+already uses for "meaningfully different" - shared deliberately, not by coincidence, because a
+second threshold invented here would drift from the first.
+
+- **Gap within the margin** - the loser scored about as well as the winner, so the knob that
+  distinguished them evidently did not decide the run. **Replace that knob** with one whose
+  evidence is better, or with a lever aimed at an observed failure mode.
+- **Gap beyond the margin** - that knob clearly mattered. **Keep it and narrow its values**, moving
+  them toward the winning configuration's rather than re-testing the value that lost.
+
+Neither move changes the size. The space stays 3 models x 4 binary knobs = 48; this decides which
+knobs and which two values each, never how many. Neither is a search either: the managed run does
+the searching, and this only decides what space it is handed.
+
+**The same 48 whatever the customer brings.** A customer who arrives with twenty of their own
+knobs gets a 48-configuration enhanced space too, not a larger one. The reduction is not a
+judgement about their knobs, and their knobs are not replaced by this guide's: the four slots are
+filled from what they brought, and baseline evidence decides which four. Every knob replaced and
+every value narrowed is named on the enhanced run's approval card with what the baseline showed -
+the one moment the customer can object before paying for a space that excluded it.
+
+Say plainly what that is and is not. The knobs are reduced to demonstrate the principle cheaply -
+a first run has to finish, cost little, and be readable - and Traigent knows tens of knobs it can
+recommend once the principle is shown. This is a demonstration, not the ceiling of what Traigent
+can do, and no result here should be read as the best the system could reach. Never present the
+smaller space as though the improvement were bought by shrinking the search.
+
+A knob that does not influence the agent code is not a real optimization variable.
+Native boolean knobs use `[True, False]`, never string encodings. A generated walkthrough pins
+temperature at 0
+unconditionally and carries the search on behaviour knobs instead - a frail exact or case-sensitive
+metric punishes the surface variation a temperature sweep buys, and a reasoning rung ignores the
+knob entirely, so pinning it always is both safer and simpler than pinning it sometimes. Preserve a user-owned
 baseline's temperature behavior exactly, including an unset provider default; record resulting
 nondeterminism as a limitation rather than silently changing the baseline. Multi-call composite
 controls multiply
-cost and require a concrete failure-mode justification; the generated default's self-check stays
-within one provider call.
+cost and require a concrete failure-mode justification; every knob in the generated default stays
+within one provider call. `self_consistency` is the catalog's one deliberate exception, and it is
+selectable only for a customer already running above temperature 0 - at a pinned 0 every sample
+repeats, so it would multiply the bill and change no answer.
 
 Match each knob to how the agent actually fails: repair (re-prompt once on a malformed or erroring
 output), self-consistency (sample N and vote, for unstable answers), similarity-selected retrieval
@@ -696,7 +760,7 @@ Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
 not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `auto`, `grid`, or
 `random` unless a named selector is confirmed to run consistently on the installed SDK. For an
-assistant-prepared baseline, use local `grid` so all six distinct rows are predictable. For a
+assistant-prepared baseline, use local `grid` so all twelve distinct rows are predictable. For a
 user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
 connected `auto` with a default cap of 12 for the enhanced space, then report the actual count and
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never

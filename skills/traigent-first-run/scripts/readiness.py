@@ -265,7 +265,39 @@ EXCLUDED_KNOBS = frozenset(EXCLUDED_KNOB_REASONS)
 
 # `model` has a canonical list, but it is OpenAI-only; a user routing through
 # OpenRouter or Bedrock overlaps it at zero. Score breadth, never coverage.
+#
+# These are also the knobs that keep a LADDER instead of the flat categorical
+# credit below (`MODEL_BREADTH_LADDER`): every one of them names a model, and a
+# model is the one categorical dimension where more choices really is better.
+# Two models can only say "this one won"; three - cheap, mid, strong - are what
+# it takes to see the cost-for-quality trade the middle rung makes, and that
+# trade is the whole finding this guide reports.
 OPEN_CATEGORICAL_KNOBS = {"model", "embedding_model", "reranker_model"}
+
+# What a knob with exactly ONE declared value earns, whatever its type.
+#
+# It adds nothing to the search - every configuration in the space gets that
+# same value - so it cannot earn much. But it is not worth nothing either,
+# because pinning can be the deliberate, correct decision: `temperature: [0]`
+# on a task that has to be reproducible is expertise, not an omission, and the
+# author who wrote it down was thinking about the knob. Ten points says "you
+# decided this" without ever pretending a decision is a search.
+#
+# One declared value only. Several values that collapse into one - the numeric
+# path's `temperature: [0.1, 0.115]`, both sides of a noise floor - earn zero
+# instead, and the difference is the whole point: that author did not pin the
+# knob, they tried to sweep it and the sweep does not exist. Crediting the two
+# alike would pay for the mistake the noise floor was built to name.
+PINNED_KNOB_CREDIT = 0.10
+
+# Breadth credit for a model knob, by how many models it actually compares.
+# Three is the intended shape, so it is where full marks sit. Two rates below
+# it but well above a pin: comparing two models is real work, just not the
+# whole comparison - it can say which of the two won, and cannot say what the
+# middle rung costs. The bottom rung is the ordinary pin credit above, because
+# a model pinned to one id is pinned in exactly the sense every other knob is.
+MODEL_BREADTH_LADDER = {1: PINNED_KNOB_CREDIT, 2: 0.60}
+MODEL_BREADTH_FULL = 3
 
 # Below these deltas two values are the same configuration in practice.
 NOISE_FLOORS: dict[str, float] = {"temperature": 0.05, "top_p": 0.05}
@@ -1406,6 +1438,45 @@ def noise_floor(name: str, low: float, high: float) -> float:
     return abs(high - low) * DEFAULT_NOISE_FRACTION
 
 
+def categorical_breadth(name: str, distinct: int) -> float:
+    """Breadth credit for a knob scored on its value list alone.
+
+    A closed categorical knob earns FULL credit at two or more values. The old
+    `(distinct - 1) / 2` scored two values at 50%, and that 50% was an
+    assertion this scorer is in no position to make: it says a third value
+    exists and would have been better. For a categorical knob there is usually
+    no way to know how many values exist. `thinking_shape` might be direct and
+    chain-of-thought, or those plus tree-of-thought, or those plus
+    graph-of-thought and whatever is published next - so any denominator picked
+    here is a guess about a list nobody wrote down, and a guess that
+    systematically underprices an honest two-value comparison. Two distinct
+    values means the dimension is genuinely being explored, which is the only
+    thing this sub-score set out to measure.
+
+    Model knobs are the exception, and `OPEN_CATEGORICAL_KNOBS` explains why
+    they alone keep a ladder.
+
+    One value is `PINNED_KNOB_CREDIT` for every name, model or not - the same
+    rung the numeric path grafts on for the same reason.
+
+    Numeric knobs never reach this function's flat rule at two or more values:
+    a numeric knob with no canonical range and no caller bounds keeps the old
+    `(distinct - 1) / 2`, because for a number the "how many more are there"
+    question the paragraph above calls unanswerable has an answer - infinitely
+    many, between any two of them - and breadth is standing in for a span this
+    scorer cannot compute. Scoring an unbounded `retrieval_depth: [1, 2]` at
+    100% would hand out exactly the narrow-sweep credit the numeric path exists
+    to withhold.
+    """
+    if distinct < 2:
+        return PINNED_KNOB_CREDIT
+    if name in OPEN_CATEGORICAL_KNOBS:
+        if distinct >= MODEL_BREADTH_FULL:
+            return 1.0
+        return MODEL_BREADTH_LADDER[distinct]
+    return 1.0
+
+
 def effective_numeric_values(values: Sequence[float], floor: float) -> list[float]:
     """Collapse neighbours closer together than the system can distinguish."""
     kept: list[float] = []
@@ -1487,6 +1558,12 @@ def knob_variation(
                     "the same configuration in practice"
                 )
             )
+            # The pin rung, grafted on rather than replacing anything: span,
+            # resolution and coverage are all still honestly zero, and this
+            # knob still does not count as varying. Only for a knob the author
+            # declared with ONE value - `temperature: [0]` is a decision, and
+            # `temperature: [0.1, 0.115]` is a sweep that does not exist.
+            pinned_quality = PINNED_KNOB_CREDIT if distinct < 2 else 0.0
             return KnobScore(
                 name=name,
                 kind="numeric",
@@ -1495,7 +1572,7 @@ def knob_variation(
                 span=0.0,
                 resolution=0.0,
                 coverage=0.0,
-                quality=0.0,
+                quality=pinned_quality,
                 span_ratio=(
                     (max(numbers) - min(numbers)) / (high - low) if high > low else 0.0
                 ),
@@ -1538,15 +1615,25 @@ def knob_variation(
             span=0.0,
             resolution=0.0,
             coverage=0.0,
-            quality=0.0,
+            quality=categorical_breadth(name, distinct),
             span_ratio=None,
             notes=tuple(notes),
         )
 
     # Categorical, boolean, or numeric without a canonical range: breadth is the
-    # only honest signal. Two distinct values is a real comparison; more is
-    # better up to a small plateau.
-    quality = min(1.0, (distinct - 1) / 2.0)
+    # only honest signal.
+    #
+    # A CATEGORICAL knob with two or more values is being genuinely explored and
+    # scores full breadth - see `categorical_breadth` for why the old
+    # `(distinct - 1) / 2` was pricing a denominator it could not know. A NUMERIC
+    # knob with no canonical range keeps that old formula, because there the
+    # denominator is not unknowable, it is unbounded, and full marks for two
+    # values would be the narrow-sweep credit the numeric path withholds.
+    quality = (
+        min(1.0, (distinct - 1) / 2.0)
+        if numeric
+        else categorical_breadth(name, distinct)
+    )
     if name in OPEN_CATEGORICAL_KNOBS:
         notes.append("scored on breadth; canonical value list is provider-specific")
     elif numeric:

@@ -120,35 +120,123 @@ itself. Omitting it bounds generated-walkthrough cost and latency; do not imply 
 State that in the plan and price any flagship comparison separately. Every selected model runs in
 the baseline grid and must fit the approved time and cost envelope.
 
-Both generated spaces use the same three models. Keep the baseline small: the three ladder models
-by one further swept knob taking two values. In the walkthrough that becomes a six-row sweep the
-user could credibly run by hand: three models × two evaluator-safe temperatures, with
-`prompt_style` and `self_check` fixed to one value each so the only varying dimensions are model
-and temperature. If the strong tier is a reasoning model,
-temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
-reasoning calling convention pinned; either way, the baseline stays at six rows and the first
-result stays quick and cheap. The synthesized walkthrough dataset contains 18 tuning rows: 3 easy,
-5 medium, 5 hard, and 5 very hard. The enhanced space keeps the identical model list and expands beyond
-the baseline: once the baseline result is in, refine the swept values around its top rows - the
-one added temperature becomes a close neighbor of the winner, 0.1 or 0.3 for a winner at 0.2,
-rather than a farther point - and then add the prompt-policy and self-check controls. The enhanced
-run is therefore strictly larger than the baseline search. The coding assistant performs this
-refinement itself between the two runs; the user is never asked to pick values or edit the
-wrapper. Because the enhanced run never gets a model the baseline did not measure, a measured
-difference cannot be explained by quietly upgrading the model. The assistant adds the disclosed
+Both generated spaces use the same three models and both have an exact size. State them exactly,
+never as "roughly" or "about"; the asserts beside the spaces below enforce both:
+
+- baseline: **3 models × 2 prompt styles × 2 thinking shapes = 12 configurations**, run as 12
+  trials so `grid` enumerates every one of them and nothing is left to trial order.
+- enhanced: **3 models × 4 binary behaviour knobs = 48 configurations**, a quarter of it reachable
+  within the 12-trial cap and inside the 4-6 varying knobs the readiness scorer pays full marks for.
+
+Say on the approval card, plainly: **the baseline runs 12 paid trials, one for every configuration
+in its space**, and what the second axis buys is that the enhanced knobs are then chosen from
+evidence about two levers rather than one. State it as a count, never as a change from whatever
+this guide did before: a first-run customer has no run of ours to compare against, and our release
+history is not a fact about their spend. The user approves the count itself before it is spent.
+
+Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
+wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
+walkthrough conditional, dropping temperature in that branch alone and silently giving the enhanced
+space a second size nothing wrote down. Pinning it always makes both branches identical, 12 and 48
+whether the strong tier reasons or not.
+
+The four behaviour knobs are **prompt style**, **pre-action reflect**, **thinking shape** (direct or
+chain-of-thought), and **reflect**, two values each. They shape behaviour rather than sampling, and
+each intervenes at a different moment - how the task is framed, before the work starts, during the
+answer, after it - so none is another spelling of its neighbour. Four knobs, four moments, is the
+test any replacement from the catalog below has to pass.
+
+**`self_check` is gone, and `reflect` is the one that stayed.** They were one knob under two names:
+both appended "look at your answer again and fix it", differing only in what the model was told to
+look at, and no customer-facing sentence tells those apart without becoming two sentences that mean
+the same thing. `reflect` is the usual name for the technique, and it pairs with the
+`pre_action_reflect` now opposite it - plan before, revise after, a real axis.
+
+The synthesized walkthrough dataset contains 18 tuning rows: 3 easy, 5 medium, 5 hard, and 5 very
+hard. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
+space carries both: a baseline that ranks a lever the enhanced run will not use has measured nothing
+usable, which is what temperature became once it was pinned. Every baseline value is kept, so the
+baseline is a strict subset and the enhanced run never gets a model the baseline did not measure, so
+a measured difference cannot be explained by quietly upgrading the model. The coding assistant
+performs this value refinement itself between the two runs; the user is never asked to pick
+values or edit the wrapper. The assistant adds the disclosed
 controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
 in the report.
 
+### The knob catalog - twelve to choose from, four to pay for
+
+The four slots above are the default fill for a generated single-call classification or extraction
+walkthrough - a selection, not the list. Pick the four that fit the customer's agent from this
+catalog, keeping the four-different-moments test, and name the ones left out on the approval card:
+the customer sees the breadth, and pays for four.
+
+| Knob | Values | Choose it when |
+|---|---|---|
+| `model` | 3 ladder rungs | always - it is the ladder, not a slot |
+| `prompt_style` | `plain`, `structured` | default slot; the task's framing is unexamined |
+| `thinking_shape` | `direct`, `chain_of_thought` | default slot; answers need derivation, not recall |
+| `pre_action_reflect` | off, on | default slot; the agent starts work before reading the whole request |
+| `reflect` | off, on | default slot; answers are nearly right and need one revision |
+| `few_shot_count` | two counts within 0-10 | the task has a house format worked examples would teach |
+| `task_decomposition` | off, on | one request bundles several sub-tasks |
+| `self_consistency` | off, on | **only when the customer's own temperature is above 0** - see below |
+| `retrieval_k` | two counts within 1-5 | RAG agents only; there is a retriever to widen |
+| `context_format` | two layouts | retrieved or structured context is pasted in raw |
+| `tool_policy` | two policies | the agent calls tools and over- or under-uses them |
+| `temperature` | the customer's own values | **only when the customer already sweeps it** - see below |
+
+Two entries carry a precondition, and both are load-bearing.
+
+`self_consistency` samples an answer several times and keeps the majority one. It earns its catalog
+place by being a quality lever that is visibly also a cost lever - it buys accuracy by spending more
+per question, which puts it on the accuracy-for-cost frontier this guide reports rather than only
+claiming to sit there. But it needs sampling diversity, and **this walkthrough pins temperature at
+0**, where every sample repeats and the majority vote costs three calls to reproduce one. Selectable
+only for a customer already running above 0; offering it beside a pinned temperature sells a
+multiplier on the bill for nothing on the answer.
+
+`temperature` is pinned at 0 by default and its slot goes to another catalog knob. When the customer
+already sweeps it, use **their** values rather than a range invented here, and do not pin underneath
+them. Read which case applies off their existing configuration; do not build task-type detection.
+
+`batch_size` and `max_tokens` are deliberately absent: both move throughput and cost without changing
+what the answer says, and a knob that cannot change the answer is not a quality lever.
+
+### Say what is being tried, once the enhanced run is under way
+
+The moment the enhanced optimization starts, the customer is waiting on it. Use that wait: print one
+line per knob in the space, in their terms, saying what it changes about how their agent answers.
+One sentence each, verbatim:
+
+- **model** - Tries the same task on a cheaper, a mid-range, and a stronger model.
+- **prompt_style** - Changes how the request is worded, from bare task to spelled-out instructions.
+- **thinking_shape** - Lets the model work through the problem before answering instead of
+  answering straight away.
+- **pre_action_reflect** - Has the model restate what is being asked and plan an approach before it
+  starts.
+- **reflect** - Has the model look back at its own answer and fix it before returning it.
+- **few_shot_count** - Shows the model worked examples of the task first.
+- **task_decomposition** - Splits a request that contains several jobs into separate steps.
+- **self_consistency** - Answers the same question several times and keeps the answer that comes up
+  most.
+- **retrieval_k** - Changes how much retrieved material the model is given to work from.
+- **context_format** - Changes how the supplied material is laid out for the model to read.
+- **tool_policy** - Changes how readily the agent reaches for its tools.
+- **temperature** - Changes how much the model varies its wording between runs.
+
+Say nothing else here. No percentages, no reported gains, no references, no "research shows". A
+customer waiting on a run wants to know what is being tried, not to be handed reading - and a number
+quoted here reads as a promise about their task, which none of it is.
+
 Sweep only knobs that are real for every model in the space. When one model ignores a knob the
-others honor, the winner comparison is confounded - a configuration can win on a prompt or
-setting the other models were never given on equal terms, and no report footnote untangles that;
-when every model faces exactly the same variations, the winner is clear and the enhanced run's
-insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
-identically in both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling
-parameters such a model rejects - and, since temperature is then
-inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
-the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
-prompt-policy plus self-check controls in the enhanced space.
+others honor, the winner comparison is confounded - a configuration can win on a prompt or setting
+the other models were never given on equal terms, and no report footnote untangles that; when every
+model faces exactly the same variations, the winner is clear and the enhanced run's insight is
+accurate. So when the strong tier is a reasoning model, pin its calling convention identically in
+both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling parameters such a
+model rejects. Nothing else changes: temperature is already pinned for every space, and the four
+behaviour knobs are real for a reasoning model and a sampling model alike, so both branches run the
+same 12 and 48.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
@@ -282,7 +370,7 @@ OPTIMIZATION_TIMEOUT_SECONDS = optional_positive_number(
 )
 BASELINE_TRIALS = positive_int(
     "TRAIGENT_FIRST_RUN_BASELINE_TRIALS",
-    default=6,
+    default=12,
 )
 ENHANCED_MAX_TRIALS = positive_int(
     "TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS",
@@ -307,9 +395,16 @@ def require_current_route_credential() -> None:
 
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
+    # Pinned, never swept, in both phases: it adds surface noise an exact
+    # match punishes, and pinning it always retires the branch that used to
+    # give the enhanced space a second, undocumented size.
     "temperature": 0.0,
-    "prompt_style": "direct",
-    "self_check": False,
+    # `prompt_style`'s first value was "direct" until `thinking_shape` arrived
+    # and took that word for the thing it actually describes.
+    "prompt_style": "plain",
+    "pre_action_reflect": False,
+    "thinking_shape": "direct",
+    "reflect": False,
 }
 BASELINE_SPACE = {
     # The same three ladder models run in both phases, so the enhanced run
@@ -319,24 +414,26 @@ BASELINE_SPACE = {
         SELECTED_ALTERNATIVE_MODEL,
         SELECTED_STRONG_MODEL,
     ],
-    # Nonzero values are safe only when the evaluator tolerates valid surface variation.
-    # Otherwise pin 0.0 and substitute other real controls to retain the planned row count.
-    "temperature": [BASELINE_CONFIG["temperature"], 0.2],
-    "prompt_style": [BASELINE_CONFIG["prompt_style"]],
-    "self_check": [BASELINE_CONFIG["self_check"]],
+    "temperature": [BASELINE_CONFIG["temperature"]],
+    # Two non-model axes, and both must be knobs the enhanced space carries -
+    # otherwise the baseline ranks a lever that run will not use. Two rather
+    # than one because the selection rule downstream reads the baseline to
+    # choose the enhanced knobs, and one ranked lever is almost nothing to
+    # read. It costs 12 paid trials instead of 6; the approval card says so.
+    "prompt_style": [BASELINE_CONFIG["prompt_style"], "structured"],
+    "thinking_shape": [BASELINE_CONFIG["thinking_shape"], "chain_of_thought"],
+    "pre_action_reflect": [BASELINE_CONFIG["pre_action_reflect"]],
+    "reflect": [BASELINE_CONFIG["reflect"]],
 }
 ENHANCED_SPACE = {
     "model": BASELINE_SPACE["model"],
-    # 0.4 is the pre-baseline placeholder: after the baseline, replace it with
-    # one close neighbor of the winning temperature (0.1 or 0.3 for a 0.2
-    # winner), keeping both baseline values.
-    "temperature": [*BASELINE_SPACE["temperature"], 0.4],
-    "prompt_style": [
-        BASELINE_CONFIG["prompt_style"],
-        "structured",
-        "criteria_first",
-    ],
-    "self_check": [False, True],
+    "temperature": BASELINE_SPACE["temperature"],
+    # Four behaviour knobs, two values each, keeping every baseline value: the
+    # baseline space is a strict subset of this one.
+    "prompt_style": BASELINE_SPACE["prompt_style"],
+    "pre_action_reflect": [False, True],
+    "thinking_shape": BASELINE_SPACE["thinking_shape"],
+    "reflect": [False, True],
 }
 # Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE picks
 # the scorer's high-impact catalog; WIRED_KNOBS names only the dimensions
@@ -344,7 +441,14 @@ ENHANCED_SPACE = {
 # is a false claim about the search space. The scorer cannot check that claim,
 # so the assert under `demonstrably_wired` below checks it here at load time.
 AGENT_TYPE = "general"
-WIRED_KNOBS = ["model", "temperature", "prompt_style", "self_check"]
+WIRED_KNOBS = [
+    "model",
+    "temperature",
+    "prompt_style",
+    "pre_action_reflect",
+    "thinking_shape",
+    "reflect",
+]
 # Inputs the wiring probe below re-builds requests over. A knob that acts only
 # on some inputs - a `sql_mode` applied when the message starts "SQL:", say -
 # produces identical requests under a single literal, so probing one string
@@ -371,15 +475,33 @@ def config_space_document(space: dict[str, list]) -> dict:
     }
 
 
+# Every count this walkthrough claims is pinned here, so "48 configurations"
+# is a fact the file refuses to contradict rather than a number in a paragraph.
+BEHAVIOUR_KNOBS = ["prompt_style", "pre_action_reflect", "thinking_shape", "reflect"]
 assert len(set(BASELINE_SPACE["model"])) == 3
 assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
-assert set(BASELINE_SPACE["temperature"]) <= set(ENHANCED_SPACE["temperature"])
-assert not STRONG_REASONING_EFFORT or (
-    len(BASELINE_SPACE["temperature"]) == 1
-    and len(ENHANCED_SPACE["temperature"]) == 1
-), "pin temperature when the strong tier runs at a reasoning effort"
-assert configuration_count(BASELINE_SPACE) == 6
-assert 1 <= BASELINE_TRIALS <= configuration_count(BASELINE_SPACE)
+assert all(
+    set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) for knob in BASELINE_SPACE
+), "the baseline must be a subset, or it ranks levers the enhanced run will not use"
+# Unconditional, where it used to fire only under a reasoning strong tier: the
+# rule got simpler, not stricter, and the branch that gave the enhanced space a
+# second size is gone with it.
+assert (
+    len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
+), "temperature is pinned, never swept - behaviour knobs carry the search"
+assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
+# 3 models x 2 prompt styles x 2 thinking shapes, and 3 models x 4 binary
+# behaviour knobs - both holding whether or not the strong tier reasons.
+assert configuration_count(BASELINE_SPACE) == 12
+assert configuration_count(ENHANCED_SPACE) == 48
+# EQUAL, not "at most". The baseline runs `algorithm="grid"`, which enumerates
+# the space in order and stops at the trial cap - so a cap below the size is
+# not a smaller sweep, it is a sweep that silently drops whichever
+# configurations grid happened to order last, and the baseline's job is to rank
+# knobs across all of them. Any override of TRAIGENT_FIRST_RUN_BASELINE_TRIALS
+# that is not the space size fails here, at load, rather than quietly measuring
+# a truncated space.
+assert BASELINE_TRIALS == configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
 assert set(WIRED_KNOBS) <= set(ENHANCED_SPACE), (
     "every wired knob must name a dimension of the space actually searched"
@@ -395,25 +517,54 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 )
 
 
-def build_prompt(message: str, *, style: str, self_check: bool) -> str:
-    if style == "direct":
+def build_prompt(
+    message: str,
+    *,
+    style: str,
+    pre_action_reflect: bool,
+    thinking_shape: str,
+    reflect: bool,
+) -> str:
+    """Four knobs, four different moments - two knobs with one effect are one
+    dimension counted twice, which is why `self_check` is not here: it and
+    `reflect` were both "look at your answer again", differing only in what the
+    model was told to look at, and that is one dimension under two names.
+
+    `style` frames the task. `pre_action_reflect` acts BEFORE any work starts -
+    restate the request and plan an approach. `thinking_shape` acts DURING the
+    answer - derive it step by step instead of emitting it. `reflect` acts
+    AFTER - reconsider the finished answer and revise it.
+
+    Keep `pre_action_reflect` and `thinking_shape` textually distinct or they
+    collapse into each other for a single-call agent: planning what to produce
+    is not the same instruction as deriving it, and the wording below is what
+    holds them apart. A replacement knob from the catalog has to survive the
+    same test."""
+    if style == "plain":
         prompt = message
     elif style == "structured":
         prompt = (
             "Complete the task below. Follow every requested output constraint and return only "
             f"the requested result.\n\nTask:\n{message}"
         )
-    elif style == "criteria_first":
-        prompt = (
-            "Identify the task's decision criteria, apply each criterion carefully, and return "
-            f"only the requested result.\n\nTask:\n{message}"
-        )
     else:
         raise ValueError(f"unsupported prompt style: {style}")
-    if self_check:
+    if pre_action_reflect:
         prompt += (
-            "\n\nBefore returning the result, silently check it against the task constraints "
-            "and correct any mismatch. Do not include the check in the response."
+            "\n\nBefore you begin, restate what is being asked and what a correct answer must "
+            "contain, decide your approach, then carry it out."
+        )
+    if thinking_shape == "chain_of_thought":
+        prompt += (
+            "\n\nReason through the task step by step before you answer, then return only the "
+            "requested result."
+        )
+    elif thinking_shape != "direct":
+        raise ValueError(f"unsupported thinking shape: {thinking_shape}")
+    if reflect:
+        prompt += (
+            "\n\nAfter reaching an answer, reconsider whether it is actually correct, and "
+            "revise it if it is not. Return only the final answer."
         )
     return prompt
 
@@ -536,7 +687,9 @@ def build_request(message: str, config: dict) -> dict:
                 "content": build_prompt(
                     message,
                     style=config["prompt_style"],
-                    self_check=config["self_check"],
+                    pre_action_reflect=config["pre_action_reflect"],
+                    thinking_shape=config["thinking_shape"],
+                    reflect=config["reflect"],
                 ),
             }
         ],
@@ -718,7 +871,7 @@ def agent(message: str) -> str:
 
 The process-only values above are selected by the coding assistant from the inspected project and
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
-to six baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
+to twelve baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
 time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing the
 comparison back to one-versus-two rows. The assistant derives the current provider route from the
 existing vendor setup, the current agent call, and the route inventory, then populates the process
@@ -735,20 +888,19 @@ requires revised data-egress approval. In the generated default, every search
 variable must affect the actual agent call for every model in the space. A preserved conditional
 dimension may affect only the models that support it, but the request probe must report that
 partial coverage and the run record must name those models. When the strong tier runs as a
-reasoning model, temperature is inert for it - follow the ladder section above and sweep uniform
-knobs instead of making the generated comparison conditional.
+reasoning model, temperature is inert for it - which costs the comparison nothing, because
+temperature is pinned in both spaces and every swept knob is uniform across the ladder.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
-template to force onto every real agent. Its baseline performs a credible six-point standard
-sweep: the three ladder models by two evaluator-safe temperatures, with the added prompt controls
-pinned to the current behavior. The enhanced space keeps all of those values - the same three
-models - extends the temperature range around the baseline's winner,
-and adds two real one-call controls: three prompt policies and a native
-boolean self-check branch. That creates 54 possible
-configurations, so a 12-trial managed run has meaningful choices to make.
+template to force onto every real agent. Its baseline is a credible twelve-point sweep: the three
+ladder models by two prompt styles by two thinking shapes, with the remaining controls pinned to
+the current behavior. The enhanced space keeps every one of those values, the same three models,
+and adds two more real one-call controls: pre-action reflect and reflect. That is exactly 48
+configurations, so a 12-trial managed run has meaningful choices to make and reaches a quarter of
+the space.
 
 When the user already has a baseline or fixed current configuration, preserve that baseline space
-and its row count exactly; do not expand it to six. Add task-relevant controls only to the enhanced
+and its row count exactly; do not expand it to twelve. Add task-relevant controls only to the enhanced
 space, based on the existing agent and observed failure modes. Useful additions include context
 format, retrieval depth, few-shot count, tool policy, or repair behavior. Do not add no-op fields,
 string-encoded booleans, or multi-call composite behavior merely to increase the portal row count.
@@ -808,7 +960,7 @@ present. With no Traigent key it does not fail and does not run managed search: 
 local `random` sweep and reports `fallback_reason=no_api_key`, so a run that looks like Traigent's
 managed search is really random sampling. Locally the SDK registers exactly two searches, `grid` and
 `random`; the managed family is cloud side and is not registered locally. At baseline size the
-difference is visible - the same six-point space returns the first grid cell every time under
+difference is visible - the same twelve-point space returns the first grid cell every time under
 `grid`, and a different winner between runs under the fallback. A first result the user can
 reproduce in front of someone else is worth more than one they cannot, so state which algorithm
 actually ran rather than implying the managed one did.
@@ -819,7 +971,7 @@ grid would only ever cover the corner it starts from; use `random` there instead
 one ran and why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
-truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
+truncate the grid. Normally verify all twelve distinct points executed and that `BASELINE_CONFIG`
 appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's
@@ -880,13 +1032,14 @@ Traigent/Traigent issue 2020.
 
 ## Broader optimization
 
-Before this call, the coding assistant replaces the enhanced space's placeholder temperature with
-the winner-bracketing neighbor chosen from the baseline result per the ladder section, so the
-search reflects the baseline evidence rather than the pre-baseline guess. This is an automatic
-internal step - never a user task, an edit the user is asked to make, or another question.
+The enhanced space carries no pre-baseline placeholder to replace. Every value in it is fixed
+before either run, because the four behaviour knobs are binary and temperature is pinned - there is
+no swept range to re-centre on the baseline's winner, and so no between-runs edit for anything to
+get wrong. What the baseline result decides is which knobs a customer's own space keeps, not which
+values this one sweeps.
 
-The config-space document is serialized after that replacement, so it records the space the search
-actually receives rather than the pre-baseline guess - but nothing is on disk while the search runs.
+The config-space document is serialized from the space this call receives, so it records what the
+search actually got - but nothing is on disk while the search runs.
 Three steps in order give the file one meaning and no other, *this is the space the search that just
 completed received*:
 
@@ -949,7 +1102,7 @@ Do not enable mock mode in this process. The optimization space must include the
 configuration and every baseline value, plus meaningful added knobs that the function consumes.
 `max_trials` is a cap rather than an SDK-enforced minimum, passed straight through as
 `max_trials=ENHANCED_MAX_TRIALS`, so returned trials never exceed it - unlike the baseline's
-six-point space, where "all six" already names the whole result. `12` is therefore the ceiling and
+twelve-point space, where "all twelve" already names the whole result. `12` is therefore the ceiling and
 not a floor beneath a higher count, which is why everything the user reads states it as a ceiling -
 "up to 12 configurations" - rather than as a range. Report the actual count and stop reason. Fewer
 than 10 rows requires a concrete backend stop, timeout, cost-limit, or failure explanation rather
@@ -1056,7 +1209,7 @@ assert optimized_results.cloud_url is not None, "optimization is not available i
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
-returned all six intended distinct rows including its initial configuration. For an explicitly
+returned all twelve intended distinct rows including its initial configuration. For an explicitly
 approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
 failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
 as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from

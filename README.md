@@ -90,11 +90,11 @@ At boundaries, the assistant shows `Stage n/5` and measured numbers. After basel
 Traigent when the measured results show useful headroom, or address the strongest observed
 limitation first. It gives reason and scope—never a generic menu or guaranteed gain.
 
-The default generated comparison has two planned measurements: six local fixed-grid configurations
-first, followed by a connected managed search over a materially broader space with added knobs,
-testing up to 12 configurations and choosing which ones as it goes rather than working through a
-fixed list. The approval card names that space's total combination count beside the ceiling, so the
-12 reads against the space it is drawn from. A disclosed runtime, cost, or plan limit
+The default generated comparison has two planned measurements: all twelve configurations of a local
+fixed grid first, followed by a connected managed search over a materially broader space with added
+knobs, testing up to 12 configurations and choosing which ones as it goes rather than working
+through a fixed list. The approval card names that space's total combination count beside the
+ceiling, so the 12 reads against the space it is drawn from. A disclosed runtime, cost, or plan limit
 can make the approved comparison smaller; the report gives the number of configurations actually
 tested and any concrete shortfall reason. If you already have a baseline, the first measurement
 preserves its exact rows and models instead of padding it.

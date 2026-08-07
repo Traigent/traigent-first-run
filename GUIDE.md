@@ -97,7 +97,7 @@ The default paid path uses two measurements with the same tuning data, evaluator
 agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible six-configuration sweep. Stage 5
+   when no baseline exists does the assistant prepare a credible twelve-configuration sweep. Stage 5
    of `SKILL.md` owns how the provider route is resolved and when the user is asked about it. The
    user sees its best configuration, primary tuning metric, cost, latency, trial/failure count, and
    a short note for each knob before any Traigent account/key request.
@@ -120,7 +120,7 @@ Do not add an offline baseline rerun or a mandatory third optimization pass. Do 
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
 the user actually defined. When the assistant prepares the walkthrough agent and its missing
 baseline,
-generate enough real controls for the six-row baseline and add further controls to the enhanced
+generate enough real controls for the twelve-row baseline and add further controls to the enhanced
 run. Another iteration is optional only after the result identifies a specific hypothesis.
 
 ## Result interpretation

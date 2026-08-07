@@ -487,7 +487,7 @@ not repeat a provider choice already resolved in stage 5.
 
 Use the baseline checklist in `references/run-safety.md` for one concise baseline preview and
 approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
-preserved baseline or generated six-row sweep. Say only that a separately previewed managed run may
+preserved baseline or generated twelve-row sweep. Say only that a separately previewed managed run may
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
@@ -505,7 +505,7 @@ trials requires diagnosis.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
 trial target while preserving meaningful difficulty coverage; disclose any
-reduction from the six-row baseline target. Proceed after one explicit
+reduction from the twelve-row baseline target. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
@@ -520,7 +520,7 @@ time/cost; do not ask the user to select implementation timeouts.
 Use the same tuning slice, evaluator, objectives, and agent call path for both measurements:
 
 1. **Baseline** - preserve the user's existing baseline exactly, including its original row count;
-   never pad it. Only when it is missing, prepare the credible six-configuration fixed sweep in
+   never pad it. Only when it is missing, prepare the credible twelve-configuration fixed sweep in
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
    controls the agent consumes, and test up to 12 configurations (`references/sdk-execution.md`
@@ -633,7 +633,7 @@ failure is resolved.
 
 Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
 one-row before and stays unchanged. An assistant-prepared walkthrough must not proceed with a one-
-row baseline; generate enough real controls for the six-configuration default.
+row baseline; generate enough real controls for the twelve-configuration default.
 
 Do not require a third optimization pass. Recommend another iteration only after the first result
 reveals a specific, worthwhile hypothesis.
@@ -642,7 +642,7 @@ reveals a specific, worthwhile hypothesis.
 
 Before saying the run succeeded, apply every post-run verification in
 `references/run-safety.md`. Also verify that the baseline was preserved exactly or the generated
-six-row default (including its initial configuration) ran, subject only to an approved disclosed
+twelve-row default (including its initial configuration) ran, subject only to an approved disclosed
 reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
 trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
 stop/failure reason; and a
