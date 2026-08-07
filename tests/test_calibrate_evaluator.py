@@ -2632,7 +2632,9 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         """The false-red direction: a named refusal is not an internal error."""
         with tempfile.TemporaryDirectory() as directory:
             scorer = Path(directory) / "scorer.py"
-            scorer.write_text("def score(output, expected, **kwargs):\n    return 1.0\n")
+            scorer.write_text(
+                "def score(output, expected, **kwargs):\n    return 1.0\n"
+            )
             process = subprocess.run(
                 [
                     sys.executable,

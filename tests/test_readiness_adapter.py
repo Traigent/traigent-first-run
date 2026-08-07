@@ -24,8 +24,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import importlib.util
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "traigent-first-run" / "scripts"
 PREFLIGHT = SCRIPTS / "preflight.py"
@@ -2718,9 +2716,7 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             # `sources: ["collected"]` with no counts behind it is an
             # unverifiable declaration and scores where silence scores.
             worded = [dict(record) for record in records]
-            worded[0]["metrics"] = dict(
-                worded[0]["metrics"], sources=["collected"]
-            )
+            worded[0]["metrics"] = dict(worded[0]["metrics"], sources=["collected"])
             self.assertEqual(
                 _score_records(worded, extra)["overall"],
                 score["overall"],

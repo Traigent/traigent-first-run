@@ -36,7 +36,7 @@ import textwrap
 import traceback
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Sequence
+from typing import Any, Iterable, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -2134,8 +2134,6 @@ ROW_REVIEW_REVIEWER = "assistant"
 ROW_REVIEW_ORIGINS = ("collected", "undeclared")
 
 
-
-
 def _row_count(value: Any, name: str, *, required: bool = True) -> int:
     """Read one provenance row count, refusing an absent or impossible one.
 
@@ -2276,8 +2274,7 @@ def score_provenance(
     # disclosure sentence, so nothing about them is hidden by routing the
     # remedy at the mass that actually binds.
     silent = (
-        undeclared_rows > 0
-        and synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
+        undeclared_rows > 0 and synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
     )
     if unobserved == counted:
         caps.append(
@@ -4705,6 +4702,8 @@ def _dataset_absence_detail(records: Sequence[dict[str, Any]]) -> str | None:
         if isinstance(detail, str) and detail.strip():
             return detail.strip()
     return None
+
+
 def _failed(statuses: dict[str, str], check: str) -> bool:
     """Whether `check` FAILed, refusing to answer for a check that ran and could not.
 
@@ -4735,6 +4734,8 @@ def _failed(statuses: dict[str, str], check: str) -> bool:
             "dataset, say so rather than emitting a status nothing consumes"
         )
     return status == "FAIL"
+
+
 class RowReviewInputError(ValueError):
     """A row review the scorer cannot read, or may not accept as one.
 

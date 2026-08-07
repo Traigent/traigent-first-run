@@ -801,9 +801,7 @@ class StaticPreflightTests(unittest.TestCase):
     def test_an_incomplete_near_duplicate_scan_is_skip_and_never_pass(self) -> None:
         """Out of budget with nothing found is unchecked, not clean."""
         token_sets = [{"a", "b", "c"} for _ in range(50)]
-        pairs, complete = MODULE.near_duplicate_pairs(
-            token_sets, max_work=0, limit=10
-        )
+        pairs, complete = MODULE.near_duplicate_pairs(token_sets, max_work=0, limit=10)
         self.assertEqual(pairs, [])
         self.assertFalse(complete)
 
@@ -814,9 +812,7 @@ class StaticPreflightTests(unittest.TestCase):
         comparison: a posting step plus both rows' token counts.
         """
         token_sets = [{"a", "b", "c"} for _ in range(50)]
-        pairs, complete = MODULE.near_duplicate_pairs(
-            token_sets, max_work=10, limit=10
-        )
+        pairs, complete = MODULE.near_duplicate_pairs(token_sets, max_work=10, limit=10)
         self.assertTrue(pairs)
         self.assertFalse(complete)
 
@@ -850,9 +846,7 @@ class StaticPreflightTests(unittest.TestCase):
         # The false-red direction: the same three pairs with short rows are
         # cheap, and must still finish inside the same budget.
         short_rows = [{"a", "b", "c"} for _ in range(3)]
-        _pairs, short_complete = MODULE.near_duplicate_pairs(
-            short_rows, max_work=100
-        )
+        _pairs, short_complete = MODULE.near_duplicate_pairs(short_rows, max_work=100)
         self.assertTrue(short_complete)
 
     def test_one_row_is_not_charged_for_an_answer_spread_it_cannot_have(

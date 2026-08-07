@@ -118,7 +118,6 @@ class KnobVariationTests(unittest.TestCase):
                     MODULE.knob_variation("thinking_shape", values).quality, 1.0
                 )
 
-
     def test_model_keeps_a_ladder_because_more_models_really_is_better(self) -> None:
         """The one categorical knob where the value count means something.
 
@@ -632,6 +631,7 @@ class DatasetScoringTests(unittest.TestCase):
         that total rows are not the measure, which is what the second pair
         pins.
         """
+
     def _diversity(self, **facts) -> object:
         pillar, _caps = MODULE.score_dataset(
             MODULE.DatasetFacts(exists=True, rows=200, labelled_rows=200, **facts)
@@ -888,7 +888,11 @@ class DatasetScoringTests(unittest.TestCase):
         # 100 rows both times, and the one that tunes on fewer scores lower.
         thin_tuning = MODULE.score_dataset(
             MODULE.DatasetFacts(
-                exists=True, rows=100, labelled_rows=100, tuning_rows=20, holdout_rows=80
+                exists=True,
+                rows=100,
+                labelled_rows=100,
+                tuning_rows=20,
+                holdout_rows=80,
             )
         )[0]
         thin_power = next(s.value for s in thin_tuning.subscores if s.name == "power")
@@ -1039,9 +1043,7 @@ class DatasetScoringTests(unittest.TestCase):
         # resolution - 50 tuning rows are 50 tuning rows. It IS a real problem
         # (nothing can check the winner), so it is stated on the card rather
         # than expressed as a number about a different question.
-        unscoreable_holdout = next(
-            s for s in one_sided.subscores if s.name == "power"
-        )
+        unscoreable_holdout = next(s for s in one_sided.subscores if s.name == "power")
         self.assertEqual(unscoreable_holdout.value, 22.0)
         # "held-out", not "held-back": `THIRD_NOUNS` in test_skill_package bans
         # the prose form "held-back" from every bundled script and names this
@@ -1736,9 +1738,7 @@ class AgentScoringTests(unittest.TestCase):
         for value in ("general", "rag", "code_gen", "", "a-type-no-catalog-has"):
             with self.subTest(agent_type=value):
                 with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-                    MODULE.agent_facts_from_config_space(
-                        {**space, "agent_type": value}
-                    )
+                    MODULE.agent_facts_from_config_space({**space, "agent_type": value})
                 self.assertIn("'agent_type'", str(raised.exception))
 
     def test_an_absent_optional_field_still_scores(self) -> None:
@@ -3506,9 +3506,9 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _run(argv: list[str], environ: dict[str, str] | None = None) -> tuple[
-        int, str, str
-    ]:
+    def _run(
+        argv: list[str], environ: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = MODULE.main(argv)
@@ -4343,6 +4343,7 @@ class AModelWrittenAnswerKeyCannotPresentAsStrongTests(unittest.TestCase):
                     "present as good rather than merely workable",
                 )
 
+
 def _cap_constructions() -> list[tuple[str, ast.expr]]:
     """Every `Cap(...)` written in readiness.py, as (condition, ceiling node).
 
@@ -4740,6 +4741,7 @@ class TheDeclaredCapOrderDecidesTheRunTests(unittest.TestCase):
         )
         self.assertEqual(score.recommended_action, "get-data")
 
+
 def _clean_dataset(**overrides: object) -> "MODULE.DatasetFacts":
     """A dataset with nothing wrong with it, minus whatever a test changes.
 
@@ -4991,9 +4993,7 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
         self.assertLess(omitted.confidence, 1.0)
 
     def test_absent_probe_scores_score_no_better_than_a_narrow_spread(self) -> None:
-        wide = self._evaluation(
-            task_kind="short-answer", probe_scores=((1.0, 0.0),)
-        )
+        wide = self._evaluation(task_kind="short-answer", probe_scores=((1.0, 0.0),))
         narrow = self._evaluation(
             task_kind="short-answer", probe_scores=((0.55, 0.45),)
         )
@@ -5036,12 +5036,9 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
         self.assertGreater(four_bands.score, one_band.score)
         self.assertLessEqual(declared_none.score, one_band.score)
         self.assertLessEqual(never_ran.score, one_band.score)
-        declared = next(
-            s for s in declared_none.subscores if s.name == "difficulty"
-        )
+        declared = next(s for s in declared_none.subscores if s.name == "difficulty")
         self.assertTrue(declared.measured, "a declared zero is a measurement")
         self.assertEqual(declared.value, 0.0)
-
 
 
 class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):
@@ -5131,8 +5128,7 @@ class TheRouteIsClassifiedInThreeKindsNotTwoTests(unittest.TestCase):
         self.assertEqual(
             set(MODULE.ROUTE_CATEGORY),
             set(MODULE.ACTION_FOR_CONDITION),
-            "a condition is routed and not classified, or classified and not "
-            "routed",
+            "a condition is routed and not classified, or classified and not " "routed",
         )
         self.assertEqual(
             set(MODULE.ROUTE_CATEGORY.values()) - MODULE.ROUTE_CATEGORIES,
@@ -5331,6 +5327,8 @@ class TheCountFreePayloadHasOneReadingTests(unittest.TestCase):
         )
         self.assertEqual(points, MODULE.SYNTHESISED_ROW_POINTS)
         self.assertEqual([cap.condition for cap in caps], ["dataset-fully-synthetic"])
+
+
 class ADiversityQuestionWithNoSubjectIsNotAnUnrunCheckTests(unittest.TestCase):
     """`score_provenance` gets the method's context on the adjacent line; this did not.
 
@@ -5392,17 +5390,17 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
                 "check": "dataset-provenance",
                 "status": "PASS",
                 "metrics": {
-                                "rows": 40,
-                                "labelled_rows": 40,
-                                # Emitted together by preflight.py, and
-                                # required since #161 - an absent count is
-                                # refused rather than read as zero.
-                                "collected_rows": 40,
-                                "synthesised_rows": 0,
-                                "undeclared_rows": 0,
-                                "generated_answer_rows": 0,
-                                "answerable_rows": 40,
-                            },
+                    "rows": 40,
+                    "labelled_rows": 40,
+                    # Emitted together by preflight.py, and
+                    # required since #161 - an absent count is
+                    # refused rather than read as zero.
+                    "collected_rows": 40,
+                    "synthesised_rows": 0,
+                    "undeclared_rows": 0,
+                    "generated_answer_rows": 0,
+                    "answerable_rows": 40,
+                },
             }
         ]
         payload.extend(

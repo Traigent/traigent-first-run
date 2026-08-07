@@ -533,6 +533,8 @@ def behavioral_harness():
     from behavioral import harness
 
     return harness
+
+
 def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]:
     """Every `Cap(...)` in the scorer, mapped condition -> the `blocks` it names.
 
@@ -698,6 +700,7 @@ def ten_day_sentences(text: str) -> list[str]:
         sentence for sentence in prose_units(text) if TEN_DAY_MENTION.search(sentence)
     ]
 
+
 def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
     """The generated wrapper's module-level state, as executable AST nodes.
 
@@ -714,6 +717,7 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
                 if node.target.id.isupper():
                     nodes.append(node)
     return nodes
+
 
 # Spelled forms of the counts a search space could plausibly have. The prose
 # writes a size as a word ("twelve-row sweep") as often as a numeral ("12 and
@@ -1100,8 +1104,6 @@ def billing_ceiling_mandates(documents: dict[str, str]) -> dict[str, list[str]]:
             if is_billing_ceiling_mandate(sentence):
                 found.setdefault(name, []).append(sentence)
     return found
-
-
 
 
 def preflight_constant(name: str) -> object:
@@ -3187,7 +3189,9 @@ class SkillPackageTests(unittest.TestCase):
             r"\((\d+) easy, (\d+) medium, (\d+) hard, (\d+) very hard\)",
             dataset_text,
         )
-        self.assertIsNotNone(reserve, "the held-out split's composition is no longer stated")
+        self.assertIsNotNone(
+            reserve, "the held-out split's composition is no longer stated"
+        )
         held_out = int(reserve.group(1))
         held_out_bands = [int(value) for value in reserve.groups()[1:]]
         self.assertEqual(
@@ -3883,9 +3887,7 @@ class SkillPackageTests(unittest.TestCase):
         GUIDE.md would now find a pointer and no items at all.
         """
         quoted: list[str] = []
-        for raw in (
-            SKILL.read_text().split("## Opening message", 1)[1]
-        ).splitlines():
+        for raw in (SKILL.read_text().split("## Opening message", 1)[1]).splitlines():
             if raw.startswith(">"):
                 quoted.append(raw)
             elif quoted:
@@ -5088,7 +5090,9 @@ class SkillPackageTests(unittest.TestCase):
         `GUIDE.md` says nothing about how the file gets opened.
         """
         raw = instructional_documents()
-        documents = {name: " ".join(text.casefold().split()) for name, text in raw.items()}
+        documents = {
+            name: " ".join(text.casefold().split()) for name, text in raw.items()
+        }
         owner = RUN_SAFETY.relative_to(ROOT).as_posix()
 
         # 1. The middle rung is gone, everywhere - including from the owner.
@@ -5160,24 +5164,37 @@ class SkillPackageTests(unittest.TestCase):
         """
         for label, planted in (
             # The reviewer's paraphrase of the deleted middle rung.
-            ("paraphrased middle rung", "Otherwise open the `.env` in the "
-             "project's own editor."),
+            (
+                "paraphrased middle rung",
+                "Otherwise open the `.env` in the " "project's own editor.",
+            ),
             # The deleted middle rung, worded as the repository once had it.
-            ("original middle rung", "If that is unavailable, open the `.env` "
-             "with the IDE or editor associated with the chosen project "
-             "directory."),
+            (
+                "original middle rung",
+                "If that is unavailable, open the `.env` "
+                "with the IDE or editor associated with the chosen project "
+                "directory.",
+            ),
             # A FIRST rung put back into a document that must not carry one.
             # The old check looked only for the rung that had been deleted, so
             # restoring a different one was invisible.
-            ("restored first rung", "Open the `.env` using the first available "
-             "GUI editor."),
-            ("restored fallback rung", "If headless, print the full `.env` path "
-             "and stop."),
-            ("windows spelling", "Hand off the credential file with "
-             "`Start-Process`."),
+            (
+                "restored first rung",
+                "Open the `.env` using the first available " "GUI editor.",
+            ),
+            (
+                "restored fallback rung",
+                "If headless, print the full `.env` path " "and stop.",
+            ),
+            (
+                "windows spelling",
+                "Hand off the credential file with " "`Start-Process`.",
+            ),
             ("posix spelling", "Launch `xdg-open` on the credential file."),
-            ("desktop spelling", "On a desktop session, pop the `.env` open for "
-             "the user."),
+            (
+                "desktop spelling",
+                "On a desktop session, pop the `.env` open for " "the user.",
+            ),
         ):
             with self.subTest(planted=label):
                 self.assertEqual(
@@ -5195,14 +5212,21 @@ class SkillPackageTests(unittest.TestCase):
         # in the first place.
         for label, legal in (
             ("the mode rule", "Before opening it, require mode `0600` on POSIX."),
-            ("the pointer", "`references/run-safety.md` selects the credential "
-             "handoff file and owns every rule about it."),
-            ("the when-to-open rule", "Stop once only when a key is truly "
-             "missing."),
-            ("the coding agent", "Your agent is the assistant running in your "
-             "editor or terminal."),
-            ("the tracked-file check", "Run the git-tracked-file safety check "
-             "on the `.env` before secret entry."),
+            (
+                "the pointer",
+                "`references/run-safety.md` selects the credential "
+                "handoff file and owns every rule about it.",
+            ),
+            ("the when-to-open rule", "Stop once only when a key is truly " "missing."),
+            (
+                "the coding agent",
+                "Your agent is the assistant running in your " "editor or terminal.",
+            ),
+            (
+                "the tracked-file check",
+                "Run the git-tracked-file safety check "
+                "on the `.env` before secret entry.",
+            ),
         ):
             with self.subTest(legal=label):
                 self.assertEqual(
@@ -5217,8 +5241,11 @@ class SkillPackageTests(unittest.TestCase):
         # mechanism nothing here implements - so it must not exist anywhere, in
         # any context, whether or not the sentence around it mentions `.env`.
         for label, planted in (
-            ("as first written", "fall back to the IDE or editor associated "
-             "with the chosen project directory"),
+            (
+                "as first written",
+                "fall back to the IDE or editor associated "
+                "with the chosen project directory",
+            ),
             ("paraphrased", "otherwise open it in the project's own editor"),
             ("reordered", "the editor the workspace is already open in"),
             ("renamed", "hand it to the repository's configured IDE"),
@@ -5255,9 +5282,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             sorted(published),
             sorted(
-                name
-                for name in listed
-                if not name.startswith(("tests/", "reports/"))
+                name for name in listed if not name.startswith(("tests/", "reports/"))
             ),
             "the corpus has drifted from what git publishes",
         )
@@ -7594,11 +7619,12 @@ class SkillPackageTests(unittest.TestCase):
             [self._ten_day_defect(s) for s in ten_day_sentences(table)], ["", ""]
         )
         blurred = (
-            "- The code expires 10 days after it is issued\n"
-            "- You then get 10 days\n"
+            "- The code expires 10 days after it is issued\n" "- You then get 10 days\n"
         )
         self.assertEqual(len(ten_day_sentences(blurred)), 2)
-        self.assertTrue(all(self._ten_day_defect(s) for s in ten_day_sentences(blurred)))
+        self.assertTrue(
+            all(self._ten_day_defect(s) for s in ten_day_sentences(blurred))
+        )
         # Hard-wrapped prose still arrives whole: split on newlines alone, this
         # sentence becomes two halves that each name one clock and neither
         # mentions both, so a real conflation across a line break would pass.
@@ -8119,7 +8145,9 @@ class SkillPackageTests(unittest.TestCase):
         # a second time in the same paragraph, and false on #149 in the same
         # way. What is said instead is the only thing this guide decides about
         # somebody else's split: it is used as it stands.
-        self.assertIn("kept at the size it already has, whatever its composition", dataset)
+        self.assertIn(
+            "kept at the size it already has, whatever its composition", dataset
+        )
 
     def test_real_rows_are_divided_between_both_sets_before_anything_is_generated(
         self,
@@ -8799,7 +8827,9 @@ class SkillPackageTests(unittest.TestCase):
     # Which repository a citation names, when it names one. A reference to THIS
     # repository is public by definition; a reference to any other one is a
     # disclosure, which is why the two are held to different corpora below.
-    TRACKER_REPOSITORY = re.compile(r"([\w.-]*traigent[\w.-]*)\s*(?:#|\s(?:issue|pr|pull))", re.IGNORECASE)
+    TRACKER_REPOSITORY = re.compile(
+        r"([\w.-]*traigent[\w.-]*)\s*(?:#|\s(?:issue|pr|pull))", re.IGNORECASE
+    )
     THIS_REPOSITORY = "traigent-first-run"
     TRACKER_LINE = re.compile(r"^\s*tracking:", re.IGNORECASE | re.MULTILINE)
 
@@ -9297,6 +9327,7 @@ class SkillPackageTests(unittest.TestCase):
         # And the blocking half must be stated, since that is what the card
         # prints for five of the six branches.
         self.assertIn("the same condition blocks", routing)
+
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
 
@@ -9333,6 +9364,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(document="evaluation-and-dataset.md", phrase=phrase):
                 self.assertIn(phrase, reference)
+
     def test_the_row_level_sanity_check_keeps_its_five_constraints(self) -> None:
         """The rules that stop an opinion behaving like a measurement.
 
@@ -9503,8 +9535,14 @@ class SkillPackageTests(unittest.TestCase):
             # bullets: #149 gave `below-measurable-size` a second, blocking
             # half that a merged bullet cannot carry, so `.index()` on one
             # shared phrase would find the earlier bullet for both.
-            ("dataset-below-measurable-size", "more comparable examples is what lifts this"),
-            ("dataset-coarse-resolution", "more comparable examples is what lifts this too"),
+            (
+                "dataset-below-measurable-size",
+                "more comparable examples is what lifts this",
+            ),
+            (
+                "dataset-coarse-resolution",
+                "more comparable examples is what lifts this too",
+            ),
             (
                 "dataset-unsound-expected-outputs",
                 "approval-gated question",
@@ -12837,7 +12875,9 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                     total_measured=231_402,
                     # Word for word what 0001 says. Over both intrinsic floors,
                     # and it describes a raise that is not this one.
-                    reason=self.reason_for("0001 - the ledger this mechanism inherited"),
+                    reason=self.reason_for(
+                        "0001 - the ledger this mechanism inherited"
+                    ),
                 ),
             }
         )
