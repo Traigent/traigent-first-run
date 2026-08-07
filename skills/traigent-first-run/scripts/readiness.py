@@ -1828,6 +1828,28 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
     budget cannot be explored, so a twelve-knob space against a twelve-trial cap
     is worse than four. A ramp would tell users to keep adding knobs forever.
 
+    An UNDECLARED budget is damped exactly where an oversized one is, and that
+    is the part the earlier rule had backwards. "With no budget there is
+    nothing to be too large for" reads as reasoning about the space; it is
+    actually reasoning about the DOCUMENT. Nothing in a document that omits
+    `max_trials` establishes that the run will compare the whole space - only
+    declaring it is that claim - so scoring the silence as though it were
+    `max_trials = infinity` made deleting a line worth more than writing one.
+
+    Measured on this scorer before the change, one identical
+    100 000 000-configuration space, changing only whether `max_trials: 12` is
+    written: declared scored this sub-score's pillar 83, omitted scored it 94.
+    `max_trials` is documented requirement "no", so omitting it is legal - and
+    it inverts the sibling branch that refuses a misspelled key, where a
+    customer told "did you mean `max_trials`?" scored higher by deleting the
+    key than by fixing it. On the trunk this branch descends from the same pair
+    is 88 STRONG against 90 EXCELLENT, so it was worth a band there.
+
+    Declaring a budget can still score lower than omitting one - a declared
+    `max_trials: 1` reaches a space of one reachable configuration - and that is
+    not the same defect. "This run compares one configuration" is a real and bad
+    measurement; silence is not a measurement of anything.
+
     Returns points out of `KNOB_COUNT_WEIGHT`, from shares held above, so the
     curve and the pillar weight can be changed independently.
     """
@@ -1843,10 +1865,17 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
         share = max(
             KNOB_COUNT_OVERSIZED, KNOB_COUNT_FULL - KNOB_COUNT_STEP * (varying - 6)
         )
+    # Two reasons to damp, written as one `if/elif` on the same `share` so a
+    # future edit cannot leave the ceiling in place down one path and not the
+    # other. `space_size` guards both: a caller with no space size at all is
+    # asking about the curve, not about a document.
+    #
     # Compared as integers rather than through `space_size / max_trials`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
-    if max_trials and space_size and space_size > 20 * max_trials:
+    if space_size and max_trials is None:
+        share = min(share, KNOB_COUNT_OVERSIZED)
+    elif max_trials and space_size and space_size > 20 * max_trials:
         share = min(share, KNOB_COUNT_OVERSIZED)
     return round(KNOB_COUNT_WEIGHT * share, 2)
 
@@ -2001,14 +2030,36 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         if repeats <= 1
         else f"{space_size} combinations x {repeats} repeats = {run_count} runs"
     )
+    # Named, because the deduction is otherwise invisible: the sentence beside
+    # the number is byte-identical whether or not a budget was declared, so a
+    # reader who lost points for omitting the field had nothing on the card
+    # telling them which field to write.
+    #
+    # Derived from the deduction, never from the absence. The reference is the
+    # same space with a budget equal to its own size - a declared budget that
+    # reaches everything, so it is never damped - and the note appears only
+    # when the omission actually cost points against it. A space with no
+    # varying knob loses nothing here, and telling that author to declare
+    # `max_trials` would point them away from the one thing wrong with their
+    # document.
+    points = knob_count_points(len(varying), run_count, facts.max_trials)
+    budget_note = (
+        "; no trial budget was declared, so nothing here says how much of it "
+        "this run compares - declaring `max_trials` is what lets this reach "
+        "full credit"
+        if facts.max_trials is None
+        and points < knob_count_points(len(varying), run_count, run_count)
+        else ""
+    )
     subs.append(
         SubScore(
             "knob-count",
-            knob_count_points(len(varying), run_count, facts.max_trials),
+            points,
             KNOB_COUNT_WEIGHT,
             True,
             f"{len(varying)} of {len(scoreable)} wired knobs actually vary; "
-            + combinations,
+            + combinations
+            + budget_note,
         )
     )
 
