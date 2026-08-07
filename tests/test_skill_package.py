@@ -52,6 +52,44 @@ def conversation_contract_documents() -> list[Path]:
     ]
 
 
+def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]:
+    """Every `Cap(...)` in the scorer, mapped condition -> the `blocks` it names.
+
+    Read from the AST rather than from `vars(READINESS)`, because a scan of the
+    module's own attributes reaches only the caps built at module level. Two of
+    the five conditions the partition check named -
+    `dataset-below-measurable-size` and `dataset-coarse-resolution` - are
+    constructed INSIDE `power_ceiling` and never entered that loop, so forcing
+    `blocks=True` on the below-measurable-size branch left the guard green. The
+    class is wider than these two: any cap, constant or rule built inside a
+    function is invisible to a module-level scan.
+
+    The value is the rendered expression and not a bool, because a site can
+    decide at runtime: `blocks=effective_n == 0` is one condition with two
+    branches, and a routing bullet that states one of them states a falsehood
+    about the other. The default is passed in from the dataclass rather than
+    written down here, so a change to `Cap.blocks`'s default cannot leave this
+    reading every unannotated site as the wrong thing.
+    """
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "Cap" or not node.args:
+            continue
+        condition = node.args[0]
+        if not isinstance(condition, ast.Constant) or not isinstance(
+            condition.value, str
+        ):
+            continue
+        rendered = repr(default)
+        for keyword in node.keywords:
+            if keyword.arg == "blocks":
+                rendered = ast.unparse(keyword.value)
+        found.setdefault(condition.value, set()).add(rendered)
+    return found
+
+
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
@@ -3627,23 +3665,56 @@ class SkillPackageTests(unittest.TestCase):
             "dataset-fully-synthetic",
             "dataset-mostly-synthetic",
             "dataset-generated-answer-key",
-            "dataset-below-measurable-size",
             "dataset-coarse-resolution",
         }
-        self.assertEqual(blocking | scoping, conditions)
-        for cap in (
-            value
-            for value in vars(READINESS).values()
-            if isinstance(value, READINESS.Cap)
-        ):
-            if cap.condition in scoping:
-                with self.subTest(cap=cap.condition):
-                    self.assertFalse(
-                        cap.blocks,
-                        f"SKILL.md routes {cap.condition} by scoping the claim, "
+        # The third category, and the reason it has to exist: one condition
+        # decides at runtime. `dataset-below-measurable-size` is advisory with
+        # examples to compare on and blocks with none, so it belongs in neither
+        # set above, and the routing bullet has to carry both halves - the same
+        # shape `agent-no-varying-knobs` was given by the sibling test below.
+        conditional = {"dataset-below-measurable-size"}
+        self.assertEqual(blocking | scoping | conditional, conditions)
+        sites = cap_construction_blocks(
+            source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
+        for condition in sorted(conditions):
+            with self.subTest(cap=condition):
+                declared = sites[condition]
+                if condition in blocking:
+                    self.assertEqual(
+                        declared,
+                        {"True"},
+                        f"SKILL.md routes {condition} to a creation or a "
+                        "repair, so every site must block",
+                    )
+                elif condition in scoping:
+                    self.assertEqual(
+                        declared,
+                        {"False"},
+                        f"SKILL.md routes {condition} by scoping the claim, "
                         "so the scorer may bound the score and may not stop the "
                         "run or demand a repair",
                     )
+                else:
+                    # Neither literal. If a site ever settles on one, this
+                    # condition belongs in `blocking` or `scoping` above and the
+                    # bullet should stop carrying a half that cannot happen.
+                    self.assertNotIn(
+                        declared,
+                        ({"True"}, {"False"}),
+                        f"{condition} no longer decides at runtime; move it out "
+                        "of `conditional` and simplify its routing bullet",
+                    )
+                    # And the bullet must state both halves, because SKILL.md
+                    # routes by condition id: an assistant reading the advisory
+                    # sentence by id is told the opposite of what the card
+                    # prints for a 240-row dataset whose tuning side carries no
+                    # labels - measured `FIX BEFORE PAID RUN no example can be
+                    # scored`, status BLOCKED.
+                    bullet = routing.split(f"`{condition}`", 1)[1].split("- `", 1)[0]
+                    self.assertIn("only where", bullet)
+                    self.assertIn("the same condition blocks", bullet)
+                    self.assertIn("fix before paid run", bullet)
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
@@ -5115,10 +5186,27 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # answers the user's question from. Correcting a sentence that has
         # stopped being true is not new surface.
         #
-        # TOTAL measures 230_075, +426 over the 229_649 base - 411 of it the
-        # SKILL.md routing paragraph and 15 the glossary correction. 230_500
-        # leaves 425, over the 371 floor.
-        budget = 230_500
+        # TOTAL measured 230_304, +655 over the 229_649 base - 411 of it the
+        # SKILL.md routing paragraph and 15 the glossary correction. The 230_075
+        # this comment carried was 229 bytes stale: it was written before the
+        # commit that dropped this branch's `evaluator-timeout` route from
+        # SKILL.md, and re-measuring is what a raise is for.
+        #
+        # Then +269 for the second half of the same rule. The routing bullet for
+        # `dataset-below-measurable-size` said "call rankings exploratory, not
+        # stable comparisons" of a condition that BLOCKS when nothing can be
+        # scored - measured on a 240-row dataset with a declared 120/120 split
+        # whose tuning side carries no labels, the card prints `FIX BEFORE PAID
+        # RUN no example can be scored` and the status is BLOCKED. SKILL.md
+        # routes by condition id, so that bullet told the assistant the opposite
+        # of what the customer's card says. The bullet now carries both halves,
+        # in the same shape `agent-no-varying-knobs` was given three commits
+        # ago - which is the rule this branch introduced and then applied to
+        # only one of the two conditions it had split. Measured 230_573.
+        #
+        # 231_000 leaves 427, over the 371 floor and in line with the 425 the
+        # previous raise on this branch settled on.
+        budget = 231_000
         self.assertLess(
             total,
             budget,

@@ -370,7 +370,10 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
-- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
+- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons, only where
+  some example can be scored. Where none can, the same condition blocks and the card prints `FIX
+  BEFORE PAID RUN`; route that by its reason - nothing can be compared at all, so there is no
+  result to bound - and get labelled examples before any paid run.
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.
 

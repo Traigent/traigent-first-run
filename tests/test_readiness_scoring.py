@@ -2189,9 +2189,21 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(score.recommended_action, MODULE.PROCEED)
         # Advisory is not free: the ceiling is unchanged and it IS the score,
         # holding a 71-point average down to 45.
-        self.assertEqual(caps[0].ceiling, 45)
+        #
+        # The ceiling is read by name, not restated as 45 - a literal here is a
+        # second home for a number the scorer already owns, and it is the same
+        # defect that had this cap raised with a literal at four call sites. 71
+        # stays a literal deliberately: it is the arithmetic of DEFAULT_WEIGHTS
+        # over two pillars this test pins itself, checked against every open
+        # branch, none of which re-weights.
+        self.assertEqual(caps[0].ceiling, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
         self.assertEqual(score.weighted_average, 71)
-        self.assertEqual(score.overall, 45)
+        self.assertEqual(score.overall, caps[0].ceiling)
+        # And the ceiling is what BINDS - the relation the two numbers above are
+        # only one instance of. Without this, both assertions would still pass
+        # if a re-weighting dropped the average below the cap, and the test
+        # would be green while proving nothing about the cap at all.
+        self.assertGreater(score.weighted_average, caps[0].ceiling)
 
         # A document that was supplied and lists nothing IS a defect: the user
         # handed over their wiring and there is nothing in it.

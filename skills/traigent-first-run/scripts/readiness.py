@@ -890,6 +890,18 @@ def knob_variation(
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
 WIRING_CHECK_CEILING = 74  # cannot present as STRONG
+# Named here rather than repeated as a literal at each of the four
+# `agent-no-varying-knobs` sites - the same rule the two ceilings around it
+# already follow. A literal at a call site is how one condition acquires two
+# ceilings that can disagree, and this condition is raised from more sites than
+# any other.
+#
+# Placed BETWEEN those two ceilings on purpose. These three definitions are
+# being gathered into one ordered registry elsewhere, which moves them as a
+# block; a new constant sitting outside that block merges silently beside the
+# registry's own entry and leaves the same name declared twice, which is the
+# defect this file spends its comments on. Inside it, the merge has to ask.
+AGENT_NO_VARYING_KNOBS_CEILING = 45  # nothing to search, whatever the reason
 COARSE_RESOLUTION_CEILING = 89  # cannot present as EXCELLENT
 
 
@@ -1684,7 +1696,7 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
 
 NOTHING_WIRED_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Nothing is marked as a setting the agent actually uses, so there is "
     "nothing to search.",
 )
@@ -1705,7 +1717,7 @@ NOTHING_WIRED_CAP = Cap(
 # fact, fourteen lines apart, read as two findings.
 NOT_YET_MEASURED_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "No settings document was provided to this score, so the settings a search "
     "would vary cannot be counted. The enhanced run writes that document when "
     "it completes; nothing in your project needs repairing for this.",
@@ -1714,7 +1726,7 @@ NOT_YET_MEASURED_CAP = Cap(
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Settings are listed, but none is marked as one the agent uses - marking "
     "them is what makes them searchable.",
 )
@@ -1881,7 +1893,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         caps.append(
             Cap(
                 "agent-no-varying-knobs",
-                45,
+                AGENT_NO_VARYING_KNOBS_CEILING,
                 "Every setting has only one value to try, so every configuration "
                 "would be identical.",
             )
