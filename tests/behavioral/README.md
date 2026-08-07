@@ -12,8 +12,23 @@ connection must remain a visible failure; production onboarding must never fall 
 harness.
 
 CI runs every scenario twice as an unprivileged user in a read-only container with no network.
-The fixture locks protect the three starting states, and `behavior.lock.json` makes changes to the
-behavior-bearing guide, references, assets, or scripts require explicit scenario requalification.
+The fixture locks protect the three starting states, and `behavior.lock.json` makes a change to the
+behavior-bearing guide, references, assets, or scripts *visible*: CI fails until the lock is
+deliberately regenerated. The lock records file hashes, not behavior, so regenerating it re-greens
+the suite. It flags that behavior *may* have changed; it does not requalify it.
+
+## Running the suite
+
+```bash
+python -m unittest discover -s tests -v    # or: python -m pytest tests/ -q
+```
+
+`CI` is load-bearing here, not decoration: when it is set to any non-empty value,
+`tests/test_offline_socket_contract.py` fails instead of skipping if `litellm` or `traigent` is
+missing, because in CI that module *is* the no-spend guarantee and a skip would retire it silently.
+Many agent sandboxes and devcontainers export `CI=true` by default, so a maintainer without the
+pinned stack installed should unset it (`env -u CI python -m pytest tests/ -q`) or install
+`skills/traigent-first-run/assets/requirements-first-run.txt` first.
 
 ## Regenerating the locks
 
