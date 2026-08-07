@@ -460,16 +460,25 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(kept.recommended_action, restored.recommended_action)
 
     def test_a_zero_from_any_other_source_still_raises_the_ceiling(self) -> None:
-        """Only the zero the labels cap owns is suppressed, not every zero."""
+        """Only the zero the labels cap owns is suppressed, not every zero.
+
+        The zero is on the TUNING side. This test used to put it on the
+        holdout, which #161 then deliberately took out of the resolution
+        calculation - the walkthrough reserves ten held-out rows, so counting
+        them made EXCELLENT unreachable for every project that declared a
+        split. That removed the fixture's zero without removing the rule the
+        fixture is about, so the zero moves to a split half that still sets
+        the comparison's resolution.
+        """
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True,
                 rows=60,
                 labelled_rows=60,
-                tuning_rows=60,
-                holdout_rows=0,
-                tuning_labelled_rows=60,
-                holdout_labelled_rows=0,
+                tuning_rows=30,
+                holdout_rows=30,
+                tuning_labelled_rows=0,
+                holdout_labelled_rows=30,
             )
         )
         self.assertIn("dataset-below-measurable-size", [cap.condition for cap in caps])

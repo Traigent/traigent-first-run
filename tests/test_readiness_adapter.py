@@ -566,7 +566,21 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 "check": "dataset-provenance",
                 "status": "PASS",
                 "detail": "described",
-                "metrics": {"labelled_rows": 0, "synthetic": False},
+                # The provenance counts are emitted together by
+                # preflight.py (one `emit` call), and #161 made an
+                # absent one a refusal rather than a silent zero - so a
+                # fixture that omits them is not a payload this script
+                # can receive. Stated as real zeros, which is what the
+                # described-but-empty dataset this test is about emits.
+                "metrics": {
+                    "labelled_rows": 0,
+                    "synthetic": False,
+                    "collected_rows": 0,
+                    "synthesised_rows": 0,
+                    "undeclared_rows": 0,
+                    "generated_answer_rows": 0,
+                    "answerable_rows": 0,
+                },
             }
         ]
         process = subprocess.run(

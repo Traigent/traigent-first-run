@@ -497,6 +497,12 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     "dataset-generated-answer-key": CLAIM_SCOPING,
+    # #161's second rung. It scopes for the same reason the rung above
+    # does - the questions are real and only part of the ruler is a
+    # model's - and it is registered here because `Cap.__post_init__`
+    # fails closed on an unclassified condition: #161 added the cap and
+    # #144 added the registry, and neither branch could see the other.
+    "dataset-mostly-generated-answer-key": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # The sweep found a second one. A file is connected and no method could be
     # honestly declared for it without executing it - which on the ordinary

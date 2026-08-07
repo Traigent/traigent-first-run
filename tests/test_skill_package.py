@@ -4306,9 +4306,12 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # An eleventh dataset cap must be routed too, so pin the count rather
-        # than spot-checking the ten that exist today.
-        self.assertEqual(len(conditions), 10)
+        # A twelfth dataset cap must be routed too, so pin the count rather
+        # than spot-checking the eleven that exist today. Ten when #149 wrote
+        # this; #161 added the middle answer-key rung and #144 added
+        # `dataset-shape-unrecognised`, and neither branch could see the other
+        # two.
+        self.assertEqual(len(conditions), 11)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -4343,8 +4346,12 @@ class SkillPackageTests(unittest.TestCase):
             # emit, the guidance told a customer to hedge the claim and never
             # what would lift the ceiling. The branch has to do what the action
             # name says, or the two halves route differently.
-            ("dataset-below-measurable-size", "more comparable examples"),
-            ("dataset-coarse-resolution", "more comparable examples"),
+            # Distinct phrases, because the two conditions kept separate
+            # bullets: #149 gave `below-measurable-size` a second, blocking
+            # half that a merged bullet cannot carry, so `.index()` on one
+            # shared phrase would find the earlier bullet for both.
+            ("dataset-below-measurable-size", "more comparable examples is what lifts this"),
+            ("dataset-coarse-resolution", "more comparable examples is what lifts this too"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)
@@ -4393,7 +4400,11 @@ class SkillPackageTests(unittest.TestCase):
         # set above, and the routing bullet has to carry both halves - the same
         # shape `agent-no-varying-knobs` was given by the sibling test below.
         conditional = {"dataset-below-measurable-size"}
-        self.assertEqual(blocking | scoping | conditional, conditions)
+        # #144's condition: the remedy is one look at the file, so it is
+        # neither a repair nor a scope. It stops the run - nothing was
+        # measured - but the card may not call the file broken.
+        diagnostic = {"dataset-shape-unrecognised"}
+        self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
         sites = cap_construction_blocks(
             source, READINESS.Cap.__dataclass_fields__["blocks"].default
         )
@@ -4406,6 +4417,14 @@ class SkillPackageTests(unittest.TestCase):
                         {"True"},
                         f"SKILL.md routes {condition} to a creation or a "
                         "repair, so every site must block",
+                    )
+                elif condition in diagnostic:
+                    self.assertEqual(
+                        declared,
+                        {"True"},
+                        f"SKILL.md routes {condition} to a look at material "
+                        "that may be fine, but nothing was measured, so the "
+                        "run still waits",
                     )
                 elif condition in scoping:
                     self.assertEqual(
