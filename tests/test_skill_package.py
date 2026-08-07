@@ -680,6 +680,71 @@ sys.modules[_SPEC.name] = READINESS
 _SPEC.loader.exec_module(READINESS)
 
 
+def quoted_prose(path: Path) -> str:
+    """The whole document, whitespace-normalized, with leading `>` dropped.
+
+    Not "the blockquotes" - every line, blockquote or not. The narrower helper
+    is not worth building: what these checks need is the ability to match a
+    sentence that a `>` block wrapped across lines, because to `str.split()`
+    such a sentence has a `>` in the middle of it and a check written against
+    the claim fails on the line wrapping instead. That would train the next
+    author to pin half-sentences.
+
+    What it therefore does NOT prove: that a matched phrase came from mandated
+    user-facing copy rather than from ordinary body prose. Use it to find
+    wording, and pin the placeholders (`<paired outcome counts>`) separately
+    when the requirement is that the copy carries evidence.
+    """
+    lines = [
+        line.lstrip().removeprefix(">").strip()
+        for line in path.read_text().splitlines()
+    ]
+    return " ".join(" ".join(lines).casefold().split())
+
+
+def python_block_containing(path: Path, needle: str) -> str:
+    """The one fenced ```python block of `path` that contains `needle`.
+
+    Raises unless exactly one block matches, so a check written against "the
+    filter" cannot read a different block once the document grows another, nor
+    pass against zero blocks once the code it binds is deleted outright.
+    """
+    blocks = [
+        block
+        for block in re.findall(
+            r"^```python\n(.*?)^```", path.read_text(), re.DOTALL | re.MULTILINE
+        )
+        if needle in block
+    ]
+    if len(blocks) != 1:
+        raise AssertionError(
+            f"{needle!r} appears in {len(blocks)} fenced python blocks of "
+            f"{path.name}; exactly one is required"
+        )
+    return blocks[0]
+
+
+def load_guide_function(path: Path, definition: str):
+    """Execute one fenced block of the guidance and return the function it defines.
+
+    Loaded here for the same reason `readiness.py` is loaded above: the guide
+    publishes real code, and a check that reads it as text can only prove the
+    text is present.
+    """
+    namespace: dict = {}
+    exec(python_block_containing(path, definition), namespace)  # noqa: S102
+    return namespace[definition.removeprefix("def ").removesuffix("(")]
+
+
+# The second run's frontier read. Its score floor is the only executable
+# guarantee that no reported point scored below what the user already runs.
+#
+# Restored on the merge: these three definitions came in with #140 and were
+# dropped resolving a conflict whose other side was the budget ledger. Without
+# them ten of #140's tests raise NameError rather than testing anything.
+FRONTIER_AT_OR_ABOVE = load_guide_function(SDK_EXECUTION, "def frontier_at_or_above(")
+
+
 def prose_sentences(text: str) -> list[str]:
     """Split markdown prose into sentences without gluing list items together.
 
