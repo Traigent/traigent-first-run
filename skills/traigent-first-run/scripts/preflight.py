@@ -670,7 +670,15 @@ def emit_dataset_provenance(
     declared_sources: set[str] = set()
     for row in present_rows:
         token = row_provenance(row)
-        declared_sources.add(str(token or "unknown").casefold())
+        # Only what a row actually declared. `str(token or "unknown")` put the
+        # literal `unknown` in here for a row carrying no provenance field at
+        # all, so the card printed `declared sources: unknown` about a
+        # declaration nobody made - and made it indistinguishable from a row
+        # that really does declare the word, which is a different fact and is
+        # already in `UNDECLARED_SOURCE_TOKENS`. A row that declares nothing is
+        # counted in `undeclared_rows`, which is where that belongs.
+        if token is not None:
+            declared_sources.add(str(token).casefold())
         provenance_class, recognised = classify_provenance(token)
         counts[provenance_class] += 1
         if not recognised:
@@ -705,22 +713,27 @@ def emit_dataset_provenance(
         return round(count / of, 4) if of else 0.0
 
     synthesised_share = _share(counts[PROVENANCE_SYNTHESISED], total)
+    # `[]` is not a source list a reader can act on, and it is now reachable:
+    # a dataset where no row declares anything contributes no token at all.
+    rendered_sources = (
+        str(sorted(declared_sources)) if declared_sources else "none declared"
+    )
     if synthetic:
         detail = f"all {total} rows declare generated provenance"
     elif counts[PROVENANCE_SYNTHESISED]:
         detail = (
             f"{counts[PROVENANCE_SYNTHESISED]} of {total} rows declare generated "
             f"provenance ({synthesised_share:.0%}); declared sources: "
-            f"{sorted(declared_sources)}"
+            f"{rendered_sources}"
         )
     elif generated_outputs:
         detail = (
-            f"declared sources: {sorted(declared_sources)}; "
+            f"declared sources: {rendered_sources}; "
             f"{generated_answer_rows} of {len(answerable)} expected outputs "
             "declare generated provenance"
         )
     else:
-        detail = f"declared sources: {sorted(declared_sources)}"
+        detail = f"declared sources: {rendered_sources}"
     emit(
         "dataset-provenance",
         WARN if counts[PROVENANCE_SYNTHESISED] else PASS,

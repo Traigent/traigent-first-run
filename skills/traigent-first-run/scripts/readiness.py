@@ -33,7 +33,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Callable, Iterable, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -1161,9 +1161,17 @@ def provenance_evidence(
             f"expected answers written by a model, not observed{unverified}"
         )
     if not facts.synthesised_rows:
-        return (
-            f"{mixture}; declared sources: {', '.join(facts.sources)}" f"{unverified}"
-        )
+        # Only when there is a source to name. Preflight used to substitute the
+        # literal `unknown` for a row carrying no provenance field, so this line
+        # printed `declared sources: unknown` about a declaration nobody made,
+        # directly after the clause saying the rows declare nothing. With the
+        # substitution gone the list is genuinely empty in that case, and the
+        # mixture clause above already says so.
+        if facts.sources:
+            return (
+                f"{mixture}; declared sources: {', '.join(facts.sources)}"
+                f"{unverified}"
+            )
     return f"{mixture}{unverified}"
 
 
@@ -2953,6 +2961,46 @@ def candidate_domain(values: Iterable[Any]) -> list[tuple[bool, Any]]:
     return list(dict.fromkeys((isinstance(value, bool), value) for value in values))
 
 
+def _collapse_alias_spellings(
+    declared: dict[str, Any],
+    *,
+    copy: Callable[[Any], Any],
+    conflicts: Callable[[Any, Any], bool],
+    subject: str,
+    difference: str,
+) -> dict[str, Any]:
+    """Collapse alias spellings onto one key, naming both spellings as written.
+
+    One function for `knobs` and `bounds` because it was two loops, and the
+    second carried the defect the first had already been fixed for: it reported
+    the CANONICAL name for the entry already held, so an author who declared the
+    alias first was told their document "declares both 'prompt_style' and
+    'prompt_style'" - a message that names one spelling twice and so names
+    nothing to remove. Which spelling the message reports is not a property of
+    knobs or of bounds, so it is not a decision either loop should own
+    separately, and a third caller inheriting the same bug is the outcome two
+    loops were already producing.
+
+    Reporting the written name while judging the canonical one is this module's
+    rule, stated at `_reject_phantom_names`.
+    """
+    collapsed: dict[str, Any] = {}
+    written: dict[str, str] = {}
+    for name, value in declared.items():
+        canonical = KNOB_ALIASES.get(name, name)
+        held = collapsed.get(canonical)
+        if held is not None and conflicts(held, value):
+            raise ConfigSpaceInputError(
+                f"{subject} declares both '{written[canonical]}' and '{name}' "
+                f"{difference}, but they are two spellings of one search "
+                "dimension: declare it once, under either name"
+            )
+        if held is None:
+            collapsed[canonical] = copy(value)
+            written[canonical] = name
+    return collapsed
+
+
 def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
     """Collapse alias spellings onto one dimension before anything counts them.
 
@@ -2971,43 +3019,20 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
     if not any(name in KNOB_ALIASES for name in names):
         return facts
 
-    def _canonical(name: str) -> str:
-        return KNOB_ALIASES.get(name, name)
-
-    knobs: dict[str, list[Any]] = {}
-    # Both names as the author wrote them. Reporting `canonical` for the first
-    # one printed "declares both 'prompt_style' and 'prompt_style'" whenever the
-    # alias was declared first - a message that names one spelling twice cannot
-    # be acted on, and it contradicts this module's own rule, stated at
-    # `_reject_phantom_names`, of judging the canonical name and reporting the
-    # written one.
-    written: dict[str, str] = {}
-    for name, values in facts.knobs.items():
-        canonical = _canonical(name)
-        held = knobs.get(canonical)
-        if held is not None and candidate_domain(held) != candidate_domain(values):
-            raise ConfigSpaceInputError(
-                f"config-space declares both '{written[canonical]}' and "
-                f"'{name}' over different candidate values, but they are two "
-                "spellings of one search dimension: declare it once, under "
-                "either name"
-            )
-        if held is None:
-            knobs[canonical] = list(values)
-            written[canonical] = name
-
-    bounds: dict[str, dict[str, float]] = {}
-    for name, spec in facts.bounds.items():
-        canonical = _canonical(name)
-        held = bounds.get(canonical)
-        if held is not None and held != spec:
-            raise ConfigSpaceInputError(
-                f"config-space bounds declares both '{name}' and '{canonical}' "
-                "with different ranges, but they are two spellings of one "
-                "search dimension: declare it once, under either name"
-            )
-        if held is None:
-            bounds[canonical] = dict(spec)
+    knobs = _collapse_alias_spellings(
+        facts.knobs,
+        copy=list,
+        conflicts=lambda held, value: candidate_domain(held) != candidate_domain(value),
+        subject="config-space",
+        difference="over different candidate values",
+    )
+    bounds = _collapse_alias_spellings(
+        facts.bounds,
+        copy=dict,
+        conflicts=lambda held, value: held != value,
+        subject="config-space bounds",
+        difference="with different ranges",
+    )
 
     return AgentFacts(
         agent_type=facts.agent_type,
@@ -3016,7 +3041,9 @@ def canonical_alias_names(facts: AgentFacts) -> AgentFacts:
         wired=(
             None
             if facts.wired is None
-            else tuple(dict.fromkeys(_canonical(name) for name in facts.wired))
+            else tuple(
+                dict.fromkeys(KNOB_ALIASES.get(name, name) for name in facts.wired)
+            )
         ),
         bounds=bounds,
         # Carried, not defaulted. This function rebuilds the dataclass, so a

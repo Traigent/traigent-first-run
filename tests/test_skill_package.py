@@ -1002,18 +1002,73 @@ class SkillPackageTests(unittest.TestCase):
         other document states, so an assistant copying the model announced a
         dataset size the run does not build. Read from the construction rule
         rather than pinned here, so the two cannot drift apart again.
+
+        Swept over the whole corpus rather than over that one file, because
+        fixing the instance left the class open: the count is restated three
+        more times - SKILL.md's pricing scope, sdk-execution.md's walkthrough
+        paragraph, and the rule itself - and a guard naming one restatement
+        passed while another said something else. Probed: changing
+        sdk-execution.md's copy to 24 and relocking left the suite green.
+
+        The sweep is keyed on the PHRASINGS a row count is written in, not on a
+        list of files, so a document that gains one of those sentences is
+        covered without this test being edited.
         """
         dataset_text = (
             SKILL_ROOT / "references" / "evaluation-and-dataset.md"
         ).read_text()
         default = re.search(r"create (\d+) tuning examples by default", dataset_text)
         self.assertIsNotNone(default, "the generated dataset size is no longer stated")
-        example = (SKILL_ROOT / "references" / "component-creation.md").read_text()
-        shown = re.search(
-            r"Walkthrough dataset - (\d+) varied synthetic cases", example
+        expected = int(default.group(1))
+
+        counted = re.compile(
+            r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
+            r"|rows by default)"
         )
-        self.assertIsNotNone(shown, "the modelled dataset status line is gone")
-        self.assertEqual(shown.group(1), default.group(1))
+        statements: list[tuple[str, int]] = []
+        for path in assistant_facing_documents():
+            for match in counted.finditer(path.read_text()):
+                statements.append((path.name, int(match.group(1))))
+        # The rule plus its three restatements. Pinned so that DELETING a
+        # restatement is a decision someone makes, not a way for this sweep to
+        # quietly cover less than it did.
+        self.assertEqual(
+            len(statements),
+            4,
+            f"the walkthrough row count is now stated {len(statements)} times "
+            f"({statements}); one home is better, but a new one must be welded "
+            "here and a removed one accounted for",
+        )
+        for name, stated in statements:
+            with self.subTest(document=name):
+                self.assertEqual(
+                    stated,
+                    expected,
+                    f"{name} states {stated} walkthrough rows against the "
+                    f"construction rule's {expected}",
+                )
+
+        # And the difficulty breakdown, which is restated beside two of them and
+        # has to add up to the same number. A breakdown summing to something
+        # else is the same defect one level down, and it is the half a count
+        # check cannot see.
+        bands = re.compile(
+            r"(\d+) easy,\s*(\d+) medium,\s*(\d+) hard,? and (\d+) very[ -]hard"
+        )
+        breakdowns = [
+            (path.name, [int(value) for value in match.groups()])
+            for path in assistant_facing_documents()
+            for match in bands.finditer(" ".join(path.read_text().split()))
+        ]
+        self.assertTrue(breakdowns, "the difficulty breakdown is no longer stated")
+        for name, counts in breakdowns:
+            with self.subTest(document=name, breakdown=counts):
+                self.assertEqual(
+                    sum(counts),
+                    expected,
+                    f"{name}'s difficulty breakdown sums to {sum(counts)}, not "
+                    f"the {expected} rows the rule builds",
+                )
 
     def test_the_calibration_reject_list_states_what_actually_rejects(self) -> None:
         """Two of its items did not describe the helper that runs them.

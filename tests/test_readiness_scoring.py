@@ -753,21 +753,50 @@ class AgentScoringTests(unittest.TestCase):
         'prompt_style'" - which names no second thing to remove. It also
         contradicted this module's own rule at `_reject_phantom_names`: judge
         the canonical name, report the written one.
+
+        BOTH refusals, because there were two loops and only one of them was
+        fixed. The `bounds` loop fifteen lines below reported `canonical` for
+        the entry already held and produced the identical doubled message on
+        the identical input - the defect survived its own repair by being
+        written twice. They are one function now, so the next collapse cannot
+        inherit it a third time.
         """
+        values = {"prompt_policy": ["a", "b"], "prompt_style": ["c", "d", "e"]}
+        ranges = {
+            "prompt_policy": {"low": 0.0, "high": 1.0},
+            "prompt_style": {"low": 0.0, "high": 2.0},
+        }
         for order, expected in (
             (["prompt_policy", "prompt_style"], ("'prompt_policy'", "'prompt_style'")),
             (["prompt_style", "prompt_policy"], ("'prompt_style'", "'prompt_policy'")),
         ):
-            values = {"prompt_policy": ["a", "b"], "prompt_style": ["c", "d", "e"]}
             document = {
                 "knobs": {name: values[name] for name in order},
                 "wired": [order[0]],
             }
-            with self.subTest(order=order):
+            with self.subTest(order=order, collapsing="knobs"):
                 with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
                     MODULE.agent_facts_from_config_space(document)
                 message = str(raised.exception)
                 self.assertIn(f"declares both {expected[0]} and {expected[1]}", message)
+
+            # The bounds half, driven through `canonical_alias_names` directly.
+            # Routing it through the document reader would collapse the two
+            # spellings in `knobs` first and settle the bounds order with them,
+            # so only one of the two orders would ever reach this loop - and the
+            # one that did not is where the doubled name lived.
+            facts = MODULE.AgentFacts(
+                knobs={name: ["a", "b"] for name in order},
+                wired=(order[0],),
+                bounds={name: ranges[name] for name in order},
+                config_space_supplied=True,
+            )
+            with self.subTest(order=order, collapsing="bounds"):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.canonical_alias_names(facts)
+                message = str(raised.exception)
+                self.assertIn(f"declares both {expected[0]} and {expected[1]}", message)
+                self.assertIn("with different ranges", message)
 
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
