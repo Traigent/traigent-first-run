@@ -38,10 +38,23 @@ Rules the suite enforces:
   under the ceiling it buys, and it may not fall below the last measurement of
   the same budget earlier in the chain unless the entry is lowering that
   ceiling too (a prune, which is a different decision).
+* **Each field is stated exactly once.** A second `total-ceiling:` line used to
+  parse with the last one winning, so the number that governed was whichever
+  came second in the file while the other sat above it looking like the
+  decision. `follows:` was already refused for this; the figures now are too.
 * An entry carries a reason of at least 240 characters using at least 24
   distinct words. The shortest reason anyone has written in this ledger is 259
   characters and 30 distinct words, so both floors refuse a label - or a label
   padded to length - rather than a short argument.
+* **The reason has to be yours.** Both floors above measure a reason against
+  itself, so the cheapest way past either is to paste one that already passed -
+  and `0001-inherited-ledger.md` ships nine of them. An entry is refused when
+  40% or more of its five-word runs appear in another entry. Five consecutive
+  words in common is the same sentence, not shared vocabulary: measured,
+  verbatim copies score 1.00 and a copy with a verb swapped and the closing
+  sentence rewritten still scores 0.81, while independently written reasons
+  about this same package score 0.14 against the root entry and 0.00 against
+  each other.
 
 One root, and every other entry following a distinct lower-numbered entry,
 makes the ledger a single chain. The ceiling in force is the last one declared
@@ -74,25 +87,38 @@ The ceilings and their reasons used to be a single 109-line comment block
 inside the budget test, appended to by every branch that raised a number. That
 made the block a conflict surface every branch had to cross.
 
-Measured on 2026-08-06, against the head of every open pull request in this
-repository except this one, with trunk at `56d72a4`:
+Re-measured on 2026-08-07, against the head of every open pull request in this
+repository except this one, with trunk at `56d72a4` - the same trunk commit the
+previous revision of this file named, which has not moved since:
 
-* **11 of the open branches** change that block relative to their own merge-base
-  with trunk - that is the population, and it is every branch that touches the
-  ledger at all, not a selection.
-* **3 of the 11** are descended from current trunk (#174, #169, #168). The other
-  8 branch from older trunks, so an "ordered pair" across the whole set is not
-  one number: it mixes merges nobody is going to perform.
-* Among those 3, **6 of 6 ordered pairs conflict**, and every one of the 6
-  conflicts inside the guidance-budget block. 4 of the 6 also conflict
-  somewhere else, so for 2 of the 6 the block is the *only* thing in the way.
+* **19 of the 33 other open branches** change that block relative to their own
+  merge-base with trunk. That is the population, and it is every branch that
+  touches the ledger at all, not a selection.
+* **All 19 are descended from current trunk**, because trunk was merged into
+  every open branch on 2026-08-04. So every pair below is a merge somebody could
+  really be asked to perform - which was not true of the earlier figures.
+* Of the **171 unordered pairs**, **154 conflict**. 153 of those conflict in
+  `tests/test_skill_package.py`, and in all 153 a conflict hunk lies inside
+  `test_the_guidance_budget_is_not_silently_exceeded`. In **62** of them that
+  file is the *only* conflicted file.
 
 Reproduce it with `git merge-tree --write-tree <head-a> <head-b>` over the open
 heads; the population is the branches whose copy of
 `test_the_guidance_budget_is_not_silently_exceeded` differs from their
-merge-base's. Re-measure before quoting these figures - the earlier revision of
-this file carried numbers from a 7-branch window that no longer existed a few
-days later, which is the same defect the ledger itself is about.
+merge-base's, and "a hunk lies inside" is `git merge-file` on the three versions
+of that one file with the conflict markers located against the function's own
+line span.
+
+What the 153 does and does not show: it is where the conflict *is*, not proof
+that removing the block would have made those merges clean. 91 of the 153 also
+conflict in another file and would still need resolving. The 62 are the ones
+this change makes clean by construction.
+
+Re-measure before quoting any of this. The first revision of this file carried
+numbers from a 7-branch window that no longer existed days later; the second
+carried 11 branches and 3 descendants, which was already wrong when it was
+written down. The measurement is cheap and this file has now been wrong about it
+twice, which is the same defect the ledger itself is about.
 
 The direction is what is stable, and it is a property of the shape rather than
 of any window: a block that every raise appends to is a block every raise

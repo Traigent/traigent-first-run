@@ -57,6 +57,48 @@ BUDGET_REASON_FLOOR = 240
 # number can tell a bad argument from a good one - both refuse only the entry
 # that did not try.
 BUDGET_REASON_DISTINCT_WORDS = 24
+# Both floors above measure a reason against itself, and the cheapest way past
+# any such floor is to copy one that already passed. That is not hypothetical
+# padding: it is the single likeliest thing an author does when a length gate
+# stands between them and a green suite, and this ledger ships nine ready-made
+# reasons in `0001-inherited-ledger.md` for them to copy. So an entry is also
+# measured against every other entry.
+#
+# Overlap is counted in five-word shingles rather than in words. Two honest
+# entries about this package share a great deal of vocabulary - "measured",
+# "ceiling", "run-safety.md", "merged package" - and a word-overlap score reads
+# that as plagiarism. Five consecutive words in common is not vocabulary; it is
+# the same sentence. Containment, not similarity: a reason is refused when most
+# of ITS shingles appear in another entry, so pasting one paragraph out of the
+# long inherited entry is caught even though it is a small part of that entry.
+BUDGET_REASON_SHINGLE = 5
+# 0.4 rather than a near-1 threshold, so that "copied and reworded" is refused
+# along with "copied", and the boundary is probed from below rather than picked.
+# Measured over the six independent reasons in `GuidanceBudgetLedgerRulesTests`
+# and the committed root entry: verbatim copy 1.00, one paragraph lifted out of
+# the long root entry 1.00, a copy with one verb swapped and the closing
+# sentence rewritten 0.81 - against 0.14 for the highest an honestly written
+# reason scores against the root, and 0.00 among the six themselves. 0.4 sits in
+# the middle of a gap that wide, so neither floor nor ceiling of it is load
+# bearing; re-measure rather than nudge if that ever stops being true.
+BUDGET_REASON_BORROWED = 0.4
+
+
+def _shingles(reason: str) -> set[tuple[str, ...]]:
+    """Every run of `BUDGET_REASON_SHINGLE` consecutive words, lowercased."""
+    words = re.findall(r"[a-z0-9_.#-]+", reason.casefold())
+    return {
+        tuple(words[i : i + BUDGET_REASON_SHINGLE])
+        for i in range(len(words) - BUDGET_REASON_SHINGLE + 1)
+    }
+
+
+def guidance_budget_reason_overlap(reason: str, other: str) -> float:
+    """How much of `reason` is already written in `other`, from 0 to 1."""
+    mine = _shingles(reason)
+    if not mine:
+        return 0.0
+    return len(mine & _shingles(other)) / len(mine)
 
 
 def guidance_budget_entries(
@@ -79,7 +121,17 @@ def guidance_budget_entries(
         name = BUDGET_ENTRY_NAME.match(path.name)
         text = path.read_text(encoding="utf-8")
         figures: dict[str, dict[str, int]] = {"ceiling": {}, "measured": {}}
+        # Counted as well as collected. A second `follows:` line is refused
+        # below, and a second `total-ceiling:` line used to be the odd one out:
+        # the loop simply overwrote, so the LAST spelling of the number silently
+        # governed and the other one sat in the file looking authoritative.
+        # Whichever way a duplicate arrives - a bad merge resolution, an author
+        # editing the figure by adding a line instead of changing one - the
+        # entry no longer says one thing, and that is the same defect in both
+        # fields.
+        stated: dict[tuple[str, str], int] = {}
         for which, kind, value in BUDGET_FIGURE.findall(text):
+            stated[(kind, which)] = stated.get((kind, which), 0) + 1
             figures[kind][which] = int(value.replace("_", ""))
         follows = BUDGET_FOLLOWS.findall(text)
         reason = BUDGET_FOLLOWS.sub("", BUDGET_FIGURE.sub("", text))
@@ -93,6 +145,9 @@ def guidance_budget_entries(
                 measured=figures["measured"],
                 follows=int(follows[0]) if len(follows) == 1 else None,
                 follows_count=len(follows),
+                restated=sorted(
+                    f"{which}-{kind}" for (kind, which), n in stated.items() if n > 1
+                ),
                 reason=reason.strip(),
             )
         )
@@ -147,6 +202,12 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 f"{entry.path.name} declares no ceiling; an entry that raises "
                 "nothing is a note, and notes belong in the raise they explain"
             )
+        for field in entry.restated:
+            content.append(
+                f"{entry.path.name} states {field}: more than once. The last "
+                "one silently governs and the others sit in the file looking "
+                "authoritative; an entry declares each figure exactly once."
+            )
         defect = guidance_budget_reason_defect(entry.reason)
         if defect is not None:
             content.append(
@@ -154,6 +215,24 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 "What the ceiling buys, what it replaces, and the measured "
                 "figure are the whole point of raising it deliberately."
             )
+        else:
+            # Only when the intrinsic floors pass, because "too short" and
+            # "not yours" are different things to be told, and a short copy
+            # should hear the simpler one first.
+            for other in entries:
+                if other is entry:
+                    continue
+                overlap = guidance_budget_reason_overlap(entry.reason, other.reason)
+                if overlap >= BUDGET_REASON_BORROWED:
+                    content.append(
+                        f"{entry.path.name}'s reason is {overlap:.0%} "
+                        f"{other.path.name}'s, in five-word runs. Copying a "
+                        "reason that already passed is the cheapest way over a "
+                        "length floor and says nothing about THIS raise: what "
+                        "these bytes buy, what they replace, and what was "
+                        "measured."
+                    )
+                    break
         for which, ceiling in sorted(entry.ceilings.items()):
             if which not in entry.measured:
                 content.append(
@@ -5137,6 +5216,46 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             (directory / name).write_text(body, encoding="utf-8")
         return guidance_budget_entries(directory)
 
+    # One genuinely different reason per invented entry, because the rules now
+    # include "not substantially another entry's reason" and a fixture whose
+    # entries all share one text would trip it. They are written about different
+    # raises on purpose: they share this package's vocabulary heavily -
+    # "measured", "ceiling", "run-safety.md", "merged package" - and
+    # `test_a_reason_copied_from_another_entry_is_refused` is what proves the
+    # threshold still lets that through.
+    REASONS = (
+        "Branch A adds the degraded form of the enhanced-run card to "
+        "run-safety.md: the sentence the assistant says when the combination "
+        "count cannot be computed, so the card states the ceiling on its own "
+        "instead of estimating a total it does not have. That is new contract "
+        "surface with no prior statement, and it replaces nothing.",
+        "The evaluator-calibration probe grows a fourth case: a scorer that "
+        "returns a tuple. Every earlier case covered a float, so the guidance "
+        "described a shape the installed SDK does not always hand back, and an "
+        "author following it wired an adapter that silently dropped the second "
+        "element. The new text lives beside the three it joins.",
+        "Readiness gains a plain-language line for the wired-knob shortfall, "
+        "which until now printed a condition slug and nothing a first-time "
+        "reader could act on. It goes in glossary.md, next to the other terms a "
+        "user meets on the card, rather than in the ordered flow - so this buys "
+        "vocabulary, not another mandate in the resident documents.",
+        "The post-run close now states which of the user's own files were "
+        "written and which were left untouched, in the reference that already "
+        "owns the handoff. Two support conversations turned on somebody "
+        "believing their dataset had been edited; naming the artefacts costs "
+        "four sentences and removes the doubt entirely.",
+        "Provenance for a generated held-out row is spelled out where the split "
+        "is described instead of being implied by an example. A synthesised row "
+        "cannot show that a winner generalises to real inputs, and the previous "
+        "wording left a reader free to quote it as if it could. Longer, and it "
+        "replaces a sentence that was wrong.",
+        "Timeouts are bounded by a derivation rather than by a constant, so the "
+        "text has to show the derivation. It lands in sdk-execution.md beside "
+        "the call it bounds; the resident flow keeps only the decision. What "
+        "grows is the reference, which a run loads once and leaves, not the "
+        "part in context from the first turn.",
+    )
+
     def entry(
         self,
         title: str,
@@ -5151,8 +5270,22 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
         lines += [
             f"{name.replace('_', '-')}: {value}" for name, value in figures.items()
         ]
-        lines += ["", reason if reason is not None else self.REASON, ""]
+        lines += ["", reason if reason is not None else self.reason_for(title), ""]
         return "\n".join(lines)
+
+    def reason_for(self, title: str) -> str:
+        """A distinct reason per title, stable within one test."""
+        assigned = getattr(self, "_assigned_reasons", None)
+        if assigned is None:
+            assigned = self._assigned_reasons = {}
+        if title not in assigned:
+            self.assertLess(
+                len(assigned),
+                len(self.REASONS),
+                "this fixture needs more distinct reasons than REASONS holds",
+            )
+            assigned[title] = self.REASONS[len(assigned)]
+        return assigned[title]
 
     def root(self) -> str:
         return self.entry(
@@ -5518,6 +5651,130 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
         self.assertIsNotNone(guidance_budget_reason_defect(arithmetic_only))
 
         self.assertIsNotNone(guidance_budget_reason_defect("Raised for #142."))
+
+    def test_a_reason_copied_from_another_entry_is_refused(self) -> None:
+        """The cheapest way over a length floor is to copy something that passed.
+
+        Both floors above measure a reason against itself, so the entry that
+        satisfies them at zero cost is the one whose reason is somebody else's.
+        That is not a hypothetical: this ledger's root file ships nine written
+        reasons, an author who wants a green suite has them open in the next
+        tab, and every intrinsic floor - characters, distinct words, any future
+        readability score - is passed by a copy by construction.
+
+        The rule is containment in five-word runs, and both directions are
+        exercised here. Vocabulary is not the signal: two honest entries about
+        this package share "measured", "ceiling", "run-safety.md" and "merged
+        package", and a word-overlap score would call that plagiarism.
+        """
+        # Control first, so the refusals below are the rule working rather than
+        # the fixture being malformed: the same two entries, each with its own
+        # reason, are accepted.
+        root = self.root()
+        clean = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(clean), [])
+
+        borrowed = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                    # Word for word what 0001 says. Over both intrinsic floors,
+                    # and it describes a raise that is not this one.
+                    reason=self.reason_for("0001 - the ledger this mechanism inherited"),
+                ),
+            }
+        )
+        self.assertDefect(borrowed, "in five-word runs")
+
+        original = self.REASONS[0]
+        # Reworded, not rewritten: one verb swapped and the closing sentence
+        # replaced. A near-1 threshold would let this through, which is why the
+        # boundary is 0.4 and not 0.9.
+        reworded = original.replace("adds", "introduces").replace(
+            "That is new contract surface with no prior statement, and it "
+            "replaces nothing.",
+            "This is fresh contract surface.",
+        )
+        self.assertNotEqual(reworded, original)
+        self.assertGreaterEqual(
+            guidance_budget_reason_overlap(reworded, original),
+            BUDGET_REASON_BORROWED,
+        )
+
+        # The boundary from below: genuinely different reasons about the same
+        # subject, using the same technical vocabulary, have to be far under the
+        # threshold or the rule is a tax on writing about this package at all.
+        for other in self.REASONS[1:]:
+            overlap = guidance_budget_reason_overlap(other, original)
+            with self.subTest(other=other[:40]):
+                self.assertLess(
+                    overlap,
+                    BUDGET_REASON_BORROWED,
+                    f"two independently written reasons score {overlap:.0%} "
+                    "against each other; the threshold refuses honest authors",
+                )
+        # And the real inherited entry, which is the one an author would
+        # actually copy from, is no closer to any of them.
+        inherited = guidance_budget_entries()[0].reason
+        for other in self.REASONS:
+            with self.subTest(other=other[:40]):
+                self.assertLess(
+                    guidance_budget_reason_overlap(other, inherited),
+                    BUDGET_REASON_BORROWED,
+                )
+        # Containment, not similarity, is what makes the paste out of that long
+        # entry catchable: one paragraph of it is a small fraction of 0001 and
+        # all of the new entry.
+        paragraph = "\n\n".join(inherited.split("\n\n")[3:6])
+        self.assertIsNone(guidance_budget_reason_defect(paragraph))
+        self.assertGreaterEqual(
+            guidance_budget_reason_overlap(paragraph, inherited),
+            BUDGET_REASON_BORROWED,
+        )
+
+    def test_a_figure_stated_twice_is_refused(self) -> None:
+        """`follows:` was refused for being stated twice; a ceiling was not.
+
+        The reader is the same and so is the damage. Two `total-ceiling:` lines
+        parsed with the last one winning, so the number that governed was
+        whichever came second in the file, while the other sat above it looking
+        like the decision. That is the shape a bad merge resolution leaves, and
+        the shape an author leaves who edits a figure by adding a line instead
+        of changing one.
+        """
+        for field, value in (("total-ceiling", 240_000), ("total-measured", 239_118)):
+            with self.subTest(field=field):
+                stated = f"{field}: {value}"
+                body = self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    total_ceiling=240_000,
+                    total_measured=239_118,
+                )
+                self.assertIn(stated, body)
+                # The second spelling is the one that used to win silently.
+                body = body.replace(stated, f"{stated}\n{field}: 999_999", 1)
+                entries = self.ledger(
+                    **{
+                        "0001-inherited-ledger.md": self.root(),
+                        "0002-branch-a.md": body,
+                    }
+                )
+                self.assertDefect(entries, "more than once")
 
 
 if __name__ == "__main__":
