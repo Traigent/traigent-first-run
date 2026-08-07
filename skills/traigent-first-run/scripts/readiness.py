@@ -338,12 +338,19 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # weaker model the winner. That makes it a capacity guard, not a quality lever -
 # so a space that obeys the safety rule must not be docked for not sweeping it.
 #
-# DEAD as of this branch. `coverage` was the only reader, and with the
-# sub-score gone nothing consults these catalogs - the exclusion above is now a
-# note about a decision rather than a rule anything enforces, and `max_tokens`
-# is excluded from a table no code reads while still carrying a `CANONICAL_
-# RANGES` entry that earns `variation` credit. Deleted by #189, which is why
-# this branch must not land alone; #168 removes the canonical range.
+# NO LONGER A SCORING INPUT as of this branch. `coverage` was the only reader,
+# so nothing consults these catalogs now and the `agent_type` field that
+# selected a row reaches no number - #185 removes the field, and this branch
+# must not land without it or the schema documents a field that changes
+# nothing. The catalogs themselves stay, as the list a human or an assistant
+# picks the enhanced run's knobs from; #185 records that decision where it
+# lands.
+#
+# The `max_tokens` exclusion above is now a note about a decision rather than a
+# rule anything enforces: it is kept out of a table no code reads while its
+# `CANONICAL_RANGES` entry still earns credit through `knob_variation`. #168
+# removes that entry and refuses the knob outright, which is where the rule
+# regains an enforcer.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -3028,7 +3035,7 @@ def _read_agent_type(field: str, value: Any) -> str:
 
     That makes the field dead, and #185 deletes it. This branch must not land
     alone: on its own it leaves a field the schema still documents, a
-    `HIGH_IMPACT_KNOBS` catalog no scoring code reads, and a type error raised
+    `HIGH_IMPACT_KNOBS` catalog no scoring code selects from, and a type error raised
     on the way to nowhere.
     """
     if not isinstance(value, str):
