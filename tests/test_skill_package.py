@@ -5135,9 +5135,42 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # settles it is four lines and it is the difference between losing
         # fifteen minutes to an outside kill and recording a timeout.
         #
-        # 234_140 measured, plus the same 371-byte headroom, rounded up to the
+        # 234_736 measured. The 234_140 this comment carried was 596 bytes
+        # stale - it was never re-measured after the last two commits on this
+        # branch, and the RESIDENT figure directly above it was, so the two
+        # halves of one ledger disagreed about whether a reconciliation had
+        # happened. RESIDENT is 61_908 on the same measurement, not the 61_489
+        # recorded above, and for the same reason.
+        #
+        # Then +895 for three corrections in evaluation-and-dataset.md, all of
+        # them sentences that were false rather than missing:
+        #
+        # The ceiling sentence quoted one per-probe rate for both kinds. At five
+        # pairs each probe gets 45 seconds "either way", which is a 40% cut
+        # against the 75 a deterministic budget derives at and exactly half the
+        # 90 a judge derives at - so the reader paying per model call, the one
+        # cut hardest, was told the smaller of the two numbers.
+        #
+        # The pointer to the detached form triggered on "once the budget below
+        # is minutes". The budget is minutes for every calibration at every case
+        # count - 600 seconds at the two-pair minimum `--cases` accepts - so the
+        # criterion is unconditionally met and the foreground command three
+        # lines above it is never correct as written. The trigger is the
+        # estimate the assistant states, which is what varies.
+        #
+        # And the "wait, my evaluator is normally this slow" answer now says how
+        # to size the explicit `--timeout` it leads to. Merging the two budgets
+        # is right at the derived default, which allows for both phases; at an
+        # explicit value of calls-times-cost it sizes the authored phase exactly
+        # and leaves the supplemental probes nothing. Measured on a three-case
+        # matrix with a 0.55s-per-call evaluator at `--timeout 8`: 13 of 15
+        # supplemental probes lost, against 3 of 15 before the merge. The
+        # `ADVISORY` line reports that afterwards; these two sentences and the
+        # `--timeout` help are where it is visible before.
+        #
+        # 235_631 measured, plus the same 371-byte headroom, rounded up to the
         # next 250.
-        budget = 234_750
+        budget = 236_250
         self.assertLess(
             total,
             budget,

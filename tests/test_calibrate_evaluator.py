@@ -769,6 +769,17 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         The help used to disclose that the deterministic path quietly took a
         second budget of the same size - "worst-case wall time is roughly twice
         this value" - which documented the defect instead of removing it.
+
+        Merging the two budgets is the right call at the DERIVED default, where
+        the derivation already allows for both phases. It has a cost at an
+        explicit `--timeout`, and that is the one invocation this option exists
+        for: "wait, my evaluator is normally this slow" is answered with calls
+        times cost, which sizes the authored phase exactly and leaves the
+        supplemental probes nothing. Measured on a three-case matrix with a
+        0.55s-per-call evaluator and `--timeout 8`: 13 of 15 supplemental probes
+        lost here against 3 of 15 before the merge. The `ADVISORY` line makes
+        that visible after the fact; the help is where it is visible before, so
+        the cost is disclosed inside the option that triggers it.
         """
         process = subprocess.run(
             [sys.executable, str(SCRIPT), "--help"],
@@ -781,6 +792,17 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         self.assertIn("worst-case wall time and not half of it", normalized)
         self.assertIn("derived from the work", normalized)
         self.assertNotIn("roughly twice", normalized)
+        # The cost of the merge, at the invocation that pays it. Naming the
+        # sharing without naming the consequence is what the reader already had:
+        # true, and not enough to size a number by.
+        for disclosure in (
+            "size it for both phases",
+            "leaves the supplemental ones nothing",
+            "they come back unavailable",
+            "ADVISORY line on stderr names how many",
+        ):
+            with self.subTest(disclosure=disclosure):
+                self.assertIn(disclosure, normalized)
 
     def test_evaluator_exception_keeps_type_and_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1677,7 +1699,17 @@ class TimeoutIsReportableTests(unittest.TestCase):
             for kind, seconds in per_probe.items()
         }
         self.assertEqual(last_whole, {"deterministic": 3, "llm-judge": 2})
-        self.assertEqual(ceiling / (5 * probes_per_case), 45)
+        five_pair_rate = ceiling / (5 * probes_per_case)
+        self.assertEqual(five_pair_rate, 45)
+        # Both cuts, because the sentence quotes both. One number for both rates
+        # was true of the deterministic budget and understated the judge's: 45 is
+        # a 40% cut against 75 and exactly half of 90, and it was the judge - the
+        # slower of the two, and the one paying per model call - whose loss was
+        # the one not stated.
+        self.assertEqual(
+            round(100 * (1 - five_pair_rate / per_probe["deterministic"])), 40
+        )
+        self.assertEqual(five_pair_rate * 2, per_probe["llm-judge"])
         normalized = " ".join(EVALUATION_REFERENCE.read_text().casefold().split())
         for phrase in (
             "fifteen minutes is the ceiling on that budget, and say so before the wait "
@@ -1692,8 +1724,16 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # DETERMINISTIC_SECONDS_PER_PROBE to 60 survived the literal version
             # of this line: both counts above happened to stay put, and the only
             # thing that had become false was the "75" in the sentence.
-            f"{ceiling // (5 * probes_per_case)} seconds instead of "
-            f"{per_probe['deterministic']}",
+            #
+            # Both rates, for the same reason the pair counts above are both
+            # named. "45 seconds instead of 75" said "either way" and then
+            # quoted one rate, so the judge - cut to exactly half rather than by
+            # 40% - read as losing less than it does.
+            f"{ceiling // (5 * probes_per_case)} seconds - which is a "
+            f"{round(100 * (1 - five_pair_rate / per_probe['deterministic']))}% "
+            f"cut against the {per_probe['deterministic']} the deterministic "
+            f"budget is derived at, and exactly half the "
+            f"{per_probe['llm-judge']} a judge is",
             "their own larger `--timeout` is not capped",
         ):
             with self.subTest(phrase=phrase):

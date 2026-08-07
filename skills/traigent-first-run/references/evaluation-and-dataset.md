@@ -185,10 +185,14 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
   --json > traigent-runs/calibration-results.json
 ```
 
-That form is for a calibration that returns in seconds. Once the budget below is minutes - which it
-is for a judge, or for any evaluator costing about a minute per call - use the detached form in
-"When calibration runs long" instead: this one can be killed from outside before it writes anything,
-and its warnings arrive on a stderr nobody is reading.
+That form is for a calibration that returns in seconds, which a deterministic scorer doing local
+work does. The trigger is the ESTIMATE "When calibration runs long" has you state before the wait
+starts - calls times what one call costs this evaluator - and not the budget: the budget is minutes
+for every calibration at every case count, 600 seconds at the two-pair minimum `--cases` accepts, so
+a reader taking that as the trigger would never use this form at all. Once the estimate is minutes -
+a judge, or any evaluator costing about a minute per call - use the detached form in "When
+calibration runs long" instead: this one can be killed from outside before it writes anything, and
+its warnings arrive on a stderr nobody is reading.
 
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
 `metadata`. It may translate them into an existing evaluator's unchanged local convention. The
@@ -464,7 +468,9 @@ onboarding rather than a full-power run: a calibration that has not separated a 
 bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
 The ceiling bounds the wait, not the work, so a large case set is cut below the per-probe rate the
 budget was derived at: whole to three pairs deterministic and two for a judge, and at five pairs
-either way each probe gets 45 seconds instead of 75. Tell a user whose evaluator takes about a minute per call what that means for them: at that
+either way each probe gets 45 seconds - which is a 40% cut against the 75 the deterministic budget
+is derived at, and exactly half the 90 a judge is. The judge is cut harder at every size past two
+pairs, so quoting one number for both understates what a judge loses. Tell a user whose evaluator takes about a minute per call what that means for them: at that
 speed a five-pair matrix cannot finish inside the ceiling, so run fewer pairs or expect the timeout
 question. Their own larger `--timeout` is not capped; the ceiling only bounds what this stage
 chooses on its own.
@@ -498,7 +504,10 @@ name that fix in the readiness summary, and again at the close if it was not tak
 On a timeout do not call the evaluator broken; slow and broken look identical from here. Ask once -
 one question carrying every option that applies, never one question per option:
 
-- **Wait**, if the evaluator is normally this slow.
+- **Wait**, if the evaluator is normally this slow. Re-run with an explicit `--timeout` and size it
+  for both phases: calls times cost covers the authored probes only, and the supplemental ones then
+  get what is left of it, which is nothing. Say so before the re-run rather than letting the
+  `ADVISORY` line report them unavailable afterwards.
 - **Take a named fix**, when the cause is certain.
 - **Score it differently**, bounding what one scoring call costs: a cheaper judge model, or a
   deterministic comparison - an exact or normalized match against the expected answer, no model

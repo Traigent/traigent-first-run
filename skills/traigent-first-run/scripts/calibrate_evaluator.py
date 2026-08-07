@@ -689,7 +689,12 @@ def parse_args() -> argparse.Namespace:
             f"({CALIBRATION_TIMEOUT_CEILING_SECONDS // 60} minutes), which is a "
             "ceiling on the wait rather than on the work and so gives a large "
             "case set less per probe than the rates above. Passing this "
-            "explicitly is the user's own number and is not capped. There is no "
+            "explicitly is the user's own number and is not capped - and it is "
+            "the whole budget, so size it for both phases: a value that covers "
+            "only the authored probes leaves the supplemental ones nothing, "
+            "they come back unavailable, and the ADVISORY line on stderr names "
+            "how many. The default already allows for both; an explicit value "
+            "of calls-times-cost does not. There is no "
             "resume: a calibration stopped before it finishes records nothing"
         ),
     )
