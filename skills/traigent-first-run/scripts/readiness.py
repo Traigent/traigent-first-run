@@ -603,6 +603,28 @@ class Cap:
     # the assistant not to proceed with a run that was worth doing - against the
     # guide's own rule that a low score never stops the walkthrough.
     blocks: bool = True
+    # Whether the run proceeds AND the user is still asked something first.
+    #
+    # `blocks` alone could not express this branch's own finding. Setting it
+    # False was necessary - a reading of the answer key is not a defect the
+    # assistant may cancel a paid run over - and on its own it deleted the
+    # routing with the block: `recommended_action` returns `proceed` unless a
+    # cap blocks, so the payload said "nothing to do" about a condition whose
+    # entire content is a question for the user. The two states the payload
+    # could express were "stop and fix this" and "carry on"; the one this
+    # condition is in is neither.
+    #
+    # So it is a third: the ceiling stands, `status` stays OK, the run is worth
+    # making - and `recommended_action` still carries the remedy, because there
+    # IS something to do first and doing it changes the answer key the run is
+    # graded against.
+    #
+    # Deliberately not set on every advisory ceiling. `dataset-coarse-
+    # resolution` bounds a claim and asks nothing: telling a customer with 25
+    # rows to `get-data` before their first run is the conflation `blocks` was
+    # added to end. This flag says the cap is a QUESTION, which is a property
+    # of `review-answer-key` and not of a size.
+    asks: bool = False
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
     # cannot acquire two.
@@ -636,6 +658,12 @@ class Cap:
                 "every cap is ranked against the others, so add it to the "
                 "group its condition belongs to rather than choosing a "
                 "ceiling that nothing compares"
+            )
+        if self.asks and self.blocks:
+            raise ValueError(
+                f"cap {self.condition!r} both blocks and asks; a blocking cap "
+                "already routes its remedy, and the two together describe a "
+                "run that is stopped and proceeding at once"
             )
 
 
@@ -1609,6 +1637,16 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         # blocks is decided once, beside those caps; this one is decided here,
         # and the two decisions have to agree.
         blocks=False,
+        # And ASKS, which is the half `blocks=False` alone deleted. The entire
+        # content of this condition is a question for the user, and with the
+        # block removed `recommended_action` returned `proceed` - a payload
+        # saying there is nothing to do about a finding whose only purpose is
+        # to be acted on before the run. Measured: 89 STRONG / OK / proceed
+        # under the default `blocks=True` became 70 WORKABLE / BLOCKED /
+        # review-answer-key, and `blocks=False` on its own returned it to
+        # proceed with the remedy gone. The run proceeds, the ceiling stands,
+        # and the remedy is still named.
+        asks=True,
     )
 
 
@@ -2374,19 +2412,30 @@ def collect_gaps(
 def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     """The one remedy to do first, from caps already sorted by ceiling.
 
-    Only a *blocking* cap can displace `proceed`. An advisory ceiling bounds
-    what the result may claim and stops nothing, so a run carrying only those is
-    still worth making - recommending a fix there would contradict the guide's
-    own rule that a low score never stops the walkthrough, and it is the same
-    conflation `blocks` was added to end.
+    A blocking cap displaces `proceed` first: the run is waiting on it, so
+    nothing else is the next thing to do. Among blocking caps the lowest
+    ceiling wins, which is the one setting the score. `ordered_caps` is already
+    sorted by ceiling, so the first blocking entry is that one; this reads the
+    order rather than re-deriving it, so the two cannot disagree about which
+    cap is most severe.
 
-    Among blocking caps the lowest ceiling wins, which is the one setting the
-    score. `ordered_caps` is already sorted by ceiling, so the first blocking
-    entry is that one; this reads the order rather than re-deriving it, so the
-    two cannot disagree about which cap is most severe.
+    An ASKING cap displaces it second, and that is the state the payload could
+    not express. A ceiling that stops nothing and still has a question behind
+    it - "these rows look wrong to me; do you agree?" - used to come out as
+    `proceed`, so a consumer reading the payload saw no remedy for the one
+    condition whose entire content is a remedy. It is not the same as blocking:
+    `status` stays OK, the run is worth making, and the question is what to do
+    before it rather than instead of it.
+
+    An advisory ceiling that asks nothing still recommends nothing. Bounding a
+    claim is not a defect, and telling a customer with 25 rows to go and get
+    more before their first run is the conflation `blocks` was added to end.
     """
     for cap in ordered_caps:
         if cap.blocks:
+            return cap.action_kind
+    for cap in ordered_caps:
+        if cap.asks:
             return cap.action_kind
     return PROCEED
 

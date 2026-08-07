@@ -4240,19 +4240,33 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertIn("repair the rows in the working copy", normalized)
         self.assertIn("say in the run's own report what it was tuned on", normalized)
-        # And the route says the same thing where routes live. A ceiling this
-        # module calls advisory and a route that reads as a stop is the one
-        # contradiction a reader hits first, because the route is what they
-        # act on.
-        self.assertIn(
-            "`dataset-unsound-expected-outputs` - the run is bounded, not stopped.",
-            skill,
+        # And the route says the same thing where routes live - as a ROUTE.
+        # It stated all four of the mandates above at length, in a list where
+        # every sibling is one line, which is the defect CLAUDE.md names: a
+        # rule stated twice is a rule that can be changed in one place. What
+        # SKILL.md owns is that this cap does not stop the run and where the
+        # depth lives; the depth stays here.
+        route = next(
+            line
+            for line in SKILL.read_text().splitlines()
+            if line.startswith("- `dataset-unsound-expected-outputs`")
         )
-        self.assertFalse(
-            READINESS.unsound_answer_cap(
-                READINESS.RowReview(supplied=True, reviewed=10, unsound=5)
-            ).blocks
+        self.assertIn("bounded, not stopped", route)
+        self.assertIn("evaluation-and-dataset.md", skill)
+        for owned_here in (
+            "the id, the quoted content, and the reason",
+            "repair the rows in the working copy",
+            "say in the run's own report what it was tuned on",
+        ):
+            with self.subTest(mandate=owned_here):
+                self.assertNotIn(owned_here, skill)
+        cap = READINESS.unsound_answer_cap(
+            READINESS.RowReview(supplied=True, reviewed=10, unsound=5)
         )
+        # Both flags, in both directions. Neither was asserted anywhere, and
+        # the dataclass defaults gave this cap the opposite of both.
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
         # 5. Declared as the assistant's judgement, never as the user's.
         self.assertIn("never as the user's ground truth", normalized)
         self.assertIn('"reviewer": "assistant"', dataset)
