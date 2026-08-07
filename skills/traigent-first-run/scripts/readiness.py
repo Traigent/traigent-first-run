@@ -198,6 +198,14 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # scorer runs before any install, so it cannot import them; --verify-against-sdk
 # re-reads them when the SDK *is* importable and reports drift without ever
 # changing a score. The installed SDK is always authoritative.
+#
+# One preset is deliberately NOT vendored. `max_tokens` has a canonical range
+# upstream and no entry here, because an entry here is what makes a knob
+# sweepable: `knob_variation` measures a numeric knob against its range and pays
+# for the span. Sweeping `max_tokens` is not a thing this guide will ever ask
+# for, so the range it would be measured against is not a number this file
+# should hold. See `EXCLUDED_KNOB_REASONS` below for why, and the block above
+# `HIGH_IMPACT_KNOBS` for the rule that keeps it out of the generated wrapper.
 CANONICAL_RANGES: dict[str, dict[str, float]] = {
     "temperature": {"low": 0.0, "high": 1.0},
     "top_p": {"low": 0.1, "high": 1.0},
@@ -206,7 +214,6 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
     "similarity_threshold": {"low": 0.0, "high": 1.0},
     "mmr_lambda": {"low": 0.0, "high": 1.0},
     "chunk_overlap_ratio": {"low": 0.0, "high": 0.5},
-    "max_tokens": {"low": 256, "high": 4096},
     "k": {"low": 1, "high": 10},
     "retrieval_k": {"low": 1, "high": 5},
     "chunk_size": {"low": 100, "high": 1000},
@@ -219,9 +226,42 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
     "candidate_count": {"low": 1, "high": 3},
 }
 
-# Sweeping a seed measures run-to-run variance, not configuration quality, so it
-# neither earns variation credit nor counts as a missing knob.
-EXCLUDED_KNOBS = {"seed"}
+# Knobs that earn no knob-variety credit, each with the reason it earns none.
+# A mapping rather than a set because the reasons are not the same reason, and
+# the note is printed beside the knob: telling an author their `max_tokens`
+# sweep "measures run-to-run variance" would be false, and a false explanation
+# is worse than none.
+#
+# `seed` measures run-to-run variance, not configuration quality.
+#
+# `max_tokens` earns nothing for a different reason, and saying `seed`'s reason
+# beside it would be false: sweeping `max_tokens` does not measure variance, it
+# measures whether the answer FIT. Every value of it asks the same question of
+# the same agent and differs only in whether the reply survived to be read. That
+# is not a behaviour lever - it decides whether an answer exists, not whether it
+# is good - and it is worse than uninformative, because driving it down does not
+# merely fail to inform the comparison, it corrupts it. A cap that cuts the
+# answer off returns `finish_reason == "length"`, which scores 0 rather than
+# low, so the model that truncated loses a comparison it may have won. See
+# `references/run-safety.md`, which owns why a
+# low cap is dangerous and requires the generated wrapper to refuse a truncated
+# trial as a non-measurement rather than let it be scored.
+#
+# Measured before and after, on the space that made the case: `model:
+# [o3-mini, gpt-4o-mini]`, `temperature: [0.0, 0.7]`, `prompt_style: [direct,
+# structured]` scored the agent pillar 77, and the same space with `max_tokens:
+# [256, 512]` added scored 83. Sweeping the one knob that can silently zero the
+# best model was worth six points. With the exclusion below both spaces score
+# 77, which is the number that was never wrong.
+EXCLUDED_KNOB_REASONS: dict[str, str] = {
+    "seed": "sweeping this measures run-to-run variance, not quality",
+    "max_tokens": (
+        "a resource limit, not a behaviour setting - sweeping it measures "
+        "whether the answer fit, not whether it was good, and a cap that "
+        "truncates scores 0 rather than low"
+    ),
+}
+EXCLUDED_KNOBS = frozenset(EXCLUDED_KNOB_REASONS)
 
 # `model` has a canonical list, but it is OpenAI-only; a user routing through
 # OpenRouter or Bedrock overlaps it at zero. Score breadth, never coverage.
@@ -233,13 +273,31 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
-# `max_tokens` is deliberately absent from every catalog. It exists so the model
-# is not cut off mid-answer: references/run-safety.md requires at least 2048
-# (4096 at high reasoning effort) and says not to "sweep low `max_tokens` values
-# in any space that contains a reasoning model", because a tight cap truncates
-# the answer to `finish_reason == "length"`, scores it 0, and silently crowns a
-# weaker model the winner. That makes it a capacity guard, not a quality lever -
-# so a space that obeys the safety rule must not be docked for not sweeping it.
+# `max_tokens` is deliberately absent from every catalog in this file: the
+# high-impact catalogs below, and `CANONICAL_RANGES`, `OPEN_CATEGORICAL_KNOBS`,
+# `NOISE_FLOORS` and `KNOB_ALIASES` above. Those catalogs are the
+# recommendation path - an assistant composing a space reads them to decide what
+# is worth tuning - so a knob named in any of them is a knob this guide
+# proposes. `EXCLUDED_KNOB_REASONS` then refuses it credit if an author declares
+# it anyway. Absent from the catalogs, never refused in a document: the rule
+# constrains what this guide PROPOSES, never what the customer is allowed to
+# write.
+#
+# No floor is enforced here, and none can be. How much room an answer needs is
+# not predictable from a config-space document - hidden reasoning tokens are
+# spent before the answer text and nothing declares how many - so any floor is a
+# guess, and a guess that REFUSES a configuration breaks a run that would have
+# been fine. `2048` would be absurd for an agent whose expected answer is `a`,
+# `b`, `c` or `d`. The honest instrument is detection, not prediction: the
+# generated wrapper refuses a trial the provider reports as truncated, which is
+# a fact rather than a forecast.
+#
+# Nor does any cap get introduced. `references/run-safety.md` owns that rule and
+# the generated wrapper it describes sends no `max_tokens` at all; the danger it
+# closes is a cross-run one, which is why no single run could show it. A cap sized to
+# the baseline's medium model is a cap the enhanced run's stronger or reasoning
+# model can exceed, so the truncation would be introduced BY this guide, between
+# two runs, on a configuration the customer never chose.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -1391,7 +1449,7 @@ def knob_variation(
             notes=("no candidate values - nothing to search",),
         )
 
-    if name in EXCLUDED_KNOBS:
+    if name in EXCLUDED_KNOB_REASONS:
         return KnobScore(
             name=name,
             kind="excluded",
@@ -1402,7 +1460,10 @@ def knob_variation(
             coverage=0.0,
             quality=0.0,
             span_ratio=None,
-            notes=("sweeping this measures run-to-run variance, not quality",),
+            # The knob's own reason, not one shared reason: `seed` and
+            # `max_tokens` earn nothing for different causes, and printing the
+            # wrong cause beside a knob is a false explanation.
+            notes=(EXCLUDED_KNOB_REASONS[name],),
         )
 
     numeric = all(
@@ -3057,12 +3118,23 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
 
     # Named when the two differ, because a reader who can add cannot otherwise
     # reconcile a budget penalty with the knobs on the same line - the knob that
-    # caused it is, by construction, not among them.
+    # caused it is, by construction, not among them. The knobs are named
+    # outright rather than left as an unexplained multiplier, and the multiplier
+    # is not called "repeats": that word was true while `seed` was the only
+    # excluded knob and became false the moment `max_tokens` joined it. Two
+    # `max_tokens` values are two different requests, not one configuration run
+    # twice - they earn no credit, but they are not repeats of anything.
     repeats = run_count // space_size if space_size else 1
+    uncredited = ", ".join(
+        sorted(knob.name for knob in knobs if knob.kind == "excluded")
+    )
     combinations = (
         f"{space_size} combinations"
         if repeats <= 1
-        else f"{space_size} combinations x {repeats} repeats = {run_count} runs"
+        else (
+            f"{space_size} combinations x {repeats} uncredited values "
+            f"({uncredited}) = {run_count} runs"
+        )
     )
     # The denominator counts SCOREABLE wired knobs, so a document wiring only
     # `seed` printed "0 of 0 wired knobs" against a `wired` list holding one
@@ -4738,6 +4810,14 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     2. **A `wired` or `bounds` name must be a knob of the declared space**
        (`_reject_phantom_names`, applied to each field). Such a name is not a
        narrower space, it is a typo, and it is refused rather than dropped.
+
+    No rule here judges a knob's *values* against a safety floor. One was tried
+    for `max_tokens` and removed: how much room an answer needs is not knowable
+    from this document, so the floor was a guess, and a guess that refuses a
+    configuration breaks runs that would have been fine - `2048` for an agent
+    answering `a`, `b`, `c` or `d`. What replaced it predicts nothing:
+    `EXCLUDED_KNOB_REASONS` stops paying for the sweep, and the generated
+    wrapper refuses a trial the provider *reports* as truncated.
     """
     if not isinstance(document, dict):
         raise ConfigSpaceInputError(

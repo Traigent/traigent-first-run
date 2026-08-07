@@ -697,6 +697,23 @@ def ten_day_sentences(text: str) -> list[str]:
         sentence for sentence in prose_units(text) if TEN_DAY_MENTION.search(sentence)
     ]
 
+def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
+    """The generated wrapper's module-level state, as executable AST nodes.
+
+    Every test that compiles `call_agent` out of the fenced source needs these
+    in the module with it, because the function reads them. Collected from the
+    document rather than restated as a literal in each fixture: a fixture that
+    declares its own `REFUSED_TRIAL_COSTS = []` runs green against a wrapper
+    that no longer has one.
+    """
+    nodes: list[ast.stmt] = []
+    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id.isupper():
+                    nodes.append(node)
+    return nodes
+
 
 # The config-space document is a contract between prose the assistant follows and
 # code that reads it, so these tests weld the documented shape to the real
@@ -2137,6 +2154,284 @@ class SkillPackageTests(unittest.TestCase):
             "that the knob has no effect, and this guidance may not say so",
         )
 
+    def test_max_tokens_is_detected_not_predicted(self) -> None:
+        """Three statements, one rule, each in the document that owns it.
+
+        The rule this replaces was a 2048 floor that REFUSED a lower sweep. It
+        was wrong for one reason that no amount of tuning the number fixes:
+        reasoning headroom is not predictable - hidden thinking tokens are spent
+        before the answer text and nothing declares how many - so every floor is
+        a guess, and a guess that refuses breaks a configuration that would have
+        been fine. 2048 tokens for an agent answering `a`, `b`, `c` or `d` is
+        the reductio.
+
+        What is true and worth keeping is WHY a low cap is dangerous, so that
+        stays. Only the refusal goes, replaced by a detection: the provider
+        reports `finish_reason == "length"` as a fact after the call, and the
+        wrapper refuses that trial as a non-measurement rather than letting it
+        be scored as a legitimate 0.
+
+        The rule then went one step further than "do not predict a safe cap",
+        to "do not set one". The hazard is a cross-run one and no single run
+        could have shown it: a cap sized against the baseline's medium model is
+        a cap the enhanced run's stronger or reasoning model can exceed, so the
+        truncation is introduced BY this guide, between two runs, on a
+        configuration the user never chose. So the wrapper sends no
+        `max_tokens`, at any tier, and the user keeps every bit of their own
+        ability to set one - the rule constrains us, not them.
+        """
+        text = RUN_SAFETY.read_text()
+        start = text.index("`agent-no-varying-knobs` clears as soon as")
+        section = " ".join(
+            text[start : text.index("Three honesty rules", start)].split()
+        )
+
+        # 1. Composition point: no credit, no cap of ours, no floor either, and
+        #    the danger still said.
+        for phrase in (
+            "`max_tokens` never counts either",
+            "it is a resource limit, not a behaviour setting",
+            "**Never introduce a cap the user did not already have",
+            "carry it through verbatim",
+            "the generated wrapper sends no `max_tokens` at any tier",
+            "**No floor is imposed and no value is refused**",
+            "a user may cap it however they like",
+            "a cut-off answer scores 0 rather than low",
+            "`require_untruncated_completion`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # 1b. The cross-run hazard is the reason OUR cap is worse than theirs,
+        #     and the wall-clock preference is the remedy. Both stated, because
+        #     a rule whose reason is unstated is a rule a later editor deletes.
+        for phrase in (
+            "it spans two runs",
+            "the enhanced run's stronger or reasoning model can exceed",
+            "**bound the clock or the trial count, never the tokens**",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+        # 1c. The wrapper carries no cap, and the prose beside it agrees. A
+        #     rule stated in guidance and contradicted by the generated code is
+        #     the contradiction class this repository keeps producing - and
+        #     this is exactly where it was: the wrapper set `max_tokens` 4096
+        #     while the guidance explained why caps are dangerous.
+        sdk_text = SDK_EXECUTION.read_text()
+        self.assertNotIn('"max_tokens"', sdk_text)
+        self.assertIn("no `max_tokens` at all", sdk_text)
+
+        # 2. The refusal is gone from the guidance, not merely unenforced -
+        # a rule stated in prose and absent from the code is the contradiction
+        # class this repository keeps producing.
+        normalized = " ".join(text.casefold().split())
+        for gone in (
+            "sweep low `max_tokens` values",
+            "sweeping it through anything below 2048 is refused",
+            "pin it to one value at or above 2048",
+        ):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, normalized)
+
+        # 3. The scorer carries no floor to drift from.
+        scripts = str(SKILL_ROOT / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        readiness = importlib.import_module("readiness")
+        self.assertFalse(hasattr(readiness, "MAX_TOKENS_ANSWER_FLOOR"))
+        self.assertIn("max_tokens", readiness.EXCLUDED_KNOB_REASONS)
+        self.assertIn("seed", readiness.EXCLUDED_KNOB_REASONS)
+
+    def test_the_wrapper_refuses_a_truncated_trial_rather_than_scoring_it(
+        self,
+    ) -> None:
+        """The guard that actually prevents the original disaster.
+
+        A strong model truncated, scored 0, and a weaker model was crowned the
+        winner. Nothing enforced the "scan every trial for `finish_reason ==
+        'length'`" instruction - it was a sentence in a reference, and the
+        wrapper returned `response.choices[0].message.content or ""` whatever
+        the provider said about why it stopped. A cut-off answer therefore
+        entered the comparison as a legitimate 0.
+
+        This asserts the guard exists, is CALLED (an uncalled checker is the
+        same defect in a longer file), and raises rather than returning - the
+        repository's own rule is that a failure is raised, never defaulted.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef):
+                    functions[node.name] = node
+
+        # Run it, do not read it. A guard asserted by substring passes while
+        # comparing the wrong field.
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    functions["require_untruncated_completion"],
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        current = None
+        namespace = {
+            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "build_request": lambda message, config: {},
+            "require_nonzero_token_usage": lambda response: None,
+            "provider_reported_cost": lambda response: 0.01,
+        }
+        exec(compile(module, "<truncation-guard>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+        guard = namespace["require_untruncated_completion"]
+
+        def reply(finish_reason):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="a"),
+                        finish_reason=finish_reason,
+                    )
+                ]
+            )
+
+        # The whole point: `call_agent` raises instead of handing back a
+        # scoreable answer, so the trial cannot enter the comparison as a 0.
+        current = reply("length")
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            call_agent("task", {})
+        message = ""
+        try:
+            guard(current)
+        except RuntimeError as error:  # pragma: no cover - asserted below
+            message = str(error)
+        self.assertIn("not a measurement", message)
+        # A bare failure is not actionable; the repair is named - and it names
+        # BOTH repairs, because this wrapper sets no cap of its own. "Raise
+        # this configuration's cap" was the whole message while the wrapper
+        # sent `max_tokens` 4096; with no cap of ours the usual cause is the
+        # model's own output limit, for which raising a cap is unperformable.
+        self.assertIn("This wrapper sets no max_tokens", message)
+        self.assertIn("if your own agent sets one, raise it", message)
+        self.assertIn("the model's own output limit", message)
+        self.assertIn("report it as excluded", message)
+
+        # Only truncation. Every other stop reason is a real measurement, and a
+        # guard that refused them would break the run it exists to protect.
+        for reason in ("stop", "tool_calls", "content_filter", None):
+            with self.subTest(finish_reason=reason):
+                current = reply(reason)
+                self.assertEqual(call_agent("task", {}), ("a", 0.01))
+
+        # Providers that expose the choice as a mapping report the same fact.
+        current = SimpleNamespace(
+            choices=[
+                {"message": SimpleNamespace(content="a"), "finish_reason": "length"}
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            guard(current)
+
+        # And the post-run checklist says how a truncated trial now appears, so
+        # the reader is not left checking for something that cannot arrive.
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn(
+            "`require_untruncated_completion` raises on `finish_reason == "
+            '"length"`, so a truncated trial arrives as a failed trial rather '
+            "than as a scored 0",
+            safety,
+        )
+
+    def test_a_refused_trial_still_reports_the_money_it_spent(self) -> None:
+        """Refusing a trial must not also lose the spend that bought it.
+
+        Both guards raise, and `provider_reported_cost` was read AFTER them, so
+        a truncated trial's cost was never read at all: the provider billed for
+        every token it generated up to the cut, and the run reported $0 for it.
+        The same ordering swallowed a zero-usage refusal.
+
+        Executed rather than read, and both refusal paths are driven, because a
+        reordering that fixes only the truncation branch looks identical in the
+        diff to one that fixes both.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef):
+                    functions[node.name] = node
+
+        state = sdk_wrapper_state_nodes(text)
+        self.assertEqual(
+            [node.target.id for node in state if node.target.id.startswith("REFUSED")],
+            ["REFUSED_TRIAL_COSTS"],
+            "the wrapper must declare REFUSED_TRIAL_COSTS exactly once",
+        )
+        module = ast.fix_missing_locations(
+            ast.Module(body=[*state, functions["call_agent"]], type_ignores=[])
+        )
+        current = None
+        refuse: str | None = None
+
+        def truncation_guard(response):
+            if refuse == "truncated":
+                raise RuntimeError("The provider truncated this completion")
+
+        def usage_guard(response):
+            if refuse == "usage":
+                raise RuntimeError("did not report nonzero token usage")
+
+        namespace = {
+            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "build_request": lambda message, config: {},
+            "require_nonzero_token_usage": usage_guard,
+            "require_untruncated_completion": truncation_guard,
+            "provider_reported_cost": lambda response: 0.02,
+        }
+        exec(compile(module, "<refused-trial-cost>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+        spent = namespace["REFUSED_TRIAL_COSTS"]
+        current = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="a"))]
+        )
+
+        # A scored trial is not refused spend. It is already in the comparison,
+        # and counting it here would double it.
+        self.assertEqual(call_agent("task", {}), ("a", 0.02))
+        self.assertEqual(spent, [])
+
+        for reason in ("truncated", "usage"):
+            with self.subTest(refused=reason):
+                refuse = reason
+                before = len(spent)
+                with self.assertRaises(RuntimeError):
+                    call_agent("task", {})
+                self.assertEqual(
+                    spent[before:],
+                    [0.02],
+                    f"a trial refused for {reason} was billed and its cost was "
+                    "dropped, so the run reports $0 for money it spent",
+                )
+        refuse = None
+
+        # An unknown cost is recorded as unknown, not as zero. Appending a
+        # placeholder would let a run with no cost metadata report refused spend
+        # of $0.00, which is a measurement it never made.
+        namespace["provider_reported_cost"] = lambda response: None
+        refuse = "truncated"
+        before = len(spent)
+        with self.assertRaises(RuntimeError):
+            call_agent("task", {})
+        self.assertEqual(spent[before:], [])
+
+        # And the post-run checklist asks for the number, or nothing reads it.
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn("report `REFUSED_TRIAL_COSTS` beside the total", safety)
+
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
@@ -2913,7 +3208,19 @@ class SkillPackageTests(unittest.TestCase):
             "support for it is the sentence asserting it",
         )
         owner = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("unmeasured defensive floor", owner)
+        # The positive half: the rule may not be satisfied by going silent.
+        # It used to read `assertIn("unmeasured defensive floor")`, because the
+        # owning statement recommended 2048/4096 and had to admit the numbers
+        # were a judgement. The branch that removed the floor removed the
+        # numbers themselves, so there is no longer a judgement to be honest
+        # about - and that assertion would have been satisfiable only by
+        # reintroducing the floor this package now refuses to impose. What
+        # replaces it is the same obligation against the current statement:
+        # run-safety.md must still SAY that no floor is imposed and why, so
+        # deleting the whole paragraph fails here exactly as deleting the
+        # honesty did before.
+        self.assertIn("no floor is imposed and no value is refused", owner)
+        self.assertIn("reasoning headroom is not predictable", owner)
 
     # The sentence that chooses grid over random, wherever it is written. A
     # threshold reintroduced as "40 configurations per trial" or "ten times the
@@ -5421,13 +5728,17 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(document="run-safety", phrase=phrase):
                 self.assertIn(phrase, safety)
 
-    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_headroom(self) -> None:
-        """A reasoning-tier model rejects sampled temperature and needs headroom.
+    def test_strong_reasoning_tier_swaps_sampling_for_effort_and_no_cap(self) -> None:
+        """A reasoning-tier model rejects sampled temperature, and gets no cap.
 
         Executes the fence's call path shape: the strong tier at a declared
         reasoning effort must send reasoning kwargs instead of temperature,
-        with at least the 4096-token answer headroom the safety reference
-        requires, while ordinary tiers keep the swept temperature.
+        and no `max_tokens` at all, while ordinary tiers keep the swept
+        temperature. Both tiers are bounded by the wall clock instead.
+
+        The name said "and headroom" while the wrapper sent `max_tokens` 4096.
+        Renamed with the change, because a test whose name states the opposite
+        of what it asserts is read instead of run.
         """
         text = SDK_EXECUTION.read_text()
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
@@ -5458,6 +5769,7 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": SimpleNamespace(completion=fake_completion),
             "provider_reported_cost": lambda response: 0.01,
             "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
             "build_prompt": lambda message, *, style, self_check: message,
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
@@ -5477,8 +5789,14 @@ class SkillPackageTests(unittest.TestCase):
         )
         strong_call = calls[-1]
         self.assertEqual(strong_call["reasoning_effort"], "high")
-        self.assertGreaterEqual(strong_call["max_tokens"], 4096)
         self.assertNotIn("temperature", strong_call)
+        # And no cap of ours, on the tier that used to carry one. This asserted
+        # `max_tokens >= 4096` until the cross-run hazard was named: a number
+        # that fits the baseline's medium model is a number this tier's
+        # reasoning model can exceed, so the cap would truncate a configuration
+        # the user never chose, between two runs, at our hand. The provider
+        # default is the bound their agent already lives with.
+        self.assertNotIn("max_tokens", strong_call)
 
         call_agent(
             "task",
@@ -5492,6 +5810,11 @@ class SkillPackageTests(unittest.TestCase):
         ordinary_call = calls[-1]
         self.assertEqual(ordinary_call["temperature"], 0.2)
         self.assertNotIn("reasoning_effort", ordinary_call)
+        self.assertNotIn("max_tokens", ordinary_call)
+        # The bound this request DOES carry is the wall clock, which is the
+        # distinction the rule turns on: a time limit stops the work, a token
+        # limit corrupts the answer and then scores the corruption.
+        self.assertEqual(ordinary_call["timeout"], 120.0)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -5723,8 +6046,10 @@ class SkillPackageTests(unittest.TestCase):
         call_module = ast.fix_missing_locations(
             ast.Module(
                 body=[
+                    *sdk_wrapper_state_nodes(text),
                     functions["provider_reported_cost"],
                     functions["require_nonzero_token_usage"],
+                    functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
                 type_ignores=[],
@@ -5743,10 +6068,15 @@ class SkillPackageTests(unittest.TestCase):
         exec(compile(call_module, "<provider-call>", "exec"), call_namespace)
         call_agent = call_namespace["call_agent"]
 
-        def response(*, usage):
+        def response(*, usage, finish_reason="stop"):
             return SimpleNamespace(
                 usage=usage,
-                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="answer"),
+                        finish_reason=finish_reason,
+                    )
+                ],
             )
 
         current_response = response(usage=SimpleNamespace(total_tokens=3))
@@ -8102,6 +8432,7 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": _Stub,
             "provider_reported_cost": lambda response: 0.0,
             "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             "SELECTED_CURRENT_MODEL": "provider/current",
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",

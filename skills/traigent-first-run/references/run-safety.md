@@ -408,14 +408,35 @@ of the space and pays twice for one knob, so the document is corrected rather th
 as "effective" depends on whether the knob has a range at all:
 
 - A numeric knob **with** a range - one of the scorer's canonical knobs (`temperature`, `top_p`,
-  `retrieval_k`, `max_tokens`, and so on) or any knob given a `bounds` entry - needs two values
+  `retrieval_k`, and so on) or any knob given a `bounds` entry - needs two values
   separated by more than the noise floor: 0.05 for `temperature` and `top_p`, otherwise 2% of that
   range.
 - A numeric knob with **no** canonical range and no `bounds` entry is scored on breadth alone. Any
   two distinct values clear the cap, however close together they are - `[1, 1.01]` counts. There is
   no range to measure a noise floor against, so nothing collapses them.
 - A categorical or boolean knob needs two distinct values.
-- `seed` never counts, however many values it lists.
+- `seed` never counts, however many values it lists, because sweeping it measures run-to-run
+  variance rather than quality.
+- `max_tokens` never counts either, for the neighbouring reason: it is a resource limit, not a
+  behaviour setting, so sweeping it measures whether the answer **fit**, not whether it was good.
+  **Never introduce a cap the user did not already have, and never sweep one.** If their agent
+  sets `max_tokens`, carry it through verbatim - it works in their daily life. If it sets none,
+  send none: the generated wrapper sends no `max_tokens` at any tier, reasoning models included,
+  and the provider default stands. **No floor is imposed and no value is refused** either - a user
+  may cap it however they like, and reasoning headroom is not predictable, so a floor is a guess
+  that breaks runs which would have been fine (`2048` is absurd when the answer is `a`, `b`, `c`
+  or `d`).
+
+  A cap of *ours* is worse than one of theirs because it spans two runs: a number that fits the
+  baseline's medium model is one the enhanced run's stronger or reasoning model can exceed, so the
+  truncation is introduced by this guide on a configuration the user never chose. Either way the
+  provider returns `finish_reason == "length"`, and a cut-off answer scores 0 rather than low, so
+  the model it happened to loses a comparison it may have won - detected, not predicted, by the
+  wrapper's `require_untruncated_completion`.
+
+  Where a bound is genuinely needed, **bound the clock or the trial count, never the tokens**: a
+  time limit stops the work and leaves what finished intact, while a token limit corrupts the
+  answer at the cut and then scores the corruption.
 
 Three honesty rules govern the file:
 
@@ -681,13 +702,6 @@ connected `auto` with a default cap of 12 for the enhanced space, then report th
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
 silently present a two-row generated run as the intended comparison.
 
-Reasoning models need sufficient output-token headroom - give them `max_tokens` of at least 2048
-(at least 4096 with high reasoning effort), because hidden reasoning tokens are spent before the
-answer text, so a tight cap truncates the answer to `finish_reason == "length"`, scores it 0, and
-silently crowns a weaker model the winner. Both are an unmeasured defensive floor; raise them for
-long answers. Scan every trial for
-`finish_reason == "length"`, and do not sweep low `max_tokens` values in any space that contains a
-reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
@@ -780,7 +794,10 @@ Before claiming success, verify:
 5. Real calls do not show the mock's constant response pattern.
 6. Provider calls have nonzero token usage. Report `total_cost` as positive, provider-reported zero
    for a genuine free route, or untracked; cost alone does not prove whether a run was real.
-7. No output was truncated.
+7. No output was truncated. `require_untruncated_completion` raises on `finish_reason ==
+   "length"`, so a truncated trial arrives as a failed trial rather than as a scored 0; confirm
+   none reached the comparison, and report `REFUSED_TRIAL_COSTS` beside the total - a refused
+   trial was still billed, and spend that bought no measurement is still spend.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to

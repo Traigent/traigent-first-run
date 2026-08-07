@@ -1738,6 +1738,136 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(aliased.wired, ("temperature",))
 
+    def test_a_max_tokens_sweep_earns_no_variety_credit_and_is_never_refused(
+        self,
+    ) -> None:
+        """The perverse incentive, measured before and after.
+
+        `max_tokens` WAS one of `CANONICAL_RANGES`, and that entry is precisely
+        what made it sweepable: a numeric knob with a range is measured against
+        that range and paid for the span it covers. So sweeping it earned
+        variation and knob-count credit like any other numeric knob - and it is
+        the one knob whose downward sweep can silently zero the best model, by
+        cutting its answer off into `finish_reason == "length"`, which scores 0
+        rather than low. Measured on this scorer at the time this was written:
+        the space below scored the agent pillar 77 on `first-run-guide`, and the
+        identical space with `max_tokens: [256, 512]` added scored 83. Sweeping
+        it was worth six points.
+
+        Those two numbers are the record of the defect, not the assertion. What
+        is asserted is the DECISION - that the sweep earns no additional credit -
+        because the pillar's absolute value is a pricing choice other branches
+        are free to revise, and an open one already does: with #174's
+        categorical re-pricing merged in, the same space scores 85, and pinning
+        77 here failed the merge (`85 != 77`) where neither branch's CI could
+        see it. A relation survives any re-pricing; an absolute number is a
+        merge failure waiting for a date.
+
+        It now lives in `EXCLUDED_KNOB_REASONS` and in no catalog at all, so
+        there is no range left for a future reader to pay for.
+
+        The first repair tried was a refusal below a 2048 floor. That was wrong,
+        and this test pins why it will not come back: how much room an answer
+        needs is not predictable from a config-space document, so any floor is a
+        guess, and a guess that REFUSES breaks a configuration that would have
+        been fine - 2048 tokens for an agent answering `a`, `b`, `c` or `d`.
+
+        So nothing here predicts. The credit stops (this test), and the
+        truncation is DETECTED at the call, by the wrapper's
+        `require_untruncated_completion` (test_skill_package.py).
+        """
+        base = {
+            "model": ["o3-mini", "gpt-4o-mini"],
+            "temperature": [0.0, 0.7],
+            "prompt_style": ["direct", "structured"],
+        }
+
+        def agent_score(knobs):
+            facts = MODULE.agent_facts_from_config_space(
+                {
+                    "agent_type": "general",
+                    "max_trials": 12,
+                    "knobs": knobs,
+                    "wired": list(knobs),
+                }
+            )
+            pillar, _, _ = MODULE.score_agent(facts)
+            count = next(sub for sub in pillar.subscores if sub.name == "knob-count")
+            return pillar.score, count.evidence
+
+        without, _ = agent_score(dict(base))
+        swept, evidence = agent_score({**base, "max_tokens": [256, 512]})
+        # The control, and the reason no absolute pillar number is pinned here.
+        # `top_p` is what `max_tokens` used to be structurally - a numeric knob
+        # with a `CANONICAL_RANGES` entry, paid for the span it covers - so
+        # adding it still moves the pillar. Without it, `swept == without` would
+        # hold just as well for a scorer that had stopped responding to knobs at
+        # all, and the test would be green while asserting nothing.
+        credited, _ = agent_score({**base, "top_p": [0.5, 0.9]})
+        self.assertGreater(
+            credited,
+            without,
+            "a numeric knob with a canonical range must still earn credit, or "
+            "the equality below proves nothing about max_tokens",
+        )
+        self.assertEqual(
+            swept,
+            without,
+            "sweeping max_tokens must earn exactly nothing - it was worth +6",
+        )
+
+        # Not hidden, either. The runs really do double, and the line says so
+        # while staying addable: three varying knobs cannot make 16.
+        self.assertIn("8 combinations", evidence)
+        self.assertIn("max_tokens", evidence)
+        self.assertIn("16 runs", evidence)
+        # And not called "repeats". Two max_tokens values are two different
+        # requests, not one configuration run twice.
+        self.assertNotIn("repeats", evidence)
+
+        # The note beside the knob is the knob's OWN reason. Telling an author
+        # their max_tokens sweep measures run-to-run variance would be false:
+        # every value asks the same question of the same agent and differs only
+        # in whether the reply survived to be read.
+        scored = MODULE.knob_variation("max_tokens", [256, 512])
+        self.assertEqual(scored.kind, "excluded")
+        self.assertEqual(scored.quality, 0.0)
+        self.assertIn("resource limit", " ".join(scored.notes))
+        self.assertIn("whether the answer fit", " ".join(scored.notes))
+        self.assertNotIn(
+            "run-to-run", " ".join(MODULE.knob_variation("max_tokens", [1, 2]).notes)
+        )
+        self.assertIn(
+            "run-to-run", " ".join(MODULE.knob_variation("seed", [1, 2]).notes)
+        )
+
+        # And the range that made it sweepable is gone, not merely outvoted.
+        # While `CANONICAL_RANGES` still held `{"low": 256, "high": 4096}`, the
+        # exclusion was one early `return` away from being undone by a reader
+        # who saw a canonical range and concluded the knob was meant to be
+        # swept. The two catalogs must not disagree about one knob.
+        self.assertNotIn("max_tokens", MODULE.CANONICAL_RANGES)
+        self.assertIn("max_tokens", MODULE.EXCLUDED_KNOBS)
+        self.assertEqual(
+            MODULE.EXCLUDED_KNOBS & set(MODULE.CANONICAL_RANGES),
+            set(),
+            "a knob cannot be both excluded from credit and given a range to "
+            "be credited against",
+        )
+
+        # NEVER refused. Every one of these was rejected by the floor this
+        # replaces, and every one of them is a legal space.
+        for knobs in (
+            {"model": ["o3-mini"], "max_tokens": [256, 512]},
+            {"max_tokens": ["256", "512"]},
+            {"max_tokens": [16, 32]},
+            {"max_tokens": [2048, 4096]},
+        ):
+            with self.subTest(knobs=knobs):
+                facts = MODULE.agent_facts_from_config_space({"knobs": knobs})
+                self.assertEqual(facts.knobs["max_tokens"], knobs["max_tokens"])
+        self.assertFalse(hasattr(MODULE, "MAX_TOKENS_ANSWER_FLOOR"))
+
     def test_integral_max_trials_scores_however_json_spelled_it(self) -> None:
         """`12.0` is the same trial budget as `12`, and scored as one.
 
@@ -1937,17 +2067,29 @@ class AgentScoringTests(unittest.TestCase):
     def test_not_sweeping_max_tokens_is_not_a_coverage_gap(self) -> None:
         """`max_tokens` is a capacity guard, so omitting it must not cost points.
 
-        references/run-safety.md tells authors not to sweep low `max_tokens`
-        values in any space containing a reasoning model - a truncated answer
-        scores 0 for reasons unrelated to configuration quality. While the
-        catalog listed it, a space that obeyed that rule was docked 25% of its
-        coverage for doing so.
+        references/run-safety.md tells authors not to sweep `max_tokens` at all
+        - a truncated answer scores 0 for reasons unrelated to configuration
+        quality. While the catalog listed it, a space that obeyed that rule was
+        docked 25% of its coverage for doing so.
+
+        The catalogs are also the recommendation path: an assistant composing a
+        space reads them to decide what is worth tuning, so a knob named in any
+        of them is a knob this guide is proposing. `max_tokens` must appear in
+        none of them.
         """
         for agent_type in ("general", "code_gen"):
             with self.subTest(agent_type=agent_type):
                 self.assertNotIn("max_tokens", MODULE.HIGH_IMPACT_KNOBS[agent_type])
         for agent_type, catalog in MODULE.HIGH_IMPACT_KNOBS.items():
             with self.subTest(agent_type=agent_type):
+                self.assertNotIn("max_tokens", catalog)
+        for name, catalog in (
+            ("CANONICAL_RANGES", MODULE.CANONICAL_RANGES),
+            ("OPEN_CATEGORICAL_KNOBS", MODULE.OPEN_CATEGORICAL_KNOBS),
+            ("NOISE_FLOORS", MODULE.NOISE_FLOORS),
+            ("KNOB_SYNONYMS", MODULE.KNOB_SYNONYMS),
+        ):
+            with self.subTest(catalog=name):
                 self.assertNotIn("max_tokens", catalog)
 
         without = self._coverage(
@@ -4821,8 +4963,16 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
         self.assertIn("4 combinations", with_seed.evidence)
         self.assertNotIn("24 combinations", with_seed.evidence)
         # Not hidden either: the run really is 24 trials, and the line says so
-        # in terms the knob count can account for.
-        self.assertIn("6 repeats", with_seed.evidence)
+        # in terms the knob count can account for - and it names the knob that
+        # caused the multiplier, which is the only way a reader can reconcile a
+        # budget penalty with knobs the multiplier is by construction not among.
+        #
+        # "6 repeats" was the wording until `max_tokens` joined the exclusion
+        # list. It was true of `seed` alone and false the moment a second,
+        # non-repeat knob could produce the same multiplier: two `max_tokens`
+        # values are two different requests, not one configuration run twice.
+        # One line cannot call both of them repeats, so it calls neither.
+        self.assertIn("6 uncredited values (seed)", with_seed.evidence)
         self.assertIn("24 runs", with_seed.evidence)
 
         # A space with nothing excluded says exactly what it said before.

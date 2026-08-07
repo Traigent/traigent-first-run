@@ -144,8 +144,7 @@ others honor, the winner comparison is confounded - a configuration can win on a
 setting the other models were never given on equal terms, and no report footnote untangles that;
 when every model faces exactly the same variations, the winner is clear and the enhanced run's
 insight is accurate. So when the strong tier is a reasoning model, pin its calling convention
-identically in both runs - a chosen reasoning effort with answer headroom of `max_tokens` at
-least 4096 (the safety reference's defensive floor, applied flat here), and no sampling
+identically in both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling
 parameters such a model rejects - and, since temperature is then
 inert for it, drop temperature as a swept knob for the whole walkthrough: pin one temperature for
 the sampling models and sweep uniform knobs instead, two prompt styles in the baseline and the
@@ -489,6 +488,30 @@ def require_nonzero_token_usage(response) -> None:
         )
 
 
+def require_untruncated_completion(response) -> None:
+    """A trial the provider cut off is not a measurement, so refuse it.
+
+    The evaluator cannot tell a cut-off answer from a wrong one, so it scores 0
+    rather than low and the model it happened to loses to one that had room.
+    Raising sends it to the failed-trial count instead. `run-safety.md` owns
+    why nothing here sets or predicts a cap.
+    """
+    choice = response.choices[0]
+    finish_reason = getattr(choice, "finish_reason", None)
+    if finish_reason is None and isinstance(choice, dict):
+        finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        raise RuntimeError(
+            "The provider truncated this completion (finish_reason='length'). "
+            "It is not a measurement and must not be scored: a cut-off answer "
+            "scores 0 rather than low and can crown a weaker model. This "
+            "wrapper sets no max_tokens, so if your own agent sets one, raise "
+            "it and re-run this configuration; otherwise the answer ran into "
+            "the model's own output limit, so drop this configuration and "
+            "report it as excluded"
+        )
+
+
 def build_request(message: str, config: dict) -> dict:
     """Build the provider request from one configuration. Pure: makes no call.
 
@@ -498,13 +521,11 @@ def build_request(message: str, config: dict) -> dict:
     """
     sampling_kwargs: dict = {"temperature": config["temperature"]}
     if config["model"] == SELECTED_STRONG_MODEL and STRONG_REASONING_EFFORT:
-        # Reasoning models reject sampled temperature and need answer headroom
-        # beyond their hidden reasoning tokens, so this model swaps sampling
-        # controls for effort plus headroom rather than sending both.
-        sampling_kwargs = {
-            "reasoning_effort": STRONG_REASONING_EFFORT,
-            "max_tokens": 4096,
-        }
+        # Reasoning models reject sampled temperature, so this model swaps the
+        # sampling control for an effort setting rather than sending both. No
+        # `max_tokens` here or on any other tier - `run-safety.md` owns why,
+        # and it is not an oversight to correct.
+        sampling_kwargs = {"reasoning_effort": STRONG_REASONING_EFFORT}
     return {
         "model": config["model"],
         "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
@@ -522,10 +543,24 @@ def build_request(message: str, config: dict) -> dict:
     }
 
 
+# Spend on trials this wrapper refused. Both guards below raise, so reading the
+# cost after them dropped that money out of every total the run reports: a
+# truncated trial was billed for every token generated up to the cut, and
+# surfaced as $0. It is spend that bought no measurement - report it, never add
+# it to the comparison.
+REFUSED_TRIAL_COSTS: list[float] = []
+
+
 def call_agent(message: str, config: dict) -> tuple[str, float | None]:
     response = litellm.completion(**build_request(message, config))
-    require_nonzero_token_usage(response)
-    cost = provider_reported_cost(response)
+    cost = provider_reported_cost(response)  # before either refusal, not after
+    try:
+        require_nonzero_token_usage(response)
+        require_untruncated_completion(response)
+    except RuntimeError:
+        if cost is not None:
+            REFUSED_TRIAL_COSTS.append(cost)
+        raise
     return response.choices[0].message.content or "", cost
 
 
