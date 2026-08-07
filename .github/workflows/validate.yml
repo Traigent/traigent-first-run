@@ -26,10 +26,16 @@ jobs:
     # The floor is therefore derived from the same constant, not chosen against
     # the measurement, and
     # `tests/test_skill_package.py::test_every_ci_job_outlives_the_harness_bound`
-    # fails if this number drops below it. It is 14 minutes today: 11 for the
+    # fails if this number drops below it. It is 19 minutes today: 16 for the
     # command, 3 for everything else in the job - a little over twice the
     # slowest whole job of either kind ever recorded, 104s.
-    timeout-minutes: 14
+    #
+    # 14 until #151, which let a slow evaluator finish and so raised the
+    # calibrator's ceiling to 900s - moving the floor this number is derived
+    # from to 19. #162 wrote the derivation and #151 moved its input; neither
+    # branch could see the other, the merge is textually clean, and the guard
+    # firing on the composition is the whole reason it exists.
+    timeout-minutes: 19
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -95,7 +101,10 @@ jobs:
     # job makes three `pip install` calls against live PyPI, the only step in
     # either job whose duration depends on a third party, and a slow index must
     # not be reported as a broken pull request.
-    timeout-minutes: 14
+    #
+    # Also raised from 14 to 19 by #151's calibrator ceiling; see the note on
+    # the job above.
+    timeout-minutes: 19
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
