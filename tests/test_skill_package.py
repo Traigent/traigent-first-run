@@ -926,23 +926,36 @@ class SkillPackageTests(unittest.TestCase):
         ("render the initial real-world readiness board", 2, "readiness"),
         ("install the exact declared dependencies", 3, "install the sdk"),
         ("### 6. approve and run the baseline", 3, "measure today's setup"),
-        ("ask for the traigent key", 4, "traigent account"),
+        # The promise says ACCOUNT, so the flow phrase has to be the sentence
+        # that establishes one. Pinning "ask for the traigent key" instead
+        # left the promise's costliest item - create an account, mid-run,
+        # after a paid result - evidenced by a sentence about a key.
+        ("before being asked to create an account", 4, "traigent account"),
         ("### 8. verify and report", 5, "compare the runs"),
         ("hand over the traigent optimization skills", 5, "traigent skills"),
     )
 
     @staticmethod
     def _promise_items() -> dict[int, str]:
-        """The numbered opening, as items, from GUIDE.md's own blockquote."""
-        block = (
-            (ROOT / "GUIDE.md")
-            .read_text()
-            .split("## User-facing promise", 1)[1]
-            .split("\nStop only for:", 1)[0]
-        )
+        """The numbered opening, as items, from GUIDE.md's own blockquote.
+
+        Bounded by the blockquote itself rather than by the sentence that
+        happens to follow it: the trailing prose under this section is a
+        mandate that can be reworded, and a marker string that stops matching
+        silently widens this block to the rest of the file, where any other
+        numbered list would be read as promise items.
+        """
+        quoted: list[str] = []
+        for raw in (
+            (ROOT / "GUIDE.md").read_text().split("## User-facing promise", 1)[1]
+        ).splitlines():
+            if raw.startswith(">"):
+                quoted.append(raw)
+            elif quoted:
+                break
         items: dict[int, list[str]] = {}
         current: int | None = None
-        for raw in block.splitlines():
+        for raw in quoted:
             line = raw.lstrip(">").strip()
             numbered = re.match(r"(\d+)\.\s+(.*)", line)
             if numbered:
@@ -1010,11 +1023,17 @@ class SkillPackageTests(unittest.TestCase):
         positions: list[int] = []
         for flow_phrase, item, promise_phrase in self.CUSTOMER_JOURNEY:
             with self.subTest(step=promise_phrase):
-                self.assertIn(
-                    flow_phrase,
-                    skill,
-                    "the flow no longer does this, so the promise is now "
-                    "promising something that does not happen",
+                # Counted, not merely found: the ordering check below reads
+                # `index`, which is the FIRST occurrence. A phrase that also
+                # appears in an earlier stage would order the journey by
+                # wherever it happened to be mentioned first rather than by
+                # where the step runs, and the check would still pass.
+                self.assertEqual(
+                    skill.count(flow_phrase),
+                    1,
+                    "the flow no longer does this exactly once, so the "
+                    "promise is either promising something that does not "
+                    "happen or being ordered by the wrong occurrence",
                 )
                 self.assertIn(
                     promise_phrase,
@@ -1034,6 +1053,45 @@ class SkillPackageTests(unittest.TestCase):
             [item for _flow, item, _phrase in self.CUSTOMER_JOURNEY],
             sorted(item for _flow, item, _phrase in self.CUSTOMER_JOURNEY),
         )
+
+    def test_the_promise_keeps_the_two_mandates_that_bound_it(self) -> None:
+        """The opening promise carries its own scope, and cannot lose it quietly.
+
+        Rewriting the five numbered items is a change to what the run
+        advertises; deleting the two sentences around them is a change to what
+        the run is ALLOWED to do, and the second is invisible in a diff that
+        looks like a copy edit. Both were dropped while this branch rewrote the
+        items above them, which is how the class works: the sentences nobody is
+        editing are the ones that leave.
+
+        `Stop only for:` is a list of exceptions, so it needs the rule it
+        excepts from on the same page - without it the list reads as the whole
+        approval policy, which is the opposite of what it says. And the trailer
+        is what makes the five items a sequence rather than a menu.
+
+        Neither is a second home for a mandate. `SKILL.md` owns "perform safe,
+        read-only discovery without asking for approval" and `run-safety.md`
+        owns what the closing recommendation may claim; both are asserted here
+        so that if either home moves, this pin fails rather than becoming the
+        only surviving statement of a rule.
+        """
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "baseline evidence decides the next step",
+            "proceed with read-only inspection after stating the plan",
+            "do not make the user approve safe discovery",
+            "stop only for:",
+        ):
+            with self.subTest(guide=phrase):
+                self.assertIn(phrase, guide)
+        self.assertIn(
+            "perform safe, read-only discovery without asking for approval",
+            skill,
+        )
+        self.assertIn("never promise improvement", safety)
 
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
