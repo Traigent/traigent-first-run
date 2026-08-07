@@ -507,7 +507,19 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
     "evaluator-timeout": CREATION_OR_REPAIR,
-    "agent-no-varying-knobs": CREATION_OR_REPAIR,
+    # Conditional, and classified the same way `dataset-below-measurable-size`
+    # above already is: by what the result IS, not by whether the run waits.
+    # Three caps carry this condition. Two of them - nothing wired, and knobs
+    # listed with none attested - are repairs and declare `blocks=True`. The
+    # third (`NOT_YET_MEASURED_CAP`, from #144) fires when no config-space
+    # document reached this score at all: nothing in the user's project is
+    # broken, the enhanced run is simply what writes that document, and it
+    # declares `blocks=False`. #149 wrote CREATION_OR_REPAIR here before that
+    # third branch existed, and its own agent-routing test already asserts this
+    # condition must have BOTH a blocking and an advisory branch - so
+    # CREATION_OR_REPAIR contradicted #149's own expectation the moment #144
+    # landed, and the two compose only under the category that admits both.
+    "agent-no-varying-knobs": CLAIM_SCOPING,
 }
 
 
