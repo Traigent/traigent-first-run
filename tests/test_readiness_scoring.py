@@ -1290,6 +1290,91 @@ class AgentScoringTests(unittest.TestCase):
             MODULE.knob_count_points(5, 5000, 12), MODULE.knob_count_points(5, 16, 12)
         )
 
+    def test_omitting_the_trial_budget_never_outscores_declaring_one(self) -> None:
+        """Deleting a legal line must not be worth more than writing it.
+
+        `max_trials` is documented requirement "no", so omitting it is a legal
+        document - and the damping only fired when it was present, which meant
+        silence was scored as `max_trials = infinity`. Measured end to end
+        before the fix, one identical 100 000 000-configuration space and
+        otherwise identical preflight and calibration: declared scored the
+        agent pillar 83 and omitted scored it 94. On the trunk this branch
+        descends from, the same pair is 88 STRONG against 90 EXCELLENT - a
+        band, bought by deleting a key.
+
+        It also inverted the sibling branch that refuses a key the schema does
+        not declare: a customer told "did you mean `max_trials`?" scored higher
+        by deleting the key than by fixing the spelling.
+
+        Swept rather than spot-checked, because one shape passing is how the
+        original rule looked correct: for every shape below, omitted may never
+        exceed declared. A declared budget is still allowed to score LOWER -
+        `max_trials: 1` is a real and bad measurement, where silence is not a
+        measurement of anything.
+        """
+        shapes = {
+            "walkthrough baseline": {
+                "model": ["a", "b", "c"],
+                "prompt_style": ["p", "q"],
+                "thinking_shape": ["x", "y"],
+            },
+            "one knob": {"model": ["a", "b", "c"]},
+            "nothing varies": {"model": ["a"], "temperature": [0.0]},
+            "ten binary knobs": {f"k{i}": ["a", "b"] for i in range(10)},
+            "eight knobs of ten values": {
+                f"k{i}": [str(v) for v in range(10)] for i in range(8)
+            },
+        }
+        for name, knobs in shapes.items():
+            with self.subTest(shape=name):
+                declared, _, _ = MODULE.score_agent(
+                    MODULE.AgentFacts(
+                        max_trials=12,
+                        knobs=knobs,
+                        wired=tuple(knobs),
+                        config_space_supplied=True,
+                    )
+                )
+                omitted, _, _ = MODULE.score_agent(
+                    MODULE.AgentFacts(
+                        knobs=knobs,
+                        wired=tuple(knobs),
+                        config_space_supplied=True,
+                    )
+                )
+                self.assertLessEqual(
+                    omitted.score,
+                    declared.score,
+                    "omitting `max_trials` scores above declaring it, so "
+                    "deleting a documented-optional line is worth points",
+                )
+
+        # And the deduction is named on the card, so a reader who lost points
+        # is told which field to write - but only where it actually cost them.
+        wide = {f"k{i}": ["a", "b"] for i in range(10)}
+        pillar, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs=wide, wired=tuple(wide), config_space_supplied=True)
+        )
+        evidence = next(
+            sub.evidence for sub in pillar.subscores if sub.name == "knob-count"
+        )
+        self.assertIn("no trial budget was declared", evidence)
+        self.assertIn("declaring `max_trials`", evidence)
+
+        flat = {"model": ["a"], "temperature": [0.0]}
+        pillar, _, _ = MODULE.score_agent(
+            MODULE.AgentFacts(knobs=flat, wired=tuple(flat), config_space_supplied=True)
+        )
+        evidence = next(
+            sub.evidence for sub in pillar.subscores if sub.name == "knob-count"
+        )
+        self.assertNotIn(
+            "no trial budget",
+            evidence,
+            "nothing varies here, so the budget cost this document nothing - "
+            "naming it points the author away from what is actually wrong",
+        )
+
     def _agent_pillar(self, **kwargs) -> object:
         pillar, _, _ = MODULE.score_agent(MODULE.AgentFacts(**kwargs))
         return pillar
