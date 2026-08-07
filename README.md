@@ -109,11 +109,11 @@ spread across the difficulty range - drawn inside each split so it cannot invent
 the selected row ids recorded so the run can be repeated. The report names that subset size beside
 your full row count, and states the resulting sample-size limitation separately.
 
-Your readiness score is never taken on that subset. Both scores read the whole dataset, because the
-score is a statement about your data and the subset is a limit on this one comparison - scoring the
-sample would report our sampling as though it were a property of your dataset, and tell someone with
-500 good rows that they have "a wiring check, not a score". A first run shows the capability in one
-sitting; the full dataset is what a real optimization uses.
+Your readiness score is never taken on that subset. Every readiness run reads the whole dataset,
+because the score is a statement about your data and the subset is a limit on this one comparison -
+scoring the sample would report our sampling as though it were a property of your dataset, and tell
+someone with 500 good rows that they have "a wiring check, not a score". A first run shows the
+capability in one sitting; the full dataset is what a real optimization uses.
 
 ## The readiness score
 

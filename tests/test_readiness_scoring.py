@@ -4780,8 +4780,9 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
     The one that made it visible is the guide's own finish line.
     `tests/behavioral/scenarios/partial-missing-dataset` is a real agent, a real
     evaluator, a walkthrough dataset this guide writes for a user who has none,
-    and `closing_beats_opening: true` - the designed success. It closed on
-    "65/100 WORKABLE (PAID RUN BLOCKED)" with `recommended_action:
+    and `revalidation_caps: ["dataset-fully-synthetic"]` - the designed success,
+    a run whose only remaining cap is the one its own substitutes earned. It
+    reached "65/100 WORKABLE (PAID RUN BLOCKED)" with `recommended_action:
     connect-real-data`, demanding real data from the one user who by
     construction has none.
 

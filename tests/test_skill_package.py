@@ -1288,6 +1288,78 @@ def claims_no_effect(sentence: str) -> bool:
     return False
 
 
+# A claim that the run's REPORT carries two readiness scores - the opening one
+# and a later one - as a pair the reader is meant to read as progress. Written
+# as a predicate rather than as a blocklist of the literals this package used to
+# contain, for the reason the registry below states about itself: the literal
+# list refuses the wording someone already found, and every rewording of it
+# walks straight past. `25 → 78`, "show opening beside closing", "the readiness
+# change from start to finish: both scores" and "render the pair as opening ->
+# current" are the same claim in four sets of words, and only the first three
+# were ever written down.
+#
+# `readiness transition` is matched in the singular on purpose.
+# `references/component-creation.md` has a "Readiness transitions" section, and
+# it is about a component moving from `❗` to `✅` - a different fact, which this
+# guidance still makes, and which a plural-tolerant pattern would have refused.
+_PAIRED_READINESS_SCORES = re.compile(
+    r"(?:"
+    # the render templates: the pair drawn as an arrow.
+    r"<?\bopening\b>?\s*(?:→|->|=>)\s*<?\b(?:current|closing|latest|final)\b>?"
+    r"|\bopening\s+to\s+(?:the\s+)?(?:current|closing|latest|final)\b"
+    r"|\bopening[- ]to[- ]closing\b"
+    # one of the two set against the other.
+    r"|\b(?:opening|closing|latest|current)\b[^.;:]{0,50}?"
+    r"\b(?:beside|next to|alongside|side by side with)\b[^.;:]{0,50}?"
+    r"\b(?:opening|closing|latest|current)\b"
+    # or a score, band or cap set against the opening one. Anchored on `the
+    # opening` rather than on any of the four, because "the held-out score is
+    # disclosed once, beside the tuning score, in the closing report" is a
+    # different pair entirely and this package really says it.
+    r"|\b(?:scores?|bands?|caps?|numbers?|results?)\b[^.;:]{0,50}?"
+    r"\b(?:beside|next to|alongside|side by side with)\b[^.;:]{0,50}?"
+    r"\bthe opening\b"
+    # or the pair named as one thing the report carries.
+    r"|\breadiness (?:transition|change)\b"
+    r"|\b(?:show|shows|showing) the transition\b"
+    r"|\bboth (?:scores|bands)\b"
+    r"|\bfrom start to finish\b"
+    # or the record fields that used to hold it.
+    r"|\bopening/(?:latest|closing|current)\b"
+    r"|\blatest revalidated readiness score\b"
+    r")",
+    re.IGNORECASE,
+)
+# Naming the pairing in order to forbid it is how this guide states the rule -
+# "never show that score or set it beside the opening one" is the settled
+# answer, and a classifier that could not see the `never` would fail the
+# document for stating it. Searched across the clause up to and including the
+# match rather than only in front of it: the negator sits inside the span for
+# "lead with the caps that cleared, never with a new score beside the opening
+# one", where the match opens on `caps` and `never` arrives four words later.
+_PAIRED_READINESS_HEDGE = re.compile(
+    r"\b(?:never|not|no|nothing|none|cannot|can't|must not|may not"
+    r"|rather than|instead of|without|avoid|refuse[sd]?|forbid(?:s|den)?"
+    r"|stop|stops|do not|does not|did not|will not|won't|don't|doesn't)\b",
+    re.IGNORECASE,
+)
+
+
+def pairs_the_readiness_scores(sentence: str) -> bool:
+    """Does this sentence present a later readiness score beside the opening one?
+
+    The guide may re-run the score as a gate and may never report the result of
+    that re-run beside the opening number, because once the run has written the
+    missing dataset or evaluator most of what a second score grades is those
+    substitutes. So a prohibition is not a violation and an instruction to
+    render the pair is - whichever words it happens to reach for.
+    """
+    for match in _PAIRED_READINESS_SCORES.finditer(sentence):
+        if not _PAIRED_READINESS_HEDGE.search(sentence[: match.end()]):
+            return True
+    return False
+
+
 def sentences(text: str) -> list[str]:
     """Whitespace-normalised sentences, split on real sentence punctuation."""
     return [
@@ -4593,7 +4665,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("saying what a further run would be worth", skill_text)
         self.assertIn(
-            "name the ones still open and what each is now costing", skill_text
+            "name the gaps still open and what each is now costing", skill_text
         )
         self.assertIn(
             "the user's own measured evidence rather than encouragement", skill_text
@@ -5701,17 +5773,19 @@ class SkillPackageTests(unittest.TestCase):
         # trunk that had arrived holding 60 of 60 with no reserve left. The
         # raise came with an OWNER note offering one way back: fold the two
         # readiness-score lines under "Quality evidence". The owner did not take
-        # the fold. They removed the second field instead - a re-score taken
-        # after this run has created or repaired components mostly measures
-        # those substitutes, so the record was carrying a number it should not
-        # have been reporting, plus a transition line under "Interpretation"
-        # restating the pair.
+        # the fold, and took a different line instead.
         #
-        # So the line came back, but not as a reserve and not by a reflow. The
-        # "Interpretation" transition line went because the decision deleted the
-        # field it summarised, and the surviving revalidation field was rewritten
-        # to record the gate - which caps cleared, on what evidence - rather than
-        # a score. 61 - 1 = 60, measured, and the ceiling follows the template
+        # What the decision removed is a NUMBER, not a field. Both readiness
+        # fields under "Quality evidence" survive: the opening score unchanged,
+        # and the second rewritten from "latest revalidated readiness score -
+        # overall, band, binding caps, and what changed" to the gate result
+        # above, because a re-score taken after this run has created or repaired
+        # components mostly measures those substitutes. The line that went is
+        # the "Interpretation" transition bullet, which paired the two scores
+        # and had nothing left to pair once neither field carried a second one.
+        #
+        # So the line came back, but not as a reserve and not by a reflow.
+        # 61 - 1 = 60, measured on this template, and the ceiling follows it
         # down rather than sitting above it as unspent room for the next field
         # nobody argued for.
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -10020,6 +10094,50 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
 
+    def test_every_site_that_mandates_the_repair_gate_is_pinned(self) -> None:
+        """The half of the re-score that stayed, held down where it is stated.
+
+        This branch removed the narrative half of the readiness re-score and
+        kept the safety half - re-run the score after a repair, so nothing is
+        paid for against a component only believed fixed. The claim is only
+        worth its argument if the surviving half is actually enforced, and it
+        was not: SKILL.md states the gate at four sites, and deleting any one of
+        them left the suite at 774 run / 773 passed / 1 skipped, measured on
+        this branch and on its merge-base. The stage-4 step and the post-repair
+        sentence come to nine lines between them and their removal reported the
+        same headline number as the branch that keeps them.
+
+        So each site is pinned by the words that carry the obligation rather
+        than by its heading. The invalid-evaluator paragraph is here for the
+        same reason and had no coverage at all: it is what stops a paid run
+        against a grading signal known to be broken, which is the one refusal
+        "continue as is" is most likely to be read as overriding.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            # after any repair or substitute creation, at any stage
+            "after any repair or substitute creation, re-run the affected "
+            "checks, the applicable calibration, and the score, then record "
+            "that gate result without overwriting the opening one",
+            # stage 4, step 5 - required even when the answer is unwelcome
+            "re-run `scripts/readiness.py` on the fresh preflight json plus "
+            "any applicable calibration result",
+            "this score is required even when a low score or cap is expected",
+            "record its gate result in `traigent-runs/run-plan.md`",
+            # and the run is not complete until the revalidation happened
+            "any repaired component was revalidated before its status changed",
+            # the invalid-evaluator refusal
+            "for an invalid evaluator, incompatible schema, corrupted required "
+            "rows, or unverified call path, do not run paid optimization "
+            "against it",
+            "offer to repair and revalidate it, pause for a user-authored fix, "
+            "or use a generated `🛠️` substitute for the walkthrough",
+            'never treat "continue as is" as permission to optimize against a '
+            "broken grading signal",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+
     def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
         self,
     ) -> None:
@@ -11071,7 +11189,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("traigent-runs/config-space.json", skill)
         self.assertIn("--config-space", skill)
         # the producer instruction has to land in the run stage, not only in the
-        # closing recap - otherwise there is nothing for the closing score to read
+        # closing recap - otherwise the post-run score has no current-run
+        # document to read, and reports the agent pillar from absent evidence
         self.assertLess(
             skill.index("traigent-runs/config-space.json"),
             skill.index("do not close on a second number"),
@@ -11483,16 +11602,36 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # the run record's two readiness fields, README.md's promise that
             # the report "shows the transition", and the glossary. Any one of
             # them coming back reinstates the claim on its own.
+            #
+            # Affirmative render templates and record labels only, per the knob
+            # entry above. The first draft of this list banned the rule's own
+            # words - "show opening beside closing", "the recorded opening score
+            # beside the closing one", "the same score is taken again at the
+            # end", "latest revalidated readiness score" - and each of those
+            # also appears inside the sentence that forbids the thing. "The
+            # closing report does not show opening beside closing" and "this
+            # record no longer carries a latest revalidated readiness score" are
+            # both correct, both the kind of explanation CLAUDE.md permits a
+            # document to give locally, and all four entries failed them.
+            #
+            # What is left here is the shapes that only ever get written while
+            # doing it: the arrow template, the two record-field labels, and the
+            # reference's instruction in the words it actually used. The reworded
+            # forms - "show the opening score next to the closing score", "render
+            # the pair as opening -> current", "both scores, both bands" - are a
+            # substring list's blind spot and are caught by
+            # `pairs_the_readiness_scores` instead, which reads the claim as a
+            # predicate and can see a negation in front of it.
             "whether the report shows a closing readiness score beside the opening one",
             ("never show that score or set it beside the opening one",),
             (
                 "the readiness transition:",
-                "show opening beside closing",
-                "the recorded opening score beside the closing one",
-                "the same score is taken again at the end",
-                "latest revalidated readiness score",
                 "opening/latest scores",
                 "<opening> → <current>",
+                # evaluation-and-dataset.md's post-repair instruction, which
+                # survived the branch that removed its three siblings and was
+                # left telling the assistant to do the removed thing.
+                "record the new score, band, and caps beside the opening result",
             ),
         ),
         (
@@ -11947,6 +12086,103 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "wording was settled and reintroducing it puts the "
                         "guidance back in conflict",
                     )
+
+    def test_no_document_presents_a_later_readiness_score_beside_the_opening_one(
+        self,
+    ) -> None:
+        """The catch side of the entry above, as a predicate rather than a list.
+
+        The registry entry refuses the four wordings this package actually
+        carried. It cannot refuse the fifth, and the fifth is the one that gets
+        written: "show the opening score next to the closing score", "render the
+        pair as opening -> current", "the readiness change from start to finish:
+        both scores, both bands" all reinstate exactly the claim the entry was
+        added to police, and every one of them passes a substring list built
+        from the sentences that were deleted.
+
+        Corpus-wide and not scoped to the close, for the same reason the
+        no-effect check is: the temptation lives wherever a result gets
+        summarised, and the report sections are the furthest thing from the
+        paragraph that states the rule.
+        """
+        offenders = [
+            f"{path.name}: {part}"
+            for path in conversation_contract_documents()
+            for part in sentences(path.read_text())
+            if pairs_the_readiness_scores(part)
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "the opening score is the one this run reports; a later score is "
+            "read for which caps cleared and may not be set beside it, because "
+            "once this run has written the missing pieces the second number "
+            "mostly grades those pieces",
+        )
+
+    def test_the_paired_score_classifier_can_tell_the_two_directions_apart(
+        self,
+    ) -> None:
+        """Invented sentences, both directions, as with the no-effect classifier.
+
+        Half of these are the wordings the branch that removed the transition
+        deleted, so this measures that the guard would have caught the thing it
+        was written for. The other half are sentences a correct document is
+        entitled to contain - the prohibition itself, and the plain explanation
+        of it a reader may need locally - which is what a substring list of the
+        deleted phrases got wrong.
+        """
+        must_refuse = (
+            "Show the opening score next to the closing score so the user sees "
+            "how far the project came.",
+            "On a re-score render the pair as opening -> current and explain the jump.",
+            "- The readiness change from start to finish: both scores, both "
+            "bands, and which caps cleared.",
+            "So the closing report can show the recorded opening score beside "
+            "the closing one.",
+            "Show `<opening> → <current>` on re-score.",
+            "- Latest revalidated readiness score - overall, band, binding "
+            "caps, and what changed:",
+            "- Readiness transition - opening/latest scores, caps, and the repair.",
+            "The same score is taken again at the end, so the report shows the "
+            "transition rather than a single number.",
+            "Record the new score, band, and caps beside the opening result.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    pairs_the_readiness_scores(sentence),
+                    "this pairs a later readiness score with the opening one "
+                    "and must be refused",
+                )
+
+        must_accept = (
+            "Never show that score or set it beside the opening one.",
+            "The closing report does not show opening beside closing.",
+            "Never put the recorded opening score beside the closing one.",
+            "Your report will not show opening beside closing, because the "
+            "second number would mostly grade our own substitutes.",
+            "Nothing is measured twice for show: the same score is taken again "
+            "at the end only as a gate.",
+            "This record no longer carries a latest revalidated readiness score.",
+            "A re-score is a gate result: lead with the caps that cleared, "
+            "never with a new score beside the opening one.",
+            # the ❗ -> ✅ sense of the word, which this package still uses
+            "Readiness transitions: real-world readiness changes to `✅` only "
+            "when concrete real evidence passes validation.",
+            # a different pair the guide really does report
+            "The held-out score is disclosed once, beside the tuning score, in "
+            "the closing report after the enhanced run.",
+            "The approval card names that space's total combination count "
+            "beside the ceiling.",
+        )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    pairs_the_readiness_scores(sentence),
+                    "this forbids the pairing, explains the decision, or names "
+                    "a different pair, and must be allowed",
+                )
 
     # A value the guidance states in more than one document, and the pattern
     # that finds it. Anchored on the CONCEPT, never on the shape of the value:

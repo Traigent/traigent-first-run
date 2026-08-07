@@ -30,7 +30,8 @@ Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any creation or repair,
 again as a required step of local validation, and again after each repair or creation, so nothing
-is ever paid for against a blocking condition believed fixed but never rechecked. Use
+is ever paid for against a blocking condition believed fixed but never rechecked - and once more
+after the run, to rank the close. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
@@ -350,8 +351,8 @@ Follow this order:
    result. Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
    result in `traigent-runs/run-plan.md`. If calibration was deferred for an installed local
-   dependency, record the preflight-only
-   result now and re-run the score immediately after that calibration.
+   dependency, record the preflight-only result now and re-run the score immediately after that
+   calibration.
 
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed unsupported SDK is
 a failure, and an optional provider package may defer only its own check. The rendered readiness
@@ -742,11 +743,10 @@ returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer l
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
 
-After that, close by saying what a further run would be worth. Name the ones
-still open and what each is now costing; use the user's own measured evidence rather than
-encouragement. Say what this walkthrough cannot close. Then give the one next action the **latest
-validated state** earns: re-rank the remaining closing caps and run limits, ignore cleared gaps,
-and name its value:
+Close by saying what a further run would be worth. Name the gaps still open and what each is now
+costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
+cannot close. Then give the one next action the **latest validated state** earns: re-rank the
+remaining closing caps and run limits, ignore cleared gaps, and name its value:
 
 - Generated or mostly generated data - collect or export a real sample of the same task and re-run.
   This is the gap that ceilings the score no matter how good everything else is, so it is first
@@ -791,7 +791,7 @@ The first run is complete only when:
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.
 - The opening readiness score was computed before any creation or repair, recorded with its band
-  and caps, and is the number the report gives; every later score was a gate, not a transition.
+  and caps, and is the only readiness number the report gives.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
 - The evaluator passes the recorded semantic mode for every case: graded tasks distinguish
