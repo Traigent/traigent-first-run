@@ -3210,15 +3210,16 @@ class SkillPackageTests(unittest.TestCase):
         for path in assistant_facing_documents():
             for match in counted.finditer(path.read_text()):
                 statements.append((path.name, int(match.group(1))))
-        # The rule plus its four restatements. Pinned so that DELETING a
+        # The rule plus its five restatements. Pinned so that DELETING a
         # restatement is a decision someone makes, not a way for this sweep to
         # quietly cover less than it did. Raised from four when the held-out
-        # split arrived: the sampling rule that draws the tuning rows from the
-        # tuning split states the count a fifth time, and a new statement is
-        # welded here rather than left uncovered.
+        # split arrived - the sampling rule that draws the tuning rows from the
+        # tuning split states the count a fifth time - and from five when the
+        # row-level sanity check arrived, whose section states how many rows it
+        # reads. Each new statement is welded here rather than left uncovered.
         self.assertEqual(
             len(statements),
-            5,
+            6,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -9555,6 +9556,14 @@ class SkillPackageTests(unittest.TestCase):
             # the run proceeds meanwhile.
             "dataset-mostly-generated-answer-key",
             "dataset-coarse-resolution",
+            # #177's row-level sanity check. It scopes for the plainest reason
+            # on this list: the finding is the assistant's own reading of the
+            # customer's answer key, and an opinion that can be wrong may bound
+            # what the result claims and may not cancel a paid run the
+            # customer's sound rows would have earned. #187 states that in the
+            # module - `blocks=False`, `asks=True` - and SKILL.md routes it as
+            # "bounded, not stopped".
+            "dataset-unsound-expected-outputs",
         }
         # The third category, and the reason it has to exist: one condition
         # decides at runtime. `dataset-below-measurable-size` is advisory with
