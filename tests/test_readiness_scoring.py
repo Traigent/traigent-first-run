@@ -1438,9 +1438,12 @@ class AgentScoringTests(unittest.TestCase):
         pillar, _, _ = MODULE.score_agent(
             MODULE.AgentFacts(knobs=wide, wired=tuple(wide), config_space_supplied=True)
         )
-        evidence = next(
-            sub.evidence for sub in pillar.subscores if sub.name == "knob-count"
-        )
+        # Every sub-score's evidence, not the one currently called
+        # `knob-count`: the sibling branch renames this sub-score, and a
+        # lookup by name turns a behavioural check into a StopIteration at
+        # merge time - which reads as a broken test rather than as the
+        # decision it was guarding.
+        evidence = " ".join(sub.evidence for sub in pillar.subscores)
         self.assertIn("no trial budget was declared", evidence)
         self.assertIn("declaring `max_trials`", evidence)
 
@@ -1448,9 +1451,7 @@ class AgentScoringTests(unittest.TestCase):
         pillar, _, _ = MODULE.score_agent(
             MODULE.AgentFacts(knobs=flat, wired=tuple(flat), config_space_supplied=True)
         )
-        evidence = next(
-            sub.evidence for sub in pillar.subscores if sub.name == "knob-count"
-        )
+        evidence = " ".join(sub.evidence for sub in pillar.subscores)
         self.assertNotIn(
             "no trial budget",
             evidence,
