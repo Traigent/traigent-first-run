@@ -384,13 +384,15 @@ Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough`
 would expect. `scripts/preflight.py` declares the three classes once and is the only copy:
 `SYNTHESISED_SOURCE_PREFIXES` (nobody observed this), `COLLECTED_SOURCE_PREFIXES` (somebody did),
 and `UNDECLARED_SOURCE_TOKENS`, matched whole not by prefix - a row saying `n/a` or `tbd` declines
-to answer, scores 6 like a row with no field, raises no vocabulary warning, and prints as
+to answer, scores 3 like a row with no field, raises no vocabulary warning, and prints as
 `declared sources: n/a` under a card line calling it undeclared.
 
-A word on none of the three keeps the collected score, so a project's own vocabulary (`crm-export`)
-is not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
-unknown word quietly earning the production band is the failure that check exists to prevent. If the
-data is generated, say so with a word from the first list.
+A word on none of the three is read as `undeclared` too: it scores 3 like a row with no field and
+never above a row that declares itself generated, because an unverifiable declaration must not
+outscore a verifiable one - `crm-export` and three junk characters read the same from here.
+Preflight raises `dataset-provenance-vocabulary` naming the word and the card prints both grades,
+so a project using its own vocabulary sees what one relabel onto the lists above is worth before it
+changes anything. If the data is generated, say so with a word from the first list.
 
 Do not express a generated answer in the row's own `provenance` token: that marks the whole row
 generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
@@ -412,7 +414,9 @@ ceiling on the entire run:
 An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
 declaration rather than new data unless over half the corpus is declared generated - a ceiling no
 declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
-capped by neither.
+capped by neither. The two do differ in one further way: a declaration is a change to the file, so
+both undeclared rungs hold the paid run until cleared, where the declared twins only bound the claim.
+A dataset with no `provenance` field at all therefore reads `FIX BEFORE PAID RUN` at 65.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an

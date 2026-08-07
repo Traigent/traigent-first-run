@@ -14,9 +14,12 @@ space describing the agent's knobs, and returns one 0-100 score per pillar and
 an aggregate.
 
 The score is deliberately modest about itself. It runs before any optimization,
-from local evidence only, so it estimates rather than measures: a sub-score that
-cannot be computed is marked unmeasured and excluded rather than scored zero,
-and the user-facing evidence coverage says how much of the pillar was actually observed.
+from local evidence only, so it estimates rather than measures: a sub-score this
+module could not compute is marked unmeasured and excluded rather than scored
+zero, while one this run was asked for and did not supply is marked unmeasured
+and kept in the denominator (`SubScore.withheld`), so silence cannot outscore an
+honest answer. The user-facing evidence coverage reports both as unchecked and
+says how much of the pillar was actually observed.
 The config space's 'wired' list is the one input that is weaker than that: it is
 an attestation, taken at its word and never verified, because nothing here reads
 the agent's code. Declaring a knob is not a statement that the agent consumes
@@ -1495,8 +1498,12 @@ class DatasetFacts:
     # kept as labels while their intentional-label/placeholder meaning is unverified.
     placeholder_rows: int = 0
     sources: tuple[str, ...] = ()
-    # Custom source tokens that preflight credited as collected for backward
-    # compatibility but could not verify from its vocabulary.
+    # Source tokens preflight could not verify from its vocabulary. They are
+    # counted in `undeclared_rows`, not in `collected_rows`: an unverifiable
+    # declaration must not outscore a verifiable one, so an unreadable word
+    # scores where silence scores. Kept as their own list because the card
+    # names them - the row DID declare something, and a customer using their
+    # own vocabulary has to be told which word was not read.
     unrecognised_sources: tuple[str, ...] = ()
 
 
