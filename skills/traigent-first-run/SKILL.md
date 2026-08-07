@@ -55,8 +55,9 @@ unversioned `traigent` package.
 - Before readiness or results, state and record `Target project: <absolute path> · Agent: <absolute
   path>:<function or command>`. A mismatched resumed artifact is historical, never current.
   If none is credible, use `Agent: none discovered` until intent selects or creates one.
-- A user-named external credential file is the selected handoff: after safety checks add only
-  missing keys there; never copy or re-request values. Otherwise use the target `.env`.
+- `references/run-safety.md` selects the credential handoff file and owns every rule about it -
+  which file, its mode, when and how it is opened, what may be written. Follow it; decide none of
+  it here, and never copy or re-request a value already present.
 - Inspect before asking. Preserve existing agent logic, datasets, evaluators, tests, and files.
 - After task intent is anchored, put generated artifacts under `traigent-runs/`. If
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
@@ -83,7 +84,7 @@ approval.
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
-| Create or update a minimal `.env` | Proceed only after free checks. Use the user-named handoff or target `.env`; preserve existing values and comments, append only its missing provider key, and require `0600` before opening. Before writing, run `references/run-safety.md`'s git-tracked-file safety check and its ignore verification; that reference owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
+| Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
@@ -445,11 +446,10 @@ Only after the standard-library-only component checks:
 5. Run calibration deferred solely for a local installed dependency. Then run a fresh-process
    Traigent mock plumbing check only when every model call and external side effect is intercepted;
    exit it and never reuse that process for a real run.
-6. After all applicable free checks, create or minimally update `.env`—the selected credential
-   handoff per `references/run-safety.md`: the user-named external file, or otherwise the target
-   project's `.env`. Preserve every existing value and unrelated entry, add only a genuinely missing
-   selected-provider key, require mode `0600` on POSIX, and stop once for only that secret locally.
-   Do not request or route the Traigent key before the stage-7 baseline checkpoint.
+6. After all applicable free checks, create or minimally update `.env` through
+   `references/run-safety.md`'s ordered credential handoff, which selects the file: add only a
+   genuinely missing selected-provider key, and stop once for only that secret locally. Do not
+   request or route the Traigent key before the stage-7 baseline checkpoint.
 
 Before baseline approval, explain only its provider recipients using `references/run-safety.md`:
 the selected provider receives normal model-call content; OpenRouter and every allowed upstream
@@ -569,14 +569,9 @@ seen a provider-backed result before being asked to create an account. Tell them
 access rather than the read-only default, because a read-only key can leave a paid connected run
 unrecorded. Reuse a preserved suitable key or establish exactly one of the four account/key states
 in `references/run-safety.md` before naming a destination; follow that reference's single ordered
-handoff and have the user enter credentials locally, never in chat. Use the same selected
-credential file: the target-project `.env`, or the user-named external source already used for
-the baseline. Open that exact absolute path once, using the first available GUI editor; if that is
-unavailable, fall back to the IDE or editor already associated with the selected project directory,
-and if headless, print the full path and stop. Open it only so the user can add
-`TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same file so the new line is
-visible, and follow
-`references/run-safety.md` for which address each account state gets, and the two 10-day windows.
+handoff and have the user enter credentials locally, never in chat. It is the same file the
+baseline used, and that reference performs the handoff again there for `TRAIGENT_API_KEY=`; follow
+it for which address each account state gets, and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a
