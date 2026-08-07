@@ -179,7 +179,14 @@ _NO_EFFECT_CLAIM = re.compile(
     # inferring absence from a measurement that cannot carry it. Refusing the
     # provider fact would teach an author to route around the guard, which is
     # worse than the gap.
-    r"|(?:is|are|was|were|be) +(?:irrelevant|useless|pointless|meaningless)"
+    # `unimportant` and `negligible` were the gap: "Report that the knob is
+    # unimportant" is the same assertion as "the knob does not matter", in the
+    # words an author reaches for when the blunt ones feel too strong - which
+    # is exactly when it gets written. Enumerating the predicate is the design
+    # here, so a form it cannot express is a hole in the design, not a missing
+    # literal.
+    r"|(?:is|are|was|were|be) +(?:irrelevant|useless|pointless|meaningless"
+    r"|unimportant|negligible|not important)"
     r"|ha(?:s|ve|d) +no +(?:effect|impact|influence|bearing)"
     r"|no +(?:effect|impact|influence|difference) +(?:at all|whatsoever|on)"
     r"|does nothing|do nothing|did nothing"
@@ -807,6 +814,9 @@ class SkillPackageTests(unittest.TestCase):
             "Tell the customer the setting has no impact on their agent.",
             "Say the retrieval depth makes no difference and move on.",
             "That knob was shown to be irrelevant by the baseline.",
+            "Report that the knob is unimportant.",
+            "Say the value it chose is not important and move on.",
+            "The spread was small, so that lever is negligible.",
         )
         for sentence in must_refuse:
             with self.subTest(refuse=sentence):
@@ -823,6 +833,8 @@ class SkillPackageTests(unittest.TestCase):
             "A spread under the margin makes that knob a candidate to drop.",
             "Prefer the knob the baseline ranked, rather than one that does nothing.",
             "Silence is not a null result, so the knob gets no verdict.",
+            "Never report that a knob is unimportant on twelve trials.",
+            "Twelve trials cannot show a lever is negligible.",
         )
         for sentence in must_accept:
             with self.subTest(accept=sentence):

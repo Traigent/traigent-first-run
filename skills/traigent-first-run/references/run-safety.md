@@ -627,9 +627,9 @@ never the same-sized noise floor above, which is a distance between two knob VAL
 
 A knob the baseline never varied is not a candidate: silence is not a null result. Read which knobs
 it varied off the space that actually ran rather than off a remembered list - a generated
-walkthrough's baseline axes follow the selected model rung, so it can rank only what it swept. Six
-trials across a knob's values is three observations a side at most - enough to prefer one knob over
-another, never enough to prove one does nothing. Say `did not move the baseline`, never `does not
+walkthrough's baseline axes follow the selected model rung, so it can rank only what it swept. The
+baseline's twelve trials across a knob's two values are six observations a side at most - enough to
+prefer one knob over another, never enough to prove one does nothing. Say `did not move the baseline`, never `does not
 matter`, and give a knob this baseline never ranked no verdict at all.
 
 Fill the freed slots from the failure-mode levers below, once the customer's evidenced knobs are
