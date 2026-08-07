@@ -1390,7 +1390,6 @@ class EvaluationScoringTests(unittest.TestCase):
 # placeholder value to substitute first - the four behaviour knobs are binary
 # and temperature is pinned, so the space is fixed before either run.
 WALKTHROUGH_CONFIG_SPACE = {
-    "agent_type": "general",
     "knobs": {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
         "prompt_style": ["plain", "structured"],
@@ -1571,7 +1570,6 @@ class AgentScoringTests(unittest.TestCase):
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(
             {
-                "agent_type": "rag",
                 "max_trials": 8,
                 "configuration_space": {
                     "temperature": [0.0, 1.0],
@@ -1581,7 +1579,6 @@ class AgentScoringTests(unittest.TestCase):
                 "bounds": {"retrieval_depth": {"low": 1, "high": 10}},
             }
         )
-        self.assertEqual(aliased.agent_type, "rag")
         self.assertEqual(aliased.max_trials, 8)
         self.assertEqual(
             aliased.knobs, {"temperature": [0.0, 1.0], "retrieval_depth": [1, 10]}
@@ -1645,16 +1642,20 @@ class AgentScoringTests(unittest.TestCase):
             )
         self.assertIn("bounds['a']['low']", str(raised.exception))
 
-    def test_max_trials_and_agent_type_are_validated_like_every_other_field(
-        self,
-    ) -> None:
-        """Two documented fields used to reach the scorer unchecked.
+    def test_max_trials_is_validated_like_every_other_field(self) -> None:
+        """A documented field used to reach the scorer unchecked.
 
-        `max_trials` lands in `space_size / max_trials` and `agent_type` in a
-        dict lookup, so the three bad shapes below produced three different
-        behaviours: a raw TypeError traceback, a raw unhashable-type traceback,
-        and a silent exit 0 with coverage unmeasured. None of them was the
-        refusal `ConfigSpaceInputError` documents.
+        `max_trials` lands in `space_size / max_trials`, so the bad shapes
+        below produced a raw TypeError traceback rather than the refusal
+        `ConfigSpaceInputError` documents.
+
+        `agent_type` was guarded here for the same reason - it landed in a
+        `HIGH_IMPACT_KNOBS[...]` lookup, where a list raised unhashable-type
+        and a non-string scored coverage as unmeasured on a silent exit 0. The
+        field is gone, so every one of those values is now an unknown key and
+        ignored whole, which is this document's stated behaviour for unknown
+        keys. `test_declaring_agent_type_changes_nothing_the_run_emits` covers
+        that a document still carrying one is accepted and scores identically.
         """
         for document in (
             {"knobs": {"a": [1, 2]}, "max_trials": "12"},
@@ -1663,28 +1664,94 @@ class AgentScoringTests(unittest.TestCase):
             {"knobs": {"a": [1, 2]}, "max_trials": 1.5},
             # bool is an int in Python; True is not a trial budget
             {"knobs": {"a": [1, 2]}, "max_trials": True},
-            {"knobs": {"a": [1, 2]}, "agent_type": ["general"]},
-            {"knobs": {"a": [1, 2]}, "agent_type": 7},
         ):
             with self.subTest(document=document):
                 with self.assertRaises(MODULE.ConfigSpaceInputError):
                     MODULE.agent_facts_from_config_space(document)
 
-    def test_absent_and_unrecognized_optional_fields_still_score(self) -> None:
+    def _report_for(self, document: dict) -> str:
+        """The complete JSON report the CLI prints for one config-space document."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config-space.json"
+            path.write_text(json.dumps(document))
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = MODULE.main(["--config-space", str(path), "--json"])
+        self.assertEqual(exit_code, 0, stdout.getvalue())
+        return stdout.getvalue()
+
+    def test_declaring_agent_type_changes_nothing_the_run_emits(self) -> None:
+        """A document that declares `agent_type` scores as if it had not.
+
+        This is the evidence for removing the field, and it is deliberately
+        written over the *whole* emitted report rather than over the agent
+        pillar. A field that is read but never reaches any output is inert by
+        definition, so byte-identity of the full JSON across every accepted
+        value - and against a document that omits the key entirely - is a
+        stronger statement than "the pillar score matches": it says nothing in
+        the scorer reads it in any way a caller can observe.
+
+        `agent_type` used to select `HIGH_IMPACT_KNOBS[...]` for the `coverage`
+        sub-score, and `rag` names `retrieval_k` where `general` and `code_gen`
+        do not - so these three answers moved the score apart by design until
+        `coverage` was removed. That makes them the probe rather than an
+        arbitrary sample.
+
+        This test was written to outlive the field, on the assumption that once
+        the declaration was gone "a customer document written against the old
+        schema still parses and still scores identically, because unknown keys
+        are ignored whole".
+
+        *** OWNER DECISION - that assumption is false in this tree. ***
+
+        #185 forked before #190 and never saw it. #190 REFUSES a key the
+        declaration does not name, deliberately: "a key this schema does not
+        name is a misspelling of one it does, and reading the document without
+        it scores a claim the document never made". So removing `agent_type`
+        from `CONFIG_SPACE_FIELDS` does not make old documents inert - it makes
+        them exit 2, and `agent_type` is a key THIS GUIDE'S OWN PRODUCER used
+        to emit.
+
+        Resolved toward #190, because it is merged, fail-closed, and the same
+        reading the owner already settled for #161 over #165. What is asserted
+        below is therefore the behaviour this tree actually has. The decision
+        the owner still owns is whether that break is acceptable, or whether
+        `agent_type` should be kept in the declaration as an accepted-and-
+        ignored retired field - a third option neither branch wrote, which
+        would preserve #190's typo detection AND #185's compatibility claim.
+        """
+        space = {
+            "knobs": {
+                "model": ["a", "b", "c"],
+                "retrieval_k": [1, 5],
+                "prompt_style": ["direct", "structured"],
+            },
+            "max_trials": 12,
+            "wired": ["model", "retrieval_k", "prompt_style"],
+        }
+        baseline = self._report_for(space)
+        self.assertNotIn("agent_type", baseline)
+
+        # The field reaches no output because it is no longer readable at all.
+        for value in ("general", "rag", "code_gen", "", "a-type-no-catalog-has"):
+            with self.subTest(agent_type=value):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        {**space, "agent_type": value}
+                    )
+                self.assertIn("'agent_type'", str(raised.exception))
+
+    def test_an_absent_optional_field_still_scores(self) -> None:
         """Validation must refuse bad *shapes*, not narrow the documented set.
 
-        An absent `max_trials`/`agent_type` and an unrecognized agent type are
-        documented as scoreable - the latter leaves coverage unmeasured rather
-        than refusing - so the guards above must not swallow them.
+        An absent `max_trials` is documented as scoreable, so the guard above
+        must not swallow it.
         """
         absent = MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}})
         self.assertIsNone(absent.max_trials)
-        self.assertIsNone(absent.agent_type)
-        unrecognized = MODULE.agent_facts_from_config_space(
-            {"knobs": {"a": [1, 2]}, "agent_type": "summarizer"}
-        )
-        pillar, _, _ = MODULE.score_agent(unrecognized)
-        self.assertEqual(unrecognized.agent_type, "summarizer")
+        pillar, _, _ = MODULE.score_agent(absent)
+        # The document attests no `wired` knobs, so the pillar fails closed -
+        # which is a statement about `wired`, not about the absent budget.
         self.assertLess(pillar.confidence, 1.0)
 
     def test_malformed_knob_and_bounds_entries_are_refused_not_dropped(self) -> None:
@@ -1736,7 +1803,6 @@ class AgentScoringTests(unittest.TestCase):
         replaced, so a numeric string stays legal while `"x"` does not.
         """
         document = {
-            "agent_type": "rag",
             "knobs": {"retrieval_k": [1, 5]},
             "wired": ["retrieval_k"],
             "bounds": {"retrieval_k": {"low": "1", "high": "5"}},
@@ -1778,7 +1844,7 @@ class AgentScoringTests(unittest.TestCase):
             {"knobs": {"a": [1, 2]}, "configuration_space": []},
             # a document that names neither key says nothing about the space
             {},
-            {"agent_type": "general", "max_trials": 12},
+            {"max_trials": 12},
         ):
             with self.subTest(document=document):
                 with self.assertRaises(MODULE.ConfigSpaceInputError):
@@ -1895,7 +1961,6 @@ class AgentScoringTests(unittest.TestCase):
         def agent_score(knobs):
             facts = MODULE.agent_facts_from_config_space(
                 {
-                    "agent_type": "general",
                     "max_trials": 12,
                     "knobs": knobs,
                     "wired": list(knobs),
@@ -2029,7 +2094,6 @@ class AgentScoringTests(unittest.TestCase):
         exists to stop, arriving through a value the type check admits.
         """
         sweeping = {
-            "agent_type": "general",
             "knobs": {"widget": [1, 50]},
             "wired": ["widget"],
         }
@@ -2291,7 +2355,6 @@ class AgentScoringTests(unittest.TestCase):
 
         # And no sub-score is left that a catalog omission could dock.
         pillar = self._agent_pillar(
-            agent_type="general",
             knobs={
                 "model": ["a", "b"],
                 "temperature": [0.0, 0.6],
@@ -2435,7 +2498,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         sample = {
             "knobs": {"temperature": [0.0, 1.0]},
             "configuration_space": {"temperature": [0.0, 1.0]},
-            "agent_type": "general",
             "max_trials": 3,
             "wired": ["temperature"],
             "bounds": {"temperature": {"low": 0.0, "high": 1.0}},
@@ -2536,7 +2598,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                 with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
                     MODULE.agent_facts_from_config_space(
                         {
-                            "agent_type": "general",
                             "knobs": {"temperature": values},
                             "wired": ["temperature"],
                         }
@@ -2552,7 +2613,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         """
         with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
             MODULE.agent_facts_from_config_space(
-                {"agent_type": "general", "knobs": {"model": []}, "wired": ["model"]}
+                {"knobs": {"model": []}, "wired": ["model"]}
             )
         self.assertIn("knobs['model']", str(raised.exception))
         # an empty *space* still means the document lists no settings and still scores
@@ -2567,7 +2628,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         apart read as a full sweep of a range that admits one value.
         """
         sweeping = {
-            "agent_type": "general",
             "knobs": {"widget": [1, 50]},
             "wired": ["widget"],
         }
@@ -2616,7 +2676,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                 with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
                     MODULE.agent_facts_from_config_space(
                         {
-                            "agent_type": "general",
                             "knobs": knobs,
                             "wired": ["k"],
                             "bounds": {"k": edges},
@@ -2626,7 +2685,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
 
         # a narrow range that is still measurable is not refused: the guard is
         # on the width the scorer can use, not on ranges being small
-        sweeping = {"agent_type": "general", "knobs": {"k": [1, 50]}, "wired": ["k"]}
+        sweeping = {"knobs": {"k": [1, 50]}, "wired": ["k"]}
         for edges in ({"low": 1, "high": 50}, {"low": 0.0, "high": 1e-300}):
             with self.subTest(edges=edges):
                 facts = MODULE.agent_facts_from_config_space(
@@ -2651,7 +2710,6 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         `space_size / max_trials` had the same defect from the other side.
         """
         document = {
-            "agent_type": "general",
             "knobs": {"widget": [1, 50]},
             "wired": ["widget"],
         }
@@ -2671,6 +2729,21 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         )
         pillar, _, _ = MODULE.score_agent(crowded)
         self.assertGreater(pillar.score, 0)
+
+    def test_two_spellings_with_different_values_are_refused(self) -> None:
+        """One dimension cannot have two answers, and picking one silently is
+        exactly the narrowing every other guard here exists to stop."""
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": {
+                        "prompt_style": ["direct", "structured"],
+                        "prompt_policy": ["direct", "criteria_first"],
+                    }
+                }
+            )
+        self.assertIn("prompt_policy", str(raised.exception))
+        self.assertIn("prompt_style", str(raised.exception))
 
     def test_the_combination_count_uses_the_same_values_the_card_counts(
         self,
@@ -4609,65 +4682,6 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
         self.assertTrue(declared.measured, "a declared zero is a measurement")
         self.assertEqual(declared.value, 0.0)
 
-    def test_an_agent_type_this_tool_has_no_catalog_for_costs_nothing(self) -> None:
-        """The false-red direction, after the sub-score that carried it went.
-
-        This asserted that an unrecognized `agent_type` left COVERAGE
-        unmeasured-but-not-withheld, and that the pillar renormalized rather
-        than charging the user for a catalog this tool does not have. #182
-        deletes the coverage sub-score, so the vehicle is gone - but the
-        guarantee it carried is the one thing about `agent_type` that still
-        has to hold while the field exists at all: a bespoke value must score
-        exactly like a recognized one, because nothing reads it any more.
-
-        The renormalization mechanism itself is unaffected and still tested,
-        by `test_unmeasured_subscores_renormalize_and_lower_confidence` and by
-        the pillars that still set `withheld`. What is checked here is that
-        `agent_type` reaches no number - which is precisely the fact #185 acts
-        on when it removes the field, so this fails loudly if #185 lands
-        without the field having gone dead first.
-        """
-        pillar, _caps, _knobs = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space(
-                {
-                    "agent_type": "bespoke-thing",
-                    "knobs": {
-                        "temperature": [0.0, 0.5, 1.0],
-                        # `prompt_style`, not `prompt_policy`: #191 made the
-                        # latter a refused synonym, and this test only needs a
-                        # second knob, so it takes the canonical spelling.
-                        "prompt_style": ["direct", "structured", "criteria_first"],
-                    },
-                    "wired": ["temperature", "prompt_style"],
-                    "max_trials": 12,
-                }
-            )
-        )
-        self.assertNotIn(
-            "coverage",
-            [sub.name for sub in pillar.subscores],
-            "#182 removed this sub-score; a test still reading it is reading a "
-            "number nothing produces",
-        )
-        self.assertGreater(pillar.score, 0)
-
-        # The same document with a recognized type scores identically, which is
-        # what "reaches no number" means operationally.
-        recognized, _caps, _knobs = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space(
-                {
-                    "agent_type": "general",
-                    "knobs": {
-                        "temperature": [0.0, 0.5, 1.0],
-                        "prompt_style": ["direct", "structured", "criteria_first"],
-                    },
-                    "wired": ["temperature", "prompt_style"],
-                    "max_trials": 12,
-                }
-            )
-        )
-        self.assertEqual(pillar.score, recognized.score)
-        self.assertEqual(pillar.confidence, recognized.confidence)
 
 
 class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):
@@ -5183,7 +5197,6 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
     def _agent(self, knobs, wired, max_trials):
         pillar, _, _ = MODULE.score_agent(
             MODULE.AgentFacts(
-                agent_type="general",
                 knobs=knobs,
                 wired=wired,
                 max_trials=max_trials,

@@ -304,7 +304,9 @@ MODEL_BREADTH_FULL = 3
 #
 # A third sub-score, `coverage`, scored `1.0 - missing/len(HIGH_IMPACT_KNOBS[
 # agent_type])` out of 25 and is gone. Two things were wrong with it and only
-# the first was noticed at the time.
+# the first was noticed at the time. The `agent_type` document field went with
+# it: selecting that catalog was the only thing it ever did, so once coverage
+# was removed the field was read by nothing and is no longer declared.
 #
 # It restated `knob-count`. The line beside it already reads "4 of 4 wired
 # knobs actually vary", so a pillar carrying both charged twice for one fact.
@@ -382,6 +384,17 @@ DEFAULT_NOISE_FRACTION = 0.02
 FULL_SPAN_FRACTION = 0.6
 ENDPOINT_TOLERANCE_FRACTION = 0.05
 
+# Which knobs are worth searching, by kind of agent. Nothing in this scorer
+# selects among these keys any more: `coverage` was the only sub-score that
+# read one, and the `agent_type` field that chose it went with it. The catalog
+# stays because it is not a scoring input - it is the list the enhanced run
+# picks the customer's knobs from, and a human or an assistant reading this
+# file chooses the row. That is also why the keys are kept as three separate
+# rows rather than flattened into one list: a RAG agent and a code-generation
+# agent genuinely want different levers, and the distinction is still true
+# even though no code branches on it. Anything reintroducing a *scoring* use
+# of these keys needs a document field to select one, which no longer exists.
+#
 # `max_tokens` is deliberately absent from every catalog in this file: the
 # high-impact catalogs below, and `CANONICAL_RANGES`, `OPEN_CATEGORICAL_KNOBS`,
 # `NOISE_FLOORS` and `KNOB_SYNONYMS` above. Those catalogs are the
@@ -408,17 +421,12 @@ ENDPOINT_TOLERANCE_FRACTION = 0.05
 # model can exceed, so the truncation would be introduced BY this guide, between
 # two runs, on a configuration the customer never chose.
 #
-# NO LONGER A SCORING INPUT as of #182. `coverage` was the only reader, so
-# nothing consults these catalogs now and the `agent_type` field that selected a
-# row reaches no number - #185 removes the field, and #182 must not land without
-# it or the schema documents a field that changes nothing. The catalogs
-# themselves stay, as the list a human or an assistant picks the enhanced run's
-# knobs from; #185 records that decision where it lands.
-#
-# The `max_tokens` exclusion above is a rule with an enforcer again: #168 landed
-# first here, so the `CANONICAL_RANGES` entry that still earned it credit
-# through `knob_variation` is gone and the knob is refused outright rather than
-# merely left out of a table no code reads.
+# The `max_tokens` exclusion above is a rule with an enforcer, not merely a note
+# about a table nothing reads: #168 landed here first, so the `CANONICAL_RANGES`
+# entry that still earned the knob credit through `knob_variation` is gone and
+# the knob is refused outright. #182 removed the `coverage` sub-score that used
+# to read the catalog above, and #185 removed the `agent_type` field that chose
+# a row in it - both are in this tree, so nothing selects among these rows now.
 HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "rag": ("model", "retrieval_k", "temperature", "context_format", "prompt_style"),
     "code_gen": ("model", "temperature", "fewshot_k", "schema_context"),
@@ -1427,7 +1435,6 @@ class EvaluationFacts:
 
 @dataclass(frozen=True)
 class AgentFacts:
-    agent_type: str | None = None
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
     # None means the document never named the knobs the agent consumes, so
@@ -4807,28 +4814,6 @@ def _read_trial_budget(field: str, value: Any) -> int:
     )
 
 
-def _read_agent_type(field: str, value: Any) -> str:
-    """`agent_type`: read, type-checked, and scored against nothing.
-
-    It selected the high-impact catalog `coverage` graded against. That
-    sub-score is gone as of this branch, so no number on the card moves with
-    this field, no gap line mentions it, and an unrecognized value is now
-    indistinguishable from a recognized one. It is parsed only so that a
-    document declaring it is not rejected.
-
-    That makes the field dead, and #185 deletes it. This branch must not land
-    alone: on its own it leaves a field the schema still documents, a
-    `HIGH_IMPACT_KNOBS` catalog no scoring code selects from, and a type error raised
-    on the way to nowhere.
-    """
-    if not isinstance(value, str):
-        raise ConfigSpaceInputError(
-            f"config-space '{field}' must be a string naming the agent type "
-            f"('general', 'rag', or 'code_gen'), not {value!r}"
-        )
-    return value
-
-
 @dataclass(frozen=True)
 class ConfigSpaceField:
     """One field of the config-space document, and how it is read.
@@ -4856,12 +4841,6 @@ CONFIG_SPACE_FIELDS: tuple[ConfigSpaceField, ...] = (
         "same shape",
         "accepted alias",
         _read_knob_space,
-    ),
-    ConfigSpaceField(
-        "agent_type",
-        '`"general"`, `"rag"`, or `"code_gen"`',
-        "no",
-        _read_agent_type,
     ),
     ConfigSpaceField(
         "max_trials",
@@ -5097,7 +5076,6 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # never declared for it. The template's own fence asserts this before it
     # searches; enforce it here too, because the document is read long after.
     facts = AgentFacts(
-        agent_type=read.get("agent_type"),
         max_trials=read.get("max_trials"),
         knobs=knobs,
         wired=wired,

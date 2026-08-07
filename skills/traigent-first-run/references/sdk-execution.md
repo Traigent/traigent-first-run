@@ -435,14 +435,11 @@ ENHANCED_SPACE = {
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
     "reflect": [False, True],
 }
-# Readiness evidence for `scripts/readiness.py --config-space`. AGENT_TYPE names
-# the high-impact catalog this walkthrough drew its knobs from; it is recorded
-# on the score and changes no number, because the sub-score that once graded a
-# space against that catalog was removed. WIRED_KNOBS names only the dimensions
-# call_agent below actually consumes - a knob listed here that the agent ignores
-# is a false claim about the search space. The scorer cannot check that claim,
-# so the assert under `demonstrably_wired` below checks it here at load time.
-AGENT_TYPE = "general"
+# Readiness evidence for `scripts/readiness.py --config-space`. WIRED_KNOBS
+# names only the dimensions call_agent below actually consumes - a knob listed
+# here that the agent ignores is a false claim about the search space. The
+# scorer cannot check that claim, so the assert under `demonstrably_wired`
+# below checks it here at load time.
 WIRED_KNOBS = [
     "model",
     "temperature",
@@ -470,7 +467,6 @@ def configuration_count(space: dict[str, list]) -> int:
 def config_space_document(space: dict[str, list]) -> dict:
     """Serialize the finalized search space as readiness config-space evidence."""
     return {
-        "agent_type": AGENT_TYPE,
         "max_trials": ENHANCED_MAX_TRIALS,
         "knobs": {name: list(values) for name, values in space.items()},
         "wired": list(WIRED_KNOBS),
