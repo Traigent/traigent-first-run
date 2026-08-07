@@ -2019,9 +2019,10 @@ def provenance_evidence(
         # the customer actually reads, kept the sentence. Say what is true of
         # both rows that reach here: no field at all, and a non-answer in one.
         mixture += (
-            " (undeclared means the row records no source this run can read - "
-            "either none at all, or a word its vocabulary does not know - so "
-            "this run scores it as generated)"
+            " (undeclared means the row names no real source this run can "
+            "read - no provenance field at all, a non-answer such as n/a, or "
+            "a word its vocabulary does not know - so this run scores it as "
+            "generated)"
         )
     if facts.generated_answer_rows:
         if not uses_expected_outputs:

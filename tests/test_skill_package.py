@@ -6332,6 +6332,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "treat it as invalid; repair a working copy from the",
                 "none of its rows could be read",
             ),
+        ),
+        (
             # The reject list said the helper rejects a swallowed exception;
             # twenty lines below, the advisory paragraph says it never changes
             # PASS - and the helper agrees with the second: a scorer with

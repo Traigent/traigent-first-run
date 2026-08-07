@@ -224,9 +224,11 @@ The lines under each pillar on the card
                                  any improvement the run reports could sit
                                  inside the evaluator's own noise. They come
                                  from calibration, later in the run.
-    undeclared row             - a row that records no source this run can read:
-                                 either none at all, or a word its vocabulary
-                                 does not know. Scored as a generated row,
+    undeclared row             - a row that names no real source this run can
+                                 read: no provenance field at all, a non-answer
+                                 such as `n/a` that the card still prints as the
+                                 source it read, or a word its vocabulary does
+                                 not know. Scored as a generated row,
                                  because a source nothing can verify cannot be
                                  read as a claim that the row is real. The card
                                  always says so on the "where the rows came

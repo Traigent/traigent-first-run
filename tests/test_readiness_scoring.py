@@ -1374,59 +1374,17 @@ class AgentScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], [])
         self.assertEqual(pillar.score, 76)
 
-    def test_the_two_spellings_refusal_names_both_written_spellings(self) -> None:
-        """It named one spelling twice whenever the alias came first.
-
-        The message reported `canonical` for the knob already held and the
-        written name for the second, so a document declaring `prompt_policy`
-        before `prompt_style` produced "declares both 'prompt_style' and
-        'prompt_style'" - which names no second thing to remove. It also
-        contradicted this module's own rule at `_reject_phantom_names`: judge
-        the canonical name, report the written one.
-
-        BOTH refusals, because there were two loops and only one of them was
-        fixed. The `bounds` loop fifteen lines below reported `canonical` for
-        the entry already held and produced the identical doubled message on
-        the identical input - the defect survived its own repair by being
-        written twice. They are one function now, so the next collapse cannot
-        inherit it a third time.
-        """
-        values = {"prompt_policy": ["a", "b"], "prompt_style": ["c", "d", "e"]}
-        ranges = {
-            "prompt_policy": {"low": 0.0, "high": 1.0},
-            "prompt_style": {"low": 0.0, "high": 2.0},
-        }
-        for order, expected in (
-            (["prompt_policy", "prompt_style"], ("'prompt_policy'", "'prompt_style'")),
-            (["prompt_style", "prompt_policy"], ("'prompt_style'", "'prompt_policy'")),
-        ):
-            document = {
-                "knobs": {name: values[name] for name in order},
-                "wired": [order[0]],
-            }
-            with self.subTest(order=order, collapsing="knobs"):
-                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-                    MODULE.agent_facts_from_config_space(document)
-                message = str(raised.exception)
-                self.assertIn(f"declares both {expected[0]} and {expected[1]}", message)
-
-            # The bounds half, driven through `canonical_alias_names` directly.
-            # Routing it through the document reader would collapse the two
-            # spellings in `knobs` first and settle the bounds order with them,
-            # so only one of the two orders would ever reach this loop - and the
-            # one that did not is where the doubled name lived.
-            facts = MODULE.AgentFacts(
-                knobs={name: ["a", "b"] for name in order},
-                wired=(order[0],),
-                bounds={name: ranges[name] for name in order},
-                config_space_supplied=True,
-            )
-            with self.subTest(order=order, collapsing="bounds"):
-                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
-                    MODULE.canonical_alias_names(facts)
-                message = str(raised.exception)
-                self.assertIn(f"declares both {expected[0]} and {expected[1]}", message)
-                self.assertIn("with different ranges", message)
+    # REMOVED ON THE MERGE, not lost. #157 added
+    # `test_the_two_spellings_refusal_names_both_written_spellings` to pin the
+    # message produced when two alias spellings of one knob are COLLAPSED onto
+    # one dimension. #191 deleted that collapsing outright: a document that
+    # declares a synonym is now refused (exit 2) rather than quietly merged, so
+    # `canonical_alias_names` and `_collapse_alias_spellings` no longer exist
+    # and there is no collapse left to name both spellings of. The concern -
+    # that the refusal names the spelling the author actually wrote - is
+    # covered by #191's own tests above, which assert `'prompt_policy'` and
+    # `(did you mean 'prompt_style'?)` in the refusal. Nothing here is a
+    # relaxation; the behaviour under test was removed on purpose.
 
     def test_config_space_adapter_reads_both_spellings(self) -> None:
         aliased = MODULE.agent_facts_from_config_space(

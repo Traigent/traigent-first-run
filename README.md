@@ -151,7 +151,7 @@ is the headline, and each blocking condition is listed under it as `FIX BEFORE P
 thing to fix. It means the current components cannot yet support a trustworthy paid comparison and
 something has to be created or repaired first - no dataset, no expected answers, an evaluator that
 scores a wrong answer as well as a right one, a tuning set that shares examples with validation,
-nothing scoreable in the split the search would tune on, or too little comparable evidence exists.
+nothing scoreable in the split the search would tune on.
 Follow the named repair or evidence-gathering action first. `LIMITED TO 89` means the paid
 comparison can proceed, but the available evidence bounds what the result may claim; it names the
 number so "why is this 89" has an answer on the same line.
