@@ -560,7 +560,7 @@ unavailable, fall back to the IDE or editor already associated with the selected
 and if headless, print the full path and stop. Open it only so the user can add
 `TRAIGENT_API_KEY=` for the enhanced run. Then refresh/reopen that same file so the new line is
 visible, and follow
-`references/run-safety.md` for the clickable registration link and the two 10-day windows.
+`references/run-safety.md` for which address each account state gets, and the two 10-day windows.
 
 Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
 and follow `references/sdk-execution.md` for its capability-gated exact-session sync. Without a
