@@ -485,7 +485,7 @@ Use two short, contextual approvals; do not ask the user to design budgets, retr
 Before the provider-paid baseline, show only its immediate scope:
 
 - Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
-  preserved baseline or generated six-row sweep, tuning rows and limitations, configurations,
+  preserved baseline or generated twelve-row sweep, tuning rows and limitations, configurations,
   calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
   `$5.00`. For untracked cost, call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
