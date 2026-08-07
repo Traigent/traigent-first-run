@@ -1,5 +1,5 @@
 {
-  "digest": "55f8fc982473a2bee3143545d2b0a15e9a50c92bf305b40115a45442fb227f4b",
+  "digest": "558e841b7dc0d86b7fca0265381c3ed9be7525a5d2a8e2001986c8ab2ab63965",
   "paths": [
     {"path": "GUIDE.md", "sha256": "5165c51ca9e8332054f0b9565859d5a1652acc71e6cab6e50b2b4150ed7d0361", "size": 8825},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "b60b1bf2588f57c8d8149c77826f9bfb021499733b7ac4beddbdc4df9f894d5b", "size": 53784},
@@ -8,12 +8,12 @@
     {"path": "skills/traigent-first-run/assets/run-plan.md", "sha256": "5b71e484bebdf64a87fbdf1c1d10958647d9a2c55e04cc681df8162f503e8c7c", "size": 2608},
     {"path": "skills/traigent-first-run/references/component-creation.md", "sha256": "4ac8b3132b057e98eda04fbf70e5e1310d6432fcdada2e318a54d6e631fefac5", "size": 7035},
     {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "b206d43d4ca3005df8ba5d28af7108e9f8561547662ee67d1e2d5101e66ff7a9", "size": 38936},
-    {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "6e22c5c7fd633b970b8e48f92fc7b0ebbc3d93dade596ade31ea17513afdd3c7", "size": 20837},
+    {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "3ee86ed207d3f694d1569bacdca23db0e64d432247b498ba8d0cf883e490fabf", "size": 21064},
     {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "9416b27b1b7b6297849338586836bcb16fe21711d76644d898490834d246fa46", "size": 62798},
     {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "00be447d71d7ef70ac87b2462b45a888d45688cdd3dbba16a78cb5f6d2baa0ef", "size": 49795},
     {"path": "skills/traigent-first-run/scripts/calibrate_evaluator.py", "sha256": "4a7f95b2d17fc27074161563962a3653dbcf3a731505e276949b7c63bdb37383", "size": 62163},
     {"path": "skills/traigent-first-run/scripts/preflight.py", "sha256": "b3cbffd59403e91ea12cd5913182e5b4d732b5f781c49d634aa7ae192603416e", "size": 72272},
-    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "30a74f60b9f2608e61732c7940a19159e150d71f92be62b9a5d3d821044ace73", "size": 234448}
+    {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "a257fa794dbbd77604f167b3feee4af9f8bc8b605ac2bd3a10ee6cd748c6c4d4", "size": 238549}
   ],
   "schema_version": 1
 }
