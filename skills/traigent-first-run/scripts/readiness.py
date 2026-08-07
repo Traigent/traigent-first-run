@@ -1823,8 +1823,15 @@ def configuration_budget(max_trials: int | None, repeats: int) -> int | None:
 
     `None` when no budget was declared, which is a different statement from a
     budget of zero: nothing bounds the space rather than nothing being tried.
+    That distinction is the whole contract of this return type, and `if not
+    max_trials` collapsed it - a declared `0` left here as `None` and was
+    scored, and described in the evidence line, as "no trial budget was
+    declared". `_read_trial_budget` refuses a zero from a config-space
+    document, so nothing reached this through the supported path; the test
+    below pins it anyway, because `AgentFacts` is constructed directly by
+    `build_plan` and by callers that never pass through that reader.
     """
-    if not max_trials:
+    if max_trials is None:
         return None
     return max_trials // max(repeats, 1)
 
@@ -1842,9 +1849,29 @@ def search_space_points(configurations: int, budget: int | None) -> float:
     grading knob choices.
 
     So the credit is read off `min(configurations, budget)` - what the run will
-    actually compare - and then damped when the declared space dwarfs it. With
-    no budget declared there is nothing to be too large for, and the size
-    stands on its own.
+    actually compare - and then damped when the declared space dwarfs it.
+
+    An UNDECLARED budget is damped too, and that is the part an earlier draft
+    got backwards. "With no budget there is nothing to be too large for" reads
+    as reasoning about the space; it is actually reasoning about the document.
+    Nothing in a document that omits `max_trials` establishes that the run will
+    compare the whole space - the top rung is a claim that it will - and
+    scoring the silence as though it were `max_trials = infinity` made deleting
+    a line worth more than writing one.
+
+    Measured on this scorer, one identical 10 000-configuration space:
+    `max_trials: 12` scored this pillar 70 and omitting the field scored it
+    100, which carried the whole card from 88 STRONG to 96 EXCELLENT. The
+    guide's own producer always emits `max_trials` (`BASELINE_TRIALS` and
+    `ENHANCED_MAX_TRIALS` in references/sdk-execution.md), so the only document
+    the old rule rewarded was one that had dropped the field - and both of this
+    guide's own spaces still score 100, because both declare it.
+
+    So an absent budget is capped where an oversized one is: one step below
+    complete. Declaring a budget can still score lower than omitting one - a
+    declared `max_trials: 1` scores 0 - and that is not the same defect. "This
+    run compares one configuration" is a real and bad measurement; silence is
+    not a measurement of anything, and is scored as neither.
     """
     # One branch, not two. A space of one configuration and a budget of one
     # trial are the same finding - the run compares nothing - so an early
@@ -1858,12 +1885,72 @@ def search_space_points(configurations: int, budget: int | None) -> float:
         share = SEARCH_SPACE_PARTIAL
     else:
         share = 1.0
+    # Two reasons to refuse the top rung, and neither of them is "the space is
+    # small". Written as one `if/elif` on the same `share` so a future edit
+    # cannot restore the top rung down one path and not the other.
+    if budget is None:
+        share = min(share, SEARCH_SPACE_PARTIAL)
     # Compared as integers rather than through `configurations / budget`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
-    if budget and configurations > OVERSIZED_SPACE_FACTOR * budget:
+    elif configurations > OVERSIZED_SPACE_FACTOR * budget:
         share = min(share, SEARCH_SPACE_PARTIAL)
     return round(SEARCH_SPACE_WEIGHT * share, 2)
+
+
+def search_space_shortfall(configurations: int, budget: int | None) -> str:
+    """Name the step this run sits under, because the ladder is a step function.
+
+    `search_space_points` takes four values and no others - measured across
+    seventeen space sizes against a declared budget, only 0, 35, 70 and 100
+    were ever produced. That shape is deliberate and stays: every threshold in
+    it is a number this guide already uses (2 to compare anything at all, 4 for
+    the smallest space two settings can interact in, `SEARCH_SPACE_FULL` for
+    the baseline sweep), and replacing them with a smooth curve would invent a
+    scale, which is the exact mistake the retired `variation` sub-score made.
+
+    What does NOT stay is the cliff being silent. A step function means one
+    extra value in one knob can be worth a band - measured: 11 compared
+    configurations score this pillar 70 and the card 88 STRONG, 12 score it 100
+    and the card 96 EXCELLENT - while the sentence beside the number moves by
+    one digit and never mentions that a boundary was crossed. So the rung is
+    named here, with the distance to the next one, which is the only form of
+    this fact a reader can act on.
+
+    Returns a clause to append, or an empty string at the top rung, where there
+    is no next step to name.
+    """
+    reachable = min(configurations, budget) if budget is not None else configurations
+    if reachable < 2:
+        # `configurations <= 1` is already spelled out by the caller; this is
+        # the other way to reach it - a budget too small to compare anything.
+        return "" if configurations <= 1 else "; a budget this small compares nothing"
+    if reachable < SEARCH_SPACE_INTERACTION:
+        needed = SEARCH_SPACE_INTERACTION - reachable
+        return (
+            f"; {needed} more would reach the {SEARCH_SPACE_INTERACTION} this "
+            "guide scores as room for two settings to interact"
+        )
+    if reachable < SEARCH_SPACE_FULL:
+        needed = SEARCH_SPACE_FULL - reachable
+        return (
+            f"; {needed} more would reach the {SEARCH_SPACE_FULL} this guide "
+            "scores as a complete search"
+        )
+    # At or past the top rung by size, so anything below full credit now comes
+    # from the budget rather than from the space - say which, because the two
+    # have different repairs and the score alone distinguishes neither.
+    if budget is None:
+        return (
+            "; declaring `max_trials` is what lets this reach full credit - "
+            "undeclared, it is held one step below"
+        )
+    if configurations > OVERSIZED_SPACE_FACTOR * budget:
+        return (
+            f"; the space is over {OVERSIZED_SPACE_FACTOR}x what that budget "
+            "reaches, which holds this one step below full credit"
+        )
+    return ""
 
 
 def search_space_evidence(
@@ -1871,10 +1958,11 @@ def search_space_evidence(
 ) -> str:
     """One sentence a person can act on, which a bare number is not.
 
-    Names the space and then what this run will do with it, because the second
-    is the one the reader can change cheaply - a budget is an argument, a space
-    is a rewrite. The collapse is named whenever it happened, or the sentence
-    contradicts a document the reader can count for themselves.
+    Names the space, then what this run will do with it, then which step of the
+    ladder that lands on - because the first is a rewrite, the second is an
+    argument, and the third is the one the score actually moves on. The
+    collapse is named whenever it happened, or the sentence contradicts a
+    document the reader can count for themselves.
     """
     unit = "configuration" if configurations == 1 else "configurations"
     line = f"your space has {configurations} distinct {unit}"
@@ -1885,10 +1973,15 @@ def search_space_evidence(
     elif budget is not None:
         line += f"; this run will try up to {min(configurations, budget)} of them"
     else:
-        line += "; no trial budget was declared, so the run may try all of them"
+        # Not "the run may try all of them". Nothing here establishes that, and
+        # it was the sentence that made the old top-rung score sound earned.
+        line += (
+            "; no trial budget was declared, so nothing here says how much of "
+            "it this run compares"
+        )
     if repeats > 1:
         line += f", each repeated {repeats} times over 'seed'"
-    return line
+    return line + search_space_shortfall(configurations, budget)
 
 
 NOTHING_WIRED_CAP = Cap(

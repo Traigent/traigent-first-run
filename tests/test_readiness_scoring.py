@@ -1315,11 +1315,62 @@ class AgentScoringTests(unittest.TestCase):
         self.assertLess(
             MODULE.search_space_points(5000, 12), MODULE.search_space_points(16, 12)
         )
-        # And the damping needs a declared budget. With none, nothing says the
-        # space is too large for anything - which is why run-safety.md tells
-        # authors that omitting `max_trials` is not free.
-        self.assertEqual(
-            MODULE.search_space_points(5000, None), MODULE.SEARCH_SPACE_WEIGHT
+
+    def test_omitting_the_budget_never_scores_above_declaring_one(self) -> None:
+        """An absent field must not outscore a present one.
+
+        This assertion used to run the other way - `search_space_points(5000,
+        None)` was pinned EQUAL to full credit, on the reasoning that with no
+        budget declared nothing says the space is too large for anything. That
+        reasoning is about the document, not about the space: nothing in a
+        document that omits `max_trials` says the run will compare the whole
+        space either, and the top rung is a claim that it will.
+
+        Measured on the assessment, not just the sub-score: one identical
+        10 000-configuration space scored the card 88 STRONG with `max_trials:
+        12` and 96 EXCELLENT with the field deleted. Deleting a line bought a
+        band, and it penalised this guide's own producer, which always emits
+        `max_trials`.
+
+        Swept rather than spot-checked, because the defect was a single `if
+        budget` guard and a spot check at one size is what let it through.
+        """
+        for configurations in (2, 4, 11, 12, 13, 48, 200, 5000, 10_000):
+            omitted = MODULE.search_space_points(configurations, None)
+            for budget in (1, 2, 12, 48, 500, 10_000):
+                declared = MODULE.search_space_points(configurations, budget)
+                if declared >= omitted:
+                    continue
+                # A LOWER declared score is only legitimate when the budget
+                # itself is the bad news - a real measurement of a run that
+                # compares less. Silence is not that measurement.
+                self.assertLess(
+                    min(configurations, budget),
+                    MODULE.SEARCH_SPACE_FULL,
+                    f"{configurations} configurations scored {omitted} with no "
+                    f"budget and {declared} with max_trials={budget}: omitting "
+                    "the field beat declaring a budget that reaches the full "
+                    "rung, so an absent field outscored a present one",
+                )
+
+    def test_a_declared_zero_budget_is_not_an_absent_one(self) -> None:
+        """`if not max_trials` could not tell `0` from "nobody said".
+
+        Both left `configuration_budget` returning `None`, so a document
+        declaring it would try zero configurations was scored - and DESCRIBED,
+        in the evidence line - as one that declared no budget at all.
+
+        `_read_trial_budget` refuses a zero, so no config-space document
+        reaches this; `AgentFacts` is built directly elsewhere, and a guard
+        that only holds because of a check in another function is one edit away
+        from not holding.
+        """
+        self.assertIsNone(MODULE.configuration_budget(None, 1))
+        self.assertEqual(MODULE.configuration_budget(0, 1), 0)
+        self.assertEqual(MODULE.search_space_points(5000, 0), 0.0)
+        self.assertIn(
+            "try up to 0 of them",
+            MODULE.search_space_evidence(5000, 5000, 1, 0),
         )
 
     def _agent_pillar(self, **kwargs) -> object:
@@ -1526,15 +1577,48 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
         self.assertEqual(
             self._shape({f"k{index}": ["a", "b"] for index in range(10)})[1],
             "your space has 1024 distinct configurations; this run will try up "
-            "to 12 of them",
+            "to 12 of them; the space is over 20x what that budget reaches, "
+            "which holds this one step below full credit",
         )
         # No declared budget is its own sentence rather than a silent
-        # unbounded pass, because omitting `max_trials` is not free.
+        # unbounded pass - and it no longer claims "the run may try all of
+        # them", which nothing here establishes and which was the sentence
+        # that made the old full-credit score sound earned.
         self.assertEqual(
             self._shape({"model": ["a", "b"]}, max_trials=None)[1],
             "your space has 2 distinct configurations; no trial budget was "
-            "declared, so the run may try all of them",
+            "declared, so nothing here says how much of it this run compares; "
+            "2 more would reach the 4 this guide scores as room for two "
+            "settings to interact",
         )
+
+    def test_the_step_the_score_sits_on_is_named_not_silent(self) -> None:
+        """The ladder is a step function, so the cliff has to be visible.
+
+        Four values and no others - 0, 35, 70, 100 - which means one extra
+        value in one knob can be worth a band while the sentence beside the
+        number moves by a single digit. Measured: 11 compared configurations
+        score the pillar 70 and the card 88 STRONG; 12 score it 100 and the
+        card 96 EXCELLENT.
+
+        The plateau itself is kept deliberately. Every threshold in it is a
+        number this guide already uses elsewhere, and smoothing it would invent
+        a scale - the exact mistake the retired `variation` sub-score made. So
+        the repair is disclosure: say which step this is and what reaches the
+        next one.
+        """
+        just_under = MODULE.search_space_evidence(11, 11, 1, 48)
+        self.assertIn("1 more would reach the 12", just_under)
+        self.assertIn("complete search", just_under)
+        # And at the top rung there is no next step to name, so nothing is
+        # appended - the clause must not become decoration on every line.
+        self.assertNotIn("would reach", MODULE.search_space_evidence(12, 12, 1, 48))
+        # The two ways to sit below full credit at full SIZE have different
+        # repairs, so they are different sentences.
+        self.assertIn(
+            "declaring `max_trials`", MODULE.search_space_evidence(50, 50, 1, None)
+        )
+        self.assertIn("over 20x", MODULE.search_space_evidence(5000, 5000, 1, 12))
 
 
 class ConfigSpaceSchemaTests(unittest.TestCase):
@@ -2742,7 +2826,8 @@ class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
         self.assertEqual(
             plain.evidence,
             "your space has 4 distinct configurations; this run will try up to "
-            "4 of them",
+            "4 of them; 8 more would reach the 12 this guide scores as a "
+            "complete search",
         )
 
     def test_the_budget_penalty_still_counts_the_trials_seed_really_costs(
