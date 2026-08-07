@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import math
 import re
 import subprocess
 import sys
@@ -54,6 +55,123 @@ def conversation_contract_documents() -> list[Path]:
 
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
+
+# Spelled forms of the counts a search space could plausibly have. The prose
+# writes a size as a word ("twelve-row sweep") as often as a numeral ("12 and
+# 48"), so both spellings of the SAME decision have to resolve to one number
+# before anything can be compared. A size with no entry here raises rather than
+# being skipped: an unrecognised spelling is a gap in this table, not a pass.
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "sixteen": 16,
+    "eighteen": 18,
+    "twenty": 20,
+    "twenty-four": 24,
+    "twenty-seven": 27,
+    "thirty-two": 32,
+    "thirty-six": 36,
+    "forty-eight": 48,
+    "fifty-four": 54,
+    "ninety-six": 96,
+}
+
+
+def _quantity(spelling: str) -> int:
+    """Resolve a numeral or a spelled number to an int, or say why it cannot."""
+    if spelling.isdigit():
+        return int(spelling)
+    resolved = _NUMBER_WORDS.get(spelling.casefold())
+    if resolved is None:
+        raise AssertionError(
+            f"the guidance states a space size as {spelling!r}, which this test "
+            "cannot resolve to a number. Add it to _NUMBER_WORDS - a spelling "
+            "nothing can read is a size nothing is checking."
+        )
+    return resolved
+
+
+def generated_space_sizes() -> dict[str, int]:
+    """The two generated space sizes, derived from `sdk-execution.md` twice.
+
+    The prose may not restate a size the code contradicts, so the size the
+    check compares against has to come from the code and never from a number
+    typed into this file. It is derived two independent ways and the two must
+    agree:
+
+    1. the `assert configuration_count(..._SPACE) == N` lines, which are what
+       fails at load time inside a real run; and
+    2. the product of the space literals themselves, walked from the fence's
+       AST - `ENHANCED_SPACE` reuses several of the baseline's lists by
+       reference, so those are resolved back through `BASELINE_SPACE`.
+
+    Either derivation alone can be edited into agreement with a stale
+    paragraph. Both moving together is a deliberate re-sizing, which is exactly
+    when the documents are supposed to be re-read.
+    """
+    text = SDK_EXECUTION.read_text()
+    asserted = {
+        name: int(value)
+        for name, value in re.findall(
+            r"assert configuration_count\((BASELINE|ENHANCED)_SPACE\) == (\d+)", text
+        )
+    }
+    assert sorted(asserted) == [
+        "BASELINE",
+        "ENHANCED",
+    ], f"the fence must assert both space sizes; it asserts {sorted(asserted)}"
+
+    fence = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+    spaces: dict[str, dict[str, int]] = {}
+    for node in ast.parse(fence).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Dict):
+            continue
+        name = target.id.removesuffix("_SPACE")
+        if f"{name}_SPACE" != target.id:
+            continue
+        widths: dict[str, int] = {}
+        for key, value in zip(node.value.keys, node.value.values):
+            assert isinstance(key, ast.Constant), f"{target.id} has a computed key"
+            if isinstance(value, ast.List):
+                widths[key.value] = len(value.elts)
+            elif (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and isinstance(value.slice, ast.Constant)
+            ):
+                # `ENHANCED_SPACE["model"] = BASELINE_SPACE["model"]` - the
+                # width lives in the space it is borrowed from.
+                widths[key.value] = spaces[value.value.id.removesuffix("_SPACE")][
+                    value.slice.value
+                ]
+            else:
+                raise AssertionError(
+                    f"{target.id}[{key.value!r}] is neither a list of candidate "
+                    "values nor a reference to another space's list, so its "
+                    "width cannot be derived"
+                )
+        spaces[name] = widths
+
+    constructed = {name: math.prod(widths.values()) for name, widths in spaces.items()}
+    assert constructed == asserted, (
+        f"the fence asserts {asserted} but the spaces it defines are "
+        f"{constructed}; the template contradicts its own asserts"
+    )
+    return {name.casefold(): size for name, size in asserted.items()}
+
 
 # The config-space document is a contract between prose the assistant follows and
 # code that reads it, so these tests weld the documented shape to the real
@@ -326,7 +444,7 @@ class SkillPackageTests(unittest.TestCase):
         for paid_phase in (
             "smallest live provider/key check",
             "pre-baseline llm-judge calibration",
-            "preserved baseline or generated six-row sweep",
+            "preserved baseline or generated twelve-row sweep",
             "added enhanced controls",
             "rule for recommending among tradeoffs",
         ):
@@ -2044,7 +2162,7 @@ class SkillPackageTests(unittest.TestCase):
         # `thinking_shape` arrived and took that word for what it describes.
         self.assertNotIn('"criteria_first"', text)
 
-    def test_sdk_comparison_uses_six_rows_then_added_knobs_and_twelve_trials(
+    def test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials(
         self,
     ) -> None:
         text = SDK_EXECUTION.read_text()
@@ -2301,7 +2419,7 @@ class SkillPackageTests(unittest.TestCase):
         # tier reasoned, so the enhanced space was 54 ordinarily and 18 there,
         # and the assert here fired on the space the template shipped. Pinning
         # temperature always removes the branch. The template now loads
-        # unchanged under a reasoning strong tier, at the same 6 and 48 - which
+        # unchanged under a reasoning strong tier, at the same 12 and 48 - which
         # is the whole reason to pin it, so it is asserted rather than assumed.
         reasoning_namespace = {
             "math": __import__("math"),
@@ -2905,7 +3023,7 @@ class SkillPackageTests(unittest.TestCase):
         algorithms are not registered. With no Traigent key, `algorithm="auto"`
         degrades to a local random sweep and logs `fallback_reason=no_api_key` -
         so a run that looks like managed search is really random sampling. The
-        same six-point space returns the first grid cell every time under `grid`
+        same twelve-point space returns the first grid cell every time under `grid`
         and a different winner under the fallback, which is why the baseline
         pins the algorithm rather than inheriting the default.
         """
@@ -3647,7 +3765,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_first_python_fence_is_the_decorator_contract(self) -> None:
         """Guard the positional dependency in the exec'd-fence tests.
 
-        `test_sdk_comparison_uses_six_rows_then_added_knobs_and_twelve_trials`
+        `test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials`
         executes `re.findall(r"```python...")[0]` - the FIRST python fence in
         sdk-execution.md. Inserting any python fence above it silently changes
         which block is executed, and that test then fails with a confusing
@@ -4984,6 +5102,40 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 configurations",
             ),
         ),
+        (
+            # Settled at six when the baseline was three ladder models by one
+            # further two-valued knob, and re-settled at twelve when a second
+            # non-model axis was added so the selection rule downstream has
+            # two levers to read rather than one. The previous settled answer
+            # was deleted with the paragraph that carried it, which left the
+            # registry with nothing to say about a decision that had just
+            # changed - so it is restated here at its new value, and the
+            # phrasings that assert the retired one are banned.
+            #
+            # This entry is the wording half. The arithmetic half is
+            # `test_no_document_states_a_generated_space_size_the_fence_denies`,
+            # which derives the number from the fence and needs no
+            # foreknowledge of which sentence states it next.
+            "how large the generated baseline sweep may be",
+            ("3 models × 2 prompt styles × 2 thinking shapes = 12 configurations",),
+            (
+                "the three ladder models by one further swept knob taking two values",
+                "at most three swept knobs, with no swept knob taking more than two values",
+                "3 models × 2 temperatures = 6",
+                "3 models × 2 prompt styles = 6",
+                "six-row sweep",
+                "six-row baseline",
+                "six-row default",
+                "six-configuration sweep",
+                "six-configuration default",
+                "six-point sweep",
+                "six-point space",
+                "six local fixed-grid configurations",
+                "six baseline rows",
+                "all six distinct",
+                "all six intended",
+            ),
+        ),
     )
 
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
@@ -5070,6 +5222,167 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     "different numbers for one decision, and it will follow "
                     "whichever it read last.",
                 )
+
+    # Every way a document states the size of one of the two generated spaces.
+    # Each entry captures the QUANTITY and nothing else, so the check is
+    # against the number the fence derives rather than against a spelling:
+    # writing "6" into a sentence that today says "twelve" fails exactly as
+    # writing "six" does, and a re-sizing to any other number fails both.
+    #
+    # Both spaces are listed on purpose. The guard that already exists for
+    # this class only inspects `N and M` pairs whose M is the enhanced count,
+    # so it sees a wrong baseline count only in the one sentence shape that
+    # happens to name both - it was silent on the six other documents' worth
+    # of "six-row sweep", and on "all six distinct points" two hundred lines
+    # below it in its own file. A one-sided guard reads as coverage while the
+    # unwatched side drifts, so neither side is unwatched here.
+    BASELINE_SIZE_CLAIMS = (
+        # "twelve-row sweep", "twelve-configuration fixed sweep",
+        # "twelve-point space". `baseline` is deliberately not one of these
+        # nouns: a PRESERVED baseline has whatever size the user defined, so a
+        # row count beside that word is not a claim about the generated sweep.
+        r"\b(\w+)-(?:row|point|configuration) (?:fixed )?(?:sweep|grid|default|space)\b",
+        # The generated sweep is also called "the <N>-row baseline target".
+        r"\b(\w+)-row baseline\b",
+        # "all twelve distinct points executed", "all twelve intended rows".
+        r"\ball (\w+) (?:distinct|intended)\b",
+        r"\ball (\w+) configurations of a local\b",
+        r"\b(\w+) baseline rows\b",
+        r"baseline[^.]{0,90}?= (\d+) configurations",
+        r"\brun as (\d+) trials\b",
+        r"\bbaseline's (\d+) trials\b",
+        r"\bexpand it to (\w+)\b",
+    )
+
+    ENHANCED_SIZE_CLAIMS = (
+        r"\b(\w+)-configuration enhanced\b",
+        r"enhanced[^.]{0,90}?= (\d+) configurations",
+        r"\bthe same (\w+) whatever\b",
+        r"\bbinary knobs = (\d+)\b",
+        r"\bexactly (\d+) configurations\b",
+    )
+
+    # The number beside these is a size the generated sweep is forbidden to
+    # have, not a size it has: a preserved one-row baseline stays one row, and
+    # an assistant-prepared walkthrough may not proceed with one. Matched on
+    # the words immediately before the quantity so the exemption cannot spread
+    # to a sentence that merely mentions a preserved baseline nearby - "the
+    # preserved baseline or generated twelve-row sweep" is still checked.
+    NOT_THE_GENERATED_SWEEP = ("preserved ", "proceed with a ", "user-owned ")
+
+    # The other quantity in this package that is counted in ROWS and sized by
+    # a default: the held-out split. `evaluation-and-dataset.md` writes "the
+    # ten-row default" of it, which `(\w+)-row default` matches exactly as
+    # readily as SKILL.md's "generated twelve-row default" - and the preceding
+    # words there are "required on the", so the prefix exemption above cannot
+    # see it. Merged with the branch that owns the split, this guard failed
+    # with "these documents state {'evaluation-and-dataset.md': [10]}" on
+    # prose that is right: the fix belongs to the pattern, not to a sentence
+    # about the held-out set.
+    #
+    # Scoped to the SENTENCE rather than to a fixed window, because the words
+    # that identify the subject sit wherever the author put them - in that
+    # sentence, the only signal is "the split has", eleven words after the
+    # quantity. Every true positive in the corpus is checked against this and
+    # none of them names the split, which is the property that makes the
+    # exemption safe rather than convenient.
+    HELD_OUT_SPLIT = re.compile(r"held-?out|the split")
+    # ...and the guard against the exemption widening: a sentence that names
+    # BOTH the held-out split and the generated sweep is a sentence stating
+    # the sweep's size, so it stays checked. Without this, adding "held-out"
+    # anywhere in "the preserved baseline or generated twelve-row sweep" would
+    # silently switch that statement off.
+    STILL_THE_GENERATED_SWEEP = re.compile(r"generated|swept|grid")
+
+    # `(\w+)` will happily capture the tail of a number that was written with a
+    # separator: `a 10 000-configuration space` yields "000", which resolves to
+    # 0 and is reported as a document claiming a zero-configuration baseline.
+    # A thousands group is not a quantity, and the character before the capture
+    # is what says so - a digit, or a digit and one space.
+    NUMBER_FRAGMENT = re.compile(r"[\d,]\s?$")
+
+    def _states_the_held_out_split(self, text: str, start: int, end: int) -> bool:
+        opening = text.rfind(". ", 0, start) + 2
+        closing = text.find(". ", end)
+        sentence = text[opening : closing if closing != -1 else len(text)]
+        return bool(self.HELD_OUT_SPLIT.search(sentence)) and not bool(
+            self.STILL_THE_GENERATED_SWEEP.search(sentence)
+        )
+
+    def test_no_document_states_a_generated_space_size_the_fence_denies(self) -> None:
+        """A size the assistant reads may not disagree with the size it runs.
+
+        `sdk-execution.md` asserts both generated space sizes in executable
+        code, and every assistant-facing document then speaks them again in
+        prose - which is where they rot. The branch that took the baseline
+        from six configurations to twelve updated the asserts and one bullet
+        and left thirteen statements saying six, spread over five documents:
+        each correct-looking on its own, none of them visible in the diff that
+        broke it. An assistant reading SKILL.md built a six-configuration
+        sweep against a fence asserting twelve, and stage 8 told it to verify
+        that the six-row default had run on a run that emits twelve.
+
+        So the size is derived from the code (see `generated_space_sizes`) and
+        every stated size has to equal it. Nothing here pins the wording:
+        re-sizing the baseline to eight breaks this test in every document
+        that still says twelve, which is the moment those documents are meant
+        to be re-read rather than the moment one of them is missed.
+
+        Each pattern must also still match something. A pattern that matches
+        nothing has stopped checking anything while continuing to pass, and
+        that is how a guard for this class goes quiet without anyone noticing.
+        """
+        sizes = generated_space_sizes()
+        # The public promises too, not only the loaded guide: README.md stated
+        # the baseline's size to the user before they ever cloned anything.
+        documents = self.conversation()
+        for space, patterns in (
+            ("baseline", self.BASELINE_SIZE_CLAIMS),
+            ("enhanced", self.ENHANCED_SIZE_CLAIMS),
+        ):
+            expected = sizes[space]
+            for pattern in patterns:
+                with self.subTest(space=space, pattern=pattern):
+                    stated: dict[str, set[int]] = {}
+                    for name, text in documents.items():
+                        for match in re.finditer(pattern, text):
+                            preceding = text[max(0, match.start() - 24) : match.start()]
+                            if preceding.endswith(self.NOT_THE_GENERATED_SWEEP):
+                                continue
+                            # Against the QUANTITY's own position, never the
+                            # match's: `binary knobs = (\d+)` starts eleven
+                            # characters after the `4` of "3 models x 4", and
+                            # testing the match start there would silently
+                            # exempt the enhanced space's only statement.
+                            if self.NUMBER_FRAGMENT.search(text[: match.start(1)]):
+                                continue
+                            if self._states_the_held_out_split(
+                                text, match.start(), match.end()
+                            ):
+                                continue
+                            stated.setdefault(name, set()).add(
+                                _quantity(match.group(1))
+                            )
+                    self.assertTrue(
+                        stated,
+                        f"no document states the {space} space's size this way "
+                        "any more. If the wording moved, move this pattern with "
+                        "it; leaving one that matches nothing is a check that "
+                        "cannot fail.",
+                    )
+                    wrong = {
+                        name: sorted(values)
+                        for name, values in stated.items()
+                        if values != {expected}
+                    }
+                    self.assertEqual(
+                        wrong,
+                        {},
+                        f"the fence asserts a {space} space of {expected} "
+                        f"configurations, and these documents state {wrong}. "
+                        "An assistant follows the document it read last, so a "
+                        "stale number here is a run built to the wrong size.",
+                    )
 
     # A command the guidance states in more than one document, matched as the
     # literal invocation rather than a captured number. #124's class: the
@@ -5339,8 +5652,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         #
         # What was bought: the enhanced space is now 3 models x 4 binary
         # behaviour knobs = 48 configurations and the baseline 3 models x 2
-        # prompt styles = 6, both stated as exact numbers and both asserted in
-        # the template. That is two new knobs (`thinking_shape`, `reflect`)
+        # prompt styles x 2 thinking shapes = 12, both stated as exact numbers
+        # and both asserted in the template. (This sentence said "= 6" until
+        # the size was re-settled at twelve four commits later, which put the
+        # exact phrasing the CONTRADICTIONS registry BANS 480 lines below the
+        # ban list carrying it. The registry cannot catch that and should not
+        # try: `conversation()` reads the guidance, and adding this file to
+        # that corpus would make every entry fail against its own banned
+        # phrases. A ledger that restates a decision has to be corrected with
+        # the decision, which is what this is.)
+        # That is two new knobs (`thinking_shape`, `reflect`)
         # with their prompt branches, the derivation of why four behaviour
         # knobs replace a temperature sweep, and the subset/pin/size asserts -
         # none of which existed to be reworded.
