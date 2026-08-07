@@ -55,6 +55,25 @@ def conversation_contract_documents() -> list[Path]:
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
+
+def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
+    """The generated wrapper's module-level state, as executable AST nodes.
+
+    Every test that compiles `call_agent` out of the fenced source needs these
+    in the module with it, because the function reads them. Collected from the
+    document rather than restated as a literal in each fixture: a fixture that
+    declares its own `REFUSED_TRIAL_COSTS = []` runs green against a wrapper
+    that no longer has one.
+    """
+    nodes: list[ast.stmt] = []
+    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id.isupper():
+                    nodes.append(node)
+    return nodes
+
+
 # The config-space document is a contract between prose the assistant follows and
 # code that reads it, so these tests weld the documented shape to the real
 # consumer rather than re-describing it.
@@ -563,6 +582,7 @@ class SkillPackageTests(unittest.TestCase):
         module = ast.fix_missing_locations(
             ast.Module(
                 body=[
+                    *sdk_wrapper_state_nodes(text),
                     functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
@@ -636,6 +656,92 @@ class SkillPackageTests(unittest.TestCase):
             "than as a scored 0",
             safety,
         )
+
+    def test_a_refused_trial_still_reports_the_money_it_spent(self) -> None:
+        """Refusing a trial must not also lose the spend that bought it.
+
+        Both guards raise, and `provider_reported_cost` was read AFTER them, so
+        a truncated trial's cost was never read at all: the provider billed for
+        every token it generated up to the cut, and the run reported $0 for it.
+        The same ordering swallowed a zero-usage refusal.
+
+        Executed rather than read, and both refusal paths are driven, because a
+        reordering that fixes only the truncation branch looks identical in the
+        diff to one that fixes both.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {}
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef):
+                    functions[node.name] = node
+
+        state = sdk_wrapper_state_nodes(text)
+        self.assertEqual(
+            [node.target.id for node in state if node.target.id.startswith("REFUSED")],
+            ["REFUSED_TRIAL_COSTS"],
+            "the wrapper must declare REFUSED_TRIAL_COSTS exactly once",
+        )
+        module = ast.fix_missing_locations(
+            ast.Module(body=[*state, functions["call_agent"]], type_ignores=[])
+        )
+        current = None
+        refuse: str | None = None
+
+        def truncation_guard(response):
+            if refuse == "truncated":
+                raise RuntimeError("The provider truncated this completion")
+
+        def usage_guard(response):
+            if refuse == "usage":
+                raise RuntimeError("did not report nonzero token usage")
+
+        namespace = {
+            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "build_request": lambda message, config: {},
+            "require_nonzero_token_usage": usage_guard,
+            "require_untruncated_completion": truncation_guard,
+            "provider_reported_cost": lambda response: 0.02,
+        }
+        exec(compile(module, "<refused-trial-cost>", "exec"), namespace)
+        call_agent = namespace["call_agent"]
+        spent = namespace["REFUSED_TRIAL_COSTS"]
+        current = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="a"))]
+        )
+
+        # A scored trial is not refused spend. It is already in the comparison,
+        # and counting it here would double it.
+        self.assertEqual(call_agent("task", {}), ("a", 0.02))
+        self.assertEqual(spent, [])
+
+        for reason in ("truncated", "usage"):
+            with self.subTest(refused=reason):
+                refuse = reason
+                before = len(spent)
+                with self.assertRaises(RuntimeError):
+                    call_agent("task", {})
+                self.assertEqual(
+                    spent[before:],
+                    [0.02],
+                    f"a trial refused for {reason} was billed and its cost was "
+                    "dropped, so the run reports $0 for money it spent",
+                )
+        refuse = None
+
+        # An unknown cost is recorded as unknown, not as zero. Appending a
+        # placeholder would let a run with no cost metadata report refused spend
+        # of $0.00, which is a measurement it never made.
+        namespace["provider_reported_cost"] = lambda response: None
+        refuse = "truncated"
+        before = len(spent)
+        with self.assertRaises(RuntimeError):
+            call_agent("task", {})
+        self.assertEqual(spent[before:], [])
+
+        # And the post-run checklist asks for the number, or nothing reads it.
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn("report `REFUSED_TRIAL_COSTS` beside the total", safety)
 
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -2642,6 +2748,7 @@ class SkillPackageTests(unittest.TestCase):
         call_module = ast.fix_missing_locations(
             ast.Module(
                 body=[
+                    *sdk_wrapper_state_nodes(text),
                     functions["provider_reported_cost"],
                     functions["require_nonzero_token_usage"],
                     functions["require_untruncated_completion"],
@@ -5117,12 +5224,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # docstring stops restating the mandate the composition-point bullet
         # owns end to end and points at it instead. sdk-execution.md therefore
         # SHRINKS by 163 bytes, and the measured net is +565, not the +728 the
-        # bullet costs. Measured 230_889 after the paydown.
+        # bullet costs. Measured 230_888 after the paydown - the 230_889 this
+        # comment carried was one byte stale, written before the last edit on
+        # this branch and never re-measured.
         #
-        # 231_250 and not 231_000: 111 bytes is the trips-on-a-typo ceiling
-        # this comment already rejected once, and 361 is the same headroom the
+        # Then +681 for the refused-trial spend: reading `provider_reported_cost`
+        # BEFORE the two guards that raise, and holding what a refused trial
+        # cost in `REFUSED_TRIAL_COSTS` (sdk-execution.md, +539), plus the
+        # post-run item that asks for the number (run-safety.md, +142). Without
+        # a reader the list is dead code, and without the list a truncated trial
+        # bills the user and reports $0 - the guards raised before the cost was
+        # ever read. Measured 231_569.
+        #
+        # 231_930 and not 231_600: 31 bytes is the trips-on-a-typo ceiling this
+        # comment already rejected twice, and 361 is the same headroom the
         # RESIDENT ceiling above settled on for the same reason.
-        budget = 231_250
+        budget = 231_930
         self.assertLess(
             total,
             budget,

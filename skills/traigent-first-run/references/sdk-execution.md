@@ -543,11 +543,24 @@ def build_request(message: str, config: dict) -> dict:
     }
 
 
+# Spend on trials this wrapper refused. Both guards below raise, so reading the
+# cost after them dropped that money out of every total the run reports: a
+# truncated trial was billed for every token generated up to the cut, and
+# surfaced as $0. It is spend that bought no measurement - report it, never add
+# it to the comparison.
+REFUSED_TRIAL_COSTS: list[float] = []
+
+
 def call_agent(message: str, config: dict) -> tuple[str, float | None]:
     response = litellm.completion(**build_request(message, config))
-    require_nonzero_token_usage(response)
-    require_untruncated_completion(response)
-    cost = provider_reported_cost(response)
+    cost = provider_reported_cost(response)  # before either refusal, not after
+    try:
+        require_nonzero_token_usage(response)
+        require_untruncated_completion(response)
+    except RuntimeError:
+        if cost is not None:
+            REFUSED_TRIAL_COSTS.append(cost)
+        raise
     return response.choices[0].message.content or "", cost
 
 

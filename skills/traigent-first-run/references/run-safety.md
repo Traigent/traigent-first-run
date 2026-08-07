@@ -675,7 +675,8 @@ Before claiming success, verify:
    for a genuine free route, or untracked; cost alone does not prove whether a run was real.
 7. No output was truncated. `require_untruncated_completion` raises on `finish_reason ==
    "length"`, so a truncated trial arrives as a failed trial rather than as a scored 0; confirm
-   none reached the comparison.
+   none reached the comparison, and report `REFUSED_TRIAL_COSTS` beside the total - a refused
+   trial was still billed, and spend that bought no measurement is still spend.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to

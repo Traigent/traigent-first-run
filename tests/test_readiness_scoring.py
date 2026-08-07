@@ -1035,9 +1035,19 @@ class AgentScoringTests(unittest.TestCase):
         variation and knob-count credit like any other numeric knob - and it is
         the one knob whose downward sweep can silently zero the best model, by
         cutting its answer off into `finish_reason == "length"`, which scores 0
-        rather than low. Measured on this scorer: the space below scored the
-        agent pillar 77, and the identical space with `max_tokens: [256, 512]`
-        added scored 83. Sweeping it was worth six points.
+        rather than low. Measured on this scorer at the time this was written:
+        the space below scored the agent pillar 77 on `first-run-guide`, and the
+        identical space with `max_tokens: [256, 512]` added scored 83. Sweeping
+        it was worth six points.
+
+        Those two numbers are the record of the defect, not the assertion. What
+        is asserted is the DECISION - that the sweep earns no additional credit -
+        because the pillar's absolute value is a pricing choice other branches
+        are free to revise, and an open one already does: with #174's
+        categorical re-pricing merged in, the same space scores 85, and pinning
+        77 here failed the merge (`85 != 77`) where neither branch's CI could
+        see it. A relation survives any re-pricing; an absolute number is a
+        merge failure waiting for a date.
 
         It now lives in `EXCLUDED_KNOB_REASONS` and in no catalog at all, so
         there is no range left for a future reader to pay for.
@@ -1073,7 +1083,19 @@ class AgentScoringTests(unittest.TestCase):
 
         without, _ = agent_score(dict(base))
         swept, evidence = agent_score({**base, "max_tokens": [256, 512]})
-        self.assertEqual(without, 77)
+        # The control, and the reason no absolute pillar number is pinned here.
+        # `top_p` is what `max_tokens` used to be structurally - a numeric knob
+        # with a `CANONICAL_RANGES` entry, paid for the span it covers - so
+        # adding it still moves the pillar. Without it, `swept == without` would
+        # hold just as well for a scorer that had stopped responding to knobs at
+        # all, and the test would be green while asserting nothing.
+        credited, _ = agent_score({**base, "top_p": [0.5, 0.9]})
+        self.assertGreater(
+            credited,
+            without,
+            "a numeric knob with a canonical range must still earn credit, or "
+            "the equality below proves nothing about max_tokens",
+        )
         self.assertEqual(
             swept,
             without,
