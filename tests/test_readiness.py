@@ -219,6 +219,7 @@ class TheCustomerFacingTablesStateTheScorersNumbersTests(unittest.TestCase):
             [
                 "FULLY_SYNTHETIC_CEILING",
                 "MOSTLY_SYNTHETIC_CEILING",
+                "MOSTLY_GENERATED_ANSWER_KEY_CEILING",
                 "GENERATED_ANSWER_KEY_CEILING",
             ],
         )

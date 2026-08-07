@@ -369,6 +369,8 @@ rather than the condition id:
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
+- `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
+  say how many of the expected answers they are; the run proceeds meanwhile.
 - `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons.
 - `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
   justified uncertainty; call a small or flat difference directional or inconclusive.

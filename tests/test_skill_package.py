@@ -3470,9 +3470,9 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # A tenth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the nine that exist today.
-        self.assertEqual(len(conditions), 9)
+        # An eleventh dataset cap must be routed too, so pin the count rather
+        # than spot-checking the ten that exist today.
+        self.assertEqual(len(conditions), 10)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -3485,6 +3485,12 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "dataset-generated-answer-key",
                 "a person reviews a sample of the answers",
+            ),
+            # The rung between "none of it" and "all of it", which the ladder
+            # did not have: with one rung the cap turned on the last row.
+            (
+                "dataset-mostly-generated-answer-key",
+                "the same review, on the model-written answers only",
             ),
         ):
             with self.subTest(condition=condition):
@@ -4855,7 +4861,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #159 then adds four lines to run-safety.md, beside the exit-2 rule
+        # that section already owns. The three scripts grew a boundary that
+        # turns an internal failure into exit 3 instead of a traceback, and the
+        # assistant has to route that differently from every other non-zero
+        # exit: nothing was checked, so there is no finding about the user's
+        # material to relay. That is new contract surface with no prior
+        # statement, and it lands in the reference that owns exit codes rather
+        # than in SKILL.md. Measured after it: 228_853. 229_000 banks 147
+        # bytes, which is the thin-ceiling failure the RESIDENT note above
+        # already records - it trips on a one-word edit rather than on a
+        # decision. 229_250 leaves 397, the order of headroom the last two
+        # raises settled on.
+        #
+        # #161 then adds the answer-key ladder's missing rung: a routing line
+        # in SKILL.md, a table row, and the paragraph that says what the two
+        # top rungs share and how they differ. That is new contract surface -
+        # the ladder previously had no statement at all about a partly
+        # model-written answer key, and its single rung turned on the last row
+        # - and the depth lands in evaluation-and-dataset.md, which owns the
+        # provenance stage. Measured on the merge: 229_767. 230_000 banks 233
+        # bytes, the thin ceiling this comment keeps warning about; 230_250
+        # leaves 483, the order of headroom the last three raises settled on.
+        budget = 230_250
         self.assertLess(
             total,
             budget,

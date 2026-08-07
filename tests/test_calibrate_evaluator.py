@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -1497,7 +1500,14 @@ class TimeoutIsReportableTests(unittest.TestCase):
                             "metrics": {
                                 "rows": 40,
                                 "labelled_rows": 40,
+                                # Every count preflight emits together: the
+                                # scorer refuses a payload missing any of them
+                                # rather than reading absence as zero.
                                 "collected_rows": 40,
+                                "synthesised_rows": 0,
+                                "undeclared_rows": 0,
+                                "answerable_rows": 40,
+                                "generated_answer_rows": 0,
                             },
                         }
                     ]
@@ -1869,6 +1879,75 @@ class PermutationProbeTests(unittest.TestCase):
         # `not None` is True, so a two-state filter would have asked the
         # "does not distinguish" question about a probe that never scored.
         self.assertNotIn("permutation_question", payload)
+
+
+class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
+    """An unexpected error printed a traceback where the calibration goes.
+
+    `main` handled the failures it could name and let every other one escape
+    to the interpreter. A defect in this script must not read to the customer
+    as a defect in the evaluator it was asked to check.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_calibrate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_an_unexpected_error_is_diagnosed_rather_than_dumped(self) -> None:
+        module = self._module()
+        for error in (KeyError("cases"), TypeError("not subscriptable")):
+            with self.subTest(error=type(error).__name__):
+
+                def boom() -> None:
+                    raise error
+
+                module.parse_args = boom
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = module.main()
+                self.assertEqual(code, module.INTERNAL_ERROR_EXIT)
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn(type(error).__name__, err.getvalue())
+                self.assertNotIn("Traceback (most recent call last)", err.getvalue())
+                self.assertIn("treat the evaluator as unchecked", err.getvalue())
+
+    def test_the_stack_is_still_available_to_whoever_is_fixing_it(self) -> None:
+        module = self._module()
+        stream = io.StringIO()
+        code = module.report_internal_error(
+            "calibrate_evaluator.py",
+            ValueError("boom"),
+            environ={module.TRACEBACK_ENV: "1"},
+            stream=stream,
+        )
+        self.assertEqual(code, module.INTERNAL_ERROR_EXIT)
+        self.assertIn("ValueError: boom", stream.getvalue())
+
+    def test_a_refusal_still_exits_two_rather_than_three(self) -> None:
+        """The false-red direction: a named refusal is not an internal error."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text("def score(output, expected, **kwargs):\n    return 1.0\n")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--kind",
+                    "deterministic",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2, process.stderr)
+        self.assertIn("--allow-execution", process.stderr)
+        self.assertNotIn("internal error", process.stderr)
 
 
 if __name__ == "__main__":

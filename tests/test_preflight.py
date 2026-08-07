@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -941,6 +941,60 @@ class EvaluatorShapeCheckTests(unittest.TestCase):
         shape = next(r for r in records if r["check"] == "evaluator-shape")
         self.assertEqual(shape["status"], MODULE.FAIL)
         self.assertFalse(shape["metrics"]["parses"])
+
+
+class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
+    """An unexpected error printed a traceback where the check results go.
+
+    `main` handled the failures it could name and let every other one escape
+    to the interpreter: exit 1, a stack naming this file, and no check output
+    at all. The reader is running their first optimization; a defect in this
+    script must not read as a defect in what they brought.
+    """
+
+    def _explode(self, error: BaseException) -> None:
+        original = MODULE.check_python
+
+        def boom() -> None:
+            raise error
+
+        MODULE.check_python = boom
+        self.addCleanup(setattr, MODULE, "check_python", original)
+
+    def test_an_unexpected_error_is_diagnosed_rather_than_dumped(self) -> None:
+        for error in (KeyError("metrics"), TypeError("not subscriptable")):
+            with self.subTest(error=type(error).__name__):
+                self._explode(error)
+                out, err = io.StringIO(), io.StringIO()
+                with mock.patch.object(sys, "argv", ["preflight.py"]):
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = MODULE.main()
+                self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn(type(error).__name__, err.getvalue())
+                self.assertNotIn("Traceback (most recent call last)", err.getvalue())
+
+    def test_the_stack_is_still_available_to_whoever_is_fixing_it(self) -> None:
+        stream = io.StringIO()
+        code = MODULE.report_internal_error(
+            "preflight.py",
+            ValueError("boom"),
+            environ={MODULE.TRACEBACK_ENV: "1"},
+            stream=stream,
+        )
+        self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+        self.assertIn("ValueError: boom", stream.getvalue())
+
+    def test_a_normal_run_is_untouched_by_the_boundary(self) -> None:
+        """The false-red direction: nothing normal may be caught."""
+        del MODULE.RESULTS[:]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["preflight.py"]):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = MODULE.main()
+        self.assertIn(code, (0, 1))
+        self.assertNotIn("internal error", err.getvalue())
+        self.assertTrue(out.getvalue().strip())
 
 
 if __name__ == "__main__":

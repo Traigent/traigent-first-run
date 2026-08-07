@@ -358,15 +358,24 @@ So how much of the data was invented also sets a ceiling on the entire run:
 |---|---|
 | Every row generated | 65 |
 | More than half generated | 70 |
+| Real questions, but most expected answers written by a model | 74 |
 | Real questions, but every expected answer written by a model | 74 |
 
-The ladder is ordered by how much of the result is the model talking to itself. The last rung is the
-highest because the questions are still real - but an accuracy number computed against an answer key
-a model wrote reports agreement with that model, not correctness, and nothing inside the run can
-falsify it. All three rungs stay inside Workable: data a model supplied, on either side of the row,
-can be workable and cannot be good. A ceiling is not a deduction and not a refusal: the run
-continues, the pre-cap average stays in the output, and the number simply cannot claim more than the
-data supports.
+The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
+are the highest because the questions are still real - but an accuracy number computed against an
+answer key a model wrote reports agreement with that model, not correctness, and nothing inside the
+run can falsify it. All four rungs stay inside Workable: data a model supplied, on either side of
+the row, can be workable and cannot be good.
+
+The last two share a ceiling and differ in what they ask of you. When most of the expected answers
+are a model's, the run proceeds and the claim is bounded. When *all* of them are, it waits until a
+person has reviewed a sample - there is nothing left in the answer key that was not written by the
+same kind of thing the run is scoring. The rung exists because with one rung the cap turned on the
+last row: a dataset with every answer generated was blocked at 74 and the same dataset with one
+human-written answer scored 94 and Excellent.
+
+A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average stays in the
+output, and the number simply cannot claim more than the data supports.
 
 Every generated row must:
 

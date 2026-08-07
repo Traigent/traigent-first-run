@@ -250,7 +250,16 @@ class DatasetScoringTests(unittest.TestCase):
             next(s.value for s in pillar.subscores if s.name == "provenance"), 5
         )
 
-    def test_power_is_driven_by_the_smaller_split_not_total_rows(self) -> None:
+    def test_power_is_driven_by_the_tuning_split_not_total_rows(self) -> None:
+        """Not total rows, and not the holdout either.
+
+        This asserted the opposite - that a 96/4 split scored BELOW a 20/20
+        one - because the holdout used to bound resolution. It does not: 96
+        rows to compare on is a sharper comparison than 20, and reserving four
+        rows to check the winner does not make it blunter. What still holds is
+        that total rows are not the measure, which is what the second pair
+        pins.
+        """
         wide = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True, rows=100, labelled_rows=100, tuning_rows=96, holdout_rows=4
@@ -263,7 +272,16 @@ class DatasetScoringTests(unittest.TestCase):
         )[0]
         wide_power = next(s.value for s in wide.subscores if s.name == "power")
         balanced_power = next(s.value for s in balanced.subscores if s.name == "power")
-        self.assertLess(wide_power, balanced_power)
+        self.assertGreater(wide_power, balanced_power)
+
+        # 100 rows both times, and the one that tunes on fewer scores lower.
+        thin_tuning = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True, rows=100, labelled_rows=100, tuning_rows=20, holdout_rows=80
+            )
+        )[0]
+        thin_power = next(s.value for s in thin_tuning.subscores if s.name == "power")
+        self.assertLess(thin_power, wide_power)
 
     def test_untagged_difficulty_is_unmeasured_not_zero(self) -> None:
         """Real production data rarely carries difficulty tags.
@@ -309,10 +327,21 @@ class DatasetScoringTests(unittest.TestCase):
         for unsupported in ("+/-", "detect", "resolve"):
             self.assertNotIn(unsupported, power.evidence.casefold())
 
-    def test_power_uses_the_smaller_labelled_split_not_the_smaller_total_split(
+    def test_power_is_the_tuning_split_s_scoreable_size_and_not_the_holdout_s(
         self,
     ) -> None:
-        """The comparison is only as sharp as the thinner *scoreable* side."""
+        """Resolution is a property of the comparison, and the holdout is not one.
+
+        This used to take the minimum across BOTH splits, so the held-back set
+        bounded a number it takes no part in producing. The search compares
+        configurations on the tuning rows; the holdout checks the one winner
+        those rows already picked, once, and it is deliberately small. With the
+        walkthrough's ten held-out rows that minimum was ten for every project
+        that used it, `power_ceiling(10)` fired every time, and EXCELLENT was
+        structurally unreachable - a perfect 990/10 project scored 89 with a
+        permanent `dataset-coarse-resolution` cap and no action that could
+        clear it.
+        """
         lopsided = MODULE.score_dataset(
             MODULE.DatasetFacts(
                 exists=True,
@@ -325,10 +354,10 @@ class DatasetScoringTests(unittest.TestCase):
             )
         )[0]
         power = next(s for s in lopsided.subscores if s.name == "power")
-        # The smaller total split is 40 (18.0 points); the smaller labelled
-        # split is 20, which is the number that decides anything.
+        # 60 tuning rows of which 20 are scoreable. The holdout's 40 do not
+        # enter it in either direction.
         self.assertEqual(power.value, 12.0)
-        self.assertIn("20/40 scoreable", power.evidence)
+        self.assertIn("20 scoreable", power.evidence)
 
         one_sided = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -341,13 +370,19 @@ class DatasetScoringTests(unittest.TestCase):
                 holdout_labelled_rows=0,
             )
         )[0]
-        collapsed = next(s for s in one_sided.subscores if s.name == "power")
-        self.assertEqual(collapsed.value, 5.0)
-        self.assertEqual(
-            collapsed.evidence,
-            "50 to tune on / 50 held back, 50/0 scoreable; 0 comparable examples - "
-            "a wiring check, not a score",
+        # A holdout with nothing scoreable in it used to collapse power to
+        # zero. It no longer does, because it never described the comparison's
+        # resolution - 50 tuning rows are 50 tuning rows. It IS a real problem
+        # (nothing can check the winner), so it is stated on the card rather
+        # than expressed as a number about a different question.
+        unscoreable_holdout = next(
+            s for s in one_sided.subscores if s.name == "power"
         )
+        self.assertEqual(unscoreable_holdout.value, 22.0)
+        self.assertIn(
+            "none of the held-back rows can be scored", unscoreable_holdout.evidence
+        )
+        self.assertIn("50 examples", unscoreable_holdout.evidence)
 
     def test_the_clamp_never_raises_the_power_subscore(self) -> None:
         """Clamping is one-directional over the whole grid, not just on examples.
@@ -1924,6 +1959,11 @@ PREFLIGHT_RECORDS = [
             "labelled_rows": 40,
             "sources": ["reviewed-production"],
             "synthetic": False,
+            "collected_rows": 40,
+            "synthesised_rows": 0,
+            "undeclared_rows": 0,
+            "answerable_rows": 40,
+            "generated_answer_rows": 0,
         },
     },
     {
@@ -2075,6 +2115,95 @@ class CliTests(unittest.TestCase):
     def test_weights_are_configurable_and_reported(self) -> None:
         parsed = MODULE.parse_weights("50,30,20")
         self.assertEqual(parsed["dataset"], 50.0)
+
+
+class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
+    """`run` names four input errors; everything else escaped to the shell.
+
+    A `ValueError` from an unregistered cap, a `KeyError` from an unforeseen
+    payload shape, a `TypeError` from a field that arrived as a string - each
+    exited 1 with a traceback naming this file, and printed no card at all.
+    That is the worst output this tool has: the reader is running their first
+    optimization, and a defect in the checker reads as a defect in what they
+    brought.
+    """
+
+    @staticmethod
+    def _run(argv: list[str], environ: dict[str, str] | None = None) -> tuple[
+        int, str, str
+    ]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def _explode(self, error: BaseException) -> None:
+        """Make the scorer raise from inside, where the class actually lives."""
+        original = MODULE.score_dataset
+
+        def boom(*args: object, **kwargs: object) -> None:
+            raise error
+
+        MODULE.score_dataset = boom
+        self.addCleanup(setattr, MODULE, "score_dataset", original)
+
+    def test_an_unexpected_error_prints_a_diagnosis_and_exits_non_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "space.json"
+            space.write_text(json.dumps({"knobs": {"temperature": [0.7, 0.9]}}))
+            for error in (
+                ValueError("cap 'x' has no place in CAP_SEVERITY_ORDER"),
+                KeyError("answerable_rows"),
+                TypeError("'<' not supported between 'str' and 'int'"),
+            ):
+                with self.subTest(error=type(error).__name__):
+                    self._explode(error)
+                    code, stdout, stderr = self._run(
+                        ["--config-space", str(space), "--json"]
+                    )
+                    self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+                    self.assertNotEqual(code, 0)
+                    self.assertEqual(stdout, "", "a failed run printed a result")
+                    self.assertIn(type(error).__name__, stderr)
+                    self.assertNotIn("Traceback (most recent call last)", stderr)
+                    self.assertIn("defect in the check", stderr)
+
+    def test_the_stack_is_still_available_to_whoever_is_fixing_it(self) -> None:
+        """Diagnosed, not swallowed."""
+        self._explode(ValueError("boom"))
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "space.json"
+            space.write_text(json.dumps({"knobs": {"temperature": [0.7, 0.9]}}))
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                code = MODULE.main(["--config-space", str(space), "--json"])
+            self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+            code = MODULE.report_internal_error(
+                "readiness.py",
+                ValueError("boom"),
+                environ={MODULE.TRACEBACK_ENV: "1"},
+                stream=err,
+            )
+        self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+        self.assertIn("ValueError: boom", err.getvalue())
+
+    def test_a_healthy_run_still_prints_its_card_and_exits_zero(self) -> None:
+        """The false-red direction: the boundary must catch nothing normally."""
+        with tempfile.TemporaryDirectory() as directory:
+            space = Path(directory) / "space.json"
+            space.write_text(json.dumps({"knobs": {"temperature": [0.7, 0.9]}}))
+            code, stdout, stderr = self._run(["--config-space", str(space), "--json"])
+        self.assertEqual(code, 0)
+        self.assertIn('"overall"', stdout)
+        self.assertNotIn("internal error", stderr)
+
+    def test_a_named_input_error_still_exits_two_rather_than_three(self) -> None:
+        """The boundary widens what is caught; it does not relabel what was."""
+        code, _stdout, stderr = self._run(["--config-space", "/nonexistent.json"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read scoring input", stderr)
 
 
 class ThinPillarCannotPresentAsVerifiedTests(unittest.TestCase):
@@ -2413,6 +2542,509 @@ class AModelWrittenAnswerKeyCannotPresentAsStrongTests(unittest.TestCase):
                     "present as good rather than merely workable",
                 )
 
+def _cap_constructions() -> list[tuple[str, ast.expr]]:
+    """Every `Cap(...)` written in readiness.py, as (condition, ceiling node).
+
+    Read off the source rather than from a list kept beside it, for the reason
+    the sibling remedy test already gives: a hand-maintained expected list is
+    updated by whoever added the cap, so it agrees with them by construction.
+    """
+    source = Path(MODULE.__file__).read_text(encoding="utf-8")
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Cap"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            found.append((node.args[0].value, node.args[1]))
+    return found
+
+
+class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
+    """The ordering was evident, unwritten, and unenforced - so it had failed.
+
+    Worse conditions get lower ceilings. Nothing said so and nothing checked
+    it, and before #144 two overlapping unreadable-dataset conditions were
+    ranked by whichever author wrote each one. These tests are the check that
+    was missing; `CAP_SEVERITY_ORDER` in the module is the statement.
+
+    They deliberately assert the ORDER and never a value. Which number a
+    condition carries is the owner's call; that a new cap cannot be dropped in
+    out of sequence is not.
+    """
+
+    def test_every_cap_the_scorer_can_raise_has_a_place_in_the_order(self) -> None:
+        built = {condition for condition, _ceiling in _cap_constructions()}
+        self.assertTrue(built, "found no Cap construction to check")
+        self.assertEqual(
+            built - set(MODULE.CAP_CEILING),
+            set(),
+            "a cap can be raised whose ceiling nothing ranks against the others",
+        )
+        self.assertEqual(
+            set(MODULE.CAP_CEILING) - built,
+            set(),
+            "a ceiling is ranked for a condition the scorer never raises",
+        )
+        # And the two registries describe the same set of conditions. They
+        # answer different questions - what to do, and how far the score may
+        # rise - about exactly the same list, so a cap in one and not the other
+        # is a cap that is half-declared.
+        self.assertEqual(set(MODULE.CAP_CEILING), set(MODULE.ACTION_FOR_CONDITION))
+
+    def test_an_unranked_condition_cannot_be_constructed(self) -> None:
+        """Fail closed, exactly as an unmapped remedy already does."""
+        MODULE.ACTION_FOR_CONDITION["a-condition-nobody-ranked"] = "get-data"
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Cap("a-condition-nobody-ranked", 50, "reason")
+        finally:
+            del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-ranked"]
+        self.assertIn("CAP_SEVERITY_ORDER", str(caught.exception))
+
+    def test_a_worse_condition_never_carries_a_higher_ceiling(self) -> None:
+        """The order in the module is the order of the numbers."""
+        ranked = [
+            (group, condition, ceiling)
+            for group, entries in MODULE.CAP_SEVERITY_ORDER
+            for condition, ceiling in entries
+        ]
+        for (_, earlier, lower), (_, later, higher) in zip(ranked, ranked[1:]):
+            self.assertLessEqual(
+                lower,
+                higher,
+                f"{earlier} is ranked as worse than {later} and carries the "
+                f"higher ceiling ({lower} against {higher})",
+            )
+
+    def test_the_severity_groups_do_not_reach_into_each_other(self) -> None:
+        """The part of the ordering with a derivation behind it.
+
+        Group membership is decided by what the condition destroys - no result
+        at all, a result that answers the wrong question, or a sound result
+        whose claim is bounded. A cap that leaves the run usable may not be
+        capped as hard as one that leaves it meaningless, whatever anyone
+        judges about two conditions inside one group.
+        """
+        bands = [
+            (group, [ceiling for _condition, ceiling in entries])
+            for group, entries in MODULE.CAP_SEVERITY_ORDER
+        ]
+        self.assertGreater(len(bands), 1, "the grouping carries no information")
+        for (worse, lower), (better, higher) in zip(bands, bands[1:]):
+            self.assertLess(
+                max(lower),
+                min(higher),
+                f"the '{worse}' band reaches into '{better}': a run that is "
+                f"only limited in what it may claim is capped no higher than "
+                f"one that produced nothing usable",
+            )
+
+    def test_a_narrower_condition_never_outranks_the_one_it_implies(self) -> None:
+        """The #144 shape, generalised.
+
+        Where one condition's evidence strictly implies another's, the
+        stricter one describes a strictly worse dataset, so it may not carry
+        the higher ceiling. This is the one ordering claim that is derived
+        rather than judged, and it is the one that had already failed.
+        """
+        for stricter, looser in MODULE.CAP_IMPLICATIONS:
+            with self.subTest(stricter=stricter, looser=looser):
+                self.assertIn(stricter, MODULE.CAP_CEILING)
+                self.assertIn(looser, MODULE.CAP_CEILING)
+                self.assertLessEqual(
+                    MODULE.CAP_CEILING[stricter],
+                    MODULE.CAP_CEILING[looser],
+                    f"{stricter} implies {looser}, so it describes a strictly "
+                    "worse dataset and cannot be the less capped of the two",
+                )
+
+    def test_every_ceiling_is_raised_by_name_and_matches_the_order(self) -> None:
+        """One number, one home - the rule `action_kind` already enforces.
+
+        A literal at a call site is how one condition acquires two ceilings:
+        `dataset-fully-synthetic` is raised from two places and
+        `agent-no-varying-knobs` from three, and each extra copy is a chance
+        for two of them to disagree about the same condition.
+        """
+        for condition, ceiling_node in _cap_constructions():
+            with self.subTest(condition=condition):
+                self.assertIsInstance(
+                    ceiling_node,
+                    ast.Name,
+                    f"{condition} is raised with a literal ceiling; pass the "
+                    "constant named in CAP_SEVERITY_ORDER instead",
+                )
+                self.assertEqual(
+                    getattr(MODULE, ceiling_node.id),
+                    MODULE.CAP_CEILING[condition],
+                    f"{condition} is raised with {ceiling_node.id}, which is "
+                    "not the ceiling ranked for it",
+                )
+
+    def test_every_condition_states_whether_it_overlaps_another(self) -> None:
+        """`CAP_IMPLICATIONS` was the half nothing enforced.
+
+        A pair-only list cannot tell "checked, and it overlaps nothing" from
+        "nobody looked", so a new cap that narrows an existing one and carries
+        the higher ceiling shipped green - the #144 defect exactly. Every
+        condition is now named on one side or the other.
+        """
+        paired = {condition for pair in MODULE.CAP_IMPLICATIONS for condition in pair}
+        self.assertEqual(
+            set(MODULE.CAP_CEILING) - paired - set(MODULE.CAP_NO_IMPLICATION),
+            set(),
+            "a cap states no overlap with the others, in either direction",
+        )
+        # And the two sides are exclusive: a condition declared to imply
+        # nothing while also appearing in a pair is a contradiction, not a
+        # belt-and-braces entry.
+        self.assertEqual(
+            paired & set(MODULE.CAP_NO_IMPLICATION),
+            set(),
+            "a condition both declares an implication and declares it has none",
+        )
+
+    def test_a_cap_that_states_no_overlap_cannot_be_constructed(self) -> None:
+        """Fail closed, exactly as an unranked condition already does."""
+        MODULE.ACTION_FOR_CONDITION["a-condition-nobody-compared"] = "get-data"
+        MODULE.CAP_CEILING["a-condition-nobody-compared"] = 50
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Cap("a-condition-nobody-compared", 50, "reason")
+        finally:
+            del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-compared"]
+            del MODULE.CAP_CEILING["a-condition-nobody-compared"]
+        self.assertIn("CAP_NO_IMPLICATION", str(caught.exception))
+
+
+class ACapCarriesAScoreNotAnyValueTests(unittest.TestCase):
+    """`condition` failed closed and the other two fields did not.
+
+    `Cap(cond, None, ...)`, `"twenty"`, `999`, `-5` and `blocks="yes"` all
+    constructed, and each reaches arithmetic that cannot say so: a ceiling of
+    999 can never bind, -5 always does, a string takes `min()` down inside
+    `aggregate`, and a truthy `blocks` string turns every advisory ceiling into
+    a block. The type hints said all of it and nothing read them.
+    """
+
+    def test_a_ceiling_off_the_scale_is_refused(self) -> None:
+        for ceiling in (999, -5, 101):
+            with self.subTest(ceiling=ceiling):
+                with self.assertRaises(ValueError) as caught:
+                    MODULE.Cap("dataset-absent", ceiling, "reason")
+                self.assertIn("0-100", str(caught.exception))
+
+    def test_a_ceiling_that_is_not_a_number_is_refused(self) -> None:
+        for ceiling in (None, "twenty", 45.5, True):
+            with self.subTest(ceiling=ceiling):
+                with self.assertRaises(ValueError) as caught:
+                    MODULE.Cap("dataset-absent", ceiling, "reason")
+                self.assertIn("non-integer ceiling", str(caught.exception))
+
+    def test_a_non_boolean_blocks_flag_is_refused(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            MODULE.Cap("dataset-absent", 20, "reason", blocks="yes")
+        self.assertIn("non-boolean blocks", str(caught.exception))
+
+    def test_a_ceiling_on_the_scale_still_constructs(self) -> None:
+        """The false-red direction: every real cap must still build."""
+        for condition, ceiling in MODULE.CAP_CEILING.items():
+            with self.subTest(condition=condition):
+                cap = MODULE.Cap(condition, ceiling, "reason", blocks=False)
+                self.assertEqual(cap.ceiling, ceiling)
+                self.assertIs(cap.blocks, False)
+        # And the boundaries of the scale itself, which are legitimate probes.
+        self.assertEqual(MODULE.Cap("dataset-absent", 0, "reason").ceiling, 0)
+        self.assertEqual(MODULE.Cap("dataset-absent", 100, "reason").ceiling, 100)
+
+
+class TheDeclaredCapOrderDecidesTheRunTests(unittest.TestCase):
+    """The declared order had no runtime consumer, and disagreed with one.
+
+    `CAP_CEILING` folds the order away, and both consumers sorted by
+    `(ceiling, condition)` - alphabetical at a tie. So swapping two declared
+    entries changed no payload byte, and at the 45 tie the two statements
+    contradicted each other outright: the declaration ranks `evaluator-timeout`
+    first, and the card recommended `vary-knobs` because "a" sorts before "e".
+
+    These assert the BEHAVIOUR the order now decides, not the registry - a test
+    that reads the same tuple the code reads proves only that a tuple exists.
+    """
+
+    def _score(self, *conditions: str) -> object:
+        caps = [
+            MODULE.Cap(condition, MODULE.CAP_CEILING[condition], f"{condition} reason")
+            for condition in conditions
+        ]
+        pillars = [
+            MODULE.Pillar("dataset", 100, 1.0, ()),
+            MODULE.Pillar("evaluation", 100, 1.0, ()),
+            MODULE.Pillar("agent", 100, 1.0, ()),
+        ]
+        return MODULE.aggregate(
+            pillars,
+            caps,
+            [],
+            {"dataset": 0.4, "evaluation": 0.4, "agent": 0.2},
+        )
+
+    def test_the_tied_ceiling_is_broken_by_the_declared_order(self) -> None:
+        """45 is carried by two conditions, and only one can be recommended."""
+        self.assertEqual(
+            MODULE.CAP_CEILING["evaluator-timeout"],
+            MODULE.CAP_CEILING["agent-no-varying-knobs"],
+            "this test exists for a tie; these two no longer tie",
+        )
+        for order in (
+            ("evaluator-timeout", "agent-no-varying-knobs"),
+            ("agent-no-varying-knobs", "evaluator-timeout"),
+        ):
+            with self.subTest(built_in=order):
+                score = self._score(*order)
+                self.assertEqual(
+                    [cap.condition for cap in score.caps],
+                    ["evaluator-timeout", "agent-no-varying-knobs"],
+                )
+                self.assertEqual(score.recommended_action, "bound-evaluator-cost")
+                self.assertEqual(
+                    [gap.split(":")[0] for gap in score.gaps],
+                    ["evaluator-timeout", "agent-no-varying-knobs"],
+                )
+
+    def test_moving_a_condition_in_the_declaration_moves_the_recommendation(
+        self,
+    ) -> None:
+        """The order is load-bearing: change it and the payload changes.
+
+        This is what was missing. With the old key nothing in this method
+        could be observed at all - swapping the two entries left the
+        recommendation on `vary-knobs` either way.
+        """
+        original_rank = dict(MODULE.CAP_RANK)
+        swapped = dict(original_rank)
+        swapped["evaluator-timeout"], swapped["agent-no-varying-knobs"] = (
+            original_rank["agent-no-varying-knobs"],
+            original_rank["evaluator-timeout"],
+        )
+        MODULE.CAP_RANK.clear()
+        MODULE.CAP_RANK.update(swapped)
+        try:
+            score = self._score("evaluator-timeout", "agent-no-varying-knobs")
+        finally:
+            MODULE.CAP_RANK.clear()
+            MODULE.CAP_RANK.update(original_rank)
+        self.assertEqual(score.recommended_action, "vary-knobs")
+
+    def test_a_lower_ceiling_still_outranks_the_declared_order(self) -> None:
+        """The ceiling decides severity; the rank only decides the tie."""
+        score = self._score("dataset-coarse-resolution", "dataset-absent")
+        self.assertEqual(
+            [cap.condition for cap in score.caps],
+            ["dataset-absent", "dataset-coarse-resolution"],
+        )
+        self.assertEqual(score.recommended_action, "get-data")
+
+
+class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
+    """`combine` renormalized over measured sub-scores, so withholding paid.
+
+    Dropping an unmeasured check from the denominator is right when this tool
+    could not look, and wrong when the run was asked for the evidence and did
+    not answer: the check vanishes, and the pillar is scored over what is left.
+    Measured on one 200-row project, omitting against declaring:
+
+        --task-kind omitted   evaluation 100   declared a poor fit    83
+        probe scores omitted  evaluation 100   declared a narrow spread 87
+        no difficulty tag     dataset     92   one band declared        82
+
+    Each row is the same defect: the weakest possible honest answer scored
+    lower than saying nothing. These assert the ORDERING - absence at or below
+    every declaration - rather than any of those numbers, because the numbers
+    are arithmetic and the ordering is the rule.
+    """
+
+    def _evaluation(self, **kwargs: object) -> object:
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                calibration_present=True,
+                checks=(
+                    {"good_passes": True, "bad_fails": True, "non_constant": True},
+                ),
+                **kwargs,
+            )
+        )
+        return pillar
+
+    def test_an_undeclared_task_kind_scores_no_better_than_a_poor_fit(self) -> None:
+        fits = self._evaluation(task_kind="short-answer")
+        poor = self._evaluation(task_kind="code")
+        omitted = self._evaluation()
+        self.assertGreater(fits.score, poor.score)
+        self.assertLessEqual(
+            omitted.score,
+            poor.score,
+            "omitting --task-kind scored better than declaring a kind the "
+            "method is a poor ruler for",
+        )
+        # And it is still reported as unchecked, which is what it is.
+        task_fit = next(s for s in omitted.subscores if s.name == "task-fit")
+        self.assertFalse(task_fit.measured)
+        self.assertTrue(task_fit.withheld)
+        self.assertLess(omitted.confidence, 1.0)
+
+    def test_absent_probe_scores_score_no_better_than_a_narrow_spread(self) -> None:
+        wide = self._evaluation(
+            task_kind="short-answer", probe_scores=((1.0, 0.0),)
+        )
+        narrow = self._evaluation(
+            task_kind="short-answer", probe_scores=((0.55, 0.45),)
+        )
+        omitted = self._evaluation(task_kind="short-answer")
+        self.assertGreater(wide.score, narrow.score)
+        self.assertLessEqual(
+            omitted.score,
+            narrow.score,
+            "reporting no probe scores beat reporting a narrow spread",
+        )
+
+    def test_an_untagged_dataset_scores_no_better_than_one_thin_band(self) -> None:
+        def dataset(**kwargs: object) -> object:
+            pillar, _caps = MODULE.score_dataset(
+                MODULE.DatasetFacts(
+                    exists=True,
+                    rows=200,
+                    labelled_rows=200,
+                    collected_rows=200,
+                    synthesised_rows=0,
+                    undeclared_rows=0,
+                    answerable_rows=200,
+                    generated_answer_rows=0,
+                    **kwargs,
+                ),
+                "normalized-exact",
+            )
+            return pillar
+
+        four_bands = dataset(
+            difficulty_tagged_rows=200,
+            difficulty_bands=("easy", "medium", "hard", "very-hard"),
+        )
+        one_band = dataset(difficulty_tagged_rows=200, difficulty_bands=("easy",))
+        # A DECLARED zero: preflight looked at every row and found no tag. That
+        # is a measurement whose value is nothing, and truthiness read it as
+        # "the check never ran".
+        declared_none = dataset(difficulty_tagged_rows=0, difficulty_bands=())
+        never_ran = dataset(difficulty_tagged_rows=None)
+        self.assertGreater(four_bands.score, one_band.score)
+        self.assertLessEqual(declared_none.score, one_band.score)
+        self.assertLessEqual(never_ran.score, one_band.score)
+        declared = next(
+            s for s in declared_none.subscores if s.name == "difficulty"
+        )
+        self.assertTrue(declared.measured, "a declared zero is a measurement")
+        self.assertEqual(declared.value, 0.0)
+
+    def test_a_check_this_tool_could_not_run_still_renormalizes(self) -> None:
+        """The false-red direction, and the reason `withheld` is its own flag.
+
+        An unrecognized `agent_type` leaves coverage unmeasured because THIS
+        TOOL has no catalog for it, not because the run withheld anything. That
+        one still renormalizes: charging the user for our missing catalog would
+        be the same defect pointed the other way.
+        """
+        pillar, _caps, _knobs = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(
+                {
+                    "agent_type": "bespoke-thing",
+                    "knobs": {
+                        "temperature": [0.0, 0.5, 1.0],
+                        "prompt_policy": ["direct", "structured", "criteria_first"],
+                    },
+                    "wired": ["temperature", "prompt_policy"],
+                    "max_trials": 12,
+                }
+            )
+        )
+        coverage = next(s for s in pillar.subscores if s.name == "coverage")
+        self.assertFalse(coverage.measured)
+        self.assertFalse(coverage.withheld)
+        self.assertGreater(pillar.score, 0)
+
+
+class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):
+    """A ceiling one row removes is not a ceiling.
+
+    `GENERATED_ANSWER_KEY_SHARE` was 1.0 and it was the only rung, so the cap
+    turned on the last row: on one 200-row project, 200 of 200 model-written
+    answers scored 74/WORKABLE/BLOCKED and 199 of 200 scored 94/EXCELLENT with
+    no cap at all. The sibling ladder never had that shape -
+    `MOSTLY_SYNTHETIC_SHARE` is 0.5 - and the reference promises graduated
+    treatment for both.
+    """
+
+    def _caps(self, generated: int, answerable: int = 200) -> list[str]:
+        _pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=answerable,
+                labelled_rows=answerable,
+                collected_rows=answerable,
+                synthesised_rows=0,
+                undeclared_rows=0,
+                answerable_rows=answerable,
+                generated_answer_rows=generated,
+            ),
+            "normalized-exact",
+        )
+        return [cap.condition for cap in caps]
+
+    def test_one_human_written_answer_no_longer_clears_the_ladder(self) -> None:
+        self.assertIn("dataset-generated-answer-key", self._caps(200))
+        self.assertIn("dataset-mostly-generated-answer-key", self._caps(199))
+        self.assertIn("dataset-mostly-generated-answer-key", self._caps(101))
+        # Half is not most, exactly as on the synthetic ladder.
+        self.assertEqual(self._caps(100), [])
+        self.assertEqual(self._caps(0), [])
+
+    def test_the_middle_rung_bounds_the_claim_without_stopping_the_run(
+        self,
+    ) -> None:
+        _pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                collected_rows=200,
+                synthesised_rows=0,
+                undeclared_rows=0,
+                answerable_rows=200,
+                generated_answer_rows=199,
+            ),
+            "normalized-exact",
+        )
+        cap = next(
+            cap
+            for cap in caps
+            if cap.condition == "dataset-mostly-generated-answer-key"
+        )
+        self.assertFalse(cap.blocks)
+        self.assertEqual(cap.action_kind, "review-answer-key")
+        # It states the share, because "most" is the claim and the reader needs
+        # the number behind it.
+        self.assertIn("199 of 200", cap.reason)
+        # And it obeys the owner's rule the rung above obeys: model-supplied
+        # material may be workable and may not be good.
+        band, _limited = MODULE.band_for(cap.ceiling, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band), MODULE.BAND_ORDER.index("STRONG")
+        )
+
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
     """traigent-first-run#98 - the payload named the problem, never the fix."""
@@ -2743,8 +3375,9 @@ class ReferenceFreeEvaluatorsAreNotClampedTests(unittest.TestCase):
         power_of = lambda pillar: next(  # noqa: E731
             sub for sub in pillar.subscores if sub.name == "power"
         )
-        # 5 scoreable against 50: the judge must be credited the whole split.
-        self.assertIn("5/5 scoreable", power_of(reference_based).evidence)
+        # 5 scoreable of the 50 tuning rows: the judge must be credited the
+        # whole tuning split, the reference-based method only its labelled part.
+        self.assertIn("5 scoreable", power_of(reference_based).evidence)
         self.assertIn("50 examples", power_of(reference_free).evidence)
         self.assertGreater(
             power_of(reference_free).value, power_of(reference_based).value

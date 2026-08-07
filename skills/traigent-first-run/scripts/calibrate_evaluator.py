@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -898,7 +899,60 @@ def run_supplemental_attempt(
     return {"score": score, "error": error, "unavailable": None}
 
 
+# The one place an unexpected failure is allowed to end.
+#
+# The three scripts in this bundle each own this boundary because each is a
+# standalone file the skill copies out, and a shared helper module is a fourth
+# file to keep in step. What it guards is identical in all three: an error
+# nobody anticipated used to escape to the interpreter, which printed a
+# traceback in place of the result and exited 1. The reader is running their
+# first optimization; a defect in this check must not read as a defect in their
+# project.
+#
+# Loud, not silent: the error class and message are printed, the exit code is
+# non-zero and distinct, and nothing pretends a calibration ran. The
+# environment variable prints the stack for whoever is fixing it.
+INTERNAL_ERROR_EXIT = 3
+TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+
+def report_internal_error(
+    tool: str,
+    error: BaseException,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any = None,
+) -> int:
+    """Print an unexpected failure as a diagnosis, never as a traceback."""
+    out = sys.stderr if stream is None else stream
+    env = os.environ if environ is None else environ
+    print(f"{tool}: internal error - {type(error).__name__}: {error}", file=out)
+    print(
+        f"{tool} could not finish, and this is a defect in the check rather "
+        "than in your project. No calibration result was produced, so treat "
+        f"the evaluator as unchecked. Re-run with {TRACEBACK_ENV}=1 and report "
+        "the output.",
+        file=out,
+    )
+    if env.get(TRACEBACK_ENV):
+        traceback.print_exception(type(error), error, error.__traceback__, file=out)
+    return INTERNAL_ERROR_EXIT
+
+
 def main() -> int:
+    """The process boundary. See `report_internal_error`.
+
+    Wraps the worker path too. A worker that dies unexpectedly already exits
+    non-zero and the parent reads that (`worker-failed`); what changes is that
+    its last words are a named error instead of a stack the parent discards.
+    """
+    try:
+        return run()
+    except Exception as error:  # noqa: BLE001 - the boundary is the point
+        return report_internal_error("calibrate_evaluator.py", error)
+
+
+def run() -> int:
     if "--_worker" in sys.argv:
         return run_worker()
     args = parse_args()
