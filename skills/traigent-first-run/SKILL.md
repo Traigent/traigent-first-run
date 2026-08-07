@@ -510,7 +510,17 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
    default; any new model is a separately disclosed experiment. The reference owns the
    generated-space mechanics that make the
-   comparison attributable to the managed search rather than a quiet model upgrade.
+   comparison attributable to the managed search rather than a quiet model upgrade. This is the
+   last run, so the controls that carry cost are varied here or not at all - which the shared model
+   list above already does for a prepared baseline, and which a user-owned single-model baseline
+   reaches through that same separate disclosure, never through another round.
+
+Report each measurement as a **Pareto frontier over accuracy and cost**, never as a single cheaper
+answer: a frontier carries the same score for less money and a higher score for the same money, and
+asserts neither. It costs nothing - it is arithmetic over trials already paid for. Never show a
+frontier point that scored below the configuration the user is already running.
+`references/run-safety.md` owns what a frontier may claim and the wording of its two outcomes;
+`references/sdk-execution.md` owns the read itself.
 
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
 one mid, and one strong tier one step below - never the vendor's newest flagship - with a reasoning
@@ -531,9 +541,12 @@ account request:
 - Start with the recorded target project and selected agent identity.
 - If any component is `🛠️`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
-- Show the best configuration, the primary tuning metric by its actual name, cost, latency,
-  executed and failed trial counts, and any Pareto note if cost and that metric trade off. Report
-  cost or latency as `not measured` when the provider or SDK does not supply it.
+- Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
+  executed and failed trial counts. Report cost or latency as `not measured` when the provider or
+  SDK does not supply it.
+- Show this grid's own accuracy-cost frontier beside the winner, read from the trials it just
+  paid for. A fixed grid is a small frontier, and it is still the user's own measured evidence
+  rather than a note about whether the two happen to trade off.
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
@@ -635,6 +648,8 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
+- Each run's accuracy-cost frontier, in the details layer. One recommendation still leads; a
+  frontier put where the recommendation belongs is the menu this stage already refuses.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
@@ -757,6 +772,8 @@ The first run is complete only when:
   occurred.
 - Free checks made no provider calls.
 - Each paid stage had explicit approval before its calls.
+- Each reported frontier carried measured costs, a score claim the paired counts support, and no
+  point below the floor.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were

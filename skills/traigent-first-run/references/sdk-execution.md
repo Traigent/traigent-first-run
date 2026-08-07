@@ -932,6 +932,75 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 ## Result checks
 
+**Read the frontier by hand, on the metric the run actually declared.** The same function reads the
+baseline grid's finished trials and the enhanced search's, so one function serves both. It is
+arithmetic over artifacts already in hand and makes no provider call:
+
+```python
+def frontier_at_or_above(trials, metric_name, floor):
+    """Non-dominated completed trials scoring at or above `floor`, cheapest first.
+
+    `metric_name` is this run's own objective name - the key wired through
+    `metric_functions`, which is `"task_success"` in this reference's worked
+    example - and never `"accuracy"`, which can sit in the same metrics map
+    while being built-in exact match rather than the scorer this run wired.
+
+    `floor` is the incumbent trial's value under this same `metric_name`, so
+    both sides of the comparison are the same measurement. Never pass the
+    result's `best_score` - under the two-objective schema above it is the
+    weighted scalarization of score and cost, not the metric being compared.
+
+    The floor is what keeps the frontier honest. Without it the cheapest
+    trial is always on the frontier however badly it scored, and the report
+    hands the user a configuration worse than the one they already run.
+
+    Higher-is-better is assumed, which is what this reference's
+    `orientation="maximize"` objective declares. For a run whose primary
+    metric is one where lower is better - an error rate, declared `minimize` -
+    reverse both score comparisons rather than passing the metric through
+    unchanged, or the frontier is built out of the worst-scoring trials.
+    """
+    priced = []
+    for trial in trials:
+        if getattr(trial.status, "value", trial.status) != "completed":
+            continue
+        score = trial.metrics.get(metric_name)
+        cost = trial.metrics.get("cost")
+        # An absent cost is not a zero. A trial the run could not price cannot
+        # take part in a cost comparison, and reading it as 0.0 puts every
+        # unpriced trial on the frontier.
+        if score is None or cost is None:
+            continue
+        if score >= floor:
+            priced.append((cost, score, trial))
+    frontier = [
+        (cost, score, trial)
+        for cost, score, trial in priced
+        # Dominated: some other point is no dearer and no lower-scoring, and
+        # strictly better on one of the two. Nobody would take this one.
+        if not any(
+            other_cost <= cost
+            and other_score >= score
+            and (other_cost < cost or other_score > score)
+            for other_cost, other_score, _other in priced
+        )
+    ]
+    return [trial for _cost, _score, trial in sorted(frontier, key=lambda row: row[0])]
+```
+
+The incumbent is a point like any other and is reported as one: keeping what you already run is a
+choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
+must itself carry a reported, positive cost: a `0.0` produced by unknown model pricing is
+indistinguishable in the metrics map from a genuine free route, and `references/run-safety.md`
+makes measured cost a precondition for the read.
+
+Do not pass `strategy=` or `strategy_params` to obtain this: the frontier is the function above and
+nothing else. The presets are unused here because a strategy can replace the objectives the
+decorator declared without raising or warning, and because the cost-floor preset floors on built-in
+exact-match accuracy rather than the wired scorer - so the floor silently becomes `0.0` and it
+returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
+without moving anything the report shows.
+
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
 and direct portal links for every persisted run. Put the two results side by side, explain the

@@ -4560,6 +4560,11 @@ class SkillPackageTests(unittest.TestCase):
             "tracked spend, or conservative deduction",
             "remaining total ceiling",
             "partial/final result",
+            # Each run's frontier is recorded: it is a result the user was
+            # given, and after the fact this record is the only place it
+            # survives.
+            "accuracy-cost frontier for each run - its points, the recommended "
+            "one, and the score claim with paired outcome counts",
         ):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.splitlines()), 60)
@@ -7970,6 +7975,284 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
 
+    def test_the_result_is_a_frontier_and_not_a_one_sided_saving(self) -> None:
+        """The shape of the claim, and the shape it may not slide back into.
+
+        A one-sided round can only report "cheaper at no lower score", which
+        needs a noise bar to separate a saving from measurement variance - and
+        this package had two unmeasured numbers holding one up. A frontier
+        asserts no win, so it needs no bar. The guard is therefore twofold: the
+        frontier vocabulary is required, and any threshold reappearing inside
+        these sections is a signal the framing slipped back.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        self.assertIn("pareto frontier over accuracy and cost", skill)
+        self.assertIn(
+            "never show a frontier point that scored below the configuration "
+            "the user is already running",
+            skill,
+        )
+        # both wins, which is the whole reason the frontier replaced a
+        # one-sided objective
+        self.assertIn(
+            "the same score for less money and a higher score for the same money",
+            skill,
+        )
+        self.assertIn("a frontier asserts no win", safety)
+        # the floor is a number the run reads, defined once, where the run that
+        # reads it can find it
+        self.assertIn("the floor is a number this run reads", safety)
+        self.assertIn("def frontier_at_or_above(", SDK_EXECUTION.read_text())
+
+        # It is not a stage and buys nothing: arithmetic over trials both runs
+        # already paid for, which is also why there is no third run to gate,
+        # approve, or offer.
+        self.assertIn(
+            "it costs nothing - it is arithmetic over trials already paid for", skill
+        )
+        self.assertIn(
+            "it costs nothing and adds no stage - both runs priced every trial they completed",
+            safety,
+        )
+
+        # No percentage threshold anywhere in the sections that decide this
+        # run's outcome. `run-safety.md:686` asserted run-to-run token variance
+        # "is single-digit percent" and `:699` predicted "the 5-25% savings
+        # this round is most likely to find"; neither was measured, and both
+        # existed only to defend a one-sided claim. A number reappearing here
+        # is the framing sliding back, not a detail.
+        for name, document, start, end in (
+            (
+                "SKILL.md",
+                skill,
+                "report each measurement as a **pareto frontier over accuracy and cost**",
+                "### 8. verify and report",
+            ),
+            (
+                "run-safety.md",
+                safety,
+                "### the accuracy-cost frontier",
+                "## post-run verification",
+            ),
+        ):
+            self.assertIn(start, document)
+            section = document.split(start, 1)[1].split(end, 1)[0]
+            with self.subTest(document=name):
+                self.assertEqual(
+                    re.findall(r"\d+(?:\.\d+)?\s?%", section),
+                    [],
+                    f"{name}'s frontier section states a percentage "
+                    "threshold. A frontier asserts no win and needs no bar; a "
+                    "number here means the one-sided framing came back, and "
+                    "the two it replaced were both unmeasured",
+                )
+
+    def test_the_frontier_is_read_from_both_runs_and_costs_nothing(self) -> None:
+        """Two paid runs, and each reports its own frontier for free.
+
+        The round this replaced was a third paid stage with a gate, an
+        approval, and an offer, to answer a question the trials already bought
+        can answer: the baseline grid prices six configurations and the
+        enhanced search prices up to twelve, so accuracy against cost is
+        arithmetic either way. The cost-bearing controls therefore have to be
+        varied inside run 2, which for a prepared baseline the shared model
+        list above already does.
+
+        The frontier informs the close; it does not become the close. A menu
+        offered instead of a recommendation is the failure this stage already
+        names, and a frontier is exactly the shape that would do it.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+
+        # There is no third run to name, in any of the four documents a reader
+        # could reach.
+        for name, document in (
+            ("SKILL.md", skill),
+            ("run-safety.md", safety),
+            ("sdk-execution.md", sdk),
+            ("GUIDE.md", " ".join((ROOT / "GUIDE.md").read_text().casefold().split())),
+        ):
+            with self.subTest(document=name):
+                self.assertNotIn("second enhanced run", document)
+        self.assertIn("do not require a third optimization pass", skill)
+        self.assertIn("this is the last run", skill)
+
+        # The baseline reports one too, over the six trials it just paid for.
+        self.assertIn(
+            "show this grid's own accuracy-cost frontier beside the winner, read "
+            "from the trials it just paid for",
+            skill,
+        )
+        # ...and the enhanced run is where the cost-bearing controls live,
+        # because there is nowhere later for them to go.
+        self.assertIn(
+            "the controls that carry cost are varied here or not at all", skill
+        )
+        # One function, both reads - not a second implementation.
+        self.assertIn(
+            "the same function reads the baseline grid's finished trials and the "
+            "enhanced search's, so one function serves both",
+            sdk,
+        )
+
+        # Placement: details layer, never in place of the recommendation.
+        self.assertIn("each run's accuracy-cost frontier, in the details layer", skill)
+        self.assertIn(
+            "a frontier put where the recommendation belongs is the menu this "
+            "stage already refuses",
+            skill,
+        )
+        self.assertIn(
+            "a menu offered *instead of* a recommendation is the same as no "
+            "recommendation",
+            SKILL.read_text().casefold(),
+        )
+
+        # A cheaper point is a hypothesis for the handoff, not a settled
+        # finding - pointed at the rule that already says so rather than
+        # restated beside it.
+        self.assertIn(
+            "what a frontier this size supports is a hypothesis worth testing at "
+            "full scale",
+            safety,
+        )
+        self.assertIn(
+            "under the rule the continuation handoff below already states", safety
+        )
+        self.assertIn("it does not earn another paid round here", safety)
+
+    def test_the_null_outcome_is_a_reported_finding(self) -> None:
+        """The copy for "nothing beat what you already run" is the customer's.
+
+        It is pinned because it is the outcome an assistant is likeliest to
+        soften, skip, or turn into a pitch for one more round - and because
+        three earlier revisions of it each asserted a universal negative over
+        the space, which is false whenever the untested complement is
+        non-empty. It reports counts and one frontier, and quantifies over
+        nothing.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        quoted = quoted_prose(RUN_SAFETY)
+
+        self.assertIn("both are results. neither is apologized for.", safety)
+        self.assertIn(
+            "report what this run counted, never a property of the space", safety
+        )
+        for phrase in (
+            "this run tested `<executed trials>` of `<total combination count>` "
+            "configurations",
+            "the configuration you are already running is still the only point "
+            "on the frontier",
+            "so keeping it is the answer this run supports",
+            "widening the search across your full dataset and your own controls "
+            "is what the skills named at the close are for",
+        ):
+            with self.subTest(null_copy=phrase):
+                self.assertIn(phrase, quoted)
+
+        # the forward half points at an action, never at a result a further run
+        # would return - that promise is the universal claim in another aim
+        self.assertIn("it points at an action and never at a result", safety)
+        self.assertIn("do not answer it with another paid run by default", safety)
+
+        # the winning outcome carries evidence rather than a hardcoded verdict:
+        # the score sentence is filled from the paired counts, not asserted
+        self.assertIn("`<paired outcome counts>`", quoted)
+        self.assertIn("`<the score statement the counts support>`", quoted)
+        self.assertIn("default to directional", safety)
+        self.assertIn(
+            'say "the score did not get worse" only where a justified paired '
+            "uncertainty analysis over the completed outputs supports it",
+            safety,
+        )
+        self.assertIn(
+            'never let "the optimizer picked it" stand in for evidence that the '
+            "score held",
+            safety,
+        )
+
+
+class FrontierAtOrAboveTests(unittest.TestCase):
+    """Behaviour of the frontier read, which is real code, not prose.
+
+    Every other check over this section pins a sentence, which stops silent
+    deletion and nothing more. This one runs the block: the floor is the only
+    executable guarantee that the report never hands back a configuration worse
+    than the one the user already runs, and the check it replaced asserted the
+    function's NAME - green against a body with the floor deleted, which is a
+    pure cost minimiser.
+    """
+
+    @staticmethod
+    def trial(score, cost, *, status="completed"):
+        metrics = {}
+        if score is not None:
+            metrics["task_success"] = score
+        if cost is not None:
+            metrics["cost"] = cost
+        return SimpleNamespace(status=status, metrics=metrics)
+
+    def select(self, trials, *, floor=0.80):
+        return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor)
+
+    def test_a_trial_reaches_the_frontier_only_at_or_above_the_floor(self) -> None:
+        """Delete `score >= floor` and this fails: the cheap, bad trial is
+        Pareto-optimal on cost, so nothing else keeps it off the report."""
+        for label, score, qualifies in (
+            ("equal to the floor", 0.80, True),
+            ("above the floor", 0.91, True),
+            ("below the floor", 0.30, False),
+        ):
+            with self.subTest(score=label):
+                cheap = self.trial(score, 0.0060)
+                self.assertEqual(self.select([cheap]), [cheap] if qualifies else [])
+
+    def test_a_dominated_point_is_not_on_the_frontier(self) -> None:
+        """Dearer and no better than another point is not a trade-off."""
+        good = self.trial(0.95, 0.0040)
+        dominated = self.trial(0.90, 0.0090)
+        self.assertEqual(self.select([good, dominated]), [good])
+
+    def test_a_genuine_trade_off_keeps_both_points(self) -> None:
+        """Cheaper-and-lower against dearer-and-higher is what a frontier is
+        for, and collapsing it to one point is the one-sided report this
+        framing replaced."""
+        cheap = self.trial(0.82, 0.0020)
+        strong = self.trial(0.97, 0.0110)
+        self.assertEqual(self.select([cheap, strong]), [cheap, strong])
+
+    def test_the_incumbent_is_a_point_like_any_other(self) -> None:
+        """Keeping what you already run is an answer the frontier shows."""
+        incumbent = self.trial(0.80, 0.0120)
+        self.assertEqual(self.select([incumbent]), [incumbent])
+
+    def test_an_absent_cost_is_dropped_rather_than_read_as_zero(self) -> None:
+        """Reading a missing cost as 0.0 puts every unpriced trial on the
+        frontier, and dominates every priced one off it."""
+        self.assertEqual(self.select([self.trial(0.95, None)]), [])
+        self.assertEqual(self.select([self.trial(None, 0.0010)]), [])
+
+    def test_only_completed_trials_are_considered(self) -> None:
+        for status in ("failed", SimpleNamespace(value="failed")):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    self.select([self.trial(0.95, 0.0010, status=status)]), []
+                )
+
+    def test_the_frontier_comes_back_cheapest_first(self) -> None:
+        """run-safety.md reports the frontier cheapest first, so the order is
+        load-bearing rather than cosmetic."""
+        cheapest = self.trial(0.85, 0.0020)
+        middle = self.trial(0.90, 0.0050)
+        dearest = self.trial(0.99, 0.0110)
+        self.assertEqual(
+            self.select([dearest, cheapest, middle]), [cheapest, middle, dearest]
+        )
+
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     """Catch the failure this repo actually produces: two rules that disagree.
@@ -8116,6 +8399,81 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             (
                 "add that directory to the project `.gitignore`",
                 "create `traigent-runs/` artifacts and add that path to `.gitignore`",
+            ),
+        ),
+        (
+            # Affirmative report copy only, for the reason spelled out on the
+            # knob entry below. "trade accuracy for cost" was here and had to
+            # go: it also matches "never trade accuracy for cost", so the
+            # registry would have failed the guide for stating the rule.
+            #
+            # The settled answer moved when the one-sided round became a
+            # frontier. A one-sided objective refused the trade by never
+            # searching for it; a frontier searches the whole trade-off and
+            # refuses to *report* a point below what the user already gets,
+            # which is the floor named here.
+            "whether a second run may hand back a worse-scoring configuration",
+            (
+                "never show a frontier point that scored below the "
+                "configuration the user is already running",
+            ),
+            (
+                "we accepted a lower score for a lower cost",
+                "the round bought a cheaper configuration at a small accuracy cost",
+                "a slightly lower score is an acceptable price for the saving",
+            ),
+        ),
+        (
+            # Affirmative report copy only. A phrase that could also appear
+            # inside a prohibition ("never that a control was shown not to
+            # matter") does not belong here - it would fail the document for
+            # stating the rule correctly.
+            #
+            # The agreed phrase is the rule's one home, in the continuation
+            # handoff that carries observations out of the run. The second
+            # run's own section used to restate it; that was a second home for
+            # a rule this package already had, so it went rather than the rule.
+            "whether a knob that moved nothing may be reported as not mattering",
+            ("never as an established finding",),
+            (
+                "we removed the knobs that did not matter",
+                "the search showed these knobs do not matter",
+                "this round dropped the controls that had no effect",
+            ),
+        ),
+        (
+            # Three revisions of the null outcome each asserted a universal
+            # negative over a set - "every configuration tested that cost less
+            # also scored lower", then the same claim gated on "materially",
+            # then "the only configurations this round found that cost less
+            # were cheaper by less than run-to-run variance" - while the branch
+            # routing to it constrained only the trials that cleared the score
+            # bar. Each was false whenever the unexamined complement was
+            # non-empty, and each patch opened the next gap. Settled answer:
+            # report the run's own counts, which quantify over nothing.
+            "what the null second-run outcome may claim",
+            ("report what this run counted, never a property of the space",),
+            (
+                "already near the pareto frontier",
+                "every configuration tested that cost less also scored lower",
+                "every other configuration tested that cost materially less",
+            ),
+        ),
+        (
+            # This branch first answered "where does cost exploration go?" with
+            # a third paid stage, then with an optional second enhanced run.
+            # Both are the same shape: a run after the run. Two paid
+            # measurements is the answer - the baseline grid and the enhanced
+            # search - and a cheaper configuration is one more point in the
+            # second one's space, not one more space. Everything the extra
+            # round existed to gate, approve, and offer disappears with it.
+            "how many paid runs the walkthrough performs",
+            ("do not require a third optimization pass",),
+            (
+                "optional second enhanced run",
+                "the second run's winner",
+                "second enhanced run",
+                "a third paid stage",
             ),
         ),
         (

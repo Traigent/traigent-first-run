@@ -691,6 +691,84 @@ reasoning model.
 Composite patterns multiply calls and cost. Use them only when the agent shape and observed
 failure mode justify them.
 
+### The accuracy-cost frontier
+
+SKILL stage 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
+owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
+and adds no stage - both runs priced every trial they completed, so this is arithmetic over trials
+already in hand. Report it whichever way it comes out.
+
+The floor is a number this run reads rather than a judgement it makes: the incumbent's score on
+this run's own metric, the incumbent being the configuration the user is already running.
+
+It needs measured cost to exist at all, and two runs fail that for opposite reasons the user is
+told apart:
+
+- **Cost was not tracked.** An unpriced trial is not a cheap trial, and a `0.0` standing in for
+  pricing the run could not resolve is an absent cost wearing a number - indistinguishable in the
+  metrics map from a real one. Report no frontier, and say why.
+- **The route genuinely costs nothing.** A provider-reported `0.0` with nonzero token usage is a
+  real measurement rather than a missing one, and a route with no cost has no trade-off to plot.
+  Say that instead, rather than the reason above.
+
+Each point is one configuration's measured cost beside its score on this run's own metric, over the
+same rows, evaluator, and agent call path as everything else it reports. Dominated points are
+dropped - a configuration that cost more and scored no higher than another on the same evidence is
+not a trade-off anyone would take.
+
+Cost is measured directly but not exactly: one configuration evaluated twice returns two different
+token counts, inside a single run as much as across two. Report each point's measured cost and let
+the reader see the gap; never present two points a few percent apart as a saving.
+
+A frontier asserts no win, so it needs no threshold to clear and states none. What it does need is
+the score claim `references/evaluation-and-dataset.md` decides from the paired counts rather than
+from the direction of two averages: default to directional - "no score difference was detected on
+these rows" - and say "the score did not get worse" only where a justified paired uncertainty
+analysis over the completed outputs supports it. Rows where the cheaper point lost and the
+incumbent won are reported even when they are outnumbered, because failing to detect a drop on a
+first-run slice is not evidence there was none. A point reaching the frontier is not evidence its
+score held: several configurations are statistically indistinguishable at this size, so the one
+that matched the incumbent's number may simply have measured lucky. Never let "the optimizer picked
+it" stand in for evidence that the score held.
+
+That bound is why a cheaper point is never sold as settled. What a frontier this size supports is a
+hypothesis worth testing at full scale - "a cheaper tier scored level with the winner on these
+rows" - so it travels to the close as one, under the rule the continuation handoff below already
+states. It does not earn another paid round here.
+
+#### The two outcomes
+
+Both are results. Neither is apologized for.
+
+**The frontier holds more than the incumbent.** Report the recommended point against the
+configuration the user runs now, then the rest of the frontier as the trade-offs it measured:
+
+> `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
+> configuration you are running now, on the same rows, evaluator, and agent call path -
+> `<paired outcome counts>`. Cost here is arithmetic over reported token counts, so it is measured
+> directly. The score is not measured directly - it is a comparison over `<n>` rows - so `<the score
+> statement the counts support>`. The whole frontier this run measured is `<points, cheapest
+> first>`, and two points a few percent apart in cost are inside what re-measuring one
+> configuration moves.
+
+**The incumbent is the only point on it.** This is a finding, and it gets its own copy. Report what
+this run counted, never a property of the space: the space is larger than the run's trial cap, so
+any claim about the space quantifies over configurations the run never reached.
+
+> This run tested `<executed trials>` of `<total combination count>` configurations. On accuracy
+> against cost, the configuration you are already running is still the only point on the frontier:
+> nothing tested cost less at its score, and nothing scored higher at its cost. So keeping it is
+> the answer this run supports. A run this size reaches few configurations by design; widening the
+> search across your full dataset and your own controls is what the skills named at the close are
+> for.
+
+That is a measured answer to the question this run asked, and a service rather than a shrug: the
+user wanted to know whether a better trade-off was sitting there, and now they do instead of
+chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
+configurations the run did not test, and a bounded run tests few. That bound is the forward half,
+and it points at an action and never at a result: the handoff below names what a wider search would
+let the user *do*, never what it would find. Do not answer it with another paid run by default.
+
 ## Post-run verification
 
 Before claiming success, verify:
@@ -713,6 +791,9 @@ Before claiming success, verify:
 12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
     limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
     than retried outside containment.
+13. Every reported frontier carries measured costs, a score claim the paired counts support, and no
+    point below the floor. Trials that came back without reported cost carry no cost claim: report
+    that, not a number.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
