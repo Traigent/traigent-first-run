@@ -17,6 +17,25 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
 SKILL = SKILL_ROOT / "SKILL.md"
+REQUIREMENTS = SKILL_ROOT / "assets" / "requirements-first-run.txt"
+
+
+def pinned_sdk_version() -> str:
+    """The `traigent` release `requirements-first-run.txt` actually installs.
+
+    Read, never restated. Any document that names the pinned release - the
+    license disclosure, its two license links, the telemetry contract link -
+    derives it from here, so bumping the pin cannot leave a disclosure
+    pointing at the terms of a release nobody installs.
+    """
+    for line in REQUIREMENTS.read_text().splitlines():
+        name, separator, version = line.strip().partition("==")
+        if name == "traigent" and separator and version:
+            return version
+    raise AssertionError(
+        f"{REQUIREMENTS.relative_to(ROOT)} pins no `traigent==` release; "
+        "every disclosure that names the installed version reads it from here"
+    )
 
 
 def assistant_facing_documents() -> list[Path]:
@@ -373,11 +392,7 @@ class SkillPackageTests(unittest.TestCase):
             skill_text,
         )
 
-        requirements = (
-            (SKILL_ROOT / "assets" / "requirements-first-run.txt")
-            .read_text()
-            .splitlines()
-        )
+        requirements = REQUIREMENTS.read_text().splitlines()
         self.assertEqual(
             requirements,
             [
@@ -391,28 +406,66 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("unversioned `pip install traigent`", text)
 
     def test_readme_discloses_pinned_sdk_license_terms(self) -> None:
+        # The version is DERIVED from the file that pins it, never restated
+        # here. Asserting a literal this test carries makes the disclosure
+        # stale through a fully green run: bump the requirements file, update
+        # the one literal in `test_dependency_install_authorization_is_narrow`
+        # above, relock, and the whole suite passes while README still names
+        # the terms of a release nobody installs. The same class as that
+        # test's prior art, applied to the document rather than the pin.
+        version = pinned_sdk_version()
         readme_source = (ROOT / "README.md").read_text()
         readme = " ".join(readme_source.casefold().split())
 
         for phrase in (
-            "the pinned requirements install `traigent==0.25.0`",
+            f"the pinned requirements install `traigent=={version}`",
             "`agpl-3.0-only`",
             "installing the package does not itself grant commercial terms",
             "separate written commercial agreement",
             "legal@traigent.ai",
-            "does not change the license terms for this guide repository",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
-        self.assertIn(
-            "https://github.com/Traigent/Traigent/blob/v0.25.0/LICENSE",
-            readme_source,
+        for target in ("LICENSE", "COMMERCIAL-LICENSE.md"):
+            with self.subTest(target=target):
+                self.assertIn(
+                    f"https://github.com/Traigent/Traigent/blob/v{version}/{target}",
+                    readme_source,
+                )
+        # Every release-shaped literal in the whole README, not only the three
+        # in the licensing section: the telemetry link and the retention
+        # paragraph under "Privacy" name the same pinned release, and a fourth
+        # one added tomorrow is caught without this test being told about it.
+        stated = set(re.findall(r"\d+\.\d+\.\d+", readme_source))
+        self.assertEqual(
+            stated,
+            {version},
+            "README states a release other than the pinned "
+            f"`traigent=={version}`. Every version this document names is the "
+            "one `assets/requirements-first-run.txt` installs; a link to some "
+            "other tag describes terms the reader is not agreeing to.",
         )
-        self.assertIn(
-            "https://github.com/Traigent/Traigent/blob/v0.25.0/"
-            "COMMERCIAL-LICENSE.md",
-            readme_source,
-        )
+
+    def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
+        """This repository has no LICENSE, so it may not describe its own terms.
+
+        `gh api repos/Traigent/traigent-first-run` returns `"license": null`
+        with `"visibility": "public"`, and no LICENSE file is tracked - which
+        is all-rights-reserved by default, while this same README tells the
+        reader to `npx skills add Traigent/traigent-first-run`. A sentence
+        saying the SDK notice "does not change the license terms for this
+        guide repository" asserts terms that do not exist. Choosing a license
+        is the owner's call; saying nothing is strictly better than saying
+        something false, so the sentence is gone and stays gone.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for phrase in (
+            "license terms for this guide repository",
+            "the license of this repository",
+            "this repository is licensed",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, readme)
 
     def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())

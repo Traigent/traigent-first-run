@@ -198,8 +198,7 @@ The pinned requirements install `traigent==0.25.0`. The Traigent SDK is offered 
 [Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.25.0/COMMERCIAL-LICENSE.md).
 Installing the package does not itself grant commercial terms. Organizations that need terms other
 than the AGPL must obtain a separate written commercial agreement from Traigent; contact
-`legal@traigent.ai`. This notice describes the SDK dependency and does not change the license terms
-for this guide repository.
+`legal@traigent.ai`. This notice describes the SDK dependency.
 
 ## Privacy
 
