@@ -200,6 +200,32 @@ class BandAndAggregationTests(unittest.TestCase):
             ["evaluator-invalid", "dataset-fully-synthetic"],
         )
 
+    def test_a_lone_ceiling_above_the_average_still_does_not_bind(self) -> None:
+        """ "Would limit to" has two causes, and the glossary named only one.
+
+        It said a ceiling in the subjunctive is one that "only starts to matter
+        once something lower is cleared", which describes a stricter cap. The
+        other cause needs no second cap at all: `overall` is
+        `min(weighted_average, min(ceilings))`, so a sole ceiling above the
+        average is equally not the operative limit. README.md and the code
+        already said both; this pins the mechanism the glossary must describe.
+        """
+        pillars = [
+            MODULE.combine(name, [MODULE.SubScore("x", 5.0, 10.0, True, "")])
+            for name in ("agent", "dataset", "evaluation")
+        ]
+        cap = MODULE.Cap("dataset-coarse-resolution", 89, "small set", blocks=False)
+        score = MODULE.aggregate(pillars, [cap], [], dict(MODULE.DEFAULT_WEIGHTS))
+        self.assertEqual(score.weighted_average, 50)
+        self.assertEqual(score.overall, 50)
+        self.assertEqual([c.condition for c in score.caps], [cap.condition])
+        self.assertFalse(
+            MODULE.binds(cap, score.overall),
+            "the only ceiling in play is still not what holds the score down",
+        )
+        card = MODULE.render_card(score, unicode_ok=False, palette=MODULE.PLAIN)
+        self.assertIn("WOULD LIMIT TO 89", card)
+
     def test_weighted_average_is_retained_so_a_cap_is_never_hidden(self) -> None:
         pillars = [
             MODULE.combine(name, [MODULE.SubScore("x", 10.0, 10.0, True, "")])
@@ -1342,6 +1368,52 @@ class WiredAttestationShapeTests(unittest.TestCase):
 
 
 class AgentScoringTests(unittest.TestCase):
+    def test_a_seed_only_space_is_capped_for_the_reason_it_actually_has(
+        self,
+    ) -> None:
+        """The cap fires correctly; the sentence beside it was false.
+
+        `{"seed": [1, 2, 3, 4, 5]}` wired has one setting carrying five values,
+        and the card said "every setting has only one value to try" while the
+        line two rows up printed "1 combinations x 5 repeats = 5 runs" from the
+        same document. Both numbers cannot be right. `seed` is excluded from
+        scoring on purpose - sweeping it measures run-to-run variance, not
+        configuration quality - so the honest reason names that exclusion, and
+        what counts is deliberately unchanged: the cap still fires, still at 45.
+        """
+        document = {"knobs": {"seed": [1, 2, 3, 4, 5]}, "wired": ["seed"]}
+        pillar, caps, _ = MODULE.score_agent(
+            MODULE.agent_facts_from_config_space(document)
+        )
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertEqual([cap.ceiling for cap in caps], [45])
+        reason = caps[0].reason
+        self.assertIn("seed", reason)
+        self.assertIn("run-to-run variance", reason)
+        self.assertNotIn("only one value", reason)
+
+        # The count beside it named a denominator the document contradicts:
+        # "0 of 0 wired knobs" against a `wired` list holding one name.
+        knob_count = next(sub for sub in pillar.subscores if sub.name == "knob-count")
+        self.assertIn("seed", knob_count.evidence)
+        self.assertIn("not counted", knob_count.evidence)
+
+    def test_an_excluded_knob_beside_real_ones_keeps_the_ordinary_reason(
+        self,
+    ) -> None:
+        """Only the all-excluded case changes; the ordinary one must not.
+
+        A space whose scoreable knobs each carry one value really does make
+        every configuration identical, and that sentence stays.
+        """
+        document = {
+            "knobs": {"seed": [1, 2], "model": ["a"]},
+            "wired": ["seed", "model"],
+        }
+        _, caps, _ = MODULE.score_agent(MODULE.agent_facts_from_config_space(document))
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertIn("only one value to try", caps[0].reason)
+
     def test_wired_varying_knobs_clear_the_no_varying_cap(self) -> None:
         """The walkthrough's own space must not read as "nothing to search".
 

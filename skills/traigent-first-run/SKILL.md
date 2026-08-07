@@ -486,8 +486,6 @@ Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop.
 
-never call the walkthrough ceiling a hard provider-billing cap.
-
 After the approved live provider probe, derive internal time bounds from observed latency and the
 baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
 time/cost; do not ask the user to select implementation timeouts.

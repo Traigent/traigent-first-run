@@ -74,8 +74,8 @@ changing out of your project.
 4. Validates compatibility and every safely local evaluator-discrimination check; any LLM-judge or
    external calibration remains inside the paid/data-egress approval.
 5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
-   spend, a total execution stop target (`$5` by default), and data egress. When any cost is
-   untracked, that target is a conservative control, not a guaranteed provider-billing cap.
+   spend, a total execution stop target (`$5.00` by default), and data egress. That target is a
+   conservative control, not a guaranteed provider-billing cap.
 6. Shows the baseline result, then explains and separately approves the broader managed
    optimization with additional meaningful knobs when the evaluator can distinguish configurations.
 7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and

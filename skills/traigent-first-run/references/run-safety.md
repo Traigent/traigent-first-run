@@ -490,7 +490,7 @@ Before the provider-paid baseline, show only its immediate scope:
 - Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
   preserved baseline or generated six-row sweep, tuning rows and limitations, configurations,
   calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
-  `$5.00`. For untracked cost, call it an execution stop target, not a billing guarantee.
+  `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
 - Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
   fixtures, limits, residual risk, and any external sandbox recipient.
@@ -540,7 +540,7 @@ optimization-call limit, but it does not yet share one cumulative budget with ca
 calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
 cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
-Never describe this as a hard provider-billing cap.
+Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set

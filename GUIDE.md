@@ -115,11 +115,10 @@ The default paid path uses two measurements with the same tuning data, evaluator
 agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible six-configuration sweep. The
-   assistant automatically uses the vendor the project already has configured when one is already
-   available; the user only gets asked to choose if there is no usable vendor already configured
-   for the project. The user sees its best configuration, primary tuning metric, cost, latency,
-   trial/failure count, and a short note for each knob before any Traigent account/key request.
+   when no baseline exists does the assistant prepare a credible six-configuration sweep. Stage 5
+   of `SKILL.md` owns how the provider route is resolved and when the user is asked about it. The
+   user sees its best configuration, primary tuning metric, cost, latency, trial/failure count, and
+   a short note for each knob before any Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
    configurations from a materially larger search space.

@@ -278,7 +278,8 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
-  limit to" is one that only starts to matter once something lower is cleared.
+  limit to" is one you have not reached: a stricter cap, or an average that has
+  not climbed that high yet.
   Blocked: the flag the card shows when a blocking cap fired. It does not mean
   every component is broken; it means one thing in the current state must be
   created or repaired before a paid comparison is worth making. A cap

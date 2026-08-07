@@ -536,6 +536,153 @@ def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]
             if keyword.arg == "blocks":
                 rendered = ast.unparse(keyword.value)
         found.setdefault(condition.value, set()).add(rendered)
+def prose_sentences(text: str) -> list[str]:
+    """Split markdown prose into sentences without gluing list items together.
+
+    Whitespace-normalising a whole document is what the phrase checks below do,
+    and it is wrong for anything that has to reason about one statement: a
+    wrapped sentence has its subject on one line and its predicate on the next,
+    while two adjacent bullets are two statements that happen to share a
+    paragraph. So blocks are unwrapped, list markers start a new statement, and
+    only then is the text cut at sentence punctuation.
+    """
+    out: list[str] = []
+    for block in re.split(r"\n\s*\n", text):
+        for item in re.sub(r"\n(?=\s*(?:[-*+]\s|\d+\.\s))", "\x1f", block).split(
+            "\x1f"
+        ):
+            for sentence in re.split(r"(?<=[.!?])\s+", " ".join(item.split())):
+                if sentence.strip():
+                    out.append(sentence.strip())
+    return out
+
+
+# The rule that the walkthrough ceiling is never a provider-billing guarantee,
+# recognised by what it SAYS rather than by how it is spelled. A statement of
+# it has to name the ceiling and has to name what a provider charges; nothing
+# else in this package's prose does both, so the pair is a usable signature.
+_CEILING_TERMS = re.compile(
+    r"\b(ceilings?|caps?|stop target|spend limit|cost limit)\b", re.IGNORECASE
+)
+_PROVIDER_MONEY = re.compile(
+    r"\b(bills?|billed|billing|charges?|charged|invoiced?)\b", re.IGNORECASE
+)
+# What separates a MANDATE from a CONCLUSION is grammatical mood, not
+# vocabulary, and the first version of this got that wrong in both directions.
+# It was a hand-written list of eight negation words - never, do not, don't,
+# must not, may not, shall not, cannot, avoid - which is the shape its own
+# docstring warns about: "otherwise the guard is a word ban and the next
+# duplicate simply gets reworded past it."
+#
+# It let real mandates through, because a mandate does not have to be negative:
+#   "Always tell the user the walkthrough ceiling is only an execution stop
+#    target, not something that caps what the provider bills"
+#   "Present the ceiling as an execution stop target rather than a guarantee
+#    about provider billing"
+#   "Refrain from calling the walkthrough ceiling a hard provider-billing cap"
+# and it refused a real conclusion, because a statement of fact can be negative:
+#   "The walkthrough ceiling cannot guarantee what the provider bills;
+#    `references/run-safety.md` owns the rule"
+# which is the sentence shape README.md already uses - so the next person
+# editing the public README tripped a guard about SKILL.md.
+#
+# The distinction that actually holds: a mandate is an instruction, so it is
+# either in the imperative mood (no subject - "Never call it...", "Present
+# it...", "Refrain from...") or it carries a deontic modal ("must never be
+# described"). A conclusion predicates something OF the ceiling, so the ceiling
+# is its subject: "The walkthrough ceiling is/cannot...".
+#
+# So the test is inverted, the way #167 inverted the private-repository denylist
+# into a public allowlist. Rather than list the ways to say "don't" - an open
+# set, which is why paraphrase walked past it - a candidate sentence is a
+# mandate UNLESS it is recognisably a statement about the ceiling. That fails
+# closed: the only way to be excused is to write a sentence whose subject is the
+# ceiling and which legislates nothing, and that sentence is a conclusion.
+#
+# `_SUBJECT_DETERMINERS` is a closed grammatical class - English determiners and
+# pronouns - which is what makes it different in kind from the word ban it
+# replaces. Paraphrasing a mandate cannot grow this list; there is no new way to
+# start an English noun phrase.
+_SUBJECT_DETERMINERS = (
+    r"the|this|that|these|those|a|an|it|its|they|their|we|our|you|your|"
+    r"each|every|both|either|neither|any|some|no|one|there"
+)
+_CEILING_IS_THE_SUBJECT = re.compile(
+    # An optional bullet or list marker, then a determiner, then up to three
+    # words of the noun phrase, then the ceiling term itself.
+    r"^\W*(?:[-*+]\s+|\d+[.)]\s+)?"
+    rf"(?:{_SUBJECT_DETERMINERS})\b"
+    r"(?:\s+[\w'$.`-]+){0,3}?"
+    r"\s+(?:ceilings?|caps?|stop target|spend limit|cost limit|target)\b",
+    re.IGNORECASE,
+)
+# A rule about behaviour, whatever the mood. "The stop target must never be
+# described as..." opens with the ceiling as its subject and is still a mandate.
+# `cannot` is deliberately NOT here: "the ceiling cannot guarantee what the
+# provider bills" states what the ceiling is unable to do, which is the local
+# conclusion CLAUDE.md explicitly permits.
+_DEONTIC = re.compile(
+    r"\b(?:must|shall|ought)\b|\bmay not\b|\bis not to be\b|\bare not to be\b"
+    r"|\bis to be\b|\bare to be\b|\b(?:is|are) required to\b",
+    re.IGNORECASE,
+)
+
+
+def is_billing_ceiling_mandate(sentence: str) -> bool:
+    """Does this sentence legislate about the ceiling, rather than describe it?"""
+    if _DEONTIC.search(sentence):
+        return True
+    return not _CEILING_IS_THE_SUBJECT.search(sentence)
+
+
+def published_prose_documents() -> dict[str, str]:
+    """Every markdown document this repository publishes, name -> raw text.
+
+    From `git ls-files`, not a curated list. A one-home check whose corpus is
+    hand-maintained can only ever be right about the documents somebody
+    remembered: `conversation_contract_documents()` names six files, and the
+    repository publishes seventeen markdown documents. README.md was in that
+    list and `templates/`, `reports/` and `.github/` were not, so a mandate
+    restated in any of them was outside every check by construction.
+
+    `tests/` is excluded, and this is the only exclusion. The checks below
+    plant mandate sentences deliberately, as the inputs that prove the rule can
+    see one; scanning them would flag a guard's own fixtures. Nothing under
+    `tests/` is prose a user or the assistant reads.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {
+        name: (ROOT / name).read_text(encoding="utf-8")
+        for name in sorted(listed.stdout.split("\0"))
+        if name and not name.startswith("tests/")
+    }
+
+
+def billing_ceiling_mandates(documents: dict[str, str]) -> dict[str, list[str]]:
+    """Documents that state the billing-cap rule AS A MANDATE, by document.
+
+    `documents` is name -> raw text, so this can be run over the repository or
+    over invented text. Sentences that state the same conclusion without
+    legislating are deliberately not returned: CLAUDE.md permits restating a
+    conclusion locally and forbids restating the mandate, and that distinction
+    is the whole content of the check.
+    """
+    found: dict[str, list[str]] = {}
+    for name, text in documents.items():
+        for sentence in prose_sentences(text):
+            if not (
+                _CEILING_TERMS.search(sentence) and _PROVIDER_MONEY.search(sentence)
+            ):
+                continue
+            if is_billing_ceiling_mandate(sentence):
+                found.setdefault(name, []).append(sentence)
     return found
 
 
@@ -5222,6 +5369,189 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("in the user's language", normalized)
         self.assertIn("machine vocabulary and condition ids stay internal", normalized)
 
+    def test_the_billing_cap_mandate_has_exactly_one_home(self) -> None:
+        """It had two homes, and the two were not spelled the same way.
+
+        SKILL.md carried a bare lowercase sentence - "never call the
+        walkthrough ceiling a hard provider-billing cap." - restating what
+        run-safety.md's budget section already owned as "Never describe this as
+        a hard provider-billing cap." Counting either exact phrase finds one
+        occurrence in the defect and one in the fix, so a phrase count is green
+        on both and documents nothing. A rule restated in different words is
+        precisely the defect CLAUDE.md names, so this counts DOCUMENTS THAT
+        LEGISLATE about the ceiling and provider billing, whatever words they
+        use, and requires the single home to be reachable from SKILL.md.
+        """
+        owner = RUN_SAFETY.relative_to(ROOT).as_posix()
+        mandates = billing_ceiling_mandates(published_prose_documents())
+        self.assertEqual(
+            sorted(mandates),
+            [owner],
+            f"the walkthrough-ceiling billing rule is stated as a mandate in "
+            f"{sorted(mandates)}. A rule with two homes can be changed in one "
+            "of them; restate the conclusion locally if a reader needs it, but "
+            "leave the mandate where it is owned.",
+        )
+        # Two sentences in the owner, and the count is pinned so a third cannot
+        # arrive unnoticed. They are not the same statement twice: `$5.00`
+        # approval scope tells the assistant what to CALL the ceiling in the
+        # card the user reads, and the budget section states the prohibition
+        # that governs everywhere else. Both are inside the document that owns
+        # the rule, which is what "one home" asks. The previous revision
+        # asserted one because its word-ban could not see an affirmative
+        # imperative, so the card sentence was invisible to it - the count
+        # changed when the guard started working, not when the guidance did.
+        self.assertEqual(
+            len(mandates[owner]),
+            2,
+            f"run-safety.md now states the billing rule {len(mandates[owner])} "
+            "times: " + " | ".join(mandates[owner]),
+        )
+        self.assertIn("references/run-safety.md", SKILL.read_text())
+
+    def test_the_one_home_check_reads_meaning_and_not_vocabulary(self) -> None:
+        """Exercised against invented text, because the corpus cannot show it.
+
+        The repository only ever holds the fixed state, so running the check
+        over it proves the fix and not the check. Every document here is
+        fabricated: a paraphrase that shares no phrase with the real mandate
+        must still be caught, and a local conclusion that points at the owner
+        must still be allowed - otherwise the guard is a word ban and the next
+        duplicate simply gets reworded past it.
+
+        The first revision WAS that word ban - eight negation words - and it
+        was wrong in both directions, so both directions are exercised here.
+        The affirmative mandates below carry not one of those eight words and
+        are the natural way to write the rule positively; the conclusions
+        include the one README.md already uses, which that list refused.
+        """
+        owner = (
+            "Keep the default `$5.00` ceiling across both approvals.\n"
+            "Never call the walkthrough ceiling a hard provider-billing cap, "
+            "tracked cost or not.\n"
+        )
+        paraphrases = {
+            "reworded": "Do not present the walkthrough ceiling as a "
+            "guaranteed limit on what the provider bills.\n",
+            "restructured": "The stop target must never be described to the "
+            "user as something that caps provider charges.\n",
+            "verbatim": "never call the walkthrough ceiling a hard "
+            "provider-billing cap.\n",
+            # Affirmative mandates. A rule does not have to be spelled as a
+            # prohibition to be one, and each of these walked past the word ban.
+            "affirmative": "Always tell the user the walkthrough ceiling is "
+            "only an execution stop target, not something that caps what the "
+            "provider bills.\n",
+            "positive-framing": "Present the ceiling as an execution stop "
+            "target rather than a guarantee about provider billing.\n",
+            "formal": "Refrain from calling the walkthrough ceiling a hard "
+            "provider-billing cap.\n",
+            "bulleted": "- Call the ceiling an execution stop target, never a "
+            "promise about what the provider charges.\n",
+        }
+        for label, second in paraphrases.items():
+            with self.subTest(duplicate=label):
+                self.assertEqual(
+                    sorted(
+                        billing_ceiling_mandates(
+                            {"run-safety.md": owner, "SKILL.md": second}
+                        )
+                    ),
+                    ["SKILL.md", "run-safety.md"],
+                    f"a {label} statement of the mandate is invisible to this "
+                    "check, so the duplicate it exists to catch only has to be "
+                    "written differently",
+                )
+
+        conclusions = {
+            "pointer": "The walkthrough ceiling is an execution stop target, "
+            "not a billing guarantee; `references/run-safety.md` owns the "
+            "rule.\n",
+            # The negative conclusion. This is the shape README.md already
+            # uses, and the word ban failed it on `cannot` - a false red on the
+            # single most-read file in a public repository, with a message
+            # about a mandate the sentence does not state.
+            "negative": "The walkthrough ceiling cannot guarantee what the "
+            "provider bills; `references/run-safety.md` owns the rule.\n",
+            "readme": "That target is a conservative control, not a "
+            "guaranteed provider-billing cap.\n",
+            "pronoun": "It is a stop target, not a promise about what the "
+            "provider bills.\n",
+        }
+        for label, second in conclusions.items():
+            with self.subTest(conclusion=label):
+                self.assertEqual(
+                    sorted(
+                        billing_ceiling_mandates(
+                            {"run-safety.md": owner, "README.md": second}
+                        )
+                    ),
+                    ["run-safety.md"],
+                    "a local conclusion with a pointer is what CLAUDE.md "
+                    "permits; rejecting it would push writers into saying "
+                    "nothing at all",
+                )
+
+    def test_the_one_home_corpus_is_every_document_this_repository_publishes(
+        self,
+    ) -> None:
+        """The check is only as good as the set of documents it opens.
+
+        The previous corpus was a hand-written list of six paths. The
+        repository publishes seventeen markdown documents, so a mandate
+        restated in `templates/`, `reports/` or `.github/` was outside the
+        check by construction - which is the same defect, one level up, as the
+        duplicate it looks for.
+        """
+        published = published_prose_documents()
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        self.assertEqual(
+            sorted(published),
+            sorted(name for name in listed if not name.startswith("tests/")),
+            "the corpus has drifted from what git publishes",
+        )
+        # The named documents the earlier list held, and the directories it did
+        # not - each asserted to be reachable, so a future narrowing fails here
+        # rather than silently shrinking what the rule covers.
+        for expected in ("README.md", "AGENTS.md", "CLAUDE.md", "GUIDE.md"):
+            with self.subTest(document=expected):
+                self.assertIn(expected, published)
+        for directory in ("skills/", "templates/", "reports/"):
+            with self.subTest(directory=directory):
+                self.assertTrue(
+                    any(name.startswith(directory) for name in published),
+                    f"nothing under {directory} is in the corpus",
+                )
+
+    def test_the_subjunctive_ceiling_is_explained_by_both_of_its_causes(
+        self,
+    ) -> None:
+        """`binds` is `cap.ceiling == overall`, and `overall` has two inputs.
+
+        The glossary is the file the assistant phrases from, and it said "would
+        limit to" marks a ceiling that "only starts to matter once something
+        lower is cleared" - true of a stricter cap, false of the other half.
+        `overall` is `min(weighted_average, min(ceilings))`, so a sole ceiling
+        above the average is equally not the operative limit. README.md already
+        stated both causes; the two must not disagree.
+        """
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        sentence = glossary.split('"would limit to" is', 1)[1].split(".", 1)[0]
+        self.assertIn("stricter", sentence)
+        self.assertIn("average", sentence)
+        self.assertNotIn(
+            "only starts to matter once something lower is cleared", glossary
+        )
+        self.assertIn("your average simply has not climbed that high yet", readme)
+
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
@@ -6348,6 +6678,45 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "what a binary partial probe has to score",
             ("partial output above `--bad-maximum`",),
             ("in `binary` mode, partial output receiving a passing score",),
+            # SKILL.md stage 5 asks, recommends preserving the agent's route,
+            # and requires recipient disclosure before changing it. GUIDE.md
+            # described the same situation as resolved silently in favour of
+            # whichever vendor has a key - which sends the user's prompts to a
+            # different company with no disclosure at all. The route sentence
+            # landed in GUIDE.md (f2573a3) a day before 402023e settled the
+            # rule in SKILL.md, run-safety.md and .env.example without
+            # revisiting it.
+            "who picks the provider route when the configured vendor has no key",
+            ("never rewrite a route merely to match a key",),
+            (
+                "the assistant automatically uses the vendor the project already has configured",
+                "the user only gets asked to choose if there is no usable vendor",
+            ),
+        ),
+        (
+            # The ceiling is not a billing guarantee in either case: the SDK
+            # enforces its own per-optimization limit and "does not yet share
+            # one cumulative budget with calibration and other calls". Two
+            # documents attached "when cost is untracked" to that sentence,
+            # which licenses telling a user with tracked cost that $5.00 is
+            # guaranteed.
+            "whether the walkthrough ceiling is ever a billing guarantee",
+            ("never call the walkthrough ceiling a hard provider-billing cap",),
+            (
+                "for untracked cost, call it an execution stop target",
+                "when any cost is untracked, that target is a conservative control",
+            ),
+        ),
+        (
+            # `model` is a swept knob carrying three values, so "no swept knob
+            # taking more than two values" contradicted the same paragraph's
+            # "three models × two temperatures" and the fence's own
+            # `assert configuration_count(BASELINE_SPACE) == 6`.
+            "how large the generated baseline sweep may be",
+            ("the three ladder models by one further swept knob taking two values",),
+            (
+                "at most three swept knobs, with no swept knob taking more than two values",
+            ),
         ),
     )
 
@@ -6384,9 +6753,17 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     SHARED_VALUES = (
         ("supported Python range", r"Python (3\.\d+\s*-\s*3\.\d+)"),
         ("the .env file mode", r"mode `(0[0-7]{3})`"),
+        # The cents are optional on purpose. `\$(\d+\.\d{2})` cannot match a
+        # bare `$5`, so the one shape this value actually drifted into was the
+        # one shape the check could not see: README.md said `$5` while every
+        # guidance document said `$5.00`, and this entry was green throughout.
+        # An unmatchable variant is not a passing check, it is an absent one.
+        # `stop target` is here for the same reason - it is the phrase
+        # run-safety.md requires the user be given, so it is the phrase the
+        # ceiling is most likely to be restated under.
         (
             "the total walkthrough ceiling",
-            r"(?:ceiling|walkthrough)[^.]{0,40}?\$(\d+\.\d{2})",
+            r"(?:ceiling|walkthrough|stop target)[^.]{0,40}?\$(\d+(?:\.\d{2})?)",
         ),
         # The enhanced run's ceiling, matched as the ceiling phrase the user
         # reads rather than as a range: the range shape it used to have is now
@@ -6404,8 +6781,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         the subclass that grows fastest: each new reference file is another
         place for the spend ceiling or the supported interpreter range to be
         restated slightly differently.
+
+        Run over the conversation corpus, not the progressive-load one. The
+        guidance corpus excludes README.md, which is where the walkthrough
+        ceiling is quoted to a reader who has installed nothing yet - so the
+        one document most likely to be edited without opening SKILL.md was the
+        one document this check could not read. Every entry in the table above
+        already agrees across the wider corpus; widening it costs nothing and
+        closes the hole it was measured through.
         """
-        documents = self.guidance()
+        documents = self.conversation()
         for label, pattern in self.SHARED_VALUES:
             with self.subTest(value=label):
                 stated = {

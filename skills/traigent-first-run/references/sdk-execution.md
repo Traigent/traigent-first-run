@@ -120,11 +120,11 @@ itself. Omitting it bounds generated-walkthrough cost and latency; do not imply 
 State that in the plan and price any flagship comparison separately. Every selected model runs in
 the baseline grid and must fit the approved time and cost envelope.
 
-Both generated spaces use the same three models. Keep the baseline small: at most three models and
-at most three swept knobs, with no swept knob taking more than two values. In the walkthrough that
-usually becomes a six-row sweep the user could credibly run by hand: three models × two
-evaluator-safe temperatures, with `prompt_style` and `self_check` fixed to one value each so the
-only varying dimensions are model and temperature. If the strong tier is a reasoning model,
+Both generated spaces use the same three models. Keep the baseline small: the three ladder models
+by one further swept knob taking two values. In the walkthrough that becomes a six-row sweep the
+user could credibly run by hand: three models × two evaluator-safe temperatures, with
+`prompt_style` and `self_check` fixed to one value each so the only varying dimensions are model
+and temperature. If the strong tier is a reasoning model,
 temperature is inert for it, so the baseline instead uses two prompt styles while keeping the
 reasoning calling convention pinned; either way, the baseline stays at six rows and the first
 result stays quick and cheap. The synthesized walkthrough dataset contains 18 tuning rows: 3 easy,
