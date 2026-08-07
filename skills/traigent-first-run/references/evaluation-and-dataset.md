@@ -185,6 +185,15 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
   --json > traigent-runs/calibration-results.json
 ```
 
+That form is for a calibration that returns in seconds, which a deterministic scorer doing local
+work does. The trigger is the ESTIMATE "When calibration runs long" has you state before the wait
+starts - calls times what one call costs this evaluator - and not the budget: the budget is minutes
+for every calibration at every case count, 600 seconds at the two-pair minimum `--cases` accepts, so
+a reader taking that as the trigger would never use this form at all. Once the estimate is minutes -
+a judge, or any evaluator costing about a minute per call - use the detached form in "When
+calibration runs long" instead: this one can be killed from outside before it writes anything, and
+its warnings arrive on a stderr nobody is reading.
+
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
 `metadata`. It may translate them into an existing evaluator's unchanged local convention. The
 adapter can import project modules because the import root defaults to the directory where the
@@ -204,10 +213,22 @@ The exact thresholds depend on the metric, but reject all of these:
 - Parse/evaluator exceptions converted silently to an ordinary zero. Nothing enforces this one:
   `exception_probe_advisory` reports it and leaves PASS alone - reject it yourself.
 
+Calibration runs two sets of probes, and they answer different questions. The authored probes are
+the verdict: the answers the author wrote, scored against the thresholds above, and the only thing
+`passed`, the exit code, and the readiness score are built from. The supplemental probes ask what
+those four cannot - a wrong answer built by reordering the expected one, and malformed or
+exception-raising outputs - and they only ever raise a question, never a verdict, because a
+permutation scoring full marks is correct for a genuinely order-free task and only the author knows
+which this task is. That difference is also why they stay separate. A probe an author can revise
+until it passes is weak evidence about a repair the author just wrote; these are generated from the
+expected answer and cannot be revised, so in the re-calibration a repair requires they are the half
+of the evidence not confirming its own fix. Read the first as the verdict and the second as the
+questions.
+
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase may use one additional `--timeout` budget. Follow the
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. Follow the
 SKILL stage-4 gate for permitted paths; `run-safety.md` owns execution-evaluator containment.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
@@ -471,6 +492,75 @@ the user asks for it.
 
 Do not manufacture deliberately wrong gold labels or ambiguous inputs merely to make the
 optimization look better.
+
+## When calibration runs long
+
+Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
+over a few known-good and known-bad answers to prove it separates them, four probe calls per
+input/expected pair. Multiply those calls by what one call costs the evaluator and state the
+number - for a judge, a model call per probe, that is minutes rather than seconds. Finishing
+matters more than finishing fast: an evaluator nobody could measure makes every later number
+unverifiable.
+
+The script budgets itself the same way, per probe call rather than as one flat number, so a 3-5
+pair matrix leaves room for an evaluator taking about a minute per call. That one budget covers the
+authored probes and the supplemental ones together, so `--timeout` is the whole wait rather than
+half of it, and a calibration slow enough to spend it loses supplemental probes rather than
+extending the wait - which the `ADVISORY` line on stderr then names.
+
+**Fifteen minutes is the ceiling on that budget, and say so before the wait starts.** This is
+onboarding rather than a full-power run: a calibration that has not separated a good answer from a
+bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
+The ceiling bounds the wait, not the work, so a large case set is cut below the per-probe rate the
+budget was derived at: whole to three pairs deterministic and two for a judge, and at five pairs
+either way each probe gets 45 seconds - which is a 40% cut against the 75 the deterministic budget
+is derived at, and exactly half the 90 a judge is. The judge is cut harder at every size past two
+pairs, so quoting one number for both understates what a judge loses. Tell a user whose evaluator takes about a minute per call what that means for them: at that
+speed a five-pair matrix cannot finish inside the ceiling, so run fewer pairs or expect the timeout
+question. Their own larger `--timeout` is not capped; the ceiling only bounds what this stage
+chooses on its own.
+
+**There is no resume.** The authored probes all run in one child that reports only once every case
+is done, and nothing is written until it returns, so a calibration stopped part-way records
+nothing and a re-run starts at the first probe. Two minutes before the budget expires the script
+says exactly that on stderr, in the log the detached invocation below already has you polling.
+Relay it as a warning and do not turn it into a "stop or continue" question: continuing costs the
+minutes that are left, stopping costs every minute already spent, and offering those as a choice
+hides that they are not the same size. The question with real alternatives is the one below, asked
+after the budget has actually been spent.
+
+That wait can outlast the point at which a foreground command is killed from outside (see
+`references/run-safety.md`), and a calibration killed from outside writes no result at all - not
+even the timeout record that makes a slow evaluator legible instead of broken. So run it detached
+and poll the log, the same way that reference already requires for a long paid optimization:
+
+```bash
+nohup "$TRAIGENT_FIRST_RUN_PYTHON" \
+  "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
+  --scorer traigent-runs/evaluator.py:task_score \
+  --cases @traigent-runs/calibration-cases.json \
+  --allow-execution \
+  --json > traigent-runs/calibration-results.json 2> traigent-runs/calibration.log &
+```
+
+If a specific avoidable cause is visible - a per-call sleep, a retry loop, an uncached model load -
+name that fix in the readiness summary, and again at the close if it was not taken.
+
+On a timeout do not call the evaluator broken; slow and broken look identical from here. Ask once -
+one question carrying every option that applies, never one question per option:
+
+- **Wait**, if the evaluator is normally this slow. Re-run with an explicit `--timeout` and size it
+  for both phases: calls times cost covers the authored probes only, and the supplemental ones then
+  get what is left of it, which is nothing. Say so before the re-run rather than letting the
+  `ADVISORY` line report them unavailable afterwards.
+- **Take a named fix**, when the cause is certain.
+- **Score it differently**, bounding what one scoring call costs: a cheaper judge model, or a
+  deterministic comparison - an exact or normalized match against the expected answer, no model
+  call - where the task allows one.
+- **Retry**, since a provider call that has stalled looks the same from here.
+- **Build a new evaluation method** together.
+
+Repeated questions cost more attention than the wait they save.
 
 ## First-run subset for a large dataset
 

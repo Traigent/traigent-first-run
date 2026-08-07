@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "traigent-first-run" / "scripts" / "calibrate_evaluator.py"
+# The reference that owns this stage. Several tests below weld a number in the
+# script to the sentence that discloses it, because a bound the user is never
+# told about is the defect, not the bound.
+EVALUATION_REFERENCE = (
+    ROOT / "skills" / "traigent-first-run" / "references" / "evaluation-and-dataset.md"
+)
 
 
 class EvaluatorCalibrationTests(unittest.TestCase):
@@ -755,7 +763,27 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             self.assertEqual(process.returncode, 2)
             self.assertIn("greater than zero", process.stderr)
 
-    def test_timeout_help_discloses_the_two_deterministic_phase_budgets(self) -> None:
+    def test_timeout_help_discloses_one_shared_budget_derived_from_the_work(
+        self,
+    ) -> None:
+        """`--timeout` is the whole wait, and the default is derived, not flat.
+
+        Both halves are contract the user reads before deciding whether to wait.
+        The help used to disclose that the deterministic path quietly took a
+        second budget of the same size - "worst-case wall time is roughly twice
+        this value" - which documented the defect instead of removing it.
+
+        Merging the two budgets is the right call at the DERIVED default, where
+        the derivation already allows for both phases. It has a cost at an
+        explicit `--timeout`, and that is the one invocation this option exists
+        for: "wait, my evaluator is normally this slow" is answered with calls
+        times cost, which sizes the authored phase exactly and leaves the
+        supplemental probes nothing. Measured on a three-case matrix with a
+        0.55s-per-call evaluator and `--timeout 8`: 13 of 15 supplemental probes
+        lost here against 3 of 15 before the merge. The `ADVISORY` line makes
+        that visible after the fact; the help is where it is visible before, so
+        the cost is disclosed inside the option that triggers it.
+        """
         process = subprocess.run(
             [sys.executable, str(SCRIPT), "--help"],
             capture_output=True,
@@ -763,9 +791,21 @@ class EvaluatorCalibrationTests(unittest.TestCase):
         )
         self.assertEqual(process.returncode, 0, process.stderr)
         normalized = " ".join(process.stdout.split())
-        self.assertIn("authored calibration phase", normalized)
-        self.assertIn("one separate total budget of the same size", normalized)
-        self.assertIn("worst-case wall time is roughly twice", normalized)
+        self.assertIn("share this one total budget", normalized)
+        self.assertIn("worst-case wall time and not half of it", normalized)
+        self.assertIn("derived from the work", normalized)
+        self.assertNotIn("roughly twice", normalized)
+        # The cost of the merge, at the invocation that pays it. Naming the
+        # sharing without naming the consequence is what the reader already had:
+        # true, and not enough to size a number by.
+        for disclosure in (
+            "size it for both phases",
+            "leaves the supplemental ones nothing",
+            "they come back unavailable",
+            "ADVISORY line on stderr names how many",
+        ):
+            with self.subTest(disclosure=disclosure):
+                self.assertIn(disclosure, normalized)
 
     def test_evaluator_exception_keeps_type_and_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1205,7 +1245,13 @@ class EvaluatorCalibrationTests(unittest.TestCase):
             )
         )
         self.assertIn("supplemental_probe_advisory", payload)
-        self.assertEqual(process.stderr, "")
+        # The advisory summary announces itself on stderr in every mode. What
+        # must not reach stderr is the child's own cancellation trace - that is
+        # the swallowing this test is about, and it stays in the payload.
+        self.assertEqual(
+            [line for line in process.stderr.splitlines() if line.strip()],
+            [f"ADVISORY: {payload['supplemental_probe_advisory']}"],
+        )
 
     def test_supplemental_import_failure_is_unavailable_and_preserves_pass(
         self,
@@ -1418,6 +1464,32 @@ class TimeoutIsReportableTests(unittest.TestCase):
         },
     ]
 
+    # The same two cases, with the label task declared binary so a scorer that
+    # gives it no partial credit is judged against the contract it actually
+    # meets. The pre-cap tests below need a calibration that genuinely PASSES:
+    # a warning asserted on top of a failing run proves nothing about the run
+    # that will actually be waiting at minute 13.
+    PASSING_CASES = [
+        CASES[0],
+        {**CASES[1], "score_mode": "binary"},
+    ]
+
+    def _passing_fixture(self, directory: Path) -> tuple[Path, Path]:
+        """A briefly-slow local scorer that passes both cases. No provider call."""
+        scorer = directory / "brief_scorer.py"
+        scorer.write_text(
+            "import time\n\n\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
+            "    time.sleep(0.3)\n"
+            "    if isinstance(expected, list):\n"
+            "        required = set(expected)\n"
+            "        return len(required & set(output)) / len(required)\n"
+            "    return float(output.casefold() == expected.casefold())\n"
+        )
+        cases = directory / "passing-cases.json"
+        cases.write_text(json.dumps(self.PASSING_CASES))
+        return scorer, cases
+
     def _run_slow_calibration(self, directory: Path) -> subprocess.CompletedProcess:
         scorer = directory / "slow_scorer.py"
         scorer.write_text(
@@ -1451,7 +1523,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
 
         # The exit code stays the failure signal.
         self.assertEqual(process.returncode, 1, process.stderr)
-        self.assertIn("exceeded 2 seconds", process.stderr)
+        self.assertIn("exceeded its 2-second budget", process.stderr)
         # And the payload is what makes the failure legible.
         payload = json.loads(process.stdout)
         self.assertTrue(payload["timed_out"])
@@ -1534,58 +1606,686 @@ class TimeoutIsReportableTests(unittest.TestCase):
         }
         self.assertEqual(caps.get("evaluator-timeout"), 45)
 
-    def test_an_llm_judge_budget_scales_with_the_probe_calls_it_makes(self) -> None:
-        """A reasoning judge can think for a minute on each of four probes a case.
+    # The evaluator this whole change exists for: about a minute per call. It is
+    # the unit the budget has to be measured against, because "300" and "30" are
+    # both defensible-looking numbers that kill it.
+    SLOW_EVALUATOR_SECONDS_PER_CALL = 60
+    # What the guide asks a calibration matrix to cover, and `--cases` will not
+    # accept fewer than two, so this is the whole documented range.
+    DOCUMENTED_CASE_COUNTS = (2, 3, 4, 5)
 
-        One flat number cannot serve both a deterministic scorer that never
-        leaves the process and a judge making 4 network round trips per case, so
-        the budget is derived from the work - with a floor so a tiny case set is
-        not starved, and a ceiling where "slow" stops being credible and a hang
-        is likelier. The ceiling also stops calibration quietly consuming the
-        run's own time budget.
+    def test_the_budget_covers_a_minute_per_call_evaluator_until_the_cap_binds(
+        self,
+    ) -> None:
+        """Pin the number to the work it must cover, not to itself.
+
+        A flat budget passes every relative-shape assertion while failing the
+        one customer it was written for: 4 probe calls per case times a
+        one-minute call is 480 seconds at the two-case minimum and 1200 at five,
+        so 30 and 300 are the same defect an order of magnitude apart. Reverting
+        the derivation has to fail on meaning here, not on a file hash.
+
+        What changed is where the check stops. The fifteen-minute cap is a
+        decision about how long it is fair to make a first-run user wait, so
+        above it the derivation is deliberately cut and this can no longer
+        assert the slow evaluator is covered - that would be asserting the cap
+        away. So it asserts the derivation is intact everywhere the cap does not
+        bind, and the sibling test below owns what happens where it does.
         """
         module = _load_constants()
-        budget = module["llm_judge_timeout_seconds"]
+        budget = module["calibration_timeout_seconds"]
+        probes_per_case = module["PROBES_PER_CASE"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
 
-        self.assertGreater(budget(1), module["DEFAULT_TIMEOUT_SECONDS"])
-        self.assertGreaterEqual(budget(1), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
-        self.assertLessEqual(budget(50), module["LLM_JUDGE_TIMEOUT_CEILING_SECONDS"])
-        # More cases never buys less time.
-        self.assertLessEqual(budget(1), budget(2))
-        self.assertLessEqual(budget(2), budget(4))
-        # And a zero/negative count cannot produce a nonsense budget.
-        self.assertGreaterEqual(budget(0), module["LLM_JUDGE_TIMEOUT_FLOOR_SECONDS"])
+        uncapped = 0
+        for case_count in self.DOCUMENTED_CASE_COUNTS:
+            needed = case_count * probes_per_case * self.SLOW_EVALUATOR_SECONDS_PER_CALL
+            for kind in ("deterministic", "llm-judge"):
+                if needed > ceiling:
+                    continue
+                uncapped += 1
+                with self.subTest(cases=case_count, kind=kind):
+                    self.assertGreaterEqual(
+                        budget(case_count, kind),
+                        needed,
+                        f"{case_count} cases is {case_count * probes_per_case} probe "
+                        f"calls; a {self.SLOW_EVALUATOR_SECONDS_PER_CALL}s-per-call "
+                        f"evaluator needs {needed}s, the cap does not bind there, "
+                        "and this budget kills it anyway",
+                    )
+        # A cap low enough to skip every documented size would turn the loop
+        # above into a green tick over nothing.
+        self.assertGreater(uncapped, 0)
+
+    def test_where_the_cap_binds_it_is_the_budget_and_the_guide_says_what_that_costs(
+        self,
+    ) -> None:
+        """A clamped run gets less per probe than `--help` quotes. Disclose it.
+
+        This test replaces one that asserted the ceiling never clamps a
+        documented run. That was true of the derived 1800 and is deliberately
+        false of the owner's 900: fifteen minutes bounds the wait, not the work,
+        so at four and five pairs the per-probe rate silently drops. Silently is
+        the part that is not allowed - so the assertion moved from "it never
+        happens" to "when it happens the user is told", which is the only form
+        of this check that survives the decision.
+        """
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        probes_per_case = module["PROBES_PER_CASE"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
+        per_probe = {
+            "deterministic": module["DETERMINISTIC_SECONDS_PER_PROBE"],
+            "llm-judge": module["LLM_JUDGE_SECONDS_PER_PROBE"],
+        }
+
+        clamped = 0
+        for case_count in self.DOCUMENTED_CASE_COUNTS:
+            for kind, seconds in per_probe.items():
+                derived = case_count * probes_per_case * seconds
+                with self.subTest(cases=case_count, kind=kind):
+                    self.assertEqual(budget(case_count, kind), min(derived, ceiling))
+                if derived > ceiling:
+                    clamped += 1
+        # The disclosure below is only honest if there is something to disclose.
+        self.assertGreater(
+            clamped,
+            0,
+            "no documented case count is clamped, so the guidance sentence this "
+            "test pins is describing something that cannot happen",
+        )
+
+        # The owner set fifteen minutes; the guide has to say so, say why, and
+        # say what it costs the evaluator that is genuinely that slow.
+        self.assertEqual(ceiling, 900)
+        # The arithmetic behind the sentence, so a constant can never move and
+        # leave the words describing the previous number.
+        last_whole = {
+            kind: max(
+                count
+                for count in range(1, 100)
+                if count * probes_per_case * seconds <= ceiling
+            )
+            for kind, seconds in per_probe.items()
+        }
+        self.assertEqual(last_whole, {"deterministic": 3, "llm-judge": 2})
+        five_pair_rate = ceiling / (5 * probes_per_case)
+        self.assertEqual(five_pair_rate, 45)
+        # Both cuts, because the sentence quotes both. One number for both rates
+        # was true of the deterministic budget and understated the judge's: 45 is
+        # a 40% cut against 75 and exactly half of 90, and it was the judge - the
+        # slower of the two, and the one paying per model call - whose loss was
+        # the one not stated.
+        self.assertEqual(
+            round(100 * (1 - five_pair_rate / per_probe["deterministic"])), 40
+        )
+        self.assertEqual(five_pair_rate * 2, per_probe["llm-judge"])
+        normalized = " ".join(EVALUATION_REFERENCE.read_text().casefold().split())
+        for phrase in (
+            "fifteen minutes is the ceiling on that budget, and say so before the wait "
+            "starts",
+            "this is onboarding rather than a full-power run",
+            "the ceiling bounds the wait, not the work",
+            # Both rates, because a judge is cut a pair earlier than a
+            # deterministic scorer and one number for both would misinform the
+            # reader who is paying per probe.
+            "whole to three pairs deterministic and two for a judge",
+            # Built from the constants, not typed twice. A probe that moved
+            # DETERMINISTIC_SECONDS_PER_PROBE to 60 survived the literal version
+            # of this line: both counts above happened to stay put, and the only
+            # thing that had become false was the "75" in the sentence.
+            #
+            # Both rates, for the same reason the pair counts above are both
+            # named. "45 seconds instead of 75" said "either way" and then
+            # quoted one rate, so the judge - cut to exactly half rather than by
+            # 40% - read as losing less than it does.
+            f"{ceiling // (5 * probes_per_case)} seconds - which is a "
+            f"{round(100 * (1 - five_pair_rate / per_probe['deterministic']))}% "
+            f"cut against the {per_probe['deterministic']} the deterministic "
+            f"budget is derived at, and exactly half the "
+            f"{per_probe['llm-judge']} a judge is",
+            "their own larger `--timeout` is not capped",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_the_pre_cap_warning_lands_before_the_cap_and_only_when_it_can(
+        self,
+    ) -> None:
+        """Two minutes of notice, and none where two minutes is the whole wait.
+
+        The owner asked for the warning at about minute 13 of 15. A fixed lead
+        gives that, and gives the same two minutes to decide at any budget,
+        which a percentage does not: 13% of a 300-second budget is 39 seconds.
+        The None case is the other half - a budget no longer than the lead has
+        no "before the cap" to warn in, and a warning fired at the first probe
+        call only repeats what the assistant said when it announced the wait.
+        """
+        module = _load_constants()
+        delay = module["pre_cap_warning_delay"]
+        lead = module["PRE_CAP_WARNING_LEAD_SECONDS"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
+
+        # The owner's own example, at the owner's own ceiling.
+        self.assertEqual(delay(ceiling), 780.0)
+        self.assertEqual((ceiling - delay(ceiling)) / 60, 2.0)
+        # Whatever the budget, the notice is the same size.
+        for budget_seconds in (300, 600, 900):
+            with self.subTest(budget=budget_seconds):
+                self.assertEqual(delay(budget_seconds), budget_seconds - lead)
+        # And a budget that cannot carry the lead gets no warning rather than
+        # one at t=0.
+        self.assertIsNone(delay(lead))
+        self.assertIsNone(delay(lead - 1))
+        self.assertIsNotNone(delay(lead + 1))
+
+    def test_the_pre_cap_line_is_a_warning_and_says_there_is_no_resume(self) -> None:
+        """The owner's condition: a stop/continue question here is dishonest.
+
+        Stopping is not the cheap half of a choice - it discards every minute
+        already spent, because the authored probes run in one child that reports
+        only when every case is done and the parent writes nothing until it
+        returns. So the line has to say the run cannot be resumed, and must not
+        be phrased as a choice between two things of different size.
+        """
+        module = _load_constants()
+        message = module["pre_cap_warning_message"](900)
+        normalized = " ".join(message.casefold().split())
+
+        self.assertIn("there is no resume", normalized)
+        self.assertIn("stopping now discards this wait entirely", normalized)
+        self.assertIn("re-run starts from the first probe", normalized)
+        # It still says what happens if nothing is done, or it is only bad news.
+        self.assertIn("writes the timeout record", normalized)
+        self.assertIn("warning, not as a question", normalized)
+        # The numbers in it are the real ones.
+        self.assertIn("120 of the 900 seconds", normalized)
+        # And it does not offer the choice the docstring rejects.
+        self.assertNotIn("stop or continue", normalized)
+        self.assertNotIn("?", message)
+
+    def test_the_pre_cap_warning_actually_reaches_stderr_during_the_run(self) -> None:
+        """Measured, because a timer that never fires is a promise in a comment.
+
+        A budget one second above the lead puts the warning one second into the
+        run, which is what makes this affordable to assert end to end rather
+        than at minute 13. The scorer is local and sleeps; no provider is called.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scorer, cases = self._passing_fixture(directory)
+            module = _load_constants()
+            budget_seconds = module["PRE_CAP_WARNING_LEAD_SECONDS"] + 1
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{cases}",
+                    "--timeout",
+                    str(budget_seconds),
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        warnings = [
+            line
+            for line in process.stderr.splitlines()
+            if "CALIBRATION STILL RUNNING" in line
+        ]
+        self.assertEqual(
+            len(warnings),
+            1,
+            f"expected exactly one pre-cap warning on stderr, got {process.stderr!r}",
+        )
+        self.assertIn("there is no resume", warnings[0])
+        # It is a warning about a run still going, so it cannot be the last word:
+        # the calibration still finished and still reported.
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(json.loads(process.stdout)["passed"])
+
+    def test_a_short_calibration_is_not_warned_about_a_cap_it_cannot_reach(
+        self,
+    ) -> None:
+        """The quiet case, asserted so the timer cannot become unconditional."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scorer, cases = self._passing_fixture(directory)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{cases}",
+                    "--timeout",
+                    "20",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotIn("CALIBRATION STILL RUNNING", process.stderr)
+
+    def test_the_guide_says_there_is_no_resume_and_forbids_the_stop_question(
+        self,
+    ) -> None:
+        """The disclosure has to match what the code does, or it is worse than none.
+
+        The code has no resume path, so the guidance may not offer a choice that
+        implies one. This is pinned in the reference rather than left to the
+        script's own stderr line because the assistant decides what to say to
+        the user, and it decides that from here.
+        """
+        normalized = " ".join(EVALUATION_REFERENCE.read_text().casefold().split())
+
+        self.assertIn("**there is no resume.**", normalized)
+        self.assertIn(
+            "a calibration stopped part-way records nothing and a re-run starts at the "
+            "first probe",
+            normalized,
+        )
+        self.assertIn(
+            'do not turn it into a "stop or continue" question',
+            normalized,
+        )
+        self.assertIn(
+            "continuing costs the minutes that are left, stopping costs every minute "
+            "already spent",
+            normalized,
+        )
+
+    def test_the_budget_is_bounded_and_monotonic(self) -> None:
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
+
+        for kind in ("deterministic", "llm-judge"):
+            with self.subTest(kind=kind):
+                # A hang is still stopped.
+                self.assertLessEqual(budget(500, kind), ceiling)
+                # More cases never buys less time.
+                self.assertLessEqual(budget(1, kind), budget(2, kind))
+                self.assertLessEqual(budget(2, kind), budget(4, kind))
+                # And a zero/negative count cannot produce a nonsense budget.
+                self.assertGreater(budget(0, kind), 0)
+                self.assertEqual(budget(0, kind), budget(1, kind))
+        # A judge pays network latency on top of the same work - below the cap.
+        # At and above it the two paths meet at the same number, because the cap
+        # is a bound on the wait and the wait does not care which kind produced
+        # it. Asserting the strict inequality everywhere would be asserting the
+        # cap away; asserting both halves is what the function actually does.
+        self.assertGreater(budget(2, "llm-judge"), budget(2, "deterministic"))
+        self.assertEqual(budget(500, "llm-judge"), budget(500, "deterministic"))
+        self.assertEqual(budget(500, "llm-judge"), ceiling)
+
+    # Every case-set size the budget can be asked about. `--cases` requires at
+    # least two and one is the smallest the function itself accepts, so this
+    # range covers every input a clamp could bind on, with a wide margin above.
+    LEGAL_CASE_COUNTS = range(0, 501)
+    KINDS = ("deterministic", "llm-judge")
+    _NAMES_A_CLAMP = re.compile(r"_(?:FLOOR|CEILING|MINIMUM|MAXIMUM)_SECONDS$")
+
+    def _budget_source(self) -> ast.FunctionDef:
+        """`calibration_timeout_seconds`, as source rather than as a callable."""
+        for node in ast.parse(SCRIPT.read_text()).body:
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "calibration_timeout_seconds"
+            ):
+                return node
+        self.fail("the module no longer defines calibration_timeout_seconds")
+
+    def test_every_clamp_this_module_declares_can_actually_bind(self) -> None:
+        """A clamp that cannot bind is a protection that is not there.
+
+        `LLM_JUDGE_TIMEOUT_FLOOR_SECONDS = 180` lived here and could never fire:
+        the smallest case set is one case, which is `PROBES_PER_CASE` probes,
+        which is already 300 seconds - so `max(180, ...)` returned its other
+        argument for every input the function can receive. It was removed rather
+        than raised, because a floor nobody reaches still reads to the next
+        person as "small case sets are protected", and they are not.
+
+        Nothing catches that by behaviour, and that is exactly why it needs a
+        test: putting the floor back changes no output, so every value-based
+        assertion in this file passes with it there. A deletion whose undo is
+        invisible is the one a merge undoes and nobody notices.
+
+        So the check is structural, and it is a rule rather than a list of the
+        names that have appeared so far. Two places are read: any module-level
+        constant whose name says it is a clamp, and any bound written inside the
+        budget function itself - because the floor's second, worse form is a
+        bare `max(180, ...)` with no constant to notice. Each must be a value
+        the budget actually returns for some legal case count. A ceiling
+        qualifies because the budget reaches it; a floor qualifies because the
+        budget rests on it; an unreachable number of either kind does not.
+        """
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        reachable = {
+            budget(count, kind)
+            for count in self.LEGAL_CASE_COUNTS
+            for kind in self.KINDS
+        }
+
+        declared = {
+            name: value
+            for name, value in module.items()
+            if isinstance(value, int)
+            and not isinstance(value, bool)
+            and self._NAMES_A_CLAMP.search(name)
+        }
+        self.assertTrue(declared, "this module declares no timeout clamp at all")
+
+        # Every argument of a `min`/`max` bounding the budget's RETURNED value
+        # that is a number this test can resolve - a literal, or a module
+        # constant by name. Scoped to the return because that is where a bound
+        # on the wait can be: `max(1, case_count)` further up guards a count,
+        # not a number of seconds, and is not a clamp on anything. An expression
+        # argument is left alone; it is the work, not a bound on it.
+        written: dict[str, int] = {}
+        returns = [
+            node.value
+            for node in ast.walk(self._budget_source())
+            if isinstance(node, ast.Return) and node.value is not None
+        ]
+        self.assertTrue(returns, "the budget function returns nothing")
+        for node in [child for tree in returns for child in ast.walk(tree)]:
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"min", "max"}
+            ):
+                continue
+            for argument in node.args:
+                if isinstance(argument, ast.Constant) and isinstance(
+                    argument.value, int
+                ):
+                    written[f"{node.func.id}({argument.value})"] = argument.value
+                elif isinstance(argument, ast.Name) and isinstance(
+                    module.get(argument.id), int
+                ):
+                    written[argument.id] = module[argument.id]
+
+        unreachable = sorted(
+            f"{where}={value}"
+            for where, value in {**declared, **written}.items()
+            if value not in reachable
+        )
+        self.assertEqual(
+            unreachable,
+            [],
+            "a clamp is declared or written that the budget never returns for "
+            "any legal case count, so it cannot bind - it reads as a protection "
+            "this module does not have",
+        )
+
+    def test_the_budget_is_the_work_and_never_a_flat_default(self) -> None:
+        """`DEFAULT_TIMEOUT_SECONDS = 30` was one number for every case set.
+
+        It killed a working evaluator that takes about a minute per call and
+        reported it as unverifiable - and a flat 300 would have done the same
+        thing one order of magnitude later, so the defect is the flatness and
+        not the value. What has to keep holding is that below the ceiling the
+        budget is exactly the work: probes times the per-probe allowance, with
+        nothing added, nothing floored and nothing substituted.
+
+        Asserting the identity rather than a table of numbers is what makes this
+        survive a re-tuning. Change `DETERMINISTIC_SECONDS_PER_PROBE` and it
+        still passes; add a rounding, a margin or a substituted constant and it
+        does not.
+        """
+        module = _load_constants()
+        budget = module["calibration_timeout_seconds"]
+        probes_per_case = module["PROBES_PER_CASE"]
+        ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
+        per_probe = module["SECONDS_PER_PROBE"]
+
+        below_ceiling = 0
+        for kind in self.KINDS:
+            for count in self.LEGAL_CASE_COUNTS:
+                derived = max(1, count) * probes_per_case * per_probe[kind]
+                with self.subTest(kind=kind, cases=count):
+                    self.assertEqual(budget(count, kind), min(ceiling, derived))
+                if derived < ceiling:
+                    below_ceiling += 1
+        self.assertGreater(
+            below_ceiling,
+            0,
+            "the ceiling binds at every legal size, so this proves nothing "
+            "about the derivation it is meant to be checking",
+        )
+
+    def test_the_default_wait_is_derived_where_the_case_count_is_known(self) -> None:
+        """The derivation has to be the thing that is actually called.
+
+        The two tests above prove `calibration_timeout_seconds` is honest; they
+        say nothing about whether anyone uses it. A merge that restored the old
+        flat default would leave both of them passing and still hand every
+        calibration 30 seconds, because the constant and the caller are separate
+        lines - and the caller is the only one the user feels.
+
+        Read structurally, from the one branch that decides an unset `--timeout`:
+        whatever it assigns must be a call to the derivation. A literal there, a
+        module constant there, or no such branch at all, all fail. The case
+        count has to be in hand for the derivation to mean anything, which is
+        why this is checked at the call site and not at parse time.
+        """
+        assignments: list[str] = []
+        for node in ast.walk(ast.parse(SCRIPT.read_text())):
+            if not isinstance(node, ast.If):
+                continue
+            test = ast.unparse(node.test).replace(" ", "")
+            if test not in {"args.timeoutisNone", "args.timeoutis None"}:
+                continue
+            for statement in ast.walk(node):
+                if isinstance(statement, ast.Assign) and any(
+                    ast.unparse(target) == "args.timeout"
+                    for target in statement.targets
+                ):
+                    assignments.append(ast.unparse(statement.value))
+        self.assertEqual(
+            len(assignments),
+            1,
+            "the branch that fills in an unset --timeout is gone, or there is "
+            f"more than one of it: {assignments}",
+        )
+        self.assertRegex(
+            assignments[0],
+            r"^calibration_timeout_seconds\(",
+            "an unset --timeout is filled in with something other than the "
+            "derived budget, so the work-scaled number this branch computes is "
+            "not the number anyone waits",
+        )
+
+    def test_one_timeout_is_the_whole_calibration_not_one_per_phase(self) -> None:
+        """`--timeout N` must be the wait, not half of it.
+
+        The supplemental phase opened a second budget of the same size after the
+        authored phase returned, so a user told "about five minutes" could wait
+        ten. Measured rather than read off the source, because the two phases are
+        two `subprocess.run` calls and only the clock knows whether they share a
+        deadline.
+        """
+        budget_seconds = 4
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scorer = directory / "slow_everywhere_scorer.py"
+            scorer.write_text(
+                "import time\n\n\n"
+                "def score(*, output, expected, input_data=None, metadata=None):\n"
+                "    if type(output).__name__ in {\n"
+                "        'AdversarialOutputProbe', 'MalformedTextOutputProbe'\n"
+                "    }:\n"
+                "        time.sleep(30)\n"
+                "    time.sleep(0.3)\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            cases = directory / "cases.json"
+            cases.write_text(json.dumps(self.CASES))
+            started = time.monotonic()
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{cases}",
+                    "--timeout",
+                    str(budget_seconds),
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            elapsed = time.monotonic() - started
+
+        # The authored phase spends most of the budget; the supplemental probes
+        # get what is left of the same one, and hang until it runs out.
+        self.assertLess(
+            elapsed,
+            budget_seconds + 1.5,
+            f"--timeout {budget_seconds} took {elapsed:.2f}s of wall clock; the "
+            "supplemental phase is taking a second budget",
+        )
+        payload = json.loads(process.stdout)
+        self.assertIn("supplemental_probe_advisory", payload)
+
+    def test_degraded_supplemental_evidence_is_announced_not_only_recorded(
+        self,
+    ) -> None:
+        """--json writes the payload to a file; stderr is what gets read.
+
+        The documented invocation redirects stdout into
+        `calibration-results.json`, so an advisory that exists only in the
+        payload is advisory evidence lost quietly.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scorer = directory / "hanging_supplemental_scorer.py"
+            scorer.write_text(
+                "import time\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    if type(output).__name__ in {\n"
+                "        'AdversarialOutputProbe', 'MalformedTextOutputProbe'\n"
+                "    }:\n"
+                "        time.sleep(10)\n"
+                "    required = set(expected)\n"
+                "    actual = set(output)\n"
+                "    return len(required & actual) / len(required)\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--expected",
+                    "['name', 'email']",
+                    "--good",
+                    "['name', 'email']",
+                    "--equivalent-good",
+                    "['email', 'name']",
+                    "--partial",
+                    "['name']",
+                    "--bad",
+                    "['unrelated']",
+                    "--timeout",
+                    "1",
+                    "--allow-execution",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        payload = json.loads(process.stdout)
+        self.assertIn("supplemental_probe_advisory", payload)
+        self.assertIn(
+            f"ADVISORY: {payload['supplemental_probe_advisory']}", process.stderr
+        )
 
     def test_a_timeout_says_slow_is_not_the_same_as_broken(self) -> None:
         """The cap means "not verified", never "this evaluator is bad"."""
         with tempfile.TemporaryDirectory() as raw:
             process = self._run_slow_calibration(Path(raw))
         self.assertIn("does not by itself mean the evaluator is broken", process.stderr)
-        self.assertIn("larger --timeout", process.stderr)
+
+    def test_the_timeout_line_carries_the_whole_question_not_two_of_its_answers(
+        self,
+    ) -> None:
+        """This line always reaches the assistant; the reference may not be loaded.
+
+        It used to offer a larger `--timeout` or a faster model - two of five
+        options, and an invitation to double the user's wait without asking.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            process = self._run_slow_calibration(Path(raw))
+        normalized = " ".join(process.stderr.split())
+        self.assertIn("Do not silently re-run with a larger --timeout", normalized)
+        self.assertIn("Ask the user once, in one question", normalized)
+        for option in (
+            "wait, if the evaluator is normally this slow",
+            "take a named fix",
+            "score with a different judge model",
+            "deterministic comparison",
+            "retry",
+            "build a new evaluation method together",
+        ):
+            with self.subTest(option=option):
+                self.assertIn(option, normalized)
+
+
+# The pure, import-free helpers this file evaluates out of the script. They sit
+# together, immediately after the constants they read, so the walk below stops
+# before the first assignment that needs an import (`TOKEN_SPLIT`, a compiled
+# regex) - which is why this collects a named set and returns at the last of
+# them rather than reading the whole module.
+_PURE_HELPERS = (
+    "calibration_timeout_seconds",
+    "pre_cap_warning_delay",
+    "pre_cap_warning_message",
+)
 
 
 def _load_constants() -> dict:
-    """Load the module's timeout constants and helper without importing it.
+    """Load the module's timeout constants and pure helpers without importing it.
 
     Importing the script executes its argument parser at module scope in some
-    entry paths; the constants and the one pure function are all this needs.
+    entry paths; the module-level constants and these pure functions are all
+    this needs.
+
+    Every top-level assignment up to and including the last required helper is
+    evaluated, in source order, and nothing is suppressed. The previous version
+    filtered by name prefix, so renaming a constant made it silently absent here
+    instead of failing; a swallowed exec would do the same thing one layer down.
     """
     import ast
 
     source = SCRIPT.read_text()
     tree = ast.parse(source)
     namespace: dict = {}
+    remaining = set(_PURE_HELPERS)
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
-            name = node.targets[0].id
-            if name.startswith(("LLM_JUDGE_", "DEFAULT_TIMEOUT", "PROBES_PER_CASE")):
-                namespace[name] = ast.literal_eval(node.value)
-        elif (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "llm_judge_timeout_seconds"
-        ):
             exec(compile(ast.Module([node], []), "<calibrator>", "exec"), namespace)
-    return namespace
+        elif isinstance(node, ast.FunctionDef) and node.name in remaining:
+            exec(compile(ast.Module([node], []), "<calibrator>", "exec"), namespace)
+            remaining.discard(node.name)
+            if not remaining:
+                return namespace
+    raise AssertionError(
+        "calibrate_evaluator.py no longer defines: " + ", ".join(sorted(remaining))
+    )
 
 
 class PermutationProbeTests(unittest.TestCase):

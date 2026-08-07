@@ -3268,6 +3268,70 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+    def test_a_slow_calibration_is_disclosed_asked_about_once_and_run_detached(
+        self,
+    ) -> None:
+        """The three obligations a longer budget creates, none of them optional.
+
+        A budget that lets a minute-per-call evaluator finish is a wait the user
+        did not ask for, so it has to be disclosed before it starts; a timeout
+        after it is a question with five answers, asked once rather than five
+        times; and the wait now outlasts a foreground command, so calibration
+        gets the detached invocation this package already ships for a long paid
+        optimization. Guidance with no test is guidance one edit from gone.
+        """
+        reference = (
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        ).read_text()
+        normalized = " ".join(reference.casefold().split())
+
+        for phrase in (
+            # Disclosed before, not narrated after - and the estimate is derived
+            # from the probe calls rather than being a shrug.
+            "before the stage starts, say what it does and how long it may take",
+            "four probe calls per input/expected pair",
+            # One budget, so the quoted wait is the real one.
+            "`--timeout` is the whole wait rather than half of it",
+            # Asked once, with every option that applies.
+            "ask once - one question carrying every option that applies, never "
+            "one question per option",
+            "**wait**, if the evaluator is normally this slow",
+            "**take a named fix**, when the cause is certain",
+            "a deterministic comparison - an exact or normalized match against "
+            "the expected answer, no model call",
+            "**retry**, since a provider call that has stalled looks the same "
+            "from here",
+            "**build a new evaluation method** together",
+            # And named again at the close when it was avoidable and not fixed.
+            "name that fix in the readiness summary, and again at the close if "
+            "it was not taken",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+        # The detached invocation itself, not merely the word "detached": a
+        # calibration killed by a foreground timeout writes no `timed_out`
+        # record, so the one cap that tells slow from broken cannot fire.
+        self.assertIn("nohup ", reference)
+        self.assertIn("2> traigent-runs/calibration.log &", reference)
+        self.assertIn(
+            "a calibration killed from outside writes no result at all",
+            normalized,
+        )
+
+        # SKILL.md owns the closing repetition, because the closing stage loads
+        # run-safety.md and that reference does not own calibration.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "name any avoidable cause of the slowness in the readiness summary "
+            "and again at the close if it was not fixed",
+            skill,
+        )
+        self.assertIn(
+            "before calibration starts, say what it does and how long it may take",
+            skill,
+        )
+
     def test_exception_probe_advisory_routes_to_real_error_path_review(self) -> None:
         """The mechanical probe is evidence to inspect, never a diagnosis."""
         text = " ".join(
@@ -3289,10 +3353,71 @@ class SkillPackageTests(unittest.TestCase):
             "never changes the authored probes' pass by itself",
             "each deterministic supplemental attempt gets a fresh child",
             "isolating process-local scorer and dependency state",
-            "one additional `--timeout` budget",
+            "shares the single `--timeout` budget",
             "read `supplemental_probe_advisory` as unavailable evidence",
             "it never changes authored pass",
             "do not count an unavailable probe as distinguished",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_the_guide_says_what_each_probe_set_is_for(self) -> None:
+        """Two sets of probes ran and the guide never said why there were two.
+
+        Everything downstream reads only the authored ones - `readiness.py`
+        takes `cases`/`checks`/`scores`/`timed_out` and nothing else - so a
+        reader could reasonably conclude the generated ones earn nothing and
+        delete them. They earn the question the authored four cannot ask, and
+        the answer is the reason they must not decide: a permutation scoring
+        full marks is correct for an order-free task. The separation also
+        carries the repair case, which is where it matters most and where the
+        guidance said nothing at all - an author's own probes partly confirm the
+        author's own fix, and generated probes cannot be revised to pass.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "the authored probes are the verdict",
+            "the only thing `passed`, the exit code, and the readiness score are "
+            "built from",
+            "they only ever raise a question, never a verdict",
+            "only the author knows which this task is",
+            "a probe an author can revise until it passes is weak evidence about a "
+            "repair the author just wrote",
+            "the half of the evidence not confirming its own fix",
+            "read the first as the verdict and the second as the questions",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_the_short_calibration_command_routes_long_ones_to_the_detached_form(
+        self,
+    ) -> None:
+        """Two invocations for one step, and only one of them survives the wait.
+
+        The command block in the calibration section is a plain foreground run.
+        `run-safety.md` records that harnesses often kill a foreground command at
+        about five minutes, and a calibration budget now runs to fifteen - so a
+        reader who follows the first block they meet loses the whole wait AND
+        the timeout record that makes a slow evaluator legible. The pre-cap
+        warning has the same problem from the other end: it goes to stderr,
+        which only the detached form is capturing and polling.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "that form is for a calibration that returns in seconds",
+            'use the detached form in "when calibration runs long" instead',
+            "can be killed from outside before it writes anything",
+            "its warnings arrive on a stderr nobody is reading",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
@@ -5561,6 +5686,81 @@ class SkillPackageTests(unittest.TestCase):
             "only starts to matter once something lower is cleared", glossary
         )
         self.assertIn("your average simply has not climbed that high yet", readme)
+
+    def test_every_evaluator_cap_condition_has_a_documented_branch(self) -> None:
+        """The dataset caps were routed exhaustively; the evaluator ones were not.
+
+        SKILL.md's paragraph opens "Evaluator and agent caps route through the
+        rules that already own them" and then named three of the four the
+        scorer can emit. `evaluator-timeout` ceilings the whole score at 45 and
+        carries the remedy `bound-evaluator-cost` - a word that appeared in no
+        guidance document, so an assistant holding that payload had nothing to
+        route it to.
+
+        Three open branches then wrote three incompatible routes into this one
+        paragraph - ask the one question, raise the budget, route to the
+        invalid-evaluator paragraph - which is the "five documents close the
+        stop set five ways" defect reproduced inside a single file. The owner
+        settled it by placing the question at "fill gaps", before any spend, so
+        the route lives here with the stage that asks it and nowhere else. This
+        check is what keeps it single: it fails if the condition loses its
+        branch, and the sibling `test_the_timeout_route_has_exactly_one_home`
+        fails if a second branch appears.
+
+        Enumerated from the module rather than listed here, for the same reason
+        the dataset check pins its count: a fifth evaluator cap must be routed
+        too.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        conditions = {
+            condition
+            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            if condition.startswith("evaluator-")
+        }
+        self.assertEqual(len(conditions), 4)
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        routing = normalized.split(
+            "evaluator and agent caps route through the rules that already own them", 1
+        )[1]
+        for condition, branch in (
+            ("evaluator-unresolved", "inspect, repair, or replace"),
+            ("evaluator-invalid", "inspect, repair, or replace"),
+            ("evaluator-timeout", "five-option question"),
+            ("evaluator-absent", "create or select"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, conditions)
+                self.assertLess(routing.index(condition), routing.index(branch))
+
+    def test_the_timeout_route_has_exactly_one_home(self) -> None:
+        """Three branches wrote three routes; only one of them may survive.
+
+        The rule is CLAUDE.md's "one decision, one home", and this condition is
+        the instance that proved it: a rule stated in two documents is a rule
+        that can be changed in one, and three pull requests each rewrote this
+        paragraph into a route the other two contradict. So `evaluator-timeout`
+        is named in exactly one assistant-facing document - SKILL.md, which
+        owns routing - and the depth behind it (what to say before the wait,
+        the five options to offer after it) sits in the evaluation reference
+        without restating the route.
+
+        Counted over occurrences rather than files: the previous three drafts
+        would each have passed a per-file check, because each put its whole
+        route in one place. What they could not survive together is a count.
+        """
+        occurrences = {
+            path.name: " ".join(path.read_text().casefold().split()).count(
+                "evaluator-timeout"
+            )
+            for path in assistant_facing_documents()
+        }
+        self.assertEqual(
+            {name: count for name, count in occurrences.items() if count},
+            {"SKILL.md": 1},
+            "the timeout route must be stated once, in the document that owns "
+            "routing - a second statement is the defect this condition's own "
+            "history is made of",
+        )
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
