@@ -662,10 +662,15 @@ went should not have to ask twice. In the same layer, list the rest under
 `calibration-results.json`, plus any `walkthrough_agent.py`, `evaluator.py`, readiness report, and
 SDK run logs that exist. Name only what was actually written. The sentence above covers all of
 them - every one is derived, and that whole folder is git-ignored and can be deleted without
-losing anything. Three writes sit outside the folder and are not covered by it: the
+losing anything. Five writes sit outside the folder and are not covered by it: the
 `/traigent-runs/` line added to the project `.gitignore`; the provider key line in `.env`, or the
-whole file when this run created it; and the virtual environment this run created at the project
-root - `.venv`, or its `.venv-traigent` fallback - which is the largest of the three.
+whole file when this run created it; the virtual environment this run created at the project
+root - `.venv`, or its `.venv-traigent` fallback - which is the largest of them; the pinned
+packages installed into an environment this run did not create, whose site-packages sits wherever
+that environment does and is not undone by deleting anything here; and the credential handoff when
+the user named a file of their own, which is outside the project by definition. Name only the ones
+this run actually performed, and for the last two give the absolute path, because "delete the
+folder and nothing is lost" is false of them and a reader cannot find them from here.
 
 Skills installed during this run are the one item the list cannot hand over ready to use. Name the
 absolute directory the install wrote to; it is outside the project, so deleting `traigent-runs/`

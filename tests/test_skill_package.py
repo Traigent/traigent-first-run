@@ -3692,36 +3692,101 @@ class SkillPackageTests(unittest.TestCase):
         The writes OUTSIDE `traigent-runs/` are the half that needs a guard
         rather than a phrase, because "delete the folder and nothing is lost"
         is true of the folder and false of every one of them, and an omission
-        there reads exactly like completeness. So this test carries the set
-        itself: for each artifact, SKILL.md has to still instruct the run to
-        create it, and the close has to still disclose it. Dropping one from
-        the sentence fails here whatever wording the sentence is written in -
-        which is what the earlier version of this test, pinning the phrase
-        "two writes", could not do while the largest of them (the virtual
-        environment at the project root) went unlisted.
+        there reads exactly like completeness.
+
+        The count is checked against SKILL.md's authorization table, not
+        against a tuple written here. Comparing the prose to this test's own
+        list is the producer agreeing with itself: it fails when an instruction
+        disappears and passes silently when SKILL.md gains a new write outside
+        the folder, which is exactly what happened twice. Installing the pinned
+        set into an environment this run did NOT create mutates site-packages
+        wherever that environment lives - SKILL.md authorises it behind one
+        confirmation, and run-safety.md says a current-project environment
+        managed outside the root is an external candidate - and the credential
+        handoff to a user-named file is outside the project by definition.
+        Neither was disclosed, and the sentence said "three".
+
+        So every row of that table is classified here, on one side or the
+        other, and a row that is neither fails. That is the shape
+        `CAP_NO_IMPLICATION` already uses in the scorer, for the same reason: a
+        list of positives cannot tell "checked, and it writes nothing outside"
+        from "nobody looked".
         """
-        # What this run leaves at the project root, outside the folder it just
-        # told the user is safe to delete. Kept as data, in the order the close
-        # names them: the SKILL.md instruction that creates each one, and what
-        # the disclosure has to say about it.
-        root_artifacts_outside_the_run_folder = (
+        # One entry per WRITE, not per table row, because the count in the prose
+        # counts writes and one row authorises two of them. Each names the
+        # SKILL.md action-class cell that authorises it, so a reworded row fails
+        # here until it is re-classified rather than dropping out of the check.
+        writes_outside_the_run_folder = (
             (
                 "the /traigent-runs/ ignore line",
-                "add `/traigent-runs/` to the project-root `.gitignore`",
+                "Create `traigent-runs/` artifacts; when the project root is "
+                "inside a Git worktree, add `/traigent-runs/` to the "
+                "project-root `.gitignore`",
                 ("`.gitignore`",),
             ),
             (
+                # When the file did not exist, the run wrote all of it, so the
+                # disclosure owes the stronger true statement.
                 "the provider key in .env",
-                # Stage 6. When the file did not exist, the run wrote all of
-                # it, so the disclosure owes the stronger true statement.
-                "create or minimally update `.env`",
+                "Create or update a minimal `.env`",
                 ("`.env`", "whole file"),
             ),
             (
-                "the virtual environment",
-                "create the conventional `.venv`",
+                # Same row, different write: "use the user-named handoff or
+                # target `.env`", and a file the user names is outside the
+                # project by definition.
+                "the credential handoff to a user-named file",
+                "Create or update a minimal `.env`",
+                ("the user named a file of their own",),
+            ),
+            (
+                "the virtual environment this run created",
+                "Create an isolated environment",
                 ("`.venv`",),
             ),
+            (
+                # Not the environment - the packages. Deleting a run-created
+                # `.venv` undoes this; installing into a reused one, which
+                # SKILL.md authorises behind one confirmation and run-safety.md
+                # says may sit outside the project root, leaves it behind.
+                "the pinned packages in an environment this run did not create",
+                "Install dependencies in the isolated environment",
+                ("an environment this run did not create",),
+            ),
+        )
+        # Rows that write nothing the close has to hand over: nothing at all,
+        # only inside `traigent-runs/`, or only where the user already decided.
+        writes_nothing_to_disclose_here = {
+            "Read-only discovery and static validation",
+            "Repair a working copy after the user chooses repair",
+            "Change real labels, expected answers, examples, or rubric policy",
+            "Execute an evaluator or mock check",
+            "Make provider, private-data, connected Traigent, or external calls "
+            "other than the narrow dependency fetch",
+            "Perform destructive or production-affecting actions",
+        }
+        authorization = (
+            SKILL.read_text()
+            .split("## Action authorization", 1)[1]
+            .split("\n## ", 1)[0]
+        )
+        rows = []
+        for line in authorization.splitlines():
+            line = line.strip()
+            if not line.startswith("|") or set(line) <= set("|- "):
+                continue
+            action = " ".join(line.strip("|").split("|")[0].split())
+            if action.casefold() == "action class":
+                continue
+            rows.append(action)
+        self.assertTrue(rows, "the authorization table is no longer parseable")
+        self.assertEqual(
+            set(rows),
+            {row for _, row, _ in writes_outside_the_run_folder}
+            | writes_nothing_to_disclose_here,
+            "an authorization row is on neither side: say whether it can leave "
+            "something outside `traigent-runs/`, and disclose it in the close "
+            "if it can",
         )
         counts = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
@@ -3763,24 +3828,23 @@ class SkillPackageTests(unittest.TestCase):
         self.assertTrue(
             outside, "the close must still say what survives deleting `traigent-runs/`"
         )
-        skill = " ".join(SKILL.read_text().casefold().split())
-        for artifact, instruction, disclosed in root_artifacts_outside_the_run_folder:
-            with self.subTest(artifact=artifact):
-                self.assertIn(
-                    instruction,
-                    skill,
-                    f"SKILL.md no longer creates {artifact}; drop it from this set",
-                )
-                for token in disclosed:
+        for write, action, disclosed in writes_outside_the_run_folder:
+            for token in disclosed:
+                with self.subTest(write=write, token=token):
                     self.assertIn(
-                        token, outside, f"the close does not disclose {artifact}"
+                        token.casefold(),
+                        outside,
+                        f"SKILL.md authorises {action!r}, which leaves {write} "
+                        "outside `traigent-runs/`, and the close does not "
+                        "disclose it",
                     )
         stated = head.split()[-1]
         self.assertIn(stated, counts, f"the count of outside writes reads {stated!r}")
         self.assertEqual(
             counts[stated],
-            len(root_artifacts_outside_the_run_folder),
-            "the stated count and the list disagree",
+            len(writes_outside_the_run_folder),
+            "the stated count and SKILL.md's authorization table disagree about "
+            "how many writes land outside `traigent-runs/`",
         )
 
     def test_an_installed_skill_is_disclosed_as_needing_a_fresh_session(self) -> None:
@@ -6092,7 +6156,25 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # a merge, not an author.
         #
         # Measured at 248_831 on the merged tree, rounded up to the next 250.
-        budget = 249_000
+        #
+        # Raised again, by +477, for the two writes the disclosure did not name.
+        # The sentence said "three writes sit outside the folder", and the whole
+        # value of that sentence is completeness - one omission reads exactly
+        # like a complete list. SKILL.md's authorization table permits
+        # installing the pinned set into an environment this run did NOT create
+        # ("into one with other dependents, obtain one confirmation first"), and
+        # run-safety.md says a current-project environment managed outside the
+        # root is an external candidate rather than an ignored one: that run
+        # mutates site-packages outside the folder, and "delete the folder and
+        # nothing is lost" is exactly as false of it as of the three listed. The
+        # credential handoff's user-named file is outside the project by
+        # definition and was in the same position.
+        #
+        # Both are named now, with the instruction to give their absolute paths,
+        # since neither can be found from the close.
+        #
+        # Measured at 249_308, rounded up to the next 250.
+        budget = 249_500
         self.assertLess(
             total,
             budget,
