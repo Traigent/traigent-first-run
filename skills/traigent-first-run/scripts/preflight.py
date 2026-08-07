@@ -947,9 +947,28 @@ def check_dataset(
     malformed_rows = len(invalid_rows) - unlabelled_present
     if invalid_rows:
         invalid_percentage = len(invalid_rows) / candidate_count * 100
+        # One entry per unusable ROW made the message grow with the size of the
+        # file rather than with the number of things wrong with it: six rows
+        # missing the same selected field printed that sentence six times, 347
+        # characters to say one thing. Readiness forwards this detail verbatim
+        # onto its card, so the repetition was what a customer read.
+        #
+        # Group by cause instead, keep the first line each was seen on - the
+        # line to open - and count the rest. The cap then bounds DISTINCT
+        # causes rather than rows, so a file with five different problems now
+        # reports five of them where it previously spent all five slots on the
+        # first cause repeating. Nothing is inferred that preflight did not
+        # already say; the same facts are stated once each.
+        by_cause: dict[str, list[int]] = {}
+        for line_number, detail in invalid_rows:
+            by_cause.setdefault(detail, []).append(line_number)
         examples = "; ".join(
-            f"line {line_number}: {detail}"
-            for line_number, detail in invalid_rows[:MAX_REPORTED_DATASET_ERRORS]
+            (
+                f"line {lines[0]}: {detail}"
+                if len(lines) == 1
+                else f"line {lines[0]} (+{len(lines) - 1} more): {detail}"
+            )
+            for detail, lines in list(by_cause.items())[:MAX_REPORTED_DATASET_ERRORS]
         )
         emit(
             "dataset-integrity",

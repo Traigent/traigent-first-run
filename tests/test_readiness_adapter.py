@@ -81,6 +81,10 @@ def _provenance_metric(records: list[dict]) -> dict:
     )
 
 
+def _cap(score: dict, condition: str) -> dict:
+    return next(cap for cap in score["caps"] if cap["condition"] == condition)
+
+
 def _dataset_subscore(score: dict, name: str) -> dict:
     pillar = next(p for p in score["pillars"] if p["name"] == "dataset")
     return next(sub for sub in pillar["subscores"] if sub["name"] == name)
@@ -364,6 +368,299 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             "18 tuning rows and no independent validation set", power["evidence"]
         )
         self.assertNotIn("no tuning set", power["evidence"])
+
+    def test_a_dataset_with_other_field_names_is_not_reported_as_absent(self) -> None:
+        """The bug this pair exists for, end to end through the real pipeline.
+
+        Three well-formed, fully labelled rows whose file says `question` /
+        `answer` were scored as "No dataset is connected" with the machine
+        recommendation `get-data` - the customer was told to go and collect
+        data they already had. Preflight had already reported the real cause.
+
+        This lives in the ADAPTER tests on purpose. The scoring tests build
+        DatasetFacts by hand, so they cannot see `dataset_facts_from_preflight`
+        losing the distinction, and mutating the adapter to drop it left the
+        whole suite green.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {"id": "1", "question": "refund my order", "answer": "refund"},
+                {"id": "2", "question": "where is my package", "answer": "tracking"},
+                {"id": "3", "question": "cancel subscription", "answer": "cancel"},
+            ]
+            dataset = _write_jsonl(directory, "customer.jsonl", rows)
+            score = _score(dataset)
+
+        caps = {cap["condition"]: cap for cap in score["caps"]}
+        self.assertNotIn("dataset-absent", caps)
+        self.assertIn("dataset-shape-unrecognised", caps)
+        cap = caps["dataset-shape-unrecognised"]
+        # The routing is the fix. A reworded `dataset-absent` still recommended
+        # `get-data` and still routed the guide into dataset creation, because
+        # the remedy is keyed by condition id.
+        self.assertEqual(cap["action_kind"], "read-dataset")
+        self.assertEqual(score["recommended_action"], "read-dataset")
+        reason = cap["reason"]
+        # It must say a dataset WAS provided ...
+        self.assertIn("A dataset was provided", reason)
+        # ... and must not claim the project has none.
+        self.assertNotIn("No dataset is connected", reason)
+        self.assertNotIn("No dataset was provided", reason)
+        # The cause is preflight's, forwarded verbatim rather than guessed.
+        self.assertIn("missing selected input field 'input'", reason)
+
+    def test_a_dataset_with_other_field_names_scores_clean_once_it_is_mapped(
+        self,
+    ) -> None:
+        """The other half of the same file, and the reason the cap is not a verdict.
+
+        The rows above are well-formed, fully labelled and entirely usable; the
+        only thing wrong is that the run read them with `input`/`output`. Read
+        with the fields the file actually uses, the identical bytes score with
+        no dataset cap of any kind - so what the opening card capped was the
+        reading, and calling it broken data was false about this file.
+
+        This is the assertion that makes the pair a pair. Without it the suite
+        could only say "the unreadable branch fires", which is exactly the
+        claim that was true and misleading at the same time. It also pins the
+        second half of the owner's rule: a successful re-map leaves no residue,
+        so nothing may persist a cap across it.
+        """
+        rows = [
+            {"id": str(index), "question": f"q{index}", "answer": f"a{index % 4}"}
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "customer.jsonl", rows)
+            unmapped = _score(dataset)
+            mapped = _score(
+                dataset,
+                preflight_extra=(
+                    "--input-field",
+                    "question",
+                    "--expected-field",
+                    "answer",
+                ),
+            )
+
+        self.assertIn(
+            "dataset-shape-unrecognised",
+            {cap["condition"] for cap in unmapped["caps"]},
+        )
+        # Same file, same bytes, read correctly: no dataset finding survives.
+        self.assertEqual(
+            [cap for cap in mapped["caps"] if cap["condition"].startswith("dataset-")],
+            [],
+        )
+        self.assertGreater(mapped["overall"], unmapped["overall"])
+        self.assertNotEqual(mapped["recommended_action"], "read-dataset")
+
+    def test_the_more_broken_file_is_never_sent_to_collect_new_data(self) -> None:
+        """The discontinuity, on one file, in one assertion.
+
+        Ninety of a hundred rows unreadable fired `dataset-integrity-fail` and
+        recommended `repair-dataset`. Making the file WORSE - all hundred
+        unreadable - fired `dataset-absent` and recommended `get-data`, so the
+        more broken file was the one told to go and collect data. Neither may
+        route to collection: the customer has the file in both cases.
+
+        The two remedies are deliberately not the same, and the line between
+        them is evidence rather than severity. At 90 of 100, ten rows DID match
+        the shape the run assumed - that confirms the assumption, so the other
+        ninety are genuinely malformed and `repair-dataset` is a claim the run
+        can support. At 100 of 100 nothing confirmed it, so the only supportable
+        instruction is to go and read the file. Asserting both here keeps a
+        later edit from collapsing them back into one remedy in either
+        direction.
+        """
+        broken = "{not json at all"
+        good = {"id": "1", "input": "q", "output": "a", "source": "collected"}
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            partial = directory / "partial.jsonl"
+            partial.write_text(
+                "\n".join([json.dumps(good)] * 10 + [broken] * 90) + "\n"
+            )
+            everything = directory / "everything.jsonl"
+            everything.write_text("\n".join([broken] * 100) + "\n")
+            partial_score = _score(partial)
+            everything_score = _score(everything)
+
+        self.assertEqual(partial_score["recommended_action"], "repair-dataset")
+        self.assertEqual(everything_score["recommended_action"], "read-dataset")
+        for score in (partial_score, everything_score):
+            with self.subTest(score=score["recommended_action"]):
+                self.assertNotEqual(score["recommended_action"], "get-data")
+        conditions = {cap["condition"] for cap in everything_score["caps"]}
+        self.assertIn("dataset-shape-unrecognised", conditions)
+        self.assertNotIn("dataset-absent", conditions)
+
+    def test_a_third_cause_is_reported_as_itself_not_as_the_other_two(self) -> None:
+        """A healthy dataset can be unreadable for a reason nobody listed.
+
+        One field path selected for both the input and the expected answer makes
+        every row of a perfectly good file unusable. `normalize_dataset_row`
+        reports exactly that. The sentence that named malformed lines and a
+        missing field, then closed with "check both before concluding the data
+        is missing", was false about this file three ways.
+        """
+        rows = [
+            {"id": str(index), "input": f"q{index}", "output": f"a{index % 3}"}
+            for index in range(120)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "healthy.jsonl", rows)
+            score = _score(
+                dataset,
+                preflight_extra=(
+                    "--input-field",
+                    "input",
+                    "--expected-field",
+                    "input",
+                ),
+            )
+
+        caps = {cap["condition"]: cap for cap in score["caps"]}
+        self.assertIn("dataset-shape-unrecognised", caps)
+        reason = caps["dataset-shape-unrecognised"]["reason"]
+        self.assertIn("input and expected-output field paths must be different", reason)
+        # None of the guessed causes, and no claim that the list was complete.
+        for invented in ("malformed lines", "expected-answer field", "Check both"):
+            with self.subTest(invented=invented):
+                self.assertNotIn(invented, reason)
+
+    def test_a_missing_path_and_an_empty_file_do_not_read_the_same(self) -> None:
+        """Two different problems, two different repairs, one sentence before.
+
+        A path that does not exist is a typo or a wrong working directory. A
+        file that exists and holds nothing is a dataset yet to be written. They
+        produced byte-identical scores; preflight's `dataset-shape` FAIL knew
+        the difference all along.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            empty = directory / "empty.jsonl"
+            empty.write_text("")
+            missing = directory / "not-written-yet.jsonl"
+            empty_score = _score(empty)
+            missing_score = _score(missing)
+
+        empty_reason = _cap(empty_score, "dataset-absent")["reason"]
+        missing_reason = _cap(missing_score, "dataset-absent")["reason"]
+        self.assertNotEqual(empty_reason, missing_reason)
+        self.assertIn("does not exist", missing_reason)
+        self.assertIn(missing.name, missing_reason)
+        self.assertNotIn("does not exist", empty_reason)
+
+    def test_a_described_dataset_with_no_row_count_is_not_called_absent(self) -> None:
+        """Reachable from the public `--preflight -` surface, so pinned there.
+
+        A provenance record with no `rows` count leaves `exists=True` and no
+        usable rows: the same no-rows branch, entered from the other return.
+        That return omitted the supplied fact, so a dataset preflight had just
+        described was reported as one that never reached the score.
+        """
+        records = [
+            {
+                "check": "dataset-provenance",
+                "status": "PASS",
+                "detail": "described",
+                "metrics": {"labelled_rows": 0, "synthetic": False},
+            }
+        ]
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(records),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        reason = _cap(json.loads(process.stdout), "dataset-absent")["reason"]
+        self.assertIn("A dataset was provided to this score", reason)
+        self.assertNotIn("No dataset was provided", reason)
+
+    def test_unlabelled_rows_are_not_counted_as_unreadable(self) -> None:
+        """`invalid_rows` is `malformed_rows + unlabelled_rows`, not either one.
+
+        An unlabelled row was read. Counting it as unreadable would route a
+        payload whose rows are all present-but-unlabelled to `repair-dataset`
+        for rows that need labels, not repair. Preflight emits provenance for
+        that shape today, so the divergence is unreachable through the pipeline
+        - which is exactly why it is pinned here, on the payload the adapter
+        actually reads, rather than left correct by a fact asserted elsewhere.
+        """
+        records = [
+            {
+                "check": "dataset-integrity",
+                "status": "FAIL",
+                "detail": "5/5 rows (100.0%) are unusable",
+                "metrics": {
+                    "invalid_rows": 5,
+                    "malformed_rows": 0,
+                    "unlabelled_rows": 5,
+                    "candidate_rows": 5,
+                },
+            }
+        ]
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        conditions = {cap["condition"] for cap in json.loads(process.stdout)["caps"]}
+        self.assertIn("dataset-absent", conditions)
+        self.assertNotIn("dataset-shape-unrecognised", conditions)
+
+    def test_a_payload_too_old_to_carry_malformed_rows_is_refused(self) -> None:
+        """The refusal now covers the return that reads the same count.
+
+        The guard sat below the no-provenance return, so a payload predating
+        `malformed_rows` was refused when it described rows and silently scored
+        as "no data at all" when it did not - the one place the missing count
+        decides between broken data and no data.
+        """
+        records = [
+            {
+                "check": "dataset-integrity",
+                "status": "FAIL",
+                "detail": "3/3 rows (100.0%) are unusable",
+                "metrics": {"invalid_rows": 3, "candidate_rows": 3},
+            }
+        ]
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("malformed_rows", process.stderr)
+
+    def test_a_dataset_that_never_reached_the_score_is_reported_as_absent(self) -> None:
+        """The other half, also end to end: preflight run with no --dataset.
+
+        `_preflight_records` always passes `--dataset`, so this one drives
+        preflight directly - the state under test is precisely its absence.
+        """
+        preflight = subprocess.run(
+            [sys.executable, str(PREFLIGHT), "--defer-missing-sdk", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(preflight.returncode, (0, 1), preflight.stderr)
+        records = json.loads(preflight.stdout)
+        self.assertEqual(
+            [r for r in records if str(r.get("check", "")).startswith("dataset-")],
+            [],
+            "preflight emitted a dataset check without a dataset",
+        )
+        process = subprocess.run(
+            [sys.executable, str(READINESS), "--preflight", "-", "--json"],
+            input=json.dumps(records),
+            capture_output=True,
+            text=True,
+        )
+        score = json.loads(process.stdout)
+
+        caps = {cap["condition"]: cap for cap in score["caps"]}
+        self.assertIn("dataset-absent", caps)
+        reason = caps["dataset-absent"]["reason"]
+        self.assertIn("provided to this score", reason)
+        # Must not borrow the supplied-but-unreadable sentence.
+        self.assertNotIn("A dataset was provided", reason)
 
     def test_unlabelled_but_present_reaches_cap_30_not_cap_20(self) -> None:
         """C1: 150 real rows with inputs but no expected outputs.

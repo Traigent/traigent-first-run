@@ -353,13 +353,16 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: `proceed` unless a blocking cap fires, otherwise the lowest-ceiling blocking
-remedy. Present reasons in user language; keep machine vocabulary and condition ids internal.
+remedy.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id. A route asking for a creation or repair blocks the run; one that only
 scopes what the result may claim is an advisory ceiling, never a repair to route:
 
 - `dataset-absent` - enter the creation dependency matrix.
+- `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
+  a verdict on the data: do not enter the creation dependency matrix or call it invalid. Read and
+  re-map it per the dataset reference, then re-score; repair, then create, only if mapping fails.
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
   copy, with approval for judgment-dependent labels. Do not use unchanged input-only data with a
   reference-requiring evaluator; disclose a reference-free method's absent independent answer key.
@@ -372,12 +375,14 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
-- `dataset-below-measurable-size` - call rankings exploratory, not stable comparisons, only where
-  some example can be scored. Where none can, the same condition blocks and the card prints `FIX
-  BEFORE PAID RUN`; route that by its reason - nothing can be compared at all, so there is no
-  result to bound - and get labelled examples before any paid run.
-- `dataset-coarse-resolution` - after paired outputs exist, report paired outcome counts and
-  justified uncertainty; call a small or flat difference directional or inconclusive.
+- `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
+  rankings exploratory, not stable comparisons, only where some example can be scored. Where none
+  can, the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route that by its
+  reason - nothing can be compared at all, so there is no result to bound - and get labelled
+  examples before any paid run.
+- `dataset-coarse-resolution` - more comparable examples is what lifts this too; after paired
+  outputs exist, report paired outcome counts and justified uncertainty, calling a small or flat
+  difference directional or inconclusive.
 
 Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
 connected file with no honestly declarable method) and `evaluator-invalid` route through the

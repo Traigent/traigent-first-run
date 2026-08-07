@@ -221,12 +221,258 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
         self.assertEqual(pillar.score, 0)
 
+    def test_a_supplied_but_unrecognised_dataset_is_not_called_absent(self) -> None:
+        """A customer holding good rows must never be told to go and get data.
+
+        `exists=False` used to carry two situations at once: no dataset reached
+        the score, and a dataset reached it whose rows could not be read with
+        the selected field names. Both raised `dataset-absent`, and the remedy
+        is a property of the condition - so both recommended `get-data`, and a
+        customer with three perfectly good labelled rows whose file says
+        `question`/`answer` was told to collect data they already had.
+
+        Rewording the sentence alone left that intact: the card said "a dataset
+        was provided" while `recommended_action` still said `get-data` and the
+        guide still routed the id into dataset creation. The state needs its own
+        condition, which is what carries the remedy.
+
+        The remedy is `read-dataset`, and that is the second half of the same
+        correction. `repair-dataset` also keeps the customer's file - but it
+        asserts the file is defective, and the run has no evidence for that: it
+        read the file with one assumed shape, nothing matched, and every
+        conclusion beyond "we did not recognise it" is a guess. See
+        `test_a_dataset_with_other_field_names_scores_clean_once_it_is_mapped`
+        in the adapter tests for what the same file scores once it is read
+        correctly.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=3,
+                unreadable_detail="3/3 rows (100.0%) are unusable; line 1: "
+                "missing selected input field 'input'",
+            )
+        )
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-shape-unrecognised"]
+        )
+        cap = caps[0]
+        # The routing, not just the prose. This is the assertion the reworded
+        # sentence could not make.
+        self.assertEqual(cap.action_kind, "read-dataset")
+        self.assertEqual(MODULE.recommended_action(caps), "read-dataset")
+        self.assertNotEqual(cap.action_kind, "get-data")
+        # Neither of the two instructions that assert something about the data.
+        self.assertNotEqual(cap.action_kind, "repair-dataset")
+        # Still blocks - nothing here is measurable yet - and still scores under
+        # every state that has a readable row in it (30 for no expected
+        # outputs, 35 for some rows unreadable), but above 20, "no data at all".
+        self.assertTrue(cap.blocks)
+        self.assertEqual(cap.ceiling, 25)
+        reason = cap.reason
+        self.assertIn("A dataset was provided", reason)
+        # The old sentence claimed something about the project rather than
+        # about this score's input; it must not come back.
+        self.assertNotIn("No dataset is connected", reason)
+
+    def test_the_reason_names_the_reading_and_never_convicts_the_data(self) -> None:
+        """The sentence a customer reads on the opening card.
+
+        This cap is computed before the assistant has opened the file, so the
+        card can honestly report only that the run did not recognise what it
+        read. "None of its rows could be read, so nothing can be measured" is a
+        verdict on the customer's data, and on the files that actually produce
+        this state - a `question`/`answer` schema, a nested one, a CSV, a JSON
+        array, YAML - it is false. Two obligations follow, and both are asserted
+        here because prose is where this defect lives.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=12,
+                unreadable_detail="12/12 rows (100.0%) are unusable; line 1 "
+                "(+11 more): missing selected input field 'input'",
+            )
+        )
+        reason = caps[0].reason
+        # It says what the run could not do, not what the data is.
+        self.assertIn("matched the shape this score read it with", reason)
+        self.assertIn("not a defect in the data", reason)
+        # The old verdict, in the two forms it was written in.
+        self.assertNotIn("none of its rows could be read", reason.casefold())
+        self.assertNotIn("nothing can be measured", reason)
+        # And it names the next step, because the card fires at the opening
+        # gate and the state it describes can end one look at the file later.
+        self.assertIn("can clear on the next step", reason)
+
+    def test_the_cause_is_preflights_to_state_and_is_never_invented(self) -> None:
+        """The reason forwards the cause; it does not guess one and close it.
+
+        A 120-row dataset scored with one field path selected for both the input
+        and the expected answer is unreadable for a third reason preflight
+        already names. The sentence that asserted two causes and told the reader
+        to "check both before concluding the data is missing" was false for it
+        twice over: neither named cause applied, and the closure said there was
+        no third.
+        """
+        detail = (
+            "120/120 rows (100.0%) are unusable; line 1: input and "
+            "expected-output field paths must be different"
+        )
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=120,
+                unreadable_detail=detail,
+            )
+        )
+        reason = caps[0].reason
+        self.assertIn(detail, reason)
+        self.assertNotIn("Check both", reason)
+
+    def test_no_reported_cause_means_no_cause_is_named(self) -> None:
+        """Nothing to forward is not a licence to fall back on a guess."""
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=False, dataset_supplied=True, unreadable_rows=4)
+        )
+        reason = caps[0].reason
+        self.assertEqual(caps[0].condition, "dataset-shape-unrecognised")
+        for invented in ("malformed lines", "expected-answer field", "Check both"):
+            with self.subTest(invented=invented):
+                self.assertNotIn(invented, reason)
+
+    def test_a_supplied_dataset_with_no_row_count_forwards_what_was_reported(
+        self,
+    ) -> None:
+        """No rows to count at all is `dataset-absent`, and still says why.
+
+        A path that does not exist and a file that exists and holds nothing both
+        arrive here with no row count. They are different problems with
+        different repairs, and preflight's `dataset-shape` FAIL is the only
+        witness that separates them - so it is forwarded rather than flattened
+        into one sentence for both.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_detail="/tmp/nope.jsonl does not exist",
+            )
+        )
+        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
+        self.assertIn("/tmp/nope.jsonl does not exist", caps[0].reason)
+        self.assertIn("A dataset was provided to this score", caps[0].reason)
+
+    def test_a_dataset_that_never_reached_the_score_says_so(self) -> None:
+        """The other half: absence of input is not evidence of absence of data."""
+        _, caps = MODULE.score_dataset(MODULE.DatasetFacts(exists=False))
+        self.assertEqual([cap.condition for cap in caps], ["dataset-absent"])
+        self.assertIn("provided to this score", caps[0].reason)
+        self.assertEqual(caps[0].action_kind, "get-data")
+
+    def test_an_empty_file_does_not_read_like_a_broken_one(self) -> None:
+        """The two sentences must not be interchangeable, because the fixes are not.
+
+        `dataset-absent` on a supplied path routes to `get-data` and
+        `dataset-shape-unrecognised` routes to `read-dataset` - opposite
+        instructions - and the card used to state them as "nothing could be
+        read from it" and "none of its rows could be read". A reader picking a
+        branch off the prose cannot tell those apart, which is the same defect
+        as the id that carried the wrong remedy, moved into the sentence.
+        """
+        _, absent = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_detail="dataset has no usable rows",
+            )
+        )
+        _, unrecognised = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=6,
+                unreadable_detail="6/6 rows (100.0%) are unusable; line 1: x",
+            )
+        )
+        self.assertEqual(absent[0].action_kind, "get-data")
+        self.assertEqual(unrecognised[0].action_kind, "read-dataset")
+        # The prose has to carry the difference the action makes. `get-data` is
+        # the right instruction only because there is nothing here to open, so
+        # the sentence says exactly that - and the other one must not, because
+        # opening the file is the whole of what it asks for.
+        self.assertIn("holds no rows at all", absent[0].reason)
+        self.assertIn("nothing to repair", absent[0].reason)
+        self.assertNotIn("nothing to repair", unrecognised[0].reason)
+        self.assertIn("open the file", unrecognised[0].reason)
+        self.assertNotIn("open the file", absent[0].reason)
+        # Both still name what was given rather than what the customer has.
+        self.assertIn("A dataset was provided to this score", absent[0].reason)
+
     def test_logs_without_expected_outputs_are_capped_not_merely_low(self) -> None:
         """500 unlabelled rows must not score as WORKABLE - nothing can be scored."""
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
         )
         self.assertIn("dataset-no-expected-outputs", [cap.condition for cap in caps])
+
+    def test_unlabelled_rows_are_not_also_reported_as_missing_rows(self) -> None:
+        """One fact, one cap, one remedy - and it must be the repairable one.
+
+        With rows present and none labelled, the scoreable count is zero, so
+        the power ceiling fired too: `dataset-below-measurable-size`, whose
+        remedy is `get-data`. The card then carried two FIX lines for one fact
+        and the second told a customer holding 500 usable inputs to go and
+        collect examples - the very instruction `dataset-shape-unrecognised` was added
+        to stop giving.
+
+        `label-data` is the remedy that repairs what they already have, and the
+        labels cap already carries it.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
+        )
+        self.assertEqual(
+            [cap.condition for cap in caps], ["dataset-no-expected-outputs"]
+        )
+        self.assertEqual(MODULE.recommended_action(caps), "label-data")
+        self.assertNotIn("get-data", [cap.action_kind for cap in caps])
+
+    def test_suppressing_that_duplicate_moves_no_number(self) -> None:
+        """The removed ceiling was never the operative one, so nothing changes.
+
+        30 sits below 74, so the labels cap set the score with or without it.
+        Asserted rather than argued, because "this changes no number" is the
+        claim that makes the suppression safe.
+        """
+        pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=500, labelled_rows=0)
+        )
+        with_duplicate = [*caps, MODULE.power_ceiling(0)]
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+        kept = MODULE.aggregate([pillar], caps, [], weights)
+        restored = MODULE.aggregate([pillar], with_duplicate, [], weights)
+        self.assertEqual(kept.overall, restored.overall)
+        self.assertEqual(kept.status, restored.status)
+        self.assertEqual(kept.recommended_action, restored.recommended_action)
+
+    def test_a_zero_from_any_other_source_still_raises_the_ceiling(self) -> None:
+        """Only the zero the labels cap owns is suppressed, not every zero."""
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=60,
+                labelled_rows=60,
+                tuning_rows=60,
+                holdout_rows=0,
+                tuning_labelled_rows=60,
+                holdout_labelled_rows=0,
+            )
+        )
+        self.assertIn("dataset-below-measurable-size", [cap.condition for cap in caps])
 
     def test_fully_synthetic_dataset_is_capped_however_good(self) -> None:
         facts = MODULE.DatasetFacts(
@@ -2964,12 +3210,14 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
         """Fail closed, exactly as an unranked condition already does."""
         MODULE.ACTION_FOR_CONDITION["a-condition-nobody-compared"] = "get-data"
         MODULE.CAP_CEILING["a-condition-nobody-compared"] = 50
+        MODULE.ROUTE_CATEGORY["a-condition-nobody-compared"] = MODULE.DIAGNOSTIC
         try:
             with self.assertRaises(ValueError) as caught:
                 MODULE.Cap("a-condition-nobody-compared", 50, "reason")
         finally:
             del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-compared"]
             del MODULE.CAP_CEILING["a-condition-nobody-compared"]
+            del MODULE.ROUTE_CATEGORY["a-condition-nobody-compared"]
         self.assertIn("CAP_NO_IMPLICATION", str(caught.exception))
 
 
@@ -3006,9 +3254,14 @@ class ACapCarriesAScoreNotAnyValueTests(unittest.TestCase):
         """The false-red direction: every real cap must still build."""
         for condition, ceiling in MODULE.CAP_CEILING.items():
             with self.subTest(condition=condition):
-                cap = MODULE.Cap(condition, ceiling, "reason", blocks=False)
+                # `blocks` is not free: `ROUTE_CATEGORY` decides which values
+                # are honest for this condition, so the probe passes the one
+                # its route admits rather than asserting a value the route
+                # refuses.
+                blocks = MODULE.ROUTE_CATEGORY[condition] != MODULE.CLAIM_SCOPING
+                cap = MODULE.Cap(condition, ceiling, "reason", blocks=blocks)
                 self.assertEqual(cap.ceiling, ceiling)
-                self.assertIs(cap.blocks, False)
+                self.assertIs(cap.blocks, blocks)
         # And the boundaries of the scale itself, which are legitimate probes.
         self.assertEqual(MODULE.Cap("dataset-absent", 0, "reason").ceiling, 0)
         self.assertEqual(MODULE.Cap("dataset-absent", 100, "reason").ceiling, 100)
@@ -3499,6 +3752,113 @@ class TheAnswerKeyLadderHasARungBetweenNoneAndAllTests(unittest.TestCase):
         self.assertLess(
             MODULE.BAND_ORDER.index(band), MODULE.BAND_ORDER.index("STRONG")
         )
+
+
+class TheRouteIsClassifiedInThreeKindsNotTwoTests(unittest.TestCase):
+    """#149 partitions the routes in two, and one condition is neither.
+
+    A route asking for a creation or a repair stops the run; a route that only
+    scopes what the result may claim does not. `dataset-shape-unrecognised` is
+    neither: nothing needs creating (the customer handed over a file), nothing
+    is known to need repairing (a fully labelled file whose rows say
+    `question`/`answer` produces this exact state), and the claim is not merely
+    scoped, because a score read from zero matched rows is no result at all.
+
+    So the partition is three, and `ROUTE_CATEGORY` is where every condition is
+    classified against it.
+    """
+
+    def test_every_condition_is_classified_and_only_into_the_three(self) -> None:
+        self.assertEqual(
+            set(MODULE.ROUTE_CATEGORY),
+            set(MODULE.ACTION_FOR_CONDITION),
+            "a condition is routed and not classified, or classified and not "
+            "routed",
+        )
+        self.assertEqual(
+            set(MODULE.ROUTE_CATEGORY.values()) - MODULE.ROUTE_CATEGORIES,
+            set(),
+            "a fourth category was invented at a call site",
+        )
+        self.assertEqual(len(MODULE.ROUTE_CATEGORIES), 3)
+
+    def test_the_third_category_is_not_empty_and_holds_the_diagnostic_route(
+        self,
+    ) -> None:
+        """A widened two-way partition would have swallowed this one."""
+        diagnostic = {
+            condition
+            for condition, category in MODULE.ROUTE_CATEGORY.items()
+            if category == MODULE.DIAGNOSTIC
+        }
+        self.assertIn("dataset-shape-unrecognised", diagnostic)
+        # The sweep found a second: a connected evaluator file no method could
+        # be declared for was never read either.
+        self.assertIn("evaluator-unresolved", diagnostic)
+        # And it is genuinely a third kind, not a relabelling: the remedy asks
+        # for a look, where every creation-or-repair remedy asks for a change.
+        self.assertEqual(
+            MODULE.ACTION_FOR_CONDITION["dataset-shape-unrecognised"],
+            "read-dataset",
+        )
+        for condition, category in MODULE.ROUTE_CATEGORY.items():
+            if category == MODULE.CREATION_OR_REPAIR:
+                with self.subTest(condition=condition):
+                    self.assertNotEqual(
+                        MODULE.ACTION_FOR_CONDITION[condition],
+                        "read-dataset",
+                        "a creation-or-repair route asks only for a look",
+                    )
+
+    def test_a_diagnostic_condition_stops_the_run(self) -> None:
+        """The half a claim-scoping category cannot express.
+
+        Nothing was measured, so the run may not present a result - but the
+        remedy is one look at the file, and the card says so rather than
+        calling the file broken.
+        """
+        _, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=3,
+                unreadable_detail="3/3 rows (100.0%) are unusable",
+            )
+        )
+        cap = caps[0]
+        self.assertEqual(MODULE.ROUTE_CATEGORY[cap.condition], MODULE.DIAGNOSTIC)
+        self.assertTrue(cap.blocks)
+        self.assertEqual(cap.action_kind, "read-dataset")
+
+    def test_a_condition_that_is_not_claim_scoping_cannot_be_advisory(self) -> None:
+        """Fail closed: the classification decides `blocks`, not the call site."""
+        for condition in ("dataset-shape-unrecognised", "dataset-absent"):
+            with self.subTest(condition=condition):
+                with self.assertRaises(ValueError) as caught:
+                    MODULE.Cap(
+                        condition,
+                        MODULE.CAP_CEILING[condition],
+                        "reason",
+                        blocks=False,
+                    )
+                self.assertIn("does not block", str(caught.exception))
+        # The false-red direction: a claim-scoping condition may be advisory,
+        # and every condition may block.
+        self.assertFalse(
+            MODULE.Cap("dataset-coarse-resolution", 89, "reason", blocks=False).blocks
+        )
+        self.assertTrue(MODULE.Cap("dataset-shape-unrecognised", 25, "reason").blocks)
+
+    def test_an_unclassified_condition_cannot_be_constructed(self) -> None:
+        MODULE.ACTION_FOR_CONDITION["a-condition-nobody-classified"] = "get-data"
+        MODULE.CAP_CEILING["a-condition-nobody-classified"] = 50
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Cap("a-condition-nobody-classified", 50, "reason")
+        finally:
+            del MODULE.ACTION_FOR_CONDITION["a-condition-nobody-classified"]
+            del MODULE.CAP_CEILING["a-condition-nobody-classified"]
+        self.assertIn("ROUTE_CATEGORY", str(caught.exception))
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):

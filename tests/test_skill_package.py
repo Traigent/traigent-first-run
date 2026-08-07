@@ -4258,6 +4258,42 @@ class SkillPackageTests(unittest.TestCase):
         # And the blocking half must be stated, since that is what the card
         # prints for five of the six branches.
         self.assertIn("the same condition blocks", routing)
+    def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
+        """The route has to say READ, not just "not creation".
+
+        Removing "do not enter the creation dependency matrix" is caught by the
+        branch table below. Replacing the rest of the sentence with the repair
+        instruction it used to carry is not: the branch still routes away from
+        creation, and the assistant is still told to fix a file nobody has
+        opened. Both halves are the fix, so both are asserted.
+
+        The obligation itself lives once, in the reference that owns the
+        dataset stage - re-run the check with the paths the file uses, or
+        convert a format the check does not read, and only then judge the data.
+        SKILL.md names the order and points at it. Deleting either leaves the
+        other stating half a route, which is why the two are pinned together.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        reference = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "re-map it per the dataset reference",
+            "repair, then create, only if mapping fails",
+        ):
+            with self.subTest(document="SKILL.md", phrase=phrase):
+                self.assertIn(phrase, skill)
+        for phrase in (
+            "correct the shape, not the data",
+            "re-run preflight with the field paths the file actually uses",
+            "convert a non-jsonl file into a jsonl working copy",
+            "only when mapped rows still yield no input and expected answer",
+        ):
+            with self.subTest(document="evaluation-and-dataset.md", phrase=phrase):
+                self.assertIn(phrase, reference)
 
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
@@ -4277,6 +4313,15 @@ class SkillPackageTests(unittest.TestCase):
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
             ("dataset-absent", "creation dependency matrix"),
+            # An unrecognised shape routes to reading the file, and explicitly
+            # NOT to creation: the id it used to share sent a customer holding
+            # a perfectly good file into the dataset-creation branch. It does
+            # not route to repair either - most files that reach it are not
+            # broken, so the branch must not open by calling them invalid.
+            (
+                "dataset-shape-unrecognised",
+                "do not enter the creation dependency matrix",
+            ),
             ("dataset-no-expected-outputs", "repairing a labelled working copy"),
             ("dataset-integrity-fail", "repair and revalidate a working copy"),
             ("dataset-tune-holdout-overlap", "repair a disjoint split"),
@@ -4292,10 +4337,24 @@ class SkillPackageTests(unittest.TestCase):
                 "dataset-mostly-generated-answer-key",
                 "the same review, on the model-written answers only",
             ),
+            # Both map to `get-data`, and neither bullet said anything about
+            # data: one said "call rankings exploratory" and the other said
+            # report paired uncertainty. Read together with the action they
+            # emit, the guidance told a customer to hedge the claim and never
+            # what would lift the ceiling. The branch has to do what the action
+            # name says, or the two halves route differently.
+            ("dataset-below-measurable-size", "more comparable examples"),
+            ("dataset-coarse-resolution", "more comparable examples"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)
                 self.assertLess(routing.index(condition), routing.index(branch))
+        # Every dataset condition the scorer can raise is routed here, not just
+        # the ones this table spells out. The count above pins how many exist;
+        # this pins that none of them reaches a reader with no branch at all.
+        for condition in conditions:
+            with self.subTest(condition=condition):
+                self.assertIn(condition, routing)
         self.assertIn("present the reason rather than the condition id", normalized)
         # And the rule that decides which routes stop the run, checked against
         # the scorer rather than only quoted. Without it the routing list is
@@ -4388,6 +4447,11 @@ class SkillPackageTests(unittest.TestCase):
             "and what changed:",
             "readiness transition",
             "`🛠️` substitute",
+            # the record has to have somewhere to put what this run changed on
+            # the customer's behalf, or the obligation to name it lands in
+            # free text and stops being auditable
+            "row ids repaired into the working copy, and row ids generated to "
+            "fill a gap:",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
@@ -4423,6 +4487,68 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never real-world readiness", norm("component-creation.md"))
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
+
+    def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
+        self,
+    ) -> None:
+        """The assistant has the file open; a relayed summary is a guess it did not have to make.
+
+        The card's reason forwards preflight's own FAIL detail, which is honest
+        but second-hand: it names a count, a percentage, and a line. The user
+        can read that much themselves. What only the assistant can do is open
+        the file and say which field the rows actually use against the one the
+        run selected - which is also what turns "your data is unusable" into a
+        one-line fix.
+
+        Stated in the reference that owns the dataset stage and nowhere else,
+        per CLAUDE.md: a second statement of a rule is a rule that can be
+        changed in one place.
+        """
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "where to look, not what to report",
+            "open the file at those lines",
+            "the field the rows use against the field the run selected",
+            "relaying a summary they could have read themselves",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, evaluation)
+        # One home. SKILL.md carries the flow and the routing, not the depth.
+        self.assertNotIn(
+            "open the file at those lines",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
+
+    def test_rows_changed_on_the_users_behalf_are_named_by_id(self) -> None:
+        """ "Some rows were fixed" cannot be inspected, and neither can a count.
+
+        Two things this guide does to a customer's data - repairing rows into a
+        working copy, and generating rows to fill a gap - were reported without
+        saying WHICH rows. The ids are already the identifier here: the bounded
+        subset records the ones it chose, and an excluded degenerate gold
+        records its own. This reuses them rather than adding a second scheme.
+        """
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "name what changed by row id",
+            "these ids were repaired, these ids are synthetic",
+            "record both lists in `traigent-runs/run-plan.md` and say them to the user",
+            # the reuse is the point - a second identifier scheme would be a
+            # second place for two records of the same row to disagree
+            "so reuse them rather than inventing a second way to point at a row",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, evaluation)
 
     def test_first_json_fence_in_run_safety_is_the_config_space_example(self) -> None:
         """Guard the positional dependency the next test relies on.
@@ -5395,6 +5521,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "10-12 visible trials",
                 "10-12 visible enhanced rows",
                 "10-12 configurations",
+            ),
+        ),
+        (
+            "whether a file no row could be read from is a defect in the data",
+            # This one was a contradiction inside a single pull request, across
+            # the two documents CLAUDE.md warns about by name. #144 added a
+            # worked example to the dataset reference whose punchline is "the
+            # rows are fine and the field selection is not", and in the same
+            # commit added a SKILL.md branch calling the identical state
+            # "broken data" and routing it to repair - each correct-looking on
+            # its own, opposite when read together.
+            #
+            # Settled by execution: every situation that produces the state was
+            # built and run through preflight and readiness. A `question` /
+            # `answer` file, a nested schema, a CSV, a JSON array and YAML all
+            # reach it with the rows intact, and re-reading the same bytes with
+            # the fields the file uses scores them with no dataset cap at all.
+            # So the score names its own reading, and whether the data is at
+            # fault is established after the file is opened, not before.
+            ("which is not a verdict on the data",),
+            (
+                "broken data, not missing data",
+                "treat it as invalid; repair a working copy from the",
+                "none of its rows could be read",
             ),
         ),
     )

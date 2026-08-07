@@ -252,7 +252,7 @@ Use concrete evidence:
 | Finding | Evidence to report | Optimization consequence |
 |---|---|---|
 | Too few usable examples | Usable count; fewer than 10 is only a wiring-level signal | Each row moves the score sharply; rankings are unstable |
-| Corrupted rows | Invalid count, total count, percentage, and representative line errors | Some cases never reach the agent/evaluator; reported accuracy is incomplete |
+| Corrupted rows | Invalid count, total count, percentage, and what the named lines actually contain | Some cases never reach the agent/evaluator; reported accuracy is incomplete |
 | Duplicate or narrow cases | Duplicate counts, dominant scenarios/labels, representative rows | Repetition overweights one behavior and can manufacture a high score |
 | Easy-only coverage | Cite representative trivial cases and name absent boundary/failure modes | Most plausible configurations may tie near 100%, leaving no measurable headroom |
 | Missing or overlapping validation split | Split sizes and overlap evidence | No independent generalization claim is supported |
@@ -260,6 +260,20 @@ Use concrete evidence:
 | Degenerate evaluator | Four-probe scores, exceptions, or constant/inverted ordering | Candidate configurations cannot be ranked reliably |
 | Present-but-unresolved evaluator | A file exists but no method could be honestly declared without executing it (a syntax error, or a return that plainly ignores the input) | Nothing can be scored yet; this is a repair/inspect gap on an existing file, not a create/select gap |
 | Baseline ceiling | Baseline score, number and type of failures, and per-example outcomes | This sample/evaluator may show little headroom; the cause is not established |
+
+Those findings are where to look, not what to report. When rows could not be read, the score's
+reason forwards the check's own summary - a count, a percentage, and the first line each distinct
+cause was seen on. Open the file at those lines and say what is actually wrong: the line, the field
+the rows use against the field the run selected, and the malformation. So
+`6/6 rows (100.0%) are unusable; line 1 (+5 more): missing selected input field 'input'` becomes
+`every row names its question 'question' and its answer 'answer', and the run selected
+'input'/'output', so no row matched - the rows are fine and the field selection is not`. The
+assistant has the file open and the user does not, so relaying a summary they could have read
+themselves is the one thing this stage must not do.
+
+Then act on it: correct the shape, not the data - re-run preflight with the field paths the file
+actually uses, or convert a non-JSONL file into a JSONL working copy, then re-score. The data is at
+fault only when mapped rows still yield no input and expected answer, as a truncated line never can.
 
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which
 decision boundaries, realistic noise, edge cases, or known failure modes are absent. If that
@@ -297,6 +311,13 @@ After any repair, re-run the same checks that produced the advisory, the applica
 and the readiness score; record the new score, band, and caps beside the opening result. Do not
 clear `❗` because a file changed or because the score rose; clear it only when new evidence
 resolves the limitation.
+
+Name what changed by row id. Whenever this run repairs rows into a working copy or generates rows
+to fill a gap, record both lists in `traigent-runs/run-plan.md` and say them to the user: these ids
+were repaired, these ids are synthetic. A count cannot be inspected and "some rows were fixed"
+cannot be audited; an id opens the exact row. Ids already do that job here - the bounded subset
+records the ones it chose and an excluded degenerate gold records its own - so reuse them rather
+than inventing a second way to point at a row.
 
 ## Dataset construction
 

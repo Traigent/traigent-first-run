@@ -402,6 +402,25 @@ class SubScore:
 PROCEED = "proceed"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
+    # A file was named and no row in it matched the shape preflight read it
+    # with. It is not `get-data`: the customer has data, so sending them to
+    # collect more is the wrong instruction - and it was the instruction, from
+    # the id this state borrowed. It is not `repair-dataset` either, which is
+    # the correction this entry carries. `repair-dataset` asserts the file is
+    # defective, and on the inputs that actually reach here it usually is not:
+    # a fully labelled file whose rows say `question`/`answer` produces this
+    # exact state, and re-running preflight with `--input-field question
+    # --expected-field answer` scores it 31/PARTIAL with no dataset cap at all.
+    # So does a nested schema, a CSV, a JSON array, and YAML. What is true of
+    # every one of them is that no row confirmed the shape the run assumed -
+    # which is a reason to go and look, not a verdict on the data.
+    #
+    # `dataset-integrity-fail` keeps `repair-dataset` and that stays right,
+    # because it fires only when at least one row DID match: the shape
+    # assumption is confirmed by that row, so the rest are genuinely broken.
+    # Zero matched rows is the absence of that evidence, and the two conditions
+    # already sit exactly on that line.
+    "dataset-shape-unrecognised": "read-dataset",
     "dataset-below-measurable-size": "get-data",
     "dataset-coarse-resolution": "get-data",
     "dataset-no-expected-outputs": "label-data",
@@ -423,6 +442,73 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "agent-no-varying-knobs": "vary-knobs",
 }
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
+
+# What each route ASKS THE USER FOR - a different question from how far the
+# ceiling lets the score rise, and the question that decides whether the run
+# waits.
+#
+# #149 partitions the routes in two: a route asking for a creation or a repair
+# stops the run, and a route that only scopes what the result may claim does
+# not. `dataset-shape-unrecognised` is neither, and that is why it is here.
+# Nothing needs creating - the customer handed over a file. Nothing is known to
+# need repairing - a fully labelled file whose rows say `question`/`answer`
+# produces this exact state and is not defective in any way. And the claim is
+# not merely scoped: a score read from zero matched rows is not a bounded
+# result, it is no result.
+#
+# So the partition is three, and the third one is real:
+#
+#   CREATION_OR_REPAIR  something must be made or mended before this can be
+#                       measured                              -> the run waits
+#   DIAGNOSTIC          nothing was measured, and the material may be perfectly
+#                       fine; what is owed is a look at it, not a change to it
+#                                                             -> the run waits
+#   CLAIM_SCOPING       a real comparison whose claim is bounded
+#                                                             -> the run proceeds
+#
+# The first two both stop the run and are still not the same statement, which
+# is why this is a third category rather than a widened first one. They route
+# to different work, and they read differently on the card a customer is shown
+# before they are asked to pay: telling someone whose file is perfectly good to
+# repair it is precisely the defect this branch exists to remove, and a two-way
+# partition can only say "repair".
+CREATION_OR_REPAIR = "creation-or-repair"
+DIAGNOSTIC = "diagnostic"
+CLAIM_SCOPING = "claim-scoping"
+ROUTE_CATEGORIES = frozenset({CREATION_OR_REPAIR, DIAGNOSTIC, CLAIM_SCOPING})
+
+ROUTE_CATEGORY: dict[str, str] = {
+    "dataset-absent": CREATION_OR_REPAIR,
+    # The condition this category was added for. `read-dataset` is the only
+    # remedy in the vocabulary that asks for an inspection rather than a
+    # change.
+    "dataset-shape-unrecognised": DIAGNOSTIC,
+    # Both route to `get-data` and they disagree about whether the run waits -
+    # `below-measurable-size` blocks and `coarse-resolution` does not. Both are
+    # classified by what the result IS (a real comparison, narrowly bounded)
+    # rather than by that disagreement, which is tracked separately: forcing
+    # the two into agreement breaks one side either way, and it is not this
+    # branch's call.
+    "dataset-below-measurable-size": CLAIM_SCOPING,
+    "dataset-coarse-resolution": CLAIM_SCOPING,
+    "dataset-no-expected-outputs": CREATION_OR_REPAIR,
+    "dataset-integrity-fail": CREATION_OR_REPAIR,
+    "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
+    "dataset-fully-synthetic": CLAIM_SCOPING,
+    "dataset-mostly-synthetic": CLAIM_SCOPING,
+    "dataset-generated-answer-key": CLAIM_SCOPING,
+    "evaluator-absent": CREATION_OR_REPAIR,
+    # The sweep found a second one. A file is connected and no method could be
+    # honestly declared for it without executing it - which on the ordinary
+    # shape means nothing is wrong, only unnamed. It shares `repair-evaluator`
+    # with `evaluator-invalid` because a consumer needs no new slug, but the
+    # two are not the same statement: `evaluator-invalid` was PROVEN wrong by
+    # probes that ran, and this one was never read.
+    "evaluator-unresolved": DIAGNOSTIC,
+    "evaluator-invalid": CREATION_OR_REPAIR,
+    "evaluator-timeout": CREATION_OR_REPAIR,
+    "agent-no-varying-knobs": CREATION_OR_REPAIR,
+}
 
 
 # What a ceiling is FOR, and the one sentence the ordering was missing.
@@ -492,6 +578,14 @@ EVALUATOR_INVALID_CEILING = 25
 # scores a wrong answer as well as a right one is worse than a missing one,
 # because it produces believable numbers; it sits above 20 only because the
 # dataset it would measure is still there.
+DATASET_SHAPE_UNRECOGNISED_CEILING = 25
+# Equal to `evaluator-invalid`, and for a related reason: neither state has
+# produced a number anyone may read. A file was provided and no row in it
+# matched the shape this score read it with, so nothing was measured. It cannot
+# be 20 - that is "no data at all" and this customer has a file. It stays below
+# `dataset-no-expected-outputs` (30) and `dataset-integrity-fail` (35) because
+# each of those has at least one row that confirmed the shape, which is
+# positive evidence this state does not have.
 DATASET_NO_EXPECTED_OUTPUTS_CEILING = 30
 # The bottom of PARTIAL. Rows exist and are readable - real material, and the
 # gap is one addition away - but nothing can be scored until it is made.
@@ -582,6 +676,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         (
             ("dataset-absent", DATASET_ABSENT_CEILING),
             ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
+            ("dataset-shape-unrecognised", DATASET_SHAPE_UNRECOGNISED_CEILING),
             ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
             ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
             ("evaluator-absent", EVALUATOR_ABSENT_CEILING),
@@ -673,6 +768,12 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-absent", "dataset-coarse-resolution"),
     # No labels is no comparable example either, under a reference-based method.
     ("dataset-no-expected-outputs", "dataset-below-measurable-size"),
+    # A file no row of which matched the shape it was read with yielded no
+    # expected answer and no comparable example either - the same three
+    # consequences as an absent dataset, from a file that does exist.
+    ("dataset-shape-unrecognised", "dataset-no-expected-outputs"),
+    ("dataset-shape-unrecognised", "dataset-below-measurable-size"),
+    ("dataset-shape-unrecognised", "dataset-coarse-resolution"),
     # All of it generated is also most of it generated.
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
     # And the same on the answer-key ladder, which now has the same two rungs.
@@ -789,6 +890,24 @@ class Cap:
         # And the third registry, which was declared and enforced nowhere. A
         # cap whose overlap with the others nobody stated is the #144 defect
         # waiting to recur - it fails here rather than shipping green.
+        # And the route category, on the same fail-closed footing. A cap whose
+        # route nobody classified is a cap whose `blocks` was chosen rather
+        # than derived, which is how a customer holding a perfectly good file
+        # was told to repair it.
+        if self.condition not in ROUTE_CATEGORY:
+            raise ValueError(
+                f"cap {self.condition!r} has no entry in ROUTE_CATEGORY; say "
+                "whether its remedy asks for a creation or repair, asks only "
+                "for a look at material that may be fine, or only scopes what "
+                "the result may claim"
+            )
+        if ROUTE_CATEGORY[self.condition] != CLAIM_SCOPING and not self.blocks:
+            raise ValueError(
+                f"cap {self.condition!r} is routed as "
+                f"{ROUTE_CATEGORY[self.condition]} and does not block; a "
+                "condition under which nothing was measured cannot let the "
+                "run present a result, so either it scopes a claim or it waits"
+            )
         if self.condition not in CAP_OVERLAP_REVIEWED:
             raise ValueError(
                 f"cap {self.condition!r} states no overlap with the other "
@@ -952,6 +1071,33 @@ class ReadinessScore:
 @dataclass(frozen=True)
 class DatasetFacts:
     exists: bool = False
+    # Whether a dataset reached this score at all, and if it did, how much of it
+    # could be read. `exists` alone conflated two states the customer
+    # experiences very differently: "you have no data" and "I could not read the
+    # data you gave me". The second has several causes - the rows are fine but
+    # the selected field names are not the ones in the file, the lines are not
+    # JSON, one field path was selected for both the input and the expected
+    # answer - and reporting any of them as the first tells a customer holding a
+    # good dataset to go and get one.
+    # This mirrors AgentFacts.config_space_supplied, which already draws the
+    # same line for the same reason.
+    dataset_supplied: bool = False
+    unreadable_rows: int | None = None
+    # Preflight's own sentence about why nothing could be read, forwarded
+    # verbatim rather than re-derived here.
+    #
+    # This adapter cannot see the cause: `unreadable_rows` is the same number
+    # for a file of broken JSON, a file whose selected field names are not the
+    # ones in it, and a run that selected one field path for both the input and
+    # the expected answer. Guessing a cause from the count produced a sentence
+    # that was simply false for the third - it named "malformed lines, or
+    # missing the input or expected-answer field" and told the reader to "check
+    # both", when neither was true and preflight had already reported
+    # `input and expected-output field paths must be different`.
+    #
+    # `None` when preflight said nothing about it; then the reason names no
+    # cause at all rather than inventing one.
+    unreadable_detail: str | None = None
     rows: int | None = None
     labelled_rows: int | None = None
     tuning_rows: int | None = None
@@ -1711,23 +1857,98 @@ def score_dataset(
     subs: list[SubScore] = []
 
     if not facts.exists or not facts.rows:
-        caps.append(
-            Cap(
-                "dataset-absent",
-                DATASET_ABSENT_CEILING,
-                "No dataset is connected, so nothing can be measured.",
+        # Three different situations used to produce one sentence, and one
+        # remedy. Say which, and route each to its own.
+        unreadable = facts.unreadable_rows or 0
+        detail = facts.unreadable_detail
+        if facts.dataset_supplied and unreadable:
+            # Rows were counted and none matched the shape the run read them
+            # with. The earlier wording called that broken data. It is not, on
+            # most of the files that produce it - see `ACTION_FOR_CONDITION`
+            # for the reproductions - so this says what is true instead: what
+            # failed is the reading, and whether the data is at fault is not
+            # yet established.
+            #
+            # Ceiling 25, kept, and re-argued for the sentence it now carries.
+            # It is a bound on what has been DEMONSTRATED, and nothing has:
+            # the score may not present a file nobody has read as better than
+            # one that is measurable. 20 is "no data at all"; this customer has
+            # a file, so it cannot be that. It stays below
+            # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail`
+            # (35) because each of those has at least one row that confirmed
+            # the shape, which is positive evidence this state does not have.
+            #
+            # Blocking, because nothing here is measurable yet - but the route
+            # is `read-dataset`, so what it blocks on is one look at the file
+            # rather than a repair. The reason says so, because this cap is
+            # computed at the opening gate, before the assistant has had any
+            # chance to adapt, and a customer reading that card is owed the
+            # fact that it can clear on the very next step.
+            #
+            # The cause is preflight's to state, not this adapter's to guess:
+            # every wording invented here was false for at least one of the
+            # inputs that reach this branch.
+            reason = (
+                "A dataset was provided and no row in it matched the shape "
+                "this score read it with, so nothing could be measured yet"
             )
-        )
-        subs.append(SubScore("labels", 0.0, 30.0, True, "no dataset"))
-        subs.append(SubScore("power", 0.0, 25.0, True, "no dataset"))
-        subs.append(SubScore("difficulty", 0.0, 15.0, False, "no dataset"))
-        subs.append(SubScore("diversity", 0.0, 20.0, False, "no dataset"))
-        subs.append(SubScore("provenance", 0.0, 10.0, True, "no dataset"))
+            reason += f": {detail}." if detail else "."
+            reason += (
+                " That describes the reading, not a defect in the data - open "
+                "the file, select the fields it actually uses, and re-score; "
+                "this can clear on the next step."
+            )
+            evidence = "provided, no row matched the shape it was read with"
+            caps.append(
+                Cap(
+                    "dataset-shape-unrecognised",
+                    DATASET_SHAPE_UNRECOGNISED_CEILING,
+                    reason,
+                )
+            )
+        else:
+            if facts.dataset_supplied:
+                # A dataset was named and preflight counted no rows to salvage
+                # - the path does not exist, or the file holds nothing. Those
+                # are different problems and preflight's `dataset-shape` FAIL
+                # says which; without it, this printed one sentence for both.
+                #
+                # "nothing could be read from it" was one word away from the
+                # `dataset-shape-unrecognised` sentence directly above, and the
+                # two route to opposite remedies: go and get data, or go and
+                # read the file you have. A reader cannot pick a branch off two
+                # sentences that differ by "and none of its rows" versus "but
+                # nothing". So this one says the thing that makes `get-data`
+                # the right instruction - there are no rows here at all, so
+                # there is nothing to go and look at - which is exactly what
+                # separates it from the state above, where rows exist and none
+                # of them matched the shape they were read with.
+                reason = (
+                    "A dataset was provided to this score and it holds no rows "
+                    "at all, so there is nothing to measure and nothing to "
+                    "repair"
+                )
+                reason += f": {detail}" if detail else "."
+                evidence = "provided, no rows read"
+            else:
+                reason = (
+                    "No dataset was provided to this score, so nothing can be measured."
+                )
+                evidence = "no dataset provided to this score"
+            caps.append(Cap("dataset-absent", DATASET_ABSENT_CEILING, reason))
+        subs.append(SubScore("labels", 0.0, 30.0, True, evidence))
+        subs.append(SubScore("power", 0.0, 25.0, True, evidence))
+        subs.append(SubScore("difficulty", 0.0, 15.0, False, evidence))
+        subs.append(SubScore("diversity", 0.0, 20.0, False, evidence))
+        subs.append(SubScore("provenance", 0.0, 10.0, True, evidence))
         return combine("dataset", subs), caps
 
     rows = facts.rows
     reference_free = scores_without_a_reference(evaluator_method)
     labelled = facts.labelled_rows if facts.labelled_rows is not None else 0
+    # Whether the reason nothing is scoreable is already named, and already
+    # routed, by the labels cap below. Read by the power ceiling further down.
+    unlabelled_capped = False
     if reference_free:
         subs.append(
             SubScore(
@@ -1740,6 +1961,7 @@ def score_dataset(
             )
         )
     elif labelled == 0:
+        unlabelled_capped = True
         caps.append(
             Cap(
                 "dataset-no-expected-outputs",
@@ -1865,7 +2087,23 @@ def score_dataset(
     # STRONG in the same breath (#88). The ceiling is what stops a result
     # presenting as trustworthy when nothing measurable was measured.
     ceiling = power_ceiling(effective)
-    if ceiling is not None:
+    # A zero that the labels cap already owns is not a second finding.
+    #
+    # When rows exist and none carries an expected output, `effective` is zero
+    # BECAUSE of that, and `dataset-no-expected-outputs` has already said so
+    # and routed it to `label-data` - repair the rows the customer is holding.
+    # Appending the power ceiling here restated the same zero as
+    # `dataset-below-measurable-size`, whose remedy is `get-data`: the card
+    # carried two FIX lines for one fact, and the second told a customer with
+    # 50 perfectly good inputs to go and collect examples. That is the defect
+    # this file already fixed for `dataset-shape-unrecognised`, one condition
+    # over.
+    #
+    # Suppressing it moves no number: 30 is below the 74 ceiling, so the labels
+    # cap is the operative one either way and the run stays blocked. When the
+    # zero has any other source - an empty side of a declared split - nothing
+    # else has named it, so the ceiling still fires.
+    if ceiling is not None and not (effective == 0 and unlabelled_capped):
         caps.append(ceiling)
 
     # `is not None`, not truthiness. A declared zero means preflight looked at
@@ -1968,6 +2206,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     subs: list[SubScore] = []
 
     if not facts.present:
+        # Deliberately left as-is. The dataset pillar above earns its new
+        # phrasing with a new fact (`dataset_supplied`); this pillar has no
+        # equivalent, and `present=False` covers both "no evaluator reached this
+        # score" and "a path was supplied that does not exist". Rewording it to
+        # "was provided to this score" without that fact would be false in the
+        # second case - one WAS provided. Giving this pillar the same fact is a
+        # follow-up, not a free rename.
         caps.append(
             Cap(
                 "evaluator-absent",
@@ -2989,29 +3234,79 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+def _dataset_absence_detail(records: Sequence[dict[str, Any]]) -> str | None:
+    """Preflight's own sentence about why no row reached the score.
+
+    Preferred from `dataset-integrity`, which names the per-row cause exactly
+    ("invalid JSON (...)", "missing selected input field 'input'", "input and
+    expected-output field paths must be different"); otherwise from
+    `dataset-shape`, which is the only witness that separates a path that does
+    not exist from a file that exists and holds nothing - two states that
+    printed byte-identical scores before this read them.
+
+    `None` when neither check FAILed with a detail, so the caller says nothing
+    about the cause rather than choosing one.
+    """
+    details = {
+        record["check"]: record.get("detail")
+        for record in records
+        if isinstance(record, dict)
+        and "check" in record
+        and record.get("status") == "FAIL"
+    }
+    for check in ("dataset-integrity", "dataset-shape"):
+        detail = details.get(check)
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return None
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
     provenance = metrics.get("dataset-provenance", {})
     difficulty = metrics.get("dataset-difficulty-coverage", {})
     integrity = metrics.get("dataset-integrity", {})
-    # No provenance metric at all means preflight found no rows to describe - a
-    # genuinely absent or empty dataset. An unlabelled-but-present dataset now
-    # carries provenance (rows > 0, labelled_rows == 0), so it lands below in the
-    # exists=True branch and reaches the cap-30 "no expected outputs" case.
-    if not provenance:
-        return DatasetFacts(exists=False)
     # Structural integrity is about malformed rows (bad JSON, non-objects,
     # missing inputs). Rows that merely lack an expected output are unlabelled,
     # not malformed, so they must not trip the integrity cap - they are scored
     # through the "no expected outputs" branch instead. Read dataset-integrity
     # directly (dataset-shape now also fails for a merely-unlabelled dataset).
+    #
+    # Checked before the no-provenance return below, not after it: that return
+    # reads the same count to decide between "broken data" and "no data", so a
+    # payload too old to carry it must refuse there too rather than quietly
+    # score as the second.
     integrity_status = statuses.get("dataset-integrity")
     if integrity_status == "FAIL" and "malformed_rows" not in integrity:
         raise PreflightInputError(
             "dataset-integrity FAILed but carries no malformed_rows count - "
             "this preflight JSON predates the current preflight.py; re-run "
             "preflight.py --json from the same version as this script"
+        )
+    # No provenance metric at all means preflight found no rows to describe - a
+    # genuinely absent or empty dataset. An unlabelled-but-present dataset now
+    # carries provenance (rows > 0, labelled_rows == 0), so it lands below in the
+    # exists=True branch and reaches the cap-30 "no expected outputs" case.
+    if not provenance:
+        # Preflight ran no dataset check at all -> nothing was supplied. It ran
+        # one and salvaged nothing -> a dataset was supplied and could not be
+        # read. Both used to arrive here as a bare exists=False.
+        supplied = any(
+            str(record.get("check", "")).startswith("dataset-") for record in records
+        )
+        return DatasetFacts(
+            exists=False,
+            dataset_supplied=supplied,
+            # `malformed_rows`, not `invalid_rows`: the latter is
+            # `malformed_rows + unlabelled_rows` (preflight.py), and an
+            # unlabelled row is a row that WAS read. The two agree on every
+            # payload that reaches this return today, because a dataset with
+            # unlabelled rows carries provenance and leaves through the branch
+            # below - so reading the sum was correct only by way of a fact
+            # asserted elsewhere. Read the count that means what this says.
+            unreadable_rows=integrity.get("malformed_rows"),
+            unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     tuning_metrics = metrics.get("dataset-tuning-size", {})
@@ -3140,6 +3435,13 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 )
     return DatasetFacts(
         exists=True,
+        # Preflight described a dataset, so one was supplied - stated here
+        # rather than left to default. `exists=True` with no usable row count
+        # (a provenance record carrying no `rows`) falls into the same
+        # no-rows branch of `score_dataset` as the returns above, where the
+        # default `False` made it say "No dataset was provided to this score"
+        # about a dataset preflight had just described.
+        dataset_supplied=True,
         rows=provenance.get("rows"),
         labelled_rows=provenance.get("labelled_rows"),
         tuning_rows=tuning_metrics.get("tuning_rows"),
