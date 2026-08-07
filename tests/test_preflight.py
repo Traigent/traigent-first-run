@@ -724,6 +724,224 @@ class StaticPreflightTests(unittest.TestCase):
         ]
         self.assertIn("dataset-duplicates", failures)
 
+    @staticmethod
+    def _pairwise_near_duplicates(
+        token_sets: list[set[str]], threshold: float = 0.9
+    ) -> list[tuple[int, int]]:
+        """The full O(n^2) scan, kept here as the oracle for the indexed join.
+
+        This is the code the indexed join replaced. It stays in the tests
+        because a similarity index that quietly misses pairs would be the same
+        defect the index was written to remove - a check that reports clean
+        without having looked - one layer further down.
+        """
+        pairs = []
+        for left in range(len(token_sets)):
+            for right in range(left + 1, len(token_sets)):
+                union = token_sets[left] | token_sets[right]
+                similarity = (
+                    len(token_sets[left] & token_sets[right]) / len(union)
+                    if union
+                    else 1.0
+                )
+                if similarity >= threshold:
+                    pairs.append((left + 1, right + 1))
+        return pairs
+
+    def test_indexed_near_duplicate_join_matches_the_pairwise_scan(self) -> None:
+        """Exactness, on the shapes that break naive similarity indexes."""
+        import random
+
+        random.seed(20260806)
+        vocabulary = [f"word{index}" for index in range(40)]
+        for _ in range(200):
+            token_sets = [
+                set(random.sample(vocabulary, size))
+                for size in (random.randint(0, 8) for _ in range(random.randint(0, 40)))
+            ]
+            pairs, complete = MODULE.near_duplicate_pairs(token_sets)
+            self.assertTrue(complete)
+            self.assertEqual(
+                pairs,
+                sorted(self._pairwise_near_duplicates(token_sets)),
+                f"indexed join disagrees with the pairwise scan on {token_sets}",
+            )
+
+    def test_near_duplicates_are_still_checked_above_five_hundred_rows(self) -> None:
+        """The check must not stop running as the dataset gets big.
+
+        A 500-row ceiling used to turn this into SKIP, and nothing downstream
+        told a SKIP from a pass - so a 5,000-row dataset silently lost
+        duplicate detection at exactly the size where duplicates become likely.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"question {index} about topic {index} number {index}",
+                "output": f"answer {index % 7}",
+                "source": "production",
+            }
+            for index in range(900)
+        ]
+        # Row 2 repeats nine of row 1's ten tokens: Jaccard 9/10, at threshold.
+        rows[0]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+        rows[1]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota"
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.WARN, near.detail)
+        self.assertIn("(1, 2)", near.detail)
+
+    def test_an_incomplete_near_duplicate_scan_is_skip_and_never_pass(self) -> None:
+        """Out of budget with nothing found is unchecked, not clean."""
+        token_sets = [{"a", "b", "c"} for _ in range(50)]
+        pairs, complete = MODULE.near_duplicate_pairs(
+            token_sets, max_work=0, limit=10
+        )
+        self.assertEqual(pairs, [])
+        self.assertFalse(complete)
+
+    def test_a_truncated_near_duplicate_scan_still_reports_its_findings(self) -> None:
+        """Pairs found before the budget ran out are a finding, not a SKIP.
+
+        The budget is in token operations, so it has to buy at least one whole
+        comparison: a posting step plus both rows' token counts.
+        """
+        token_sets = [{"a", "b", "c"} for _ in range(50)]
+        pairs, complete = MODULE.near_duplicate_pairs(
+            token_sets, max_work=10, limit=10
+        )
+        self.assertTrue(pairs)
+        self.assertFalse(complete)
+
+    def test_the_budget_is_spent_on_the_work_and_not_on_the_pair_count(
+        self,
+    ) -> None:
+        """The bound has to bound what the loop actually spends.
+
+        It used to count distinct candidate PAIRS, which is not the cost: each
+        pair is found with one posting-list step and then settled with a union
+        and an intersection over both rows' whole token sets. So a few very
+        long rows cost a great deal and counted as almost nothing. Measured on
+        2,000 RAG-shaped rows of 300 tokens: 1.7M candidate pairs - 34% of a
+        5,000,000 pair budget, so the bound never fired - and 1.03 billion
+        token operations, which ran 45 s with no output and no timeout and then
+        answered PASS. Trunk answered in 0.24 s.
+
+        Asserted on the accounting rather than on a clock, which would be
+        flaky. Three rows are three candidate pairs however long they are, so
+        a budget of 100 stops this scan only if the row length is being
+        charged for.
+        """
+        long_rows = [{f"token{index}" for index in range(1000)} for _ in range(3)]
+        pairs, complete = MODULE.near_duplicate_pairs(long_rows, max_work=100)
+        self.assertFalse(
+            complete,
+            "three 1,000-token rows are three candidate pairs and about six "
+            "thousand token operations; a budget of 100 that still completes "
+            "is counting pairs",
+        )
+        # The false-red direction: the same three pairs with short rows are
+        # cheap, and must still finish inside the same budget.
+        short_rows = [{"a", "b", "c"} for _ in range(3)]
+        _pairs, short_complete = MODULE.near_duplicate_pairs(
+            short_rows, max_work=100
+        )
+        self.assertTrue(short_complete)
+
+    def test_one_row_is_not_charged_for_an_answer_spread_it_cannot_have(
+        self,
+    ) -> None:
+        """Dominance needs two answers to be a statement about anything.
+
+        One row's single answer holds 100% of the rows by arithmetic, and
+        reporting that charged a 1-row dataset 6 of its 20 diversity points -
+        14.0 against 20.0, dataset 64 against 71 - for a finding no dataset of
+        that size can avoid, and told its owner to diversify answers they have
+        one of. The row count IS the problem and `dataset-size` already says
+        so, loudly.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "one.jsonl"
+            dataset.write_text(
+                json.dumps({"id": "r1", "input": "only question", "output": "only"})
+                + "\n"
+            )
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertNotIn("dataset-ceiling-risk", checks)
+        self.assertEqual(checks["dataset-outputs"].status, MODULE.PASS)
+        self.assertIn("too few", checks["dataset-outputs"].detail)
+        # And the size itself is still reported as the problem it is.
+        self.assertEqual(checks["dataset-size"].status, MODULE.WARN)
+
+    def test_two_identical_answers_are_still_a_finding(self) -> None:
+        """The false-red direction: the guard is about one row, not about two."""
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "two.jsonl"
+            dataset.write_text(
+                "\n".join(
+                    json.dumps(
+                        {"id": f"r{index}", "input": f"question {index}", "output": "x"}
+                    )
+                    for index in range(2)
+                )
+                + "\n"
+            )
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertIn("dataset-ceiling-risk", checks)
+
+    def test_an_exhausted_budget_emits_skip_rather_than_a_clean_result(self) -> None:
+        """The one remaining way this check can fail to run must say so.
+
+        Driven through `check_dataset` and not just the join, because the
+        defect being guarded lived in the emit: the old ceiling produced a SKIP
+        that nothing downstream distinguished from a pass. The budget is
+        patched down rather than a pathological dataset built, so the test
+        states the contract instead of the size at which it triggers.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                # A shared vocabulary, so the filter admits candidate pairs and
+                # the budget is actually consulted. The rows are not similar
+                # enough to BE near-duplicates: the scan finds nothing, runs
+                # out of budget, and must not call that clean.
+                "input": f"alpha beta gamma delta token{index}",
+                "output": f"answer {index % 4}",
+                "source": "production",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with mock.patch.object(MODULE, "MAX_NEAR_DUPLICATE_WORK", 0):
+                MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertIn("UNCHECKED", near.detail)
+        self.assertNotIn("no high-similarity", near.detail)
+        # And it must account for the wait, in terms of the dataset the reader
+        # is holding. This is the one slow path in the script, so they have just
+        # waited and are then told the check did not run; the detail has to name
+        # what causes it or the pause reads as a hang. It must name BOTH causes:
+        # the text used to name only a small vocabulary, and the slower way in
+        # is long rows with an entirely ordinary one.
+        self.assertIn("length of each one", near.detail)
+        self.assertIn("vocabulary", near.detail)
+
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [
             {"input": f"case {index}", "output": f"answer {index}"}
@@ -792,6 +1010,52 @@ class StaticPreflightTests(unittest.TestCase):
                 and "9/10" in result.detail
                 for result in MODULE.RESULTS
             )
+        )
+
+    def test_total_answer_dominance_is_a_finding_not_an_unchecked_gap(self) -> None:
+        """100% is the dominance check's worst case, not its absent case.
+
+        `dataset-ceiling-risk` was raised only inside the `else` arm that runs
+        when there is more than one distinct expected output. A dataset where
+        EVERY answer is identical took the `len(output_counts) == 1` arm, which
+        emitted `dataset-outputs` WARN and nothing else - so the one check that
+        measures answer spread produced no record at the exact input it exists
+        to catch.
+
+        readiness.py reads a PASS on `dataset-outputs` as its witness that the
+        spread was examined, so a WARN there left answer dominance reported as
+        NEVER CHECKED, and an unmeasured sub-score drops out of the pillar
+        average instead of deducting from it. The dataset with the worst
+        possible answer spread therefore scored HIGHER than one with 90%
+        dominance. Both records are asserted here, because either alone is
+        satisfied by the shape that produced the inversion.
+        """
+        rows = [
+            {"id": f"real-{index}", "input": f"case {index}", "output": "same"}
+            for index in range(10)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        self.assertTrue(
+            any(
+                result.check == "dataset-outputs"
+                and "every expected output is identical" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            "the degenerate-outputs finding is gone",
+        )
+        self.assertTrue(
+            any(
+                result.check == "dataset-ceiling-risk"
+                and result.status == MODULE.WARN
+                and "10/10" in result.detail
+                and "100.0%" in result.detail
+                for result in MODULE.RESULTS
+            ),
+            "total answer dominance raised no dominance record, so the score "
+            "will report it as a check that never ran",
         )
 
     def test_dominant_structured_label_is_not_hidden_by_unique_reasons(self) -> None:

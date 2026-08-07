@@ -419,10 +419,10 @@ Every generated row must:
 Run quality checks:
 
 - Usable count and corrupted-row percentage.
-- Exact duplicate inputs.
+- Repeated inputs: exact duplicates, and near-duplicates at or above the similarity line
+  `preflight.py` prints on the check's own line - one finding, scored once.
 - Duplicate IDs.
 - Normalized duplicate outputs/labels where diversity is expected.
-- Near-duplicate inputs using normalized token shingles or another explainable local heuristic.
 - Missing difficulty bands.
 - Repeated scenario tags that crowd out coverage.
 - Tuning/holdout overlap by ID and normalized input.

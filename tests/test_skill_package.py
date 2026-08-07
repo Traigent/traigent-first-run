@@ -555,6 +555,25 @@ sys.modules[_SPEC.name] = READINESS
 _SPEC.loader.exec_module(READINESS)
 
 
+def preflight_constant(name: str) -> object:
+    """Read one module-level constant out of `preflight.py` without running it.
+
+    The two scripts are separate programs that meet over JSON, so nothing at
+    runtime can compare their constants against each other - which is exactly
+    why a number can be changed in one and left in the other. That comparison
+    lives here. Parsed rather than executed, because a test about what
+    preflight DECIDES should not depend on what importing it does.
+    """
+    source = ast.parse((SKILL_ROOT / "scripts" / "preflight.py").read_text())
+    for node in source.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"preflight.py defines no module-level {name}")
+
+
 def score_config_space(document: dict) -> tuple[object, list[str]]:
     """Run a config-space document through the real adapter and agent scorer."""
     pillar, caps, _knobs = READINESS.score_agent(
@@ -2955,17 +2974,10 @@ class SkillPackageTests(unittest.TestCase):
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         self.assertIn('"--evaluator-method"', preflight)
         self.assertIn("REFERENCE_FREE_METHODS", preflight)
-        preflight_module = ast.parse(preflight)
-        preflight_methods = next(
-            ast.literal_eval(node.value)
-            for node in preflight_module.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "REFERENCE_FREE_METHODS"
-                for target in node.targets
-            )
+        self.assertEqual(
+            preflight_constant("REFERENCE_FREE_METHODS"),
+            set(READINESS.REFERENCE_FREE_METHODS),
         )
-        self.assertEqual(preflight_methods, set(READINESS.REFERENCE_FREE_METHODS))
         for phrase in (
             "resolved evaluator method as run-scoped validation state",
             "same current `--evaluator-method` value to every paired preflight/readiness invocation",
@@ -2984,6 +2996,77 @@ class SkillPackageTests(unittest.TestCase):
         for document in (skill, safety):
             self.assertIn("preflight", document)
             self.assertIn("expected outputs", document)
+
+    def test_the_similarity_line_the_card_prints_is_the_one_that_decides(
+        self,
+    ) -> None:
+        """One decision, three homes: what decides, what prints, what is read.
+
+        `preflight.NEAR_DUPLICATE_THRESHOLD` decides which rows count as
+        repetition. `readiness.NEAR_DUPLICATE_PERCENT` is the number the card
+        prints, and glossary.md is the number the user reads before agreeing to
+        be judged by it. All three were independent literals, so lowering the
+        deciding threshold to 0.8 left 472 tests passing while the card still
+        promised "rows at least 90% similar" and the glossary still called 90%
+        the chosen line - the customer told one number and scored on another.
+
+        Asserted against the deciding constant, not beside it: a test that
+        restates 90 is a fourth home for the same drift.
+        """
+        threshold = preflight_constant("NEAR_DUPLICATE_THRESHOLD")
+        percent = READINESS.NEAR_DUPLICATE_PERCENT
+        self.assertAlmostEqual(threshold * 100, percent, places=6)
+        # Also the label preflight itself prints, so a threshold that is not a
+        # whole percent cannot round into agreement with a card that is.
+        self.assertEqual(f"{threshold:.0%}", f"{percent}%")
+        near_duplicates = next(
+            check
+            for check in READINESS.DIVERSITY_CHECKS
+            if check.certifier == "near_duplicate_status"
+        )
+        for label in (
+            near_duplicates.found_label,
+            near_duplicates.looking_for_label,
+        ):
+            self.assertIn(f"{percent}%", label)
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().split()
+        )
+        self.assertIn(f"repeat when {percent}% or more of their words match", glossary)
+        self.assertIn(f"{percent}% is a chosen line", glossary)
+
+    def test_no_document_states_the_similarity_line_as_its_own_number(
+        self,
+    ) -> None:
+        """The fourth home the docstring above names, found in the same commit.
+
+        The branch that welded three homes together created two more: an
+        assistant-facing instruction in evaluation-and-dataset.md reading
+        "near-duplicates at or above 90% shared words", inside no guard at all,
+        and four `"90%"` literals across the test suite. A number welded in
+        three places and written out in five is not welded.
+
+        The rule is that only the two documents the guard above pins may state
+        the number, and they state it BECAUSE they are pinned to the constant.
+        Anywhere else names the check instead of the value.
+        """
+        percent = READINESS.NEAR_DUPLICATE_PERCENT
+        pinned = {SKILL_ROOT / "references" / "glossary.md"}
+        for document in assistant_facing_documents():
+            if document in pinned:
+                continue
+            with self.subTest(document=document.name):
+                text = " ".join(document.read_text().split())
+                for phrase in (f"{percent}% shared words", f"{percent}% similar"):
+                    # `assertNotIn` would print the whole document on failure,
+                    # so the membership test is done here and the message says
+                    # only what is wrong.
+                    self.assertFalse(
+                        phrase in text,
+                        f"{document.name} states the similarity line as the "
+                        f"literal {phrase!r}, in no guard - name the check "
+                        "that prints it instead",
+                    )
 
     def test_readiness_receives_only_a_grounded_task_kind(self) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())

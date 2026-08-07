@@ -28,8 +28,48 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 SUPPORTED_TRAIGENT_VERSION = "0.25.0"
-MAX_NEAR_DUPLICATE_ROWS = 500
+# Jaccard similarity over normalized word sets. This is the only number the
+# repetition deduction now rests on (traigent-first-run#158), and nothing
+# derives it: it is order-blind, so a reordered sentence scores 1.0, and it is
+# length-sensitive, so one changed word clears 0.9 at 19 tokens and never does
+# below that. What it should be is an open owner question
+# (traigent-first-run#170); until it is answered the user-facing text calls it
+# a chosen line rather than a discovered one.
 NEAR_DUPLICATE_THRESHOLD = 0.9
+# How many near-duplicate pairs the scan will collect before it stops. A display
+# bound, not a limit on what is checked: the emit prints ten, and a dataset with
+# a thousand near-duplicate pairs has already answered the only question this
+# check asks. Bounded so one very repetitive dataset cannot materialize millions
+# of tuples.
+MAX_NEAR_DUPLICATE_PAIRS = 1000
+# A ceiling on the WORK the near-duplicate join may do - never on the number of
+# rows it will look at. The join below is exact, so this bounds the datasets it
+# cannot finish, not the ordinary path. Reaching it cannot produce a clean
+# result: the caller emits SKIP, and readiness reads a SKIP as unchecked.
+#
+# This replaced a 500-row ceiling above which the check emitted SKIP and stopped
+# running. Nothing downstream distinguished that SKIP from a pass, so every
+# dataset over 500 rows silently lost near-duplicate detection - precisely the
+# size at which duplicates become likely (traigent-first-run#151).
+#
+# COUNTED IN TOKEN OPERATIONS, and that is the correction. It used to count
+# distinct candidate PAIRS, which is not what the loop spends: a pair costs one
+# posting-list step to find and then a set union and intersection over both
+# rows' tokens, so a row of 300 tokens costs 600 units where a row of 12 costs
+# 24. Bounding the pair count therefore bounded nothing on exactly the datasets
+# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M candidate
+# pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03 BILLION
+# token operations, which ran for 45 s with no output and no timeout and then
+# answered PASS. Trunk took 0.24 s on the same file.
+#
+# The number is derived from wall clock and nothing else. This loop sustains
+# 15-22M token operations per second across the shapes measured (2,000x300 RAG
+# chunks, 5,000 rows over a 60-word vocabulary, 5,000 short rows), so 60M is
+# about three to four seconds - long enough that no ordinary dataset reaches it
+# and short enough that a user is not left watching a script that will not
+# answer. Re-derive it if the loop's inner work changes; do not move it because
+# a dataset wanted more.
+MAX_NEAR_DUPLICATE_WORK = 60_000_000
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
@@ -458,6 +498,121 @@ def normalized_identity(value: Any) -> str:
 
 def token_set(value: Any) -> set[str]:
     return set(normalized_text(value).split())
+
+
+def near_duplicate_prefix(
+    tokens: set[str], rank: dict[str, int], threshold: float
+) -> list[str]:
+    """The tokens of one row that must be indexed for an exact threshold join.
+
+    Prefix filtering (Chaudhuri et al.): order every token by a global ranking,
+    and two sets whose Jaccard similarity is at least `threshold` must share a
+    token inside their prefixes. Suppose they do not, and let `w` be the
+    lowest-ranked token they have in common. `w` sits outside at least one of
+    the two prefixes, so every shared token sits in that set's suffix and the
+    intersection is at most `size - prefix`, which is below `threshold * size` -
+    contradicting the similarity. So a candidate pair can never be missed by
+    looking only at prefixes, and the join stays exact rather than sampled.
+
+    The length uses floor where the derivation uses ceil. Floor is never
+    shorter, and a longer prefix only admits extra candidates that the exact
+    Jaccard check then rejects - whereas a prefix one token too short drops real
+    pairs silently. Binary floating point puts `0.9 * 10` at 9.000000000000002,
+    so the rounding direction has to be the one that cannot lose a pair.
+
+    Ranking rarest-first is what makes this cheap: the indexed tokens are the
+    ones that share a bucket with almost nothing.
+    """
+    size = len(tokens)
+    length = max(1, min(size, size - int(threshold * size) + 1))
+    return sorted(tokens, key=lambda token: rank[token])[:length]
+
+
+def near_duplicate_pairs(
+    token_sets: Sequence[set[str]],
+    threshold: float = NEAR_DUPLICATE_THRESHOLD,
+    *,
+    limit: int | None = None,
+    max_work: int | None = None,
+) -> tuple[list[tuple[int, int]], bool]:
+    """Find every pair of rows at or above `threshold` Jaccard similarity.
+
+    Returns `(pairs, complete)` as 1-based row numbers. `complete` says whether
+    the scan examined every candidate it needed to; it is the honest half of the
+    answer, because an empty `pairs` means "no near-duplicates" only when the
+    scan finished. The caller must not report an incomplete empty scan as a pass.
+
+    Replaces a full pairwise scan that ran only below 500 rows. This one runs at
+    any size and returns the same pairs - `tests/test_preflight.py` checks that
+    against the pairwise scan on random datasets, because an index that silently
+    misses pairs would be the same defect one layer down.
+
+    The two bounds resolve from the module constants at call time rather than in
+    the signature's defaults, which bind once at import and cannot then be moved.
+    """
+    limit = MAX_NEAR_DUPLICATE_PAIRS if limit is None else limit
+    max_work = MAX_NEAR_DUPLICATE_WORK if max_work is None else max_work
+    pairs: list[tuple[int, int]] = []
+
+    # Rows whose input has no word characters at all ("?", "-", "..."). Their
+    # union is empty, which the pairwise scan scored as similarity 1.0, so they
+    # were all near-duplicates of each other. Kept, and computed directly rather
+    # than through the index, because they share no token to be indexed under.
+    empty = [index + 1 for index, tokens in enumerate(token_sets) if not tokens]
+    for left in range(len(empty)):
+        for right in range(left + 1, len(empty)):
+            if len(pairs) >= limit:
+                return pairs, False
+            pairs.append((empty[left], empty[right]))
+
+    frequency: Counter[str] = Counter()
+    for tokens in token_sets:
+        frequency.update(tokens)
+    rank = {
+        token: position
+        for position, (token, _count) in enumerate(
+            sorted(frequency.items(), key=lambda item: (item[1], item[0]))
+        )
+    }
+
+    index_by_token: dict[str, list[int]] = {}
+    work = 0
+    for position, tokens in enumerate(token_sets):
+        if not tokens:
+            continue
+        prefix = near_duplicate_prefix(tokens, rank, threshold)
+        seen: set[int] = set()
+        for token in prefix:
+            postings = index_by_token.get(token, ())
+            # Two charges, because there are two costs, and the old accounting
+            # counted neither of them.
+            #
+            # Walking a posting list costs one step per entry whether or not
+            # the entry is a candidate this row has already seen - charged here
+            # in one O(1) step, before the walk, so the accounting itself is
+            # not what makes this slow.
+            work += len(postings)
+            if work > max_work:
+                return sorted(pairs), False
+            for other in postings:
+                if other in seen:
+                    continue
+                seen.add(other)
+                # And the exact check costs a union and an intersection over
+                # both rows' whole token sets. This is where the time actually
+                # goes: 1.7M candidate pairs of 300-token rows is 1.03 billion
+                # token operations, and counting the pairs alone said 1.7M.
+                work += len(tokens) + len(token_sets[other])
+                if work > max_work:
+                    return sorted(pairs), False
+                union = tokens | token_sets[other]
+                if len(tokens & token_sets[other]) / len(union) >= threshold:
+                    if len(pairs) >= limit:
+                        return sorted(pairs), False
+                    pairs.append((other + 1, position + 1))
+        for token in prefix:
+            index_by_token.setdefault(token, []).append(position)
+    return sorted(pairs), True
 
 
 # One question, two answers: was this written, or was it collected? Every token
@@ -1077,6 +1232,12 @@ def check_dataset(
     exact_duplicates = [
         positions for positions in normalized_inputs.values() if len(positions) > 1
     ]
+    # Both records describe repetition, and the readiness score deducts for it
+    # once - `dataset-near-duplicates` is what it deducts on, because identical
+    # rows are 100% similar and so are already inside "at least 90% similar".
+    # This one is kept because it is a hash bucket: O(n), always complete, and
+    # therefore still able to report repetition on a dataset where the bounded
+    # near-duplicate join gave up. It detects; it does not score twice.
     if exact_duplicates:
         emit(
             "dataset-duplicates",
@@ -1086,30 +1247,53 @@ def check_dataset(
     else:
         emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
 
-    if len(rows) <= MAX_NEAR_DUPLICATE_ROWS:
-        near_pairs: list[tuple[int, int]] = []
-        sets = [token_set(row["input"]) for row in rows]
-        for left in range(len(sets)):
-            for right in range(left + 1, len(sets)):
-                union = sets[left] | sets[right]
-                similarity = (
-                    len(sets[left] & sets[right]) / len(union) if union else 1.0
-                )
-                if similarity >= NEAR_DUPLICATE_THRESHOLD:
-                    near_pairs.append((left + 1, right + 1))
-        if near_pairs:
-            emit(
-                "dataset-near-duplicates",
-                FAIL if synthetic else WARN,
-                f"near-duplicate input pairs: {near_pairs[:10]}",
-            )
-        else:
-            emit("dataset-near-duplicates", PASS, "no high-similarity input pairs")
+    threshold_percent = f"{NEAR_DUPLICATE_THRESHOLD:.0%}"
+    near_pairs, near_complete = near_duplicate_pairs(
+        [token_set(row["input"]) for row in rows]
+    )
+    if near_pairs:
+        # A truncated scan still answered the question - there ARE
+        # near-duplicates - so it stays a finding rather than becoming a SKIP.
+        # What it cannot claim is that these are all of them.
+        more = "" if near_complete else "; the scan stopped early, so there may be more"
+        emit(
+            "dataset-near-duplicates",
+            FAIL if synthetic else WARN,
+            f"input pairs at least {threshold_percent} similar (shared words "
+            f"over total words), identical rows included: {near_pairs[:10]}{more}",
+        )
+    elif near_complete:
+        emit(
+            "dataset-near-duplicates",
+            PASS,
+            f"no input pair reaches {threshold_percent} similarity",
+        )
     else:
+        # Found nothing AND did not finish, which is not the same statement as
+        # "found nothing". The only way here is a dataset so repetitive that the
+        # filter admits everything; say that this is unchecked, never clean.
+        #
+        # And say why it took so long, in terms of the dataset the user is
+        # holding. Getting here is the one slow path in this script, so they
+        # have just waited and are then told the check did not run; without the
+        # second sentence that reads as the script having hung on their data.
+        #
+        # The sentence that used to be here named only one of the two ways in -
+        # "a vocabulary small enough to make nearly every pair a candidate" -
+        # and a 2,000-row set of 300-word RAG chunks, which has an ordinary
+        # vocabulary, is the other and the slower one. A user reading the old
+        # text about their own file would have concluded it did not apply.
         emit(
             "dataset-near-duplicates",
             SKIP,
-            f"{len(rows)} rows exceeds the local pairwise-check limit of {MAX_NEAR_DUPLICATE_ROWS}",
+            "the near-duplicate scan reached its work budget before comparing "
+            "every candidate pair, so this dataset is UNCHECKED for "
+            "near-duplicates - not clean. The exact check compares whole word "
+            "sets, so cost grows with both the number of rows and the length of "
+            "each one: long rows (documents, transcripts, retrieved chunks) "
+            "reach it soonest, and so do many short rows drawn from a small "
+            "vocabulary. Split long inputs, or scan a sample, if you need this "
+            "answered",
         )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
@@ -1144,11 +1328,48 @@ def check_dataset(
                 FAIL,
                 f"{len(unlabelled)}/{len(rows)} expected outputs are empty",
             )
+        elif len(scoreable_outputs) < 2:
+            # Dominance needs at least two answers to be a statement about
+            # anything. One row's single answer holds 100% of the rows by
+            # arithmetic, and reporting that charged a 1-row dataset 6 of its
+            # 20 diversity points for a finding no dataset of that size can
+            # avoid - and told its owner to diversify answers they have one of.
+            # The size problem is real and `dataset-size` already says it.
+            emit(
+                "dataset-outputs",
+                PASS,
+                f"{len(scoreable_outputs)} expected output, which is too few "
+                "for answer spread to mean anything; the row count is the "
+                "finding here",
+            )
         elif len(output_counts) == 1:
             emit(
                 "dataset-outputs",
                 FAIL if synthetic else WARN,
                 "every expected output is identical; evaluator discrimination is likely degenerate",
+            )
+            # And say it in the dominance vocabulary too, because this IS the
+            # dominance finding at its maximum - one answer holding 100% of the
+            # rows. Without this, the branch below is the only place
+            # `dataset-ceiling-risk` is raised, and it is unreachable here: it
+            # lives under the PASS arm. `_answer_dominance_status` in
+            # readiness.py reads a PASS on `dataset-outputs` as its witness that
+            # the spread was examined, so the WARN above left it with no record
+            # at all and it reported answer dominance as NEVER CHECKED.
+            #
+            # The consequence was a scoring inversion, which is what makes this
+            # worth an extra record rather than a comment: an unmeasured
+            # sub-score drops out of the pillar average, so a dataset where
+            # every answer is identical scored HIGHER than one where 90% are.
+            # A skipped check is not a passed check - and a check that ran and
+            # found the worst possible answer must not read as one that never
+            # ran.
+            emit(
+                "dataset-ceiling-risk",
+                WARN,
+                f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
+                "outputs (100.0%) are identical; a majority-only strategy "
+                "could hide meaningful failures",
             )
         else:
             emit(

@@ -16,6 +16,7 @@ report honestly:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -31,6 +32,9 @@ PREFLIGHT = SCRIPTS / "preflight.py"
 READINESS = SCRIPTS / "readiness.py"
 # Imported so a points assertion can name the constant it is about rather than
 # restating its value beside it.
+# Imported so an assertion about the similarity line can name the constant that
+# decides it rather than restating the number beside it - a literal here is the
+# fourth home the shared-value guard exists to prevent.
 _SPEC = importlib.util.spec_from_file_location("first_run_readiness_adapter", READINESS)
 MODULE = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
@@ -1680,7 +1684,11 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             "collected_rows": 50,
             "synthesised_rows": -1,
         }
-        record = [{"check": "dataset-provenance", "status": "PASS", "metrics": metrics}]
+        record = [
+            {"check": "dataset-provenance", "status": "PASS", "metrics": metrics},
+            {"check": "dataset-split", "status": "WARN", "metrics": {}},
+            {"check": "dataset-ids", "status": "PASS", "metrics": {}},
+        ]
         process = subprocess.run(
             [sys.executable, str(READINESS), "--preflight", "-", "--json"],
             input=json.dumps(record),
@@ -1891,6 +1899,121 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             dataset = _write_jsonl(directory, "mostly-unlabelled.jsonl", rows)
             statuses = {r["check"]: r["status"] for r in _preflight_records(dataset)}
             self.assertNotIn("dataset-ceiling-risk", statuses)
+
+    def test_a_reference_free_run_never_claims_an_answer_spread_it_has_no_use_for(
+        self,
+    ) -> None:
+        """End to end: the card must not speak about expected outputs at all.
+
+        A reference-free judge does not use expected outputs, so preflight
+        skips the whole expected-output branch - and answer dominance is
+        computed inside it. `dataset-ceiling-risk` was therefore absent for the
+        same reason it is absent from a healthy dataset, and readiness read
+        that absence as "checked, nothing found": the card printed "no single
+        answer used by most rows" about a dataset where 95% of the answers were
+        identical and nothing had looked.
+
+        Reading it as "did not run" fixed the false claim and bought a false
+        red: the near-duplicate check DID run and pass, and its result was
+        discarded with it, so a 40-row input-only dataset dropped from DATASET
+        81/100 (3 of 5 checks) to 70/100 (2 of 5) on a configuration the guide
+        fully supports. The answer is neither: a question with no subject does
+        not apply, so it is not scored, not named as unrun, and not spoken
+        about - and the check beside it keeps the answer it earned.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index} distinct{index}",
+                    "output": "yes" if index < 57 else f"no-{index}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(60)
+            ]
+            dataset = _write_jsonl(directory, "dominant.jsonl", rows)
+
+            reference_free = _score(
+                dataset,
+                extra=("--evaluator-method", "llm-judge-pointwise"),
+                preflight_extra=("--evaluator-method", "llm-judge-pointwise"),
+            )
+            statuses = {
+                record["check"]: record["status"]
+                for record in _preflight_records(
+                    dataset, "--evaluator-method", "llm-judge-pointwise"
+                )
+            }
+            self.assertEqual(statuses["dataset-outputs"], "SKIP")
+            self.assertNotIn("dataset-ceiling-risk", statuses)
+
+            diversity = next(
+                sub
+                for pillar in reference_free["pillars"]
+                if pillar["name"] == "dataset"
+                for sub in pillar["subscores"]
+                if sub["name"] == "diversity"
+            )
+            # Measured, because the question that applies was asked and
+            # answered - and silent about the one that does not.
+            self.assertTrue(diversity["measured"], diversity["evidence"])
+            self.assertNotIn("no single answer", diversity["evidence"])
+            self.assertNotIn("expected output", diversity["evidence"])
+            self.assertNotIn("not checked", diversity["evidence"])
+            self.assertEqual(diversity["value"], diversity["maximum"])
+
+            # The same dataset under a reference-requiring evaluator DOES run
+            # the check, and must still report the dominance it finds.
+            measured = _score(dataset)
+            diversity = next(
+                sub
+                for pillar in measured["pillars"]
+                if pillar["name"] == "dataset"
+                for sub in pillar["subscores"]
+                if sub["name"] == "diversity"
+            )
+            self.assertTrue(diversity["measured"])
+            self.assertIn("one expected output dominates", diversity["evidence"])
+
+    def test_a_large_dataset_is_still_checked_for_near_duplicates(self) -> None:
+        """The readiness half of the 500-row skip: no silent clean bill.
+
+        Above 500 rows preflight emitted SKIP, and the diversity sub-score's
+        `in ("FAIL", "WARN")` test let it through with full points - so the
+        card said "no repeated questions" about rows nothing had compared.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index} distinct{index} alpha",
+                    "output": f"answer {index % 6}",
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(700)
+            ]
+            rows[0]["input"] = "one two three four five six seven eight nine ten"
+            rows[1]["input"] = "one two three four five six seven eight nine"
+            dataset = _write_jsonl(directory, "big.jsonl", rows)
+            statuses = {
+                record["check"]: record["status"]
+                for record in _preflight_records(dataset)
+            }
+            self.assertEqual(statuses["dataset-near-duplicates"], "WARN")
+
+            diversity = next(
+                sub
+                for pillar in _score(dataset)["pillars"]
+                if pillar["name"] == "dataset"
+                for sub in pillar["subscores"]
+                if sub["name"] == "diversity"
+            )
+            self.assertTrue(diversity["measured"])
+            self.assertIn(
+                f"{MODULE.NEAR_DUPLICATE_PERCENT}% similar", diversity["evidence"]
+            )
 
     def test_split_labels_exceeding_the_aggregate_are_refused(self) -> None:
         """#69: the guard checked four split counts and no aggregate.
