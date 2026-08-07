@@ -6129,7 +6129,10 @@ class RowLevelSanityTests(unittest.TestCase):
         self.assertIn("3 answers do not answer their own question", cap.reason)
         # Declared as a reading, never as a measurement, and never as an edit.
         self.assertIn("coding assistant's reading, not a measurement", cap.reason)
-        self.assertIn("question for you rather than an edit", cap.reason)
+        self.assertIn("nothing is edited until you answer", cap.reason)
+        # And it bounds rather than stops - the decision this cap exists to
+        # make. See `TheUnsoundAnswerCapBoundsRatherThanBlocksTests` for why.
+        self.assertFalse(cap.blocks)
 
     def test_one_wrong_answer_is_reported_without_bounding_the_whole_run(
         self,
@@ -6270,13 +6273,88 @@ class RowLevelSanityTests(unittest.TestCase):
         self.assertLess(after.overall, before.overall)
         # Same weighted average - the pillars did not move. Only the ceiling did.
         self.assertEqual(after.weighted_average, before.weighted_average)
+        # The score drops, the run is not stopped, AND the remedy is still
+        # named. That third state is the one the payload could not express:
+        # `blocks=True` said stop-and-fix, `blocks=False` alone said carry-on
+        # with nothing to do, and this condition is neither. `status` stays OK
+        # - the run is worth making - while `recommended_action` carries the
+        # question, because doing it changes the answer key the run is about to
+        # be graded against.
+        self.assertEqual(after.status, "OK")
+        self.assertEqual(before.status, "OK")
         self.assertEqual(after.recommended_action, "review-answer-key")
         self.assertEqual(before.recommended_action, "proceed")
+        cap = next(
+            cap
+            for cap in after.caps
+            if cap.condition == "dataset-unsound-expected-outputs"
+        )
+        # The two flags, asserted in both directions, because no test asserted
+        # either one and the default gave this cap the opposite of both.
+        self.assertFalse(cap.blocks, "a reading of the answer key stopped a paid run")
+        self.assertTrue(cap.asks, "the remedy would not reach the payload")
+        self.assertEqual(cap.action_kind, "review-answer-key")
         # And a clean reading of the same dataset changes neither.
         clean = total(_review(reviewed=28))
         self.assertEqual(clean.overall, before.overall)
         self.assertEqual(clean.band, before.band)
         self.assertEqual(clean.recommended_action, before.recommended_action)
+
+    def test_a_bounded_cap_that_asks_still_names_its_remedy(self) -> None:
+        """The third state, asserted where the payload expresses it.
+
+        `blocks` alone had two values and this condition needs a third reading.
+        `True` stopped a paid run over the assistant's own opinion; `False` on
+        its own returned `recommended_action` to `proceed`, so the payload said
+        there was nothing to do about a finding whose entire content is a
+        question for the user.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        cap = MODULE.unsound_answer_cap(_review(reviewed=28, unsound=3))
+        score = MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "review-answer-key")
+
+    def test_a_ceiling_that_asks_nothing_still_recommends_nothing(self) -> None:
+        """The false-red direction, and the conflation this must not restore.
+
+        A small dataset is bounded and has no question behind it. Telling a
+        customer with 25 rows to go and get more before their first run is the
+        defect `blocks` was added to end, so an advisory ceiling that does not
+        ask keeps `proceed`.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        advisory = MODULE.power_ceiling(25)
+        self.assertFalse(advisory.blocks)
+        self.assertFalse(advisory.asks)
+        score = MODULE.aggregate(pillars, [advisory], (), dict(MODULE.DEFAULT_WEIGHTS))
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_a_blocking_cap_still_wins_over_one_that_only_asks(self) -> None:
+        """A run that is waiting has nothing else as its next step."""
+        pillars = [
+            MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        asking = MODULE.unsound_answer_cap(_review(reviewed=28, unsound=3))
+        blocking = MODULE.Cap("evaluator-invalid", 25, "broken")
+        score = MODULE.aggregate(
+            pillars, [asking, blocking], (), dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "repair-evaluator")
+
+    def test_a_cap_cannot_both_block_and_ask(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            MODULE.Cap("evaluator-invalid", 25, "broken", blocks=True, asks=True)
+        self.assertIn("both blocks and asks", str(caught.exception))
 
     def test_the_cap_reads_the_share_of_what_was_actually_read(self) -> None:
         """The share is over reviewed rows, which is the only population it saw."""
@@ -6285,6 +6363,138 @@ class RowLevelSanityTests(unittest.TestCase):
             MODULE.unsound_answer_cap(_review(reviewed=100, unsound=10))
         )
         self.assertIsNone(MODULE.unsound_answer_cap(MODULE.RowReview()))
+
+
+class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
+    """It lowers what the run may claim; it does not cancel the run.
+
+    Three things decide this, and each is asserted here rather than argued in
+    a comment nobody runs.
+
+    The run only reads 28 rows. A broken row the search never opens stops
+    nothing, so the cap's own sentence has to distinguish the two cases before
+    it is entitled to say anything about the run at all.
+
+    The judgement can be wrong. It is a model's reading of a customer's domain,
+    and an opinion that can be wrong may bound a claim and may not cancel a
+    paid run the customer's own 28 sound rows would have earned.
+
+    And the remedy decides it. `review-answer-key` is a question put to the
+    customer - not a creation, not a repair - so under the rule on
+    `Cap.blocks` it is advisory. The last test here is the one that matters:
+    one remedy slug may not carry two opposite behaviours.
+    """
+
+    facts = _brought(28, tuning_rows=18, holdout_rows=10)
+
+    def _cap(self, **counts) -> "MODULE.Cap":
+        _, caps = MODULE.score_dataset(
+            self.facts, "normalized-exact", _review(**counts)
+        )
+        return next(
+            cap for cap in caps if cap.condition == "dataset-unsound-expected-outputs"
+        )
+
+    def _both_answer_key_caps(self) -> list["MODULE.Cap"]:
+        """One dataset that raises BOTH `review-answer-key` conditions.
+
+        Every answer written by a model (the provenance cap) and some of them
+        disagreeing with their own questions (the row-level cap) are not
+        alternatives - a generated key is exactly where unsound rows come from,
+        so this is the ordinary case, not a contrived one.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10, generated_answer_rows=28)
+        _, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=3)
+        )
+        return [
+            cap
+            for cap in caps
+            if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
+        ]
+
+    def test_the_run_is_not_stopped_and_the_ceiling_still_binds(self) -> None:
+        """Bounding is not silence: the number moves, the run does not stop."""
+        cap = self._cap(reviewed=28, unsound=3)
+        self.assertFalse(cap.blocks)
+        self.assertEqual(cap.ceiling, MODULE.UNSOUND_ANSWER_CEILING)
+        self.assertIn("The run is not stopped", cap.reason)
+        self.assertIn("what it may claim is bounded", cap.reason)
+
+    def test_the_remedy_is_a_question_and_it_is_the_sibling_cap_s_remedy(
+        self,
+    ) -> None:
+        """The routing half of the argument, read off the table not a comment.
+
+        `review-answer-key` is a question put to the customer, and
+        `dataset-generated-answer-key` already carries it. What this asserts is
+        that the two conditions share one remedy AND one verdict.
+
+        The earlier version stopped at the slug and then checked one side, and
+        that gap is exactly where the defect lived: this branch shipped
+        `dataset-generated-answer-key` blocking and
+        `dataset-unsound-expected-outputs` not, under a single remedy - and the
+        blocking one carried the LOOSER ceiling, so the stricter finding
+        proceeded while the weaker one stopped the run. The docstring above
+        already said "one remedy slug may not carry two opposite behaviours";
+        nothing executed it.
+
+        So both sides are read from the caps the scorer actually builds, not
+        from the table. A remedy is a claim about what the customer should do
+        next, and a consumer routing on it cannot act on two answers.
+        """
+        siblings = sorted(
+            condition
+            for condition, action in MODULE.ACTION_FOR_CONDITION.items()
+            if action == "review-answer-key"
+        )
+        self.assertEqual(
+            siblings,
+            ["dataset-generated-answer-key", "dataset-unsound-expected-outputs"],
+        )
+        verdicts = {cap.condition: cap.blocks for cap in self._both_answer_key_caps()}
+        self.assertEqual(
+            sorted(verdicts), siblings, "both sibling caps must be observed"
+        )
+        self.assertEqual(
+            len(set(verdicts.values())),
+            1,
+            f"one remedy, two verdicts: {verdicts} - a consumer routing on "
+            "`review-answer-key` cannot act on two answers",
+        )
+        self.assertFalse(self._cap(reviewed=28, unsound=3).blocks)
+
+    def test_a_flagged_row_outside_the_run_is_not_reported_as_one_inside_it(
+        self,
+    ) -> None:
+        """The difference between a bad row in the file and a bad row in the run."""
+        undrawn = self._cap(reviewed=28, unsound=3)
+        self.assertIn("somewhere in the file this run draws from", undrawn.reason)
+
+        outside = self._cap(reviewed=28, unsound=3, unsound_in_run=0)
+        self.assertIn("outside the rows this run tunes and checks on", outside.reason)
+        self.assertNotIn("about to be graded", outside.reason)
+
+        inside = self._cap(reviewed=28, unsound=3, unsound_in_run=2)
+        self.assertIn("2 of them among the 28 rows this run tunes", inside.reason)
+        self.assertIn("about to be graded against them", inside.reason)
+
+    def test_the_row_count_comes_from_the_declared_split_and_never_from_28(
+        self,
+    ) -> None:
+        """28 is what this walkthrough creates, not what every customer brought."""
+        self.assertEqual(MODULE.run_rows(self.facts), 28)
+        self.assertEqual(
+            MODULE.run_rows(_brought(400, tuning_rows=300, holdout_rows=100)), 400
+        )
+        # No split declared, so no number may be printed for one.
+        self.assertIsNone(MODULE.run_rows(_brought(400)))
+        cap = MODULE.unsound_answer_cap(
+            _review(reviewed=28, unsound=3, unsound_in_run=2),
+            MODULE.run_rows(_brought(400)),
+        )
+        self.assertIn("among the rows this run tunes", cap.reason)
+        self.assertNotIn("28 rows this run", cap.reason)
 
 
 class RowReviewInputTests(unittest.TestCase):
@@ -6377,3 +6587,47 @@ class RowReviewInputTests(unittest.TestCase):
         self.assertEqual(review.unsure, 1)
         self.assertEqual(review.reviewed_collected, 3)
         self.assertEqual(review.reviewed_undeclared, 1)
+        # No entry answered `in_run`, so the review says nothing about it - and
+        # `None` is that silence, never "none of them".
+        self.assertIsNone(review.unsound_in_run)
+
+    def test_a_half_answered_in_run_is_refused_rather_than_read_as_outside(
+        self,
+    ) -> None:
+        """The silent rows would count as outside the run, which understates it.
+
+        That is the direction of error that favours proceeding, so it is the
+        one shape this input may not be quietly repaired into.
+        """
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(
+                self._rows(
+                    self._entry(id="a", verdict="no", in_run=True, note="wrong"),
+                    self._entry(id="b", verdict="no", note="wrong too"),
+                )
+            )
+        self.assertIn("for some rows and not others", str(raised.exception))
+
+    def test_in_run_is_a_boolean_and_counted_only_for_the_flagged_rows(self) -> None:
+        review = self._read(
+            self._rows(
+                self._entry(id="a", verdict="no", in_run=True, note="wrong"),
+                self._entry(id="b", verdict="no", in_run=False, note="wrong"),
+                self._entry(id="c", verdict="yes", in_run=True, note="reads right"),
+            )
+        )
+        self.assertEqual(review.unsound, 2)
+        self.assertEqual(review.unsound_in_run, 1)
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(self._rows(self._entry(in_run="yes")))
+        self.assertIn("true or false or absent", str(raised.exception))
+
+    def test_a_review_cannot_place_more_rows_in_the_run_than_the_run_has(
+        self,
+    ) -> None:
+        """The same check the origin counts already get, against the split."""
+        facts = _brought(30, collected_rows=30, tuning_rows=2, holdout_rows=1)
+        entries = [self._entry(id=f"row-{index}", in_run=True) for index in range(4)]
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            MODULE.row_review_from_document(self._rows(*entries), facts)
+        self.assertIn("more rows in the run than the run has", str(raised.exception))

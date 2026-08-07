@@ -400,8 +400,9 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
-- `dataset-unsound-expected-outputs` - put each flagged row to the user as one approval-gated
-  question, as your reading rather than a finding; never edit an expected answer on it yourself.
+- `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one
+  approval-gated question and take the answer, per "A `no` is never a silent edit" in
+  `references/evaluation-and-dataset.md`.
 - `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
   rankings exploratory, not stable comparisons, only where some example can be scored. Where none
   can, the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route that by its

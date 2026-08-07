@@ -9356,19 +9356,63 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn("marking its own homework", normalized)
-        # 3. The direction rule, and no credit for a clean pass.
-        self.assertIn("lower the score and can never raise it", normalized)
+        # 3. The direction rule, no credit for a clean pass - and the bound,
+        #    which is a ceiling and never a stop. A judgement that can cancel a
+        #    paid run is the same defect as one that can raise a score, read
+        #    from the other end: on collected data it can be wrong, and the run
+        #    only reads the rows it draws.
+        self.assertIn("bounds the run and never stops it", normalized)
         self.assertIn("may withhold a claim; it may not manufacture one", normalized)
+        self.assertIn("may not cancel a paid run", normalized)
         self.assertIn(
             "a clean pass earns no points, no band, and no credit of any kind",
             normalized,
         )
         self.assertIn("sentence in the readiness evidence line", normalized)
-        # 4. A finding is a question, never an edit.
-        self.assertIn("never a silent edit", normalized)
+        # 4. A finding is a question, never an edit - and the question has a
+        #    shape: every flagged row's id, its quoted content, the reason, and
+        #    whether the run will actually read it. Then the user's answer
+        #    decides, in both directions.
+        self.assertIn("never a silent edit, and it opens a conversation", normalized)
         self.assertIn(
-            "approval-gated question the action table already requires", normalized
+            "I suspect this dataset has rows that need fixing before the run",
+            normalized,
         )
+        self.assertIn("do you agree or disagree?", normalized)
+        self.assertIn("the id, the quoted content, and the reason", normalized)
+        self.assertIn(
+            "Say which of them are inside the rows this run will actually use",
+            normalized,
+        )
+        self.assertIn("repair the rows in the working copy", normalized)
+        self.assertIn("say in the run's own report what it was tuned on", normalized)
+        # And the route says the same thing where routes live - as a ROUTE.
+        # It stated all four of the mandates above at length, in a list where
+        # every sibling is one line, which is the defect CLAUDE.md names: a
+        # rule stated twice is a rule that can be changed in one place. What
+        # SKILL.md owns is that this cap does not stop the run and where the
+        # depth lives; the depth stays here.
+        route = next(
+            line
+            for line in SKILL.read_text().splitlines()
+            if line.startswith("- `dataset-unsound-expected-outputs`")
+        )
+        self.assertIn("bounded, not stopped", route)
+        self.assertIn("evaluation-and-dataset.md", skill)
+        for owned_here in (
+            "the id, the quoted content, and the reason",
+            "repair the rows in the working copy",
+            "say in the run's own report what it was tuned on",
+        ):
+            with self.subTest(mandate=owned_here):
+                self.assertNotIn(owned_here, skill)
+        cap = READINESS.unsound_answer_cap(
+            READINESS.RowReview(supplied=True, reviewed=10, unsound=5)
+        )
+        # Both flags, in both directions. Neither was asserted anywhere, and
+        # the dataclass defaults gave this cap the opposite of both.
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
         # 5. Declared as the assistant's judgement, never as the user's.
         self.assertIn("never as the user's ground truth", normalized)
         self.assertIn('"reviewer": "assistant"', dataset)

@@ -591,17 +591,18 @@ in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py -
 {
   "reviewer": "assistant",
   "rows": [
-    {"id": "ticket-118", "origin": "collected", "verdict": "no",
+    {"id": "ticket-118", "origin": "collected", "verdict": "no", "in_run": true,
      "note": "45 days against a 30-day window, so 'approve' contradicts the input"},
-    {"id": "ticket-119", "origin": "undeclared", "verdict": "yes",
+    {"id": "ticket-119", "origin": "undeclared", "verdict": "yes", "in_run": false,
      "note": "inside the stated window, so the expected answer follows"}
   ]
 }
 ```
 
 `origin` is the provenance class the row already declares, and the sentence is required on every
-verdict - it is what makes a reading inspectable instead of a tally. Five rules govern what the
-answers may do.
+verdict - it is what makes a reading inspectable instead of a tally. `in_run` says whether this run
+reads that row; set it on every entry or on none, because a file that answers it for some rows lets
+the silent ones read as "outside the run". Five rules govern what the answers may do.
 
 **It is your own read, not a billed call.** The dataset is already open. Nothing here calls a model
 through the SDK, so it spends nothing, touches no ceiling, and needs no approval - which is why it
@@ -614,20 +615,50 @@ re-judging output it wrote itself is marking its own homework. `readiness.py` re
 whose origin is `synthesised`, and counts the skipped rows from preflight rather than from the
 review.
 
-**It can lower the score and can never raise it.** An assistant's opinion may withhold a claim; it
-may not manufacture one. A material share of `no` verdicts lowers the ceiling to 70
-(`dataset-unsound-expected-outputs`); a clean pass earns no points, no band, and no credit of any
-kind. What a clean pass does earn is a sentence in the readiness evidence line, which costs zero
-score and names who did the checking. An `unsure` is reported there too and never scored, because
-uncertainty is not a finding.
+**It bounds the run and never stops it.** An assistant's opinion may withhold a claim; it may not
+manufacture one, and it may not cancel a paid run the user's own sound rows have earned. A material
+share of `no` verdicts lowers the ceiling to 70 (`dataset-unsound-expected-outputs`) and the run
+proceeds; a clean pass earns no points, no band, and no credit of any kind. What a clean pass does
+earn is a sentence in the readiness evidence line, which costs zero score and names who did the
+checking. An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
-**A `no` is never a silent edit.** It becomes the approval-gated question the action table already
-requires: show the row, its input, its expected answer, and why you read them as disagreeing, then
-let the user decide. This is deliberately the opposite of the degenerate-gold rule above, and the
-contrast is the point. A gold that scores a right and a wrong answer identically offers no competing
-interpretation, so it is reported and excluded without a question. A gold reading `approve` where
-the input says 45 days against a 30-day window offers exactly two - the answer is wrong, or the task
-is not what you took it to be - and only the user can settle which.
+Three things put the ceiling there rather than a stop. The run only ever reads the tuning rows plus
+the held-out ten, so a wrong answer among rows it never opens changes nothing that happens. On
+collected data this reading can be wrong - a refund approved outside the stated window can be the
+user's goodwill rule rather than a mistake, and you cannot tell from the row. And the remedy is
+`review-answer-key`, a question put to the user rather than a creation or a repair, which is the
+same remedy `dataset-generated-answer-key` carries and is scoped the same way.
+
+**A `no` is never a silent edit, and it opens a conversation.** Put the findings to the user before
+the run, in this shape:
+
+> I suspect this dataset has rows that need fixing before the run.
+>
+> - `ticket-118` - input: *"Refund requested 45 days after purchase; the policy window is 30 days"*,
+>   expected: `approve`. 45 days is outside the 30-day window the input itself states, so `approve`
+>   contradicts it. **This row is in the 28 the run will use.**
+> - `ticket-204` - ... (one line per row: the id, the quoted input and expected answer, the reason)
+>
+> I intend to fix these before the run - do you agree or disagree?
+
+Give every flagged row: the id, the quoted content, and the reason. **Say which of them are inside
+the rows this run will actually use** - the 18 tuning rows and the held-out ten. That is the
+difference between "your file has a bad row" and "the run is about to be tuned on a bad row", and
+only the second one changes what this run measures. Set `in_run` on every entry once those rows are
+drawn, so the readiness card says it too; leave it off every entry while they are not.
+
+Then take the answer, because tuning the agent over a correct dataset is what the run is for:
+
+- **Agree** - repair the rows in the working copy, re-run the check, and re-score.
+- **Disagree** - proceed with the rows as they stand, and say in the run's own report what it was
+  tuned on: the rows you read as wrong, that the user kept them, and that the accuracy figures
+  include them.
+
+This is deliberately the opposite of the degenerate-gold rule above, and the contrast is the point.
+A gold that scores a right and a wrong answer identically offers no competing interpretation, so it
+is reported and excluded without a question. A gold reading `approve` where the input says 45 days
+against a 30-day window offers exactly two - the answer is wrong, or the task is not what you took
+it to be - and only the user can settle which.
 
 **It is declared as your judgement, never as the user's ground truth.** The file names
 `"reviewer": "assistant"` and readiness refuses any other value, so a verdict can never be filed as
