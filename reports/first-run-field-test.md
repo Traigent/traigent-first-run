@@ -17,8 +17,8 @@ A "captain" agent designed a scenario matrix, scaffolded each scenario as an **i
 + its own venv** (with realistic user data and a bundled copy of this repo as the "clone"), then
 dispatched **one sub-agent scoped to each folder** to play the user's assistant and follow
 `GUIDE.md`. A final pass independently **audited venv isolation**, **adversarially verified every
-finding** against the bundled guide, and synthesized the result. (Harness: the
-`multi-agents-test` skill.)
+finding** against the bundled guide, and synthesized the result. (Harness: an
+internal multi-agent test runner.)
 
 | # | Scenario | Environment under test |
 |---|---|---|
