@@ -1285,6 +1285,25 @@ class Cap:
                 f"{self.blocks!r}; `blocks` decides BLOCKED against OK and a "
                 "truthy string decides it silently in one direction"
             )
+        # And `asks`, which this block was written without because `asks` did
+        # not exist yet. It arrived after the guard above and inherited none of
+        # it, so the field added to express a third state was the one field
+        # nothing checked: `Cap(..., asks="no")` constructed, and every reader
+        # of the flag is a truthiness test - `recommended_action` and the
+        # durable report's remedy both ask `if cap.asks` - so a cap declaring
+        # `asks="no"` ASKS. Measured: `recommended_action` returned `get-data`
+        # for a cap whose author had written the word "no".
+        #
+        # That is the same failure `blocks="yes"` had and the same reason it is
+        # refused: a flag read for truth decides in one direction only, and the
+        # string that says the opposite is the one that never fires the guard.
+        if not isinstance(self.asks, bool):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-boolean asks flag "
+                f"{self.asks!r}; `asks` decides whether the payload and the "
+                "report name a remedy, and every reader tests it for truth, so "
+                "a string saying no asks anyway"
+            )
         if self.asks and self.blocks:
             raise ValueError(
                 f"cap {self.condition!r} both blocks and asks; a blocking cap "
@@ -2106,10 +2125,27 @@ GENERATED_ANSWER_KEY_CAP = Cap(
     # unless a cap blocks or asks, so a dataset whose ENTIRE answer key is
     # model-written was emitting "nothing to do" beside SKILL.md's route for
     # this very condition: "require that a person reviews a sample of the
-    # answers before a correctness claim". Measured through the CLI on 28
-    # collected rows with 28 model-written answers: 59 WORKABLE / OK /
-    # `proceed` became 59 WORKABLE / OK / `review-answer-key` - the score, the
-    # band and the status are untouched and only the remedy appears.
+    # answers before a correctness claim". What the port moves is the remedy
+    # and nothing else - `proceed` becomes `review-answer-key` while the score,
+    # the band, the status and the pre-cap average are identical on both sides.
+    #
+    # That claim carries no score beside it, because no score is a property of
+    # the thing it would be evidence for. An earlier revision quoted "59
+    # WORKABLE / OK, measured on 28 collected rows with 28 model-written
+    # answers", and those inputs do not determine an overall: the answer key is
+    # one input to one of three weighted pillars, so the rest of the fixture
+    # decides the number. Re-measured through the CLI on exactly those 28 rows,
+    # the same dataset scores 45 and PARTIAL against a calibrated exact
+    # evaluator with no config space, and 74 and WORKABLE once an
+    # 18-configuration wired space is supplied - and 59 is neither. The
+    # structural claim survives both readings unchanged, which is what makes it
+    # the claim worth stating; it is measured by
+    # `OneRemedyOneQuestionTests.test_un_porting_one_sibling_is_caught_here_and_by_no_table`,
+    # which builds a copy of this module with `asks=False` and asserts the
+    # overall and the status match across the two while the remedy does not.
+    # A number that cannot be re-derived from the text beside it is not
+    # evidence, which is the rule `_reject_synonym_spellings` states below and
+    # deleted a pair of numbers to keep.
     #
     # `blocks` stays False and that is not incidental: this ceiling bounds what
     # the run may claim and does not stop it, which is the distinction
@@ -4605,18 +4641,42 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # deliberately does not - the guide keeps that vocabulary out of
         # user-facing lines. Both are machine-readable artifacts here.
         #
-        # Only for a cap that blocks, though. `action_kind` is keyed by
-        # CONDITION, so all three `agent-no-varying-knobs` sites share
+        # Only for a cap that blocks OR asks - the same three-way distinction
+        # `recommended_action` reads, and for the same reason. A cap is in one
+        # of three states, and only the third owes the reader nothing:
+        #
+        #   blocks - the run waits on a repair              -> name the remedy
+        #   asks   - the run proceeds, a question comes first -> name the remedy
+        #   neither - the ceiling bounds a claim and asks nothing -> say nothing
+        #
+        # The third is what this condition was written for. `action_kind` is
+        # keyed by CONDITION, so all three `agent-no-varying-knobs` sites share
         # `vary-knobs` - and printing "fix: `vary-knobs`" under "What limits how
         # high this can score" hands a perfect project a repair for a defect it
-        # does not have, in the durable artifact, which is the exact line this
+        # does not have, in the durable artifact, which is the exact line that
         # change set out to stop showing. `dataset-coarse-resolution` had the
-        # same shape ("fix: `get-data`" for a healthy 15-row set), so both are
-        # fixed here rather than one: it is one rule, not two instances.
+        # same shape ("fix: `get-data`" for a healthy 15-row set), so both were
+        # fixed at once: it is one rule, not two instances.
+        #
+        # But `blocks` alone read that rule as two states rather than three, so
+        # it suppressed the remedy for a cap that asks as well as for one that
+        # asks nothing - and an asking cap is the one whose entire content IS a
+        # remedy. Measured end to end through the CLI on 28 collected rows whose
+        # every expected answer is model-written, against a calibrated exact
+        # evaluator and a 9-configuration wired space: `--json` returned
+        # `recommended_action: "review-answer-key"` while the durable report
+        # printed the ceiling and the reason with no remedy beside them. The
+        # report is the artifact that outlives the terminal, so that is the copy
+        # a reader keeps.
+        #
+        # `asks` is the flag that makes the third state expressible, and it is
+        # deliberately not `not cap.blocks`: `dataset-coarse-resolution` bounds
+        # a claim and asks nothing, so it still prints no remedy, which is the
+        # false-red direction this line is guarded in both ways against.
         # `--json` still carries `action_kind` on every cap for consumers that
         # want it; what goes away is the word "fix" over a state that is not
         # broken.
-        remedy = f", fix: `{cap.action_kind}`" if cap.blocks else ""
+        remedy = f", fix: `{cap.action_kind}`" if cap.blocks or cap.asks else ""
         return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
