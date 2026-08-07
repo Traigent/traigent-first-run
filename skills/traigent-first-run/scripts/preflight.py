@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import sys
+import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -1408,7 +1409,55 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# The one place an unexpected failure is allowed to end.
+#
+# The three scripts in this bundle each own this boundary because each is a
+# standalone file the skill copies out, and a shared helper module is a fourth
+# file to keep in step. What it guards is identical in all three: an error
+# nobody anticipated - a `KeyError` on a payload shape, a `TypeError` on a field
+# that arrived as a string - used to escape to the interpreter, which printed a
+# traceback in place of the result and exited 1. The reader is running their
+# first optimization; a defect in this check must not read as a defect in their
+# project.
+#
+# Loud, not silent: the error class and message are printed, the exit code is
+# non-zero and distinct, and nothing pretends a check ran. The environment
+# variable prints the stack for whoever is fixing it.
+INTERNAL_ERROR_EXIT = 3
+TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+
+def report_internal_error(
+    tool: str,
+    error: BaseException,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any = None,
+) -> int:
+    """Print an unexpected failure as a diagnosis, never as a traceback."""
+    out = sys.stderr if stream is None else stream
+    env = os.environ if environ is None else environ
+    print(f"{tool}: internal error - {type(error).__name__}: {error}", file=out)
+    print(
+        f"{tool} could not finish, and this is a defect in the check rather "
+        "than in your project. No result was produced, so treat nothing as "
+        f"checked. Re-run with {TRACEBACK_ENV}=1 and report the output.",
+        file=out,
+    )
+    if env.get(TRACEBACK_ENV):
+        traceback.print_exception(type(error), error, error.__traceback__, file=out)
+    return INTERNAL_ERROR_EXIT
+
+
 def main() -> int:
+    """The process boundary. See `report_internal_error`."""
+    try:
+        return run()
+    except Exception as error:  # noqa: BLE001 - the boundary is the point
+        return report_internal_error("preflight.py", error)
+
+
+def run() -> int:
     args = parse_args()
     env_path = Path(args.env)
     env, file_values = read_env(env_path)

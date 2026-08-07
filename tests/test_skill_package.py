@@ -4917,9 +4917,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # carried before left 23 bytes of headroom, which is a ceiling that
         # trips on a one-word edit rather than on a decision. 371 bytes is the
         # smallest headroom that still makes the next raise a choice.
+        #
+        # #144 then RAISES this, and the earlier note here claiming it falls by
+        # 42 bytes was wrong in both magnitude and direction - measured, not
+        # estimated, and the measurement is the whole reason the entry exists.
+        # Against the 61_129 the merge above records, this branch measures
+        # 61_398: GUIDE.md rises 7 and SKILL.md rises 262, for +269. The cap
+        # routing did merge the two `get-data` conditions into one branch, but
+        # the same section gained a third branch for the unrecognised-shape
+        # condition - which is a new customer state with its own remedy, and it
+        # is a routing decision, so SKILL.md is where it belongs. The saving was
+        # real and smaller than the addition; the note recorded only the saving.
+        #
+        # 62_000 and not 61_500: 61_398 clears the old ceiling by 102 bytes,
+        # which is the thin-ceiling failure this same note names - the next
+        # person raises it without weighing anything. 602 is on the generous
+        # side of the 371 floor and is the number the graduation handoff had
+        # already settled on for this document before #131 lowered the base.
         self.assertLess(
             resident,
-            61_500,
+            62_000,
             f"resident guidance is {resident / 1024:.0f} KB - the part in "
             "context for the whole run, competing with the user's project from "
             "the first turn. Stage detail belongs in the reference for that "
@@ -5018,21 +5035,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # rules already record, plus the one run-plan.md line that gives the
         # second of those somewhere to land. Roughly 1.4 KB together.
         #
-        # RESIDENT falls by 42 bytes in the same commit rather than rising:
-        # SKILL.md's cap routing merged the two `get-data` conditions into one
-        # branch that names the remedy, and dropped a third statement of "keep
-        # condition ids out of user-facing text" that the same section and the
-        # resident bullet list each already make. So the policy above is
-        # working - depth landed in the reference, and the resident document
-        # got smaller while gaining a routing fix.
+        # RESIDENT rises by 269 bytes in the same commit, and the ledger entry
+        # above records it. It is not the saving the earlier note here claimed:
+        # SKILL.md's cap routing did merge the two `get-data` conditions, and
+        # the same section gained a branch for the unrecognised-shape condition
+        # that is larger than the saving.
+        # #159 then adds four lines to run-safety.md, beside the exit-2 rule
+        # that section already owns. The three scripts grew a boundary that
+        # turns an internal failure into exit 3 instead of a traceback, and the
+        # assistant has to route that differently from every other non-zero
+        # exit: nothing was checked, so there is no finding about the user's
+        # material to relay. That is new contract surface with no prior
+        # statement, and it lands in the reference that owns exit codes rather
+        # than in SKILL.md. Measured after it: 228_853. 229_000 banks 147
+        # bytes, which is the thin-ceiling failure the RESIDENT note above
+        # already records - it trips on a one-word edit rather than on a
+        # decision. Merged with #144 this figure is superseded once more.
         #
-        # Measured, not estimated: 230_070. The next 250 would be 230_250,
-        # which banks 180 bytes - and the RESIDENT note above already records
-        # what a ceiling that thin costs: it trips on a one-word edit rather
-        # than on a decision, so the next person raises it without weighing
-        # anything. 230_500 leaves 430, the same order of headroom that number
-        # settled on.
-        budget = 230_500
+        # So, measured on the merge rather than taken from either side, which
+        # is what every entry above says to do and what neither branch's number
+        # could have been: 230_822. #144's own figure of 230_070 was already
+        # 415 low against its own tree before this merge - it was estimated
+        # from an increment rather than measured, which is the one thing this
+        # comment repeatedly says not to do. 231_000 banks 178 bytes, the
+        # thin-ceiling failure again; 231_250 leaves 428, the same order of
+        # headroom the last three raises settled on.
+        budget = 231_250
         self.assertLess(
             total,
             budget,

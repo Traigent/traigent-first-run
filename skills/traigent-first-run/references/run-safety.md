@@ -358,6 +358,11 @@ belongs are malformed, not absent, and are refused rather than read as an empty 
 any value the documented type admits is accepted however it was written, so a document that scores
 does not become an exit 2 because a writer emitted `12.0` instead of `12`.
 
+Exit 3 from any of the three scripts is a different statement and must be routed differently: it
+means the script itself failed, not that the user's material is wrong. Nothing was checked or
+scored, so present no result and no band; say the check could not run, and never relay it as a
+finding about their dataset, evaluator, or agent.
+
 The table below is not a second description of the schema. `readiness.py` declares the field set,
 each field's type, and the domain of every value inside it once, in `CONFIG_SPACE_FIELDS`, and both
 the validator and this table are read from that declaration - `tests/test_skill_package.py` fails
