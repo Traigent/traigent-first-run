@@ -149,8 +149,11 @@ available evidence bounds what the result may claim; it names the number so "why
 answer on the same line.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
-play - below every other ceiling, and below your average. A ceiling that is real but is not currently
-the one in force reads `WOULD LIMIT TO 89` instead, and the tense is the whole difference. `LIMITED
+play - at or below every other ceiling, and at or below your average. Two conditions can carry the
+same ceiling, and then both are in force and both read `LIMITED TO 45`; neither is a mistake, and
+fixing one leaves the number where it is until the other is fixed too. A ceiling that is real but is
+not currently the one in force reads `WOULD LIMIT TO 89` instead, and the tense is the whole
+difference. `LIMITED
 TO 89` is the number you are at. `WOULD LIMIT TO 89` is a limit you have not reached: either
 something stricter is holding the score down, or your average simply has not climbed that high yet.
 It is still worth reading - it is what you run into next - but it is not why the score is what it is

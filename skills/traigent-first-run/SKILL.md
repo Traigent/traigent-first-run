@@ -356,7 +356,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 remedy.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
-rather than the condition id:
+rather than the condition id, in the user's language - machine vocabulary and condition ids stay
+internal:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working

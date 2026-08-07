@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import sys
+import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -587,12 +588,33 @@ def is_synthetic(row: dict[str, Any]) -> bool:
 def classify_provenance(token: Any) -> tuple[str, bool]:
     """Classify one provenance token, and report whether it was recognised.
 
-    Returns `(class, recognised)`. An unrecognised non-empty token is classified
-    `collected` so that a project using its own vocabulary (`crm-export`) keeps
-    the score it has today rather than being silently demoted by a word list -
-    but `recognised=False` is reported so the caller can say out loud which
-    tokens it had to take on trust. Silently reading an unknown word as
-    collected production data is the failure this pair exists to make visible.
+    Returns `(class, recognised)`.
+
+    An unrecognised non-empty token is classified `undeclared`, and that is a
+    decision with a measurement behind it. It used to be classified
+    `collected`, on the reasoning that a project using its own vocabulary
+    (`crm-export`) should not be demoted by a word list. What that bought
+    instead was that a lie outscored the truth. Measured on 200 identical
+    rows with only the token varying, through the full scorer: no token at all
+    scored 65 and BLOCKED; the truthful `synthetic` scored 65 and BLOCKED;
+    `crm-export` scored 95 EXCELLENT; and so did `zzz`. Three junk characters
+    in a field nothing checks were worth thirty points and the difference
+    between a blocked run and an excellent one.
+
+    The rule this now implements is narrower than "refuse unknown tokens",
+    which would be wrong for the reason above: an UNVERIFIABLE declaration
+    must not outscore a VERIFIABLE one. `undeclared` is exactly that position -
+    it scores what a row that says nothing scores, which is what a row this
+    script cannot read is, and never more than a row that honestly declares
+    itself generated.
+
+    It is not a refusal and it is not permanent. `recognised=False` is still
+    reported, the tokens are named on the card, and the remedy is
+    `declare-data-provenance`: map the word onto the guide's vocabulary and
+    re-score. The disclosure that comes with it prints BOTH grades, so a
+    customer whose `crm-export` really is collected is shown the number that
+    declaration earns before they do anything - honesty is disclosed, not
+    punished, and the run is never stopped for it.
     """
     if token in (None, ""):
         return PROVENANCE_UNDECLARED, True
@@ -603,7 +625,7 @@ def classify_provenance(token: Any) -> tuple[str, bool]:
         return PROVENANCE_SYNTHESISED, True
     if normalized.startswith(COLLECTED_SOURCE_PREFIXES):
         return PROVENANCE_COLLECTED, True
-    return PROVENANCE_COLLECTED, False
+    return PROVENANCE_UNDECLARED, False
 
 
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
@@ -756,15 +778,18 @@ def emit_dataset_provenance(
         },
     )
     if unrecognised:
-        # Scored as collected for backward compatibility, so say so rather than
-        # let an unknown word quietly earn the production band.
+        # Named, so an unknown word neither quietly earns the production band
+        # nor quietly loses one - what happened to it is on the card, and so is
+        # the one-step way to change it.
         emit(
             "dataset-provenance-vocabulary",
             WARN,
-            f"{sorted(unrecognised)} is not a recognised provenance word and was "
-            "treated as collected by the compatibility rule, not verified as real; "
-            "declare generated data with a "
-            "'synthetic'/'generated' token if that is wrong",
+            f"{sorted(unrecognised)} is not a provenance word this check knows, "
+            "so those rows are scored as undeclared - the same as a row that "
+            "says nothing, and never above a row that declares itself "
+            "generated. Re-label them with a 'collected'/'production' or "
+            "'synthetic'/'generated' token and re-run to score them as what "
+            "they are",
         )
     return synthetic
 
@@ -1405,7 +1430,55 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# The one place an unexpected failure is allowed to end.
+#
+# The three scripts in this bundle each own this boundary because each is a
+# standalone file the skill copies out, and a shared helper module is a fourth
+# file to keep in step. What it guards is identical in all three: an error
+# nobody anticipated - a `KeyError` on a payload shape, a `TypeError` on a field
+# that arrived as a string - used to escape to the interpreter, which printed a
+# traceback in place of the result and exited 1. The reader is running their
+# first optimization; a defect in this check must not read as a defect in their
+# project.
+#
+# Loud, not silent: the error class and message are printed, the exit code is
+# non-zero and distinct, and nothing pretends a check ran. The environment
+# variable prints the stack for whoever is fixing it.
+INTERNAL_ERROR_EXIT = 3
+TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+
+def report_internal_error(
+    tool: str,
+    error: BaseException,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any = None,
+) -> int:
+    """Print an unexpected failure as a diagnosis, never as a traceback."""
+    out = sys.stderr if stream is None else stream
+    env = os.environ if environ is None else environ
+    print(f"{tool}: internal error - {type(error).__name__}: {error}", file=out)
+    print(
+        f"{tool} could not finish, and this is a defect in the check rather "
+        "than in your project. No result was produced, so treat nothing as "
+        f"checked. Re-run with {TRACEBACK_ENV}=1 and report the output.",
+        file=out,
+    )
+    if env.get(TRACEBACK_ENV):
+        traceback.print_exception(type(error), error, error.__traceback__, file=out)
+    return INTERNAL_ERROR_EXIT
+
+
 def main() -> int:
+    """The process boundary. See `report_internal_error`."""
+    try:
+        return run()
+    except Exception as error:  # noqa: BLE001 - the boundary is the point
+        return report_internal_error("preflight.py", error)
+
+
+def run() -> int:
     args = parse_args()
     env_path = Path(args.env)
     env, file_values = read_env(env_path)

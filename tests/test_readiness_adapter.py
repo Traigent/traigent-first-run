@@ -23,10 +23,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import importlib.util
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "traigent-first-run" / "scripts"
 PREFLIGHT = SCRIPTS / "preflight.py"
 READINESS = SCRIPTS / "readiness.py"
+# Imported so a points assertion can name the constant it is about rather than
+# restating its value beside it.
+_SPEC = importlib.util.spec_from_file_location("first_run_readiness_adapter", READINESS)
+MODULE = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+sys.modules[_SPEC.name] = MODULE
+_SPEC.loader.exec_module(MODULE)
 
 
 def _write_jsonl(directory: Path, name: str, rows: list[dict]) -> Path:
@@ -1240,10 +1249,26 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 "present but unused by this evaluator", provenance["evidence"]
             )
 
-    def test_an_unrecognised_provenance_word_is_flagged_not_silently_credited(
+    def test_an_unverifiable_declaration_does_not_outscore_a_verifiable_one(
         self,
     ) -> None:
-        """A project's own vocabulary keeps its score, but is said out loud."""
+        """A project's own vocabulary is said out loud AND is not credited.
+
+        This used to assert the opposite half - that `crm-export` kept the full
+        collected credit, so a word list could not demote a project using its
+        own vocabulary. What that bought was that a lie outscored the truth.
+        Measured on 200 identical rows with only the token varying: no token
+        scored 65 and BLOCKED, the truthful `synthetic` scored 65 and BLOCKED,
+        and `crm-export` AND `zzz` both scored 95 EXCELLENT. Three junk
+        characters in a field nothing checks were worth thirty points.
+
+        The rule is not "refuse unknown tokens" - that would demote the honest
+        project the old reading was protecting. It is that an UNVERIFIABLE
+        declaration must not outscore a VERIFIABLE one, so an unreadable token
+        scores what a silent row scores: never above a row that declares itself
+        generated. Nothing is refused, the tokens are named, the remedy is one
+        relabel, and the disclosure prints the grade that relabel earns.
+        """
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             rows = [
@@ -1269,13 +1294,32 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             provenance = _provenance_metric(records)
             self.assertEqual(provenance["unrecognised_sources"], ["crm-export"])
 
-            # Unchanged score: the word list must not silently demote a project.
-            # The uncertainty must survive the adapter and appear beside that
-            # score, rather than disappearing between preflight and readiness.
+            # Scored as undeclared, which is what an unreadable token is, and
+            # never above a row that honestly declares itself generated.
             scored = _dataset_subscore(_score(dataset), "provenance")
-            self.assertEqual(scored["value"], 10.0)
-            self.assertIn("unverified declaration", scored["evidence"])
+            self.assertEqual(scored["value"], MODULE.UNDECLARED_ROW_POINTS)
+            self.assertLessEqual(
+                scored["value"],
+                MODULE.SYNTHESISED_ROW_POINTS,
+                "an unverifiable declaration outscored an honest one",
+            )
+            self.assertIn("could not verify", scored["evidence"])
             self.assertIn("crm-export", scored["evidence"])
+
+            # And it is disclosed, not punished: the card names the tokens, the
+            # remedy is a relabel, and the second grade is printed.
+            payload = _score(dataset)
+            self.assertIn(
+                "dataset-undeclared-provenance",
+                [cap["condition"] for cap in payload["caps"]],
+            )
+            assumption = payload["provenance_assumption"]
+            self.assertIsNotNone(assumption)
+            self.assertGreater(
+                assumption["if_declared_collected"],
+                assumption["scored_as_generated"],
+                "the honest project is shown no way back to the score it lost",
+            )
 
     def test_an_impossible_provenance_count_is_refused_not_absorbed(self) -> None:
         """A negative count must not quietly change the denominator.
@@ -1931,7 +1975,7 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             # The silent half is what the customer can act on today, so the
             # sentence names its share rather than claiming the whole corpus.
             self.assertIn(
-                "100 of 200 rows do not record where they came from",
+                "100 of 200 rows record no source this run can read",
                 self._card(with_generated, extra),
             )
 
@@ -2057,19 +2101,23 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
                 _dataset_subscore(score, "provenance")["evidence"],
             )
 
-    def test_a_pre_count_payload_that_declared_nothing_gets_both_grades_too(
+    def test_a_payload_carrying_no_row_counts_is_read_as_saying_nothing(
         self,
     ) -> None:
-        """The shape the promise is most about, and the one it skipped.
+        """The count-free payload, with forty lines of machinery removed.
 
-        A preflight JSON written before the row counts existed carries no counts
-        at all: `sources: ["unknown"]` IS that payload's statement that no row
-        said where it came from. The scorer reads it exactly that way - 3 points
-        and a blocking 65 - and then tells the reader to declare. The disclosure
-        gated on `undeclared_rows`, which is 0 on this path, so this reader got
-        a blocked run and an instruction to declare with no second number
-        anywhere: both grades promised, one grade delivered, on the payload
-        shape that carries nothing but the silence.
+        `emit_dataset_provenance` emits the collected, generated and undeclared
+        counts together for every dataset with a row in it, so a payload
+        carrying none of them is truncated rather than old - nothing has been
+        published for it to be older than. It used to be handled by a second
+        implementation of the whole provenance ladder that re-derived it from
+        `sources`, with its own helper, its own counterfactual token and its
+        own branch in the disclosure.
+
+        All of that is one fail-closed reading now: no per-row count is no
+        statement about any row, which is what a silent row is. `sources` no
+        longer decides anything here, which is the point - the token list is
+        what an unverifiable declaration used to be scored from.
         """
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -2117,13 +2165,32 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             self.assertGreater(
                 assumption["if_declared_collected"], assumption["scored_as_generated"]
             )
-            # Computed from the same payload with a source declared, not a
-            # figure written down: the reader gets what they would get.
+            # Computed from the same payload with the rows actually counted as
+            # collected, not by writing a word into `sources` - which no longer
+            # moves anything, and is exactly the machinery that came out.
             declared = [dict(record) for record in records]
-            declared[0]["metrics"] = dict(declared[0]["metrics"], sources=["collected"])
+            declared[0]["metrics"] = dict(
+                declared[0]["metrics"],
+                collected_rows=200,
+                synthesised_rows=0,
+                undeclared_rows=0,
+                answerable_rows=200,
+                generated_answer_rows=0,
+            )
             self.assertEqual(
                 assumption["if_declared_collected"],
                 _score_records(declared, extra)["overall"],
+            )
+            # And the token list on its own buys nothing: declaring
+            # `sources: ["collected"]` with no counts behind it is an
+            # unverifiable declaration and scores where silence scores.
+            worded = [dict(record) for record in records]
+            worded[0]["metrics"] = dict(
+                worded[0]["metrics"], sources=["collected"]
+            )
+            self.assertEqual(
+                _score_records(worded, extra)["overall"],
+                score["overall"],
             )
 
             card = _card_records(records, extra)

@@ -3496,6 +3496,11 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(condition, conditions)
                 self.assertLess(routing.index(condition), routing.index(branch))
         self.assertIn("present the reason rather than the condition id", normalized)
+        # The other half of the same mandate, which had no home and no test:
+        # a reason routed correctly and phrased in this module's vocabulary is
+        # still a reason the reader cannot act on.
+        self.assertIn("in the user's language", normalized)
+        self.assertIn("machine vocabulary and condition ids stay internal", normalized)
 
     def test_run_record_keeps_the_readiness_transition(self) -> None:
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
@@ -4860,7 +4865,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # correct, which is the whole reason this comment keeps growing instead
         # of the number being guessed. Every branch weighs its own increment
         # against the base it branched from; only the merge knows the sum.
-        budget = 228_750
+        #
+        # #159 then adds four lines to run-safety.md, beside the exit-2 rule
+        # that section already owns. The three scripts grew a boundary that
+        # turns an internal failure into exit 3 instead of a traceback, and the
+        # assistant has to route that differently from every other non-zero
+        # exit: nothing was checked, so there is no finding about the user's
+        # material to relay. That is new contract surface with no prior
+        # statement, and it lands in the reference that owns exit codes rather
+        # than in SKILL.md. Measured after it: 228_853. 229_000 banks 147
+        # bytes, which is the thin-ceiling failure the RESIDENT note above
+        # already records - it trips on a one-word edit rather than on a
+        # decision. 229_250 leaves 397, the order of headroom the last two
+        # raises settled on.
+        #
+        # #165 then adds two things and both are corrections rather than new
+        # scope. SKILL.md's routing sentence regains the half of its mandate
+        # this branch had dropped - present the reason in the user's language,
+        # not only under a different name from the condition id - which had no
+        # home anywhere in the package and no test. And glossary.md's
+        # undeclared-row entry stops promising the second grade
+        # unconditionally: `provenance_assumption` returns None when both
+        # grades are equal, and the document said the card always prints it.
+        # The entry also has to describe an unreadable token, because those
+        # rows are now scored here too. Measured on the merge: 229_737.
+        # 230_000 banks 263 bytes, the thin ceiling this comment keeps warning
+        # about; 230_250 leaves 513.
+        budget = 230_250
         self.assertLess(
             total,
             budget,

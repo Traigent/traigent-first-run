@@ -31,6 +31,7 @@ import json
 import math
 import os
 import sys
+import traceback
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
@@ -392,6 +393,266 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
 
+# Every ceiling, in one ordered place, with the basis for each number beside it.
+#
+# TWO THINGS ARE RECORDED HERE, and they are different claims.
+#
+# The ORDER is a rule: a worse condition gets a lower ceiling. That was always
+# the evident intent and it was nowhere written and nothing checked it, so it
+# had already gone wrong once - before #144 two overlapping unreadable-dataset
+# conditions were ranked by whichever author wrote each one, with nothing
+# comparing them. The order is therefore asserted, in
+# `tests/test_readiness_scoring.py`, so a new cap cannot be inserted out of
+# sequence and an existing ceiling cannot be moved past its neighbours.
+#
+# The NUMBERS are not a rule and this comment does not pretend otherwise. Each
+# is a position on a 0-100 scale, chosen so that a run carrying the condition
+# cannot present as better than it is. Where a number has a derivation it is
+# given below; where the honest basis is "it sits between these two neighbours
+# on a scale", that is what is written, because inventing a derivation for it
+# would be worse than admitting the ranking is a judgment. Changing a value is
+# the owner's call; changing the ORDER breaks the test.
+#
+# The groups are the part that IS derived from something real - what the
+# condition destroys - and the ceilings of one group may not reach into
+# another's:
+#
+#   NO RESULT TO BOUND   A component the score is computed FROM is missing, or
+#                        is present and actively wrong. There is no number to
+#                        put a ceiling on; the ceiling exists to say so.
+#   ANSWERS THE WRONG    Every component is present and valid, and the run still
+#   QUESTION             does not answer what was asked - every configuration is
+#                        identical, the evaluator never finished, or the set held
+#                        back to check the winner was already tuned on.
+#   BOUNDED CLAIM        Nothing is broken. The run produces a real comparison,
+#                        and only what it may CLAIM is limited - by whose data it
+#                        ran on, or by how much of it there was.
+#
+# #149 draws the stop/ceiling line through the same material from the other
+# side: a route asking for creation or repair is a stop, a route that only
+# scopes the claim is a ceiling. That is the `blocks` flag and it is not
+# restated here - one decision, one home. This file owns how far the number may
+# rise; #149 owns whether the run may proceed at all.
+#
+# Note for whoever revisits the values: `ACTION_FOR_CONDITION` does NOT give
+# this grouping for free, and it was checked. `get-data` is the remedy for
+# `dataset-absent` (20), `dataset-below-measurable-size` (74) and
+# `dataset-coarse-resolution` (89), which span the whole range - the remedy
+# vocabulary answers "what should the user do", not "how much of the result
+# survives", and those are different questions about the same condition.
+DATASET_ABSENT_CEILING = 20
+# Nothing was measured at all, so this is the floor of the scale: the lowest
+# ceiling any condition carries, and NOT READY however good the rest looks.
+EVALUATOR_INVALID_CEILING = 25
+# Just above an absent dataset and below every other condition. A ruler that
+# scores a wrong answer as well as a right one is worse than a missing one,
+# because it produces believable numbers; it sits above 20 only because the
+# dataset it would measure is still there.
+DATASET_NO_EXPECTED_OUTPUTS_CEILING = 30
+# The bottom of PARTIAL. Rows exist and are readable - real material, and the
+# gap is one addition away - but nothing can be scored until it is made.
+DATASET_INTEGRITY_CEILING = 35
+# Above 30 because only SOME rows are unusable: what is left is scoreable, and
+# the remedy is a repair rather than a collection effort.
+EVALUATOR_ABSENT_CEILING = 40
+# Above the dataset conditions below it because the dataset - the expensive
+# half - is intact; choosing an evaluation method is the cheapest of these gaps
+# to close.
+EVALUATOR_UNRESOLVED_CEILING = 40
+# Deliberately equal to `evaluator-absent`. The user has the same problem
+# either way - no evaluation this run can trust - and only the remedy differs
+# (inspect and repair the file, rather than select a method). Equal ceilings are
+# allowed; the order asserts non-decreasing, not strictly increasing.
+EVALUATOR_TIMEOUT_CEILING = 45
+# First of the "answers the wrong question" band, so above every ceiling in the
+# band below it. Everything is connected and valid; this run simply did not
+# finish, and re-running within a bound is all that is asked.
+AGENT_NO_VARYING_KNOBS_CEILING = 45
+# Equal to the timeout for the same reason: nothing is broken, and the run
+# compares nothing. An optimization with one configuration is a single
+# measurement wearing a search's clothes.
+SPLIT_OVERLAP_CEILING = 50
+# Top of that band. Worse than the two above it because the result is not
+# merely absent or uninformative - it is flattered, and a believable wrong
+# number is the most expensive failure on this list.
+FULLY_SYNTHETIC_CEILING = 65
+# First of the "bounded claim" band. Nothing here was observed, so the run
+# measures the walkthrough; it clears 50 because the comparison it performs is
+# a real one, and it stays in WORKABLE because what it compares is invented.
+MOSTLY_SYNTHETIC_CEILING = 70
+# Above `fully-synthetic` because some of the data IS real - strictly less
+# invented, so strictly less capped. This pair is the clearest case of the
+# ordering rule: the condition below implies this one, so its ceiling may never
+# be the higher of the two.
+WIRING_CHECK_CEILING = 74
+# One below the STRONG boundary at 75, which is the only derived number in this
+# block: the claim is about what the result may PRESENT as, and under ten
+# comparable examples it may not present as STRONG. See
+# `WIRING_CHECK_EXAMPLES`.
+GENERATED_ANSWER_KEY_CEILING = 75
+# The questions are real and there are enough of them; only the answer key was
+# written by a model, so the score reports agreement with that model. Above
+# both synthetic ceilings because strictly more of the data was observed.
+COARSE_RESOLUTION_CEILING = 89
+# One below the EXCELLENT boundary at 90, derived the same way as 74: under
+# thirty comparable examples a small difference may be chance, so the result
+# may not present as EXCELLENT. The highest ceiling here, because nothing is
+# wrong with this run at all. See `COARSE_RESOLUTION_EXAMPLES`.
+
+CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
+    (
+        "no result to bound",
+        (
+            ("dataset-absent", DATASET_ABSENT_CEILING),
+            ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
+            ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
+            ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
+            ("evaluator-absent", EVALUATOR_ABSENT_CEILING),
+            ("evaluator-unresolved", EVALUATOR_UNRESOLVED_CEILING),
+        ),
+    ),
+    (
+        "answers the wrong question",
+        (
+            ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
+            ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
+            ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
+        ),
+    ),
+    (
+        "bounded claim",
+        (
+            ("dataset-fully-synthetic", FULLY_SYNTHETIC_CEILING),
+            # Identical ceilings to the pair above, deliberately: the
+            # assumption IS "generated", so the claim the run may make is the
+            # same one. What differs is the remedy - a customer who has real
+            # data and never labelled it is asked to declare, not to go and
+            # collect - and the remedy is not what this table ranks.
+            ("dataset-undeclared-provenance", FULLY_SYNTHETIC_CEILING),
+            ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
+            ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
+            ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
+            ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
+        ),
+    ),
+)
+
+# The one ceiling per condition, read off the order above so the two cannot
+# disagree. Every `Cap(...)` in this module passes the named constant, and a
+# test reads the source to prove it - a literal at a call site is how one
+# condition acquires two ceilings, which is the defect `action_kind` already
+# removed for remedies.
+CAP_CEILING: dict[str, int] = {
+    condition: ceiling
+    for _group, entries in CAP_SEVERITY_ORDER
+    for condition, ceiling in entries
+}
+
+# The declared order, as a number the runtime actually reads.
+#
+# `CAP_CEILING` above folds the order away - a dict answers "what ceiling",
+# never "which is worse" - and both consumers used to sort by
+# `(ceiling, condition)`, which at equal ceilings is alphabetical. So the order
+# written down above decided nothing: swapping two entries left `CAP_CEILING`
+# byte-identical and every payload unchanged, and where it could be observed it
+# was contradicted. At the 45 tie the declaration ranks `evaluator-timeout`
+# first and the card recommended `vary-knobs`, purely because "a" sorts before
+# "e".
+#
+# The ceiling still decides severity, because the ceiling is what holds the
+# score down. This rank decides the tie - the one place the ceiling has nothing
+# left to say, and the exact place the declaration was silent before.
+CAP_RANK: dict[str, int] = {
+    condition: index
+    for index, condition in enumerate(
+        condition
+        for _group, entries in CAP_SEVERITY_ORDER
+        for condition, _ceiling in entries
+    )
+}
+
+
+def cap_order(cap: "Cap") -> tuple[int, int]:
+    """The one sort key for caps, so no consumer invents a second one.
+
+    `aggregate` and `collect_gaps` both order caps, and ordering them two ways
+    is how the card's recommended action and the gap list come to disagree
+    about which cap is worst. They call this.
+    """
+    return (cap.ceiling, CAP_RANK[cap.condition])
+
+
+# Where one condition's evidence STRICTLY IMPLIES another's, the stricter one
+# must not carry the higher ceiling. This is the ordering rule with a
+# derivation rather than a judgment behind it: a dataset where every row is
+# generated is also a dataset where most rows are, so it cannot be the less
+# capped of the two. It is also the exact shape that failed before #144, where
+# two overlapping unreadable-dataset conditions were ranked independently.
+#
+# `(stricter, looser)`. Asserted, not documented: adding a cap that narrows an
+# existing one and giving it a higher ceiling fails the suite.
+CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
+    # No dataset is also no expected outputs, and no comparable examples.
+    ("dataset-absent", "dataset-no-expected-outputs"),
+    ("dataset-absent", "dataset-below-measurable-size"),
+    ("dataset-absent", "dataset-coarse-resolution"),
+    # No labels is no comparable example either, under a reference-based method.
+    ("dataset-no-expected-outputs", "dataset-below-measurable-size"),
+    # All of it generated is also most of it generated.
+    ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
+    # And the same on the undeclared rungs, which grade the same mass reached
+    # by silence rather than by a declaration.
+    ("dataset-undeclared-provenance", "dataset-mostly-undeclared"),
+    # Under ten comparable examples is also under thirty.
+    ("dataset-below-measurable-size", "dataset-coarse-resolution"),
+)
+
+# The other half of that declaration, and the half that was doing nothing.
+#
+# `CAP_SEVERITY_ORDER` is enforced twice - the constructor refuses an unranked
+# condition and a test refuses a ranked one nothing raises. `CAP_IMPLICATIONS`
+# was enforced nowhere: it constrains only the pairs someone remembered to
+# write down, so a new cap that narrows an existing one and carries the higher
+# ceiling ships green, which is the #144 defect exactly. Silence and "I checked
+# and it overlaps nothing" are the same text in a file that only lists pairs.
+#
+# So overlap is declared for every condition, not for the ones that have one.
+# A condition is either named in a pair above or listed here with the reason it
+# is not, and the constructor refuses one that is in neither - the author of a
+# new cap is asked the question rather than trusted to have asked it.
+CAP_NO_IMPLICATION: dict[str, str] = {
+    "evaluator-invalid": (
+        "a ruler that scores wrong answers well is orthogonal to every dataset "
+        "condition and mutually exclusive with the other evaluator ones"
+    ),
+    "evaluator-absent": "nothing is connected; no other condition can be read off that",
+    "evaluator-unresolved": (
+        "present-but-unnamed excludes absent, and no dataset condition follows "
+        "from it"
+    ),
+    "evaluator-timeout": "a run that did not finish says nothing about the material",
+    "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
+    "dataset-integrity-fail": (
+        "fires only when at least one row DID parse, so it is the complement of "
+        "dataset-absent rather than a narrowing of it"
+    ),
+    "dataset-tune-holdout-overlap": (
+        "a split defect; it can accompany any size or provenance and narrows none"
+    ),
+    "dataset-generated-answer-key": (
+        "guarded by `synthesised_rows != counted`, so it is mutually exclusive "
+        "with dataset-fully-synthetic rather than implied by it"
+    ),
+}
+
+# Every condition, reviewed for overlap one way or the other.
+CAP_OVERLAP_REVIEWED: frozenset[str] = frozenset(
+    {condition for pair in CAP_IMPLICATIONS for condition in pair}
+    | set(CAP_NO_IMPLICATION)
+)
+
+
 @dataclass(frozen=True)
 class Cap:
     condition: str
@@ -425,6 +686,67 @@ class Cap:
                 "emitting a diagnosis a consumer cannot act on"
             ) from None
         object.__setattr__(self, "action_kind", kind)
+        # The same guard for the ordering. A cap with no place in
+        # `CAP_SEVERITY_ORDER` has an unranked ceiling, which is the state this
+        # module was in for every cap until now: the number was whatever its
+        # author picked, against neighbours nobody had compared it to. The
+        # VALUE is deliberately not checked here - `Cap(condition, 50, ...)` is
+        # a legitimate way to build a probe - so the value is pinned instead by
+        # the source-reading test, which is where a wrong constant at a call
+        # site actually shows up.
+        if self.condition not in CAP_CEILING:
+            raise ValueError(
+                f"cap {self.condition!r} has no place in CAP_SEVERITY_ORDER; "
+                "every cap is ranked against the others, so add it to the "
+                "group its condition belongs to rather than choosing a "
+                "ceiling that nothing compares"
+            )
+        # And the third registry, which was declared and enforced nowhere. A
+        # cap whose overlap with the others nobody stated is the #144 defect
+        # waiting to recur - it fails here rather than shipping green.
+        if self.condition not in CAP_OVERLAP_REVIEWED:
+            raise ValueError(
+                f"cap {self.condition!r} states no overlap with the other "
+                "conditions; name it in CAP_IMPLICATIONS if its evidence "
+                "implies another condition's, or in CAP_NO_IMPLICATION with "
+                "the reason it implies none"
+            )
+        # The two fields the guards above never looked at.
+        #
+        # `condition` failed closed and these did not, so `Cap(cond, None, ...)`,
+        # `Cap(cond, "twenty", ...)`, `Cap(cond, 999, ...)`, `Cap(cond, -5, ...)`
+        # and `blocks="yes"` all constructed. Each reaches arithmetic that
+        # cannot say so: `min(weighted_average, ceiling)` raises deep inside
+        # `aggregate` on a string and silently returns `None` for the overall
+        # score's comparison partner, 999 makes a ceiling that can never bind,
+        # -5 makes one that always does, and a truthy `blocks` string turns
+        # every ceiling into a block. The type hints stated all of this and
+        # nothing read them.
+        #
+        # The VALUE is still not pinned to `CAP_CEILING[condition]` - a probe
+        # building `Cap(condition, 50, ...)` to exercise a ceiling it does not
+        # otherwise reach is legitimate, and the source-reading test is where a
+        # wrong constant at a call site actually shows up. What is refused is a
+        # ceiling that is not a score on the 0-100 scale the band table reads.
+        if isinstance(self.ceiling, bool) or not isinstance(self.ceiling, int):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-integer ceiling "
+                f"{self.ceiling!r}; a ceiling is a score on the same 0-100 "
+                "scale as the overall, because that is what it is compared to"
+            )
+        if not 0 <= self.ceiling <= 100:
+            raise ValueError(
+                f"cap {self.condition!r} carries a ceiling of {self.ceiling}, "
+                "which is off the 0-100 scale; a ceiling above 100 can never "
+                "bind and one below 0 always does, and neither describes a "
+                "band this module can name"
+            )
+        if not isinstance(self.blocks, bool):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-boolean blocks flag "
+                f"{self.blocks!r}; `blocks` decides BLOCKED against OK and a "
+                "truthy string decides it silently in one direction"
+            )
 
 
 # What each check is called on the card.
@@ -905,10 +1227,13 @@ def knob_variation(
 # calculate paired uncertainty or a minimum detectable effect before outcomes
 # exist. The ceilings sit one point below a band edge because the claim is about
 # what the result may *present as*, not about the arithmetic.
+#
+# The two ceilings themselves live with every other ceiling in
+# `CAP_SEVERITY_ORDER`, because their ORDER against the rest is a rule and a
+# number defined beside its own threshold is a number nothing ranks. The
+# thresholds stay here, where they are read.
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
-WIRING_CHECK_CEILING = 74  # cannot present as STRONG
-COARSE_RESOLUTION_CEILING = 89  # cannot present as EXCELLENT
 
 
 def power_ceiling(effective_n: int | None) -> Cap | None:
@@ -998,20 +1323,14 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # reads what they scored under the assumption and what declaring would earn.
 UNDECLARED_ROW_POINTS = SYNTHESISED_ROW_POINTS
 
-# The source the pre-count counterfactual declares, when there are no row counts
-# to move and `sources` is the only place the silence lives. A word from the
-# guide's own collected vocabulary rather than a marker, so the second grade is
-# the one a reader would get by writing this token into their own rows.
-COUNTERFACTUAL_SOURCE = "collected"
-
 # A cap is a ceiling on the whole run, not a deduction. It exists because a
 # points deduction cannot stop an average from hiding a fatal flaw: 10 -> 3 on a
 # 10-point sub-score inside a 40%-weighted pillar moves the overall score by
 # 2.8, so a fully generated dataset that was perfect everywhere else still
 # reported 93 and read as production-ready.
-FULLY_SYNTHETIC_CEILING = 65  # nothing here was observed
-MOSTLY_SYNTHETIC_CEILING = 70  # more invented than observed
-GENERATED_ANSWER_KEY_CEILING = 75  # real questions, but the answer key is a model's
+#
+# The three ceilings these shares raise are defined with every other ceiling in
+# `CAP_SEVERITY_ORDER`; only the shares that trigger them live here.
 MOSTLY_SYNTHETIC_SHARE = 0.5
 GENERATED_ANSWER_KEY_SHARE = 1.0
 
@@ -1035,16 +1354,22 @@ GENERATED_ANSWER_KEY_SHARE = 1.0
 # to declare rows they do not have. The instruction is conditional instead,
 # because whether any silent row was collected is the one thing this scorer
 # cannot see and the reader can.
+# "records nothing this run could read" and not "records nothing": a row
+# carrying a word the vocabulary does not know is in the same position as a
+# silent one - this script cannot tell what it came from - and it is now scored
+# there, so the sentence has to describe both or it is false on the card of
+# every customer using their own vocabulary.
 UNDECLARED_ALL_REASON = (
     "No row of this dataset was observed - every row is either declared "
-    "generated or records nothing, and a row that records nothing is scored as "
-    "generated. Declare the source on any silent row that was collected; if "
-    "none was, this dataset is generated."
+    "generated, or records no source this run can read, and a row whose source "
+    "it cannot read is scored as generated. Declare or re-label the source on "
+    "any such row that was collected; if none was, this dataset is generated."
 )
 UNDECLARED_MOST_REASON = (
     "More than half of these rows were never observed: they are declared "
-    "generated, or record nothing and are scored as generated. Declare the "
-    "source on any silent row that was collected."
+    "generated, or record no source this run can read and are scored as "
+    "generated. Declare or re-label the source on any such row that was "
+    "collected."
 )
 
 
@@ -1076,18 +1401,6 @@ def _row_count(value: Any, name: str) -> int:
     return value
 
 
-def declares_no_provenance(facts: DatasetFacts) -> bool:
-    """True when a count-free payload says no row declared where it came from.
-
-    The pre-count fallback, named once because two callers have to agree on it:
-    the scorer, which caps for this state, and the disclosure, which must fire
-    on exactly the runs the scorer capped. A preflight JSON written before the
-    row counts existed carries only `sources`, so `unknown` there - or nothing
-    at all - IS that payload's statement that no row said.
-    """
-    return not facts.synthetic and ("unknown" in facts.sources or not facts.sources)
-
-
 def score_provenance(
     facts: DatasetFacts, *, uses_expected_outputs: bool = True
 ) -> tuple[float, str, list[Cap]]:
@@ -1108,38 +1421,33 @@ def score_provenance(
     """
     caps: list[Cap] = []
     counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    undeclared_rows = facts.undeclared_rows
+    synthesised_rows = facts.synthesised_rows
     if not counted:
+        # A fact set with rows in it and no per-row provenance count says
+        # nothing about where any row came from - which is precisely what an
+        # undeclared row says - so it is scored there, in two lines.
+        #
+        # What used to be here was forty: a second implementation of this whole
+        # ladder that re-derived it from `sources`, with its own helper
+        # (`declares_no_provenance`), its own counterfactual token
+        # (`COUNTERFACTUAL_SOURCE`) and its own branch in
+        # `provenance_assumption`. Its stated purpose was a preflight JSON
+        # written before the counts existed. `emit_dataset_provenance` emits
+        # all three counts together for every dataset with a row in it, and
+        # this repository has published nothing that could have been written
+        # before that - so the machinery guarded a payload that has never
+        # existed, and any real one that reaches this line is truncated. The
+        # adapter refuses that one at the boundary; here the fail-closed
+        # reading is enough, and it is the same reading a silent row gets.
+        # `synthetic` is preflight's own all-or-nothing statement about the
+        # same rows and is kept, so a count-free fixture that says every row is
+        # generated is still scored generated rather than merely unread.
+        counted = facts.rows
         if facts.synthetic:
-            return (
-                SYNTHESISED_ROW_POINTS,
-                "fully generated - cannot represent production traffic",
-                [
-                    Cap(
-                        "dataset-fully-synthetic",
-                        FULLY_SYNTHETIC_CEILING,
-                        "The dataset is generated, so a high score here measures "
-                        "the walkthrough, not real-world readiness.",
-                    )
-                ],
-            )
-        if declares_no_provenance(facts):
-            return (
-                UNDECLARED_ROW_POINTS,
-                "no row says whether it was collected or generated, so this run "
-                "scores all of it as generated",
-                [
-                    Cap(
-                        "dataset-undeclared-provenance",
-                        FULLY_SYNTHETIC_CEILING,
-                        UNDECLARED_ALL_REASON,
-                    )
-                ],
-            )
-        return (
-            COLLECTED_ROW_POINTS,
-            f"declared sources: {', '.join(facts.sources)}",
-            [],
-        )
+            synthesised_rows = facts.rows
+        else:
+            undeclared_rows = facts.rows
 
     # An answer written by a model downgrades a row that was otherwise
     # collected; it cannot downgrade one already counted as synthesised, and
@@ -1153,8 +1461,8 @@ def score_provenance(
     points = (
         clean_collected * COLLECTED_ROW_POINTS
         + generated_answers * GENERATED_ANSWER_ROW_POINTS
-        + facts.undeclared_rows * UNDECLARED_ROW_POINTS
-        + facts.synthesised_rows * SYNTHESISED_ROW_POINTS
+        + undeclared_rows * UNDECLARED_ROW_POINTS
+        + synthesised_rows * SYNTHESISED_ROW_POINTS
     ) / counted
 
     # The ladder runs on how much of the corpus was never observed, and an
@@ -1164,7 +1472,7 @@ def score_provenance(
     # mixture. Half declared-generated and half silent is 100% unobserved and IS
     # capped, at 65, even though neither half reaches 100% on its own - which is
     # the case the two shares could not see separately.
-    unobserved = facts.synthesised_rows + facts.undeclared_rows
+    unobserved = synthesised_rows + undeclared_rows
 
     # WHICH of the two remedies that ceiling carries is a share too, not the
     # existence of a silent row. `undeclared_rows > 0` handed "declare the rows
@@ -1187,8 +1495,8 @@ def score_provenance(
     # disclosure sentence, so nothing about them is hidden by routing the
     # remedy at the mass that actually binds.
     silent = (
-        facts.undeclared_rows > 0
-        and facts.synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
+        undeclared_rows > 0
+        and synthesised_rows <= counted * MOSTLY_SYNTHETIC_SHARE
     )
     if unobserved == counted:
         caps.append(
@@ -1256,7 +1564,13 @@ def score_provenance(
     return (
         round(points, 2),
         provenance_evidence(
-            facts, counted, uses_expected_outputs=uses_expected_outputs
+            replace(
+                facts,
+                synthesised_rows=synthesised_rows,
+                undeclared_rows=undeclared_rows,
+            ),
+            counted,
+            uses_expected_outputs=uses_expected_outputs,
         ),
         caps,
     )
@@ -1276,8 +1590,9 @@ def provenance_evidence(
     unverified = ""
     if facts.unrecognised_sources:
         unverified = (
-            "; unrecognized provenance tokens treated as collected on an "
-            f"unverified declaration: {', '.join(facts.unrecognised_sources)}"
+            "; provenance tokens this run could not verify, scored as "
+            "undeclared rather than as collected: "
+            f"{', '.join(facts.unrecognised_sources)}"
         )
     parts: list[str] = []
     if facts.collected_rows:
@@ -1299,7 +1614,8 @@ def provenance_evidence(
         # reader skimming it takes the word for a claim that the rows are real -
         # which is the misreading this whole sub-score exists to prevent.
         mixture += (
-            " (undeclared means the row does not record where it came from, so "
+            " (undeclared means the row records no source this run can read - "
+            "either none at all, or a word its vocabulary does not know - so "
             "this run scores it as generated)"
         )
     if facts.generated_answer_rows:
@@ -1361,7 +1677,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-absent",
-                20,
+                DATASET_ABSENT_CEILING,
                 "No dataset is connected, so nothing can be measured.",
             )
         )
@@ -1390,7 +1706,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-no-expected-outputs",
-                30,
+                DATASET_NO_EXPECTED_OUTPUTS_CEILING,
                 "Rows have inputs but no expected outputs, so there is nothing to "
                 "score a configuration against.",
             )
@@ -1561,7 +1877,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-tune-holdout-overlap",
-                50,
+                SPLIT_OVERLAP_CEILING,
                 "The same examples appear in both the set the search tunes on "
                 "and the set held back to check it, so the final score is "
                 "flattered - a believable wrong number.",
@@ -1571,7 +1887,7 @@ def score_dataset(
         caps.append(
             Cap(
                 "dataset-integrity-fail",
-                35,
+                DATASET_INTEGRITY_CEILING,
                 "Some rows could not be read as data - malformed lines, or missing "
                 "the input or expected-answer field.",
             )
@@ -1587,7 +1903,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-absent",
-                40,
+                EVALUATOR_ABSENT_CEILING,
                 "No evaluation method is connected, so no result can be trusted.",
             )
         )
@@ -1630,7 +1946,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "can be trusted - inspect it and repair or replace it."
             )
             evidence = "evaluator present, method not resolved"
-        caps.append(Cap("evaluator-unresolved", 40, reason))
+        caps.append(Cap("evaluator-unresolved", EVALUATOR_UNRESOLVED_CEILING, reason))
         subs.append(SubScore("calibration", 0.0, 40.0, True, evidence))
         subs.append(SubScore("task-fit", 0.0, 25.0, False, evidence))
         subs.append(SubScore("reproducibility", 0.0, 20.0, False, evidence))
@@ -1662,7 +1978,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             caps.append(
                 Cap(
                     "evaluator-invalid",
-                    25,
+                    EVALUATOR_INVALID_CEILING,
                     "The evaluator scores a wrong answer as well as a right one, "
                     "or returns a constant. Every number below it is unreliable.",
                 )
@@ -1770,7 +2086,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-timeout",
-                45,
+                EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
             )
         )
@@ -1804,14 +2120,14 @@ def knob_count_points(varying: int, space_size: int, max_trials: int | None) -> 
 
 NOTHING_WIRED_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Nothing is marked as a setting the agent actually uses, so there is "
     "nothing to search.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
-    45,
+    AGENT_NO_VARYING_KNOBS_CEILING,
     "Settings are listed, but none is marked as one the agent uses - marking "
     "them is what makes them searchable.",
 )
@@ -1938,7 +2254,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         caps.append(
             Cap(
                 "agent-no-varying-knobs",
-                45,
+                AGENT_NO_VARYING_KNOBS_CEILING,
                 "Every setting has only one value to try, so every configuration "
                 "would be identical.",
             )
@@ -2042,15 +2358,28 @@ def collect_gaps(
     for all of them - silently restoring the flat ordering this argument exists
     to replace, in whichever caller forgot to pass it.
     """
-    gaps: list[tuple[float, str]] = []
+    # Second column: the declared severity rank, so two caps that weigh the
+    # same break their tie the way `CAP_SEVERITY_ORDER` ranks them instead of
+    # by whichever condition id sorts first alphabetically. Non-cap gaps take a
+    # rank past every cap's, which is where their weight already puts them and
+    # keeps their existing alphabetical tie-break intact.
+    unranked = len(CAP_RANK)
+    gaps: list[tuple[float, int, str]] = []
     for cap in caps:
-        gaps.append((cap_weight(cap, overall), f"{cap.condition}: {cap.reason}"))
+        gaps.append(
+            (
+                cap_weight(cap, overall),
+                CAP_RANK[cap.condition],
+                f"{cap.condition}: {cap.reason}",
+            )
+        )
     for pillar in pillars:
         for sub in pillar.subscores:
             if not sub.measured:
                 gaps.append(
                     (
                         sub.maximum * 0.5,
+                        unranked,
                         f"{pillar.name}/{sub.name} could not be measured - "
                         f"{sub.evidence}",
                     )
@@ -2059,14 +2388,15 @@ def collect_gaps(
                 gaps.append(
                     (
                         sub.maximum - sub.value,
+                        unranked,
                         f"{pillar.name}/{sub.name}: {sub.evidence}",
                     )
                 )
     for knob in knobs:
         for note in knob.notes:
-            gaps.append((5.0, f"knob '{knob.name}': {note}"))
-    gaps.sort(key=lambda item: (-item[0], item[1]))
-    return tuple(text for _, text in gaps)
+            gaps.append((5.0, unranked, f"knob '{knob.name}': {note}"))
+    gaps.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return tuple(text for _weight, _rank, text in gaps)
 
 
 def recommended_action(ordered_caps: Sequence[Cap]) -> str:
@@ -2101,7 +2431,7 @@ def aggregate(
     ) / (total_weight or 1.0)
     weighted_average = round_half_up(weighted)
 
-    ordered_caps = tuple(sorted(caps, key=lambda cap: (cap.ceiling, cap.condition)))
+    ordered_caps = tuple(sorted(caps, key=cap_order))
     ceiling = min((cap.ceiling for cap in ordered_caps), default=100)
     overall = min(weighted_average, ceiling)
 
@@ -2174,14 +2504,12 @@ def provenance_assumption(
     collected data nobody labelled" - and a second edit would make it answer a
     different one.
 
-    Two payload shapes carry that silence and both have to disclose it. A
-    counted payload names the silent rows, and the counterfactual moves them
-    into the collected count. A pre-count payload carries no counts at all, and
-    `sources` is where its silence lives (`declares_no_provenance`), so the
-    counterfactual declares a source there instead. Gating on `undeclared_rows`
-    alone left the second shape scored as generated, capped at 65, told to
-    declare - and shown no second number at all, which is this function's whole
-    promise missing on the shape it is most about.
+    "Silent" now includes a row that declared a source in a vocabulary this
+    run does not know, because `classify_provenance` scores that row as
+    undeclared - so the customer whose rows all say `crm-export` is shown, in
+    this sentence, the grade their own declaration earns once it is mapped.
+    That is the half of the unverifiable-declaration rule that keeps it from
+    being a punishment: the number is disclosed before they do anything.
     """
     if not dataset_facts.exists or not dataset_facts.rows:
         # `score_dataset` scores no provenance for these at all - it reports
@@ -2194,24 +2522,24 @@ def provenance_assumption(
         + dataset_facts.synthesised_rows
         + dataset_facts.undeclared_rows
     )
-    if counted:
-        undeclared = dataset_facts.undeclared_rows
-        if not undeclared:
-            return None
-        declared = replace(
-            dataset_facts,
-            collected_rows=dataset_facts.collected_rows + undeclared,
-            undeclared_rows=0,
-        )
-    else:
-        if not declares_no_provenance(dataset_facts):
-            return None
-        # Every row on this path is silent, and `rows` is the only size the
-        # payload carries - the guard at the top of this function refuses a
-        # payload without one, exactly as `score_dataset` does.
+    # The same normalization `score_provenance` makes, and it has to be the
+    # same one: this function has to disclose an assumption on exactly the runs
+    # that were scored under it.
+    undeclared = dataset_facts.undeclared_rows
+    if not counted:
         counted = dataset_facts.rows
-        undeclared = counted
-        declared = replace(dataset_facts, sources=(COUNTERFACTUAL_SOURCE,))
+        undeclared = 0 if dataset_facts.synthetic else dataset_facts.rows
+    if not undeclared:
+        return None
+    # One shape, because there is only one. The second branch that used to be
+    # here declared `COUNTERFACTUAL_SOURCE` into `sources` for a count-free
+    # payload, through a `declares_no_provenance` helper that read the silence
+    # out of a word list. Neither exists now.
+    declared = replace(
+        dataset_facts,
+        collected_rows=dataset_facts.collected_rows + undeclared,
+        undeclared_rows=0,
+    )
     if_declared = score_run(declared, evaluation_facts, agent_facts, weights).overall
     if if_declared == score.overall:
         # Two identical grades are a repetition, not a disclosure: "scores
@@ -2238,11 +2566,16 @@ def assumption_sentence(assumption: ProvenanceAssumption) -> str:
     the whole content is: this number rests on an assumption, here is the other
     number if the assumption is wrong.
     """
+    # "no source this run can read" rather than "do not record where they came
+    # from": since an unrecognised token is scored here too, the older wording
+    # was false on the card of a customer who HAD declared one, in their own
+    # words, on every row.
     rows = (
-        f"{assumption.undeclared_rows} of {assumption.scored_rows} rows do not "
-        "record where they came from"
+        f"{assumption.undeclared_rows} of {assumption.scored_rows} rows record "
+        "no source this run can read"
         if assumption.undeclared_rows < assumption.scored_rows
-        else f"No row of the {assumption.scored_rows} records where it came from"
+        else f"No row of the {assumption.scored_rows} records a source this run "
+        "can read"
     )
     return (
         f"{rows}, so this run scores them as generated: "
@@ -3513,7 +3846,60 @@ def scoring_requested(args: argparse.Namespace) -> bool:
     return any((args.preflight, args.calibration, args.config_space))
 
 
+# The one place an unexpected failure is allowed to end.
+#
+# `run` below catches the four input errors it can name and returns 2. Every
+# other failure - a `ValueError` from a cap the registries do not know, a
+# `KeyError` from a payload shape nobody anticipated, a `TypeError` from a
+# field that arrived as a string - escaped to the interpreter, which printed a
+# traceback and exited 1. The card never printed at all.
+#
+# That is the worst possible output for this tool. The person reading it is
+# running their first optimization, the traceback names this file rather than
+# anything they wrote, and it replaces the one artifact the whole run exists to
+# produce. A defect in the checker must not read as a defect in their project.
+#
+# So the boundary catches broadly and the failure stays loud: named error class,
+# its message, a non-zero exit, and nothing pretending a score was computed.
+# What it does NOT do is swallow it - the environment variable prints the whole
+# stack for whoever is fixing it, which is the audience a traceback was ever
+# for. An environment variable rather than a flag because the three scripts
+# share this boundary and none of them should grow an option for it.
+INTERNAL_ERROR_EXIT = 3
+TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+
+def report_internal_error(
+    tool: str,
+    error: BaseException,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any = None,
+) -> int:
+    """Print an unexpected failure as a diagnosis, never as a traceback."""
+    out = sys.stderr if stream is None else stream
+    env = os.environ if environ is None else environ
+    print(f"{tool}: internal error - {type(error).__name__}: {error}", file=out)
+    print(
+        f"{tool} could not finish, and this is a defect in the check rather "
+        "than in your project. Nothing was scored, so treat no result as "
+        f"reported. Re-run with {TRACEBACK_ENV}=1 and report the output.",
+        file=out,
+    )
+    if env.get(TRACEBACK_ENV):
+        traceback.print_exception(type(error), error, error.__traceback__, file=out)
+    return INTERNAL_ERROR_EXIT
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """The process boundary. See `report_internal_error`."""
+    try:
+        return run(argv)
+    except Exception as error:  # noqa: BLE001 - the boundary is the point
+        return report_internal_error("readiness.py", error)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     if not scoring_requested(args):
