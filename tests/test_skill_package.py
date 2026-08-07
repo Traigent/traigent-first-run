@@ -37,6 +37,33 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+def published_prose_documents() -> dict[str, str]:
+    """Every markdown document this repository publishes, name -> raw text.
+
+    From `git ls-files`, not a curated list, because a curated list is only ever
+    right about the documents somebody remembered. `README.md` is the most-read
+    file in a public repository and sat outside every disclosure check here;
+    `AGENTS.md`, `CLAUDE.md`, `templates/` and `reports/` were outside too.
+
+    `tests/` is the only exclusion, and it is a claim about what those files
+    ARE: they write the offending strings deliberately, as the inputs that
+    prove a check can see one. Scanning them would flag a guard's own fixtures.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {
+        name: (ROOT / name).read_text(encoding="utf-8")
+        for name in sorted(listed.stdout.split("\0"))
+        if name and not name.startswith("tests/")
+    }
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -3487,13 +3514,37 @@ class SkillPackageTests(unittest.TestCase):
 
         The first reinstatement told the assistant that growing the split past
         ten was tracked as a Traigent-owned follow-up, which made the size read
-        as a placeholder someone would fix. It is not: ten is where readiness
-        puts its own floor, every further row is another paid call on the
-        winner, and the honest answer to the noise that leaves is to say so.
-        The composition therefore applies wherever the rows come from, real
-        data is topped up rather than allowed to drop a band, and the display
-        quotes counts because a percentage on ten rows claims ten times the
-        resolution it has.
+        as a placeholder someone would fix. It is not. Every further row is
+        another paid call on the winner, and the honest answer to the noise
+        that leaves is to say so. The composition therefore applies wherever
+        the rows come from, real data is topped up rather than allowed to drop
+        a band, and the display quotes counts because a percentage on ten rows
+        claims ten times the resolution it has.
+
+        THE PUBLISHED REASON USED TO BE THE SCORER'S FLOOR, and it was wrong
+        twice over. The document said ten is "where the readiness score puts
+        its own floor: at nine comparable rows it raises
+        `dataset-below-measurable-size` and blocks the paid comparison". That
+        was true of the scorer on this branch and false on #149, which makes
+        the same cap advisory above zero scoreable rows - measured:
+        `power_ceiling(9).blocks` is True here and False there, while
+        `power_ceiling(0)` still blocks on both. So the customer-facing reason
+        for the owner's number was a scorer detail an open branch was already
+        changing, and the number is not changing.
+
+        The reason is difficulty coverage, which is a property of the split
+        itself and of nothing else: four bands, and the two that separate
+        configurations most carry three rows each. That is what is asserted
+        below - the arithmetic of the composition, executed, rather than the
+        presence of a slug in a sentence.
+
+        And that is the second half of the defect. This test used to prove the
+        rationale by finding the string `dataset-below-measurable-size` in the
+        prose. Greping a condition id out of a document asks whether somebody
+        WROTE the claim, never whether the code DOES it - so the document and
+        the scorer could disagree for as long as the sentence stayed put. The
+        scorer is called here instead, and the two things it is called about
+        are the two things the prose is now allowed to depend on.
         """
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -3505,7 +3556,7 @@ class SkillPackageTests(unittest.TestCase):
             # Ten is a decision, with the reason the guide previously promised
             # and never gave.
             "ten rows is the design, not a placeholder",
-            "`dataset-below-measurable-size`",
+            "ten is what the composition costs",
             "the full picture comes from running the whole dataset over a wider knob space",
             # One composition, applied wherever the rows come from.
             "that composition holds wherever the rows come from",
@@ -3533,15 +3584,71 @@ class SkillPackageTests(unittest.TestCase):
         )
         # "Ten" and "at least ten" are different rules, and the file carried
         # both shapes: a fixed composition beside a sentence about adjusting
-        # size, and a readiness floor that fires at nine. The floor and the
-        # design agree only because the design sits exactly on it, so say which
-        # of the two the number is.
+        # size. Say which of the two the number is.
         self.assertIn("ten is therefore exact in both directions", dataset)
-        self.assertIn("never a floor to grow from", dataset)
-        # The one split that is not ten, and the floor that still binds it.
-        self.assertIn(
-            "a split under ten comparable rows blocks the paid comparison", dataset
+
+        # 1. THE ARITHMETIC, EXECUTED. The composition is read out of the
+        # document the assistant follows, not restated here, and then it is
+        # made to do what the paragraph claims: it sums to ten, it covers all
+        # four bands, and removing any single row drops some band to one. That
+        # last is the whole argument for ten over nine, and it is a fact about
+        # the split rather than about any scorer.
+        composition = re.search(
+            r"reserve (\d+) held-out rows \((\d+) easy, (\d+) medium, "
+            r"(\d+) hard, (\d+) very hard\)",
+            dataset,
         )
+        self.assertIsNotNone(
+            composition,
+            "the held-out composition is no longer stated where a reader meets "
+            "the split, so nothing here can check what ten buys",
+        )
+        total, *bands = (int(group) for group in composition.groups())
+        self.assertEqual(sum(bands), total)
+        self.assertEqual(total, 10)
+        self.assertEqual(len(bands), 4)
+        # No band has a spare row: the smallest is exactly two, which is the
+        # smallest a band can be and still be measured rather than sampled. If
+        # any band had three or more to give, ten would not be the cost of this
+        # composition and the paragraph's reason would be wrong.
+        self.assertEqual(
+            min(bands),
+            2,
+            f"the smallest band holds {min(bands)} rows, so the split has a "
+            "spare and ten is not what this composition costs",
+        )
+        outer, middle = (bands[0], bands[3]), (bands[1], bands[2])
+        self.assertTrue(
+            min(middle) > max(outer),
+            f"the middle bands hold {middle} against the outer {outer}; the "
+            "paragraph says the two that separate configurations most carry "
+            "more, and they do not",
+        )
+
+        # 2. THE SCORER, ASKED RATHER THAN QUOTED. The published rationale used
+        # to cite `dataset-below-measurable-size` blocking at nine. It must not
+        # again, because that is the scorer's decision and #149 changes it -
+        # the number here does not move when it does. What IS pinned is the
+        # only claim the paragraph still leans on: the designed split is not
+        # sitting on a blocking cap.
+        self.assertNotIn("dataset-below-measurable-size", dataset)
+        self.assertNotIn("blocks the paid comparison", dataset)
+        designed = READINESS.power_ceiling(total)
+        self.assertFalse(
+            designed is not None and designed.blocks,
+            f"the designed {total}-row split is itself blocked by "
+            f"{designed.condition if designed else None}; the composition and "
+            "the scorer disagree about the size this guide reserves",
+        )
+        self.assertIn("never a floor to grow from", dataset)
+        # The one split that is not ten is a project's own, and the document no
+        # longer tells the reader what the scorer will do to it. It used to -
+        # "a split under ten comparable rows blocks the paid comparison
+        # wherever it came from" - which is the same borrowed-threshold defect
+        # a second time in the same paragraph, and false on #149 in the same
+        # way. What is said instead is the only thing this guide decides about
+        # somebody else's split: it is used as it stands.
+        self.assertIn("kept at the size it already has, whatever its composition", dataset)
 
     def test_real_rows_are_divided_between_both_sets_before_anything_is_generated(
         self,
@@ -3909,30 +4016,78 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(restatement=restatement):
                 self.assertNotIn(restatement, dataset)
 
-    # Every shape an internal tracker reference is written in, not the two
-    # that happened to be in the tree when this guard was written. Those two
-    # were `traigent-first-run#N` and `traigent/traigent issue N`, and the
-    # commonest spelling of all - `Traigent/Traigent#N` - walked straight
-    # through: the hash form was only ever spelled for one of the two repos.
-    # That is this repository's recurring defect in its mirror image. Usually a
-    # guard flags legitimate content; this one missed legitimate targets. Both
-    # are the same mistake - closing the shape that broke instead of the class.
+    # There is no allowlist any more, and its absence is the point. It held
+    # three exact citations - engineering rationale that "predates this rule" -
+    # and every one of them named a repository or an issue number in a file the
+    # installed skill ships. A citation that must not reach a customer is not
+    # made safe by being old, and with nothing published there is no citation
+    # this repository is stuck with, so the three sentences were rewritten to
+    # say what they meant: the defect is upstream's and the fix belongs there.
     #
-    # So the hash form is matched with no repository prefix at all. `#` glued
-    # to digits is an issue reference and nothing else in customer-facing
-    # guidance, which makes every prefix variant - owner-qualified,
-    # bare-repo, backticked, inside a fence, or a trailing `#2101` in a list -
-    # one pattern rather than one alternative each. Prose and URL forms are
-    # spelled out beside it. There is no allowlist: a citation that must not
-    # reach a customer is not made safe by being old, and with nothing ever
-    # published there is no citation this repository is stuck with.
+    # It was also the guard's own hole. `Tracked upstream as Traigent/Traigent
+    # issue 1993.` sat on the allowlist while `Traigent/Traigent#1993` - the
+    # same reference, in the commoner spelling - matched no pattern at all, so
+    # the allowlist documented the exact form the guard could see and said
+    # nothing about the form it could not.
+    TRACKER_CITATION_ALLOWLIST: tuple[str, ...] = ()
+    # Every shape a tracker citation is written in, not the two that happened to
+    # be in the tree when this was written. Those two were `traigent-first-run#N`
+    # and `traigent/traigent issue N`; measured against ten realistic spellings
+    # they caught two. `Traigent/Traigent#1993` walked straight through - the
+    # hash form of a string already on the allowlist above, spelled for the
+    # other repository - as did a full issue URL, an owner-qualified private
+    # repository, and a bare `issue #127`.
+    #
+    # What is deliberately NOT here is a bare `#\d+` on its own. That was the
+    # first repair attempted, on the theory that "`#` glued to digits is an
+    # issue reference and nothing else in customer-facing guidance". It is not:
+    # measured, it fails the standard markdown cross-link
+    # `[stage 3](../SKILL.md#3-complete-the-system)` - SKILL.md has eight
+    # numbered stage headings, so that anchor is correct authoring - and the
+    # ordinary sentence "If trial #3 fails, stop and report it", along with
+    # `run #1`, `configuration #7` and `step #2`. In a walkthrough that counts
+    # stages, trials, rows and configurations that is not an exotic input, and
+    # the failure message would have said "carries a tracker reference" about a
+    # sentence that carries none. A guard that misdiagnoses its own trigger
+    # teaches the author to route around it.
+    #
+    # The discriminating signal is a REPOSITORY, or a tracking word in front of
+    # the hash. Both are things a citation has and a count does not.
     TRACKER_REFERENCE = re.compile(
-        r"#\d+"
-        r"|(?:[\w.-]+/)?traigent[\w.-]*\s+(?:issue|issues|pr|pull)s?\s+\#?\d+"
-        r"|github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+",
+        # `traigent-first-run#78`, `Traigent/Traigent#2101`, and an owner
+        # segment followed by any sibling repository - which this comment
+        # cannot spell out, because the disclosure check further up this file
+        # refuses exactly that shape. The owner segment is optional.
+        r"(?:[\w.-]+/)?[\w.-]*traigent[\w.-]*#\d+"
+        # The prose form: `<repo> issue 1993`, `<repo> pull 42`.
+        r"|(?:[\w.-]+/)?traigent[\w.-]*\s+(?:issues?|prs?|pulls?|pull requests?)\s+#?\d+"
+        # A tracker URL on any forge: GitHub issues/pulls/discussions, and
+        # GitLab's `/-/issues/N`, whose extra path segment the first attempt's
+        # `issues|pull` alternation could not reach.
+        r"|[\w.-]+\.[a-z]{2,}/[\w.-]+/[\w./-]*?"
+        r"(?:issues|pull|pulls|discussions|merge_requests)/\d+"
+        # A bare hash introduced by a tracking word: `issue #127`, `see #2101`.
+        r"|\b(?:issues?|tickets?|bugs?|prs?|pull requests?"
+        r"|tracked(?:\s+(?:as|in|upstream(?:\s+as)?))?"
+        r"|fixe[sd]|closes|resolves|see)\s+#\d+",
         re.IGNORECASE,
     )
+    # Which repository a citation names, when it names one. A reference to THIS
+    # repository is public by definition; a reference to any other one is a
+    # disclosure, which is why the two are held to different corpora below.
+    TRACKER_REPOSITORY = re.compile(r"([\w.-]*traigent[\w.-]*)\s*(?:#|\s(?:issue|pr|pull))", re.IGNORECASE)
+    THIS_REPOSITORY = "traigent-first-run"
     TRACKER_LINE = re.compile(r"^\s*tracking:", re.IGNORECASE | re.MULTILINE)
+
+    @classmethod
+    def foreign_tracker_references(cls, text: str) -> list[str]:
+        """Citations that name a repository other than this public one."""
+        found = []
+        for citation in cls.TRACKER_REFERENCE.findall(" ".join(text.split())):
+            named = cls.TRACKER_REPOSITORY.search(citation)
+            if named and named.group(1).casefold() != cls.THIS_REPOSITORY:
+                found.append(citation)
+        return found
 
     def test_no_assistant_facing_document_leaks_a_tracker_reference(self) -> None:
         """Customer-facing copy is pasted verbatim; a tracker link cannot ride along.
@@ -3942,47 +4097,101 @@ class SkillPackageTests(unittest.TestCase):
         copy the assistant reads is one autocomplete away from a customer's
         onboarding transcript. This is a public repository: internal repo,
         issue, and tracker names have no place in guidance the user sees.
+
+        The corpus is every markdown document this repository publishes, from
+        `git ls-files`, rather than `assistant_facing_documents()`. That list
+        excluded README.md - the most-read file here, and the one a customer
+        reads before anything else - along with AGENTS.md, CLAUDE.md,
+        `templates/` and `reports/`.
         """
-        for path in assistant_facing_documents():
-            raw = path.read_text()
-            # Whitespace-normalized, because a citation can wrap across lines
-            # in the source and would otherwise never match.
-            with self.subTest(document=path.name):
+        for name, raw in published_prose_documents().items():
+            # Whitespace-normalized, because an allowlisted citation wraps
+            # across lines in the source and would otherwise never match.
+            allowed = " ".join(raw.split())
+            for citation in self.TRACKER_CITATION_ALLOWLIST:
+                allowed = allowed.replace(citation, "")
+            with self.subTest(document=name):
                 self.assertEqual(
                     self.TRACKER_REFERENCE.findall(" ".join(raw.split())),
                     [],
-                    f"{path.name} carries a tracker reference; this is a "
-                    "public repository and the copy is pasted verbatim",
+                    f"{name} carries a tracker reference outside the "
+                    "allowlisted engineering citations",
                 )
                 self.assertEqual(
                     self.TRACKER_LINE.findall(raw),
                     [],
-                    f"{path.name} carries a 'Tracking:' line, which the "
+                    f"{name} carries a 'Tracking:' line, which the "
                     "disclosure copy would paste to the user verbatim",
                 )
 
-    def test_the_tracker_guard_sees_every_form_a_citation_is_written_in(
-        self,
-    ) -> None:
-        """The guard is only worth its corpus if it recognizes the citation.
+    def test_no_published_file_names_another_repositorys_tracker(self) -> None:
+        """The disclosure half, and it reads everything git publishes.
 
-        It did not. `TRACKER_REFERENCE` spelled the hash form for one
-        repository (`traigent-first-run#N`) and the prose form for the other
-        (`traigent/traigent issue N`), so `Traigent/Traigent#2101` - the
-        commonest spelling, and the one an open branch adds to sdk-execution.md
-        in three places - matched nothing. Both branches passed, and three
-        internal tracker references would have reached a public repository with
-        no test failing anywhere.
+        Two different rules were being asked of one check. Copy hygiene - no
+        issue numbers in text a user is handed - belongs to the prose corpus
+        above. DISCLOSURE - no naming of a private repository's tracker -
+        belongs to everything published, scripts included, because a comment in
+        `readiness.py` ships inside the installed skill just as a sentence in
+        `run-safety.md` does.
 
-        A guard nobody probes with the input it exists to catch is a guard that
-        documents an intention. So it is probed here with every form a citation
-        gets written in, and with the near-misses that must stay legal.
+        Splitting them is what lets the corpus be whole without deleting
+        legitimate engineering context. Measured, the three shipped scripts
+        carry twelve `traigent-first-run#N` citations in code comments. Those
+        name THIS repository, which is public, and no user ever sees a code
+        comment - so the copy rule has no business there. A citation naming any
+        other repository is a different fact and fails everywhere.
+        """
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        offenders: dict[str, list[str]] = {}
+        for name in sorted(listed.stdout.split("\0")):
+            if not name or name.startswith("tests/"):
+                # `tests/` writes citations deliberately, as the inputs that
+                # prove this check can see one.
+                continue
+            try:
+                raw = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            # Normalized before the allowlist is applied, because these
+            # citations wrap across lines in the source and would otherwise
+            # never match the entry that excuses them.
+            raw = " ".join(raw.split())
+            for citation in self.TRACKER_CITATION_ALLOWLIST:
+                raw = raw.replace(citation, "")
+            foreign = self.foreign_tracker_references(raw)
+            if foreign:
+                offenders[name] = foreign
+        self.assertEqual(
+            offenders,
+            {},
+            "a published file names another repository's tracker",
+        )
+
+    def test_the_tracker_guard_sees_a_citation_and_not_a_count(self) -> None:
+        """Both directions, against invented text rather than the tree.
+
+        A clean tree says nothing about what this pattern can SEE, and the
+        pattern it replaced saw two of the ten spellings below. The second
+        group matters as much: a walkthrough that counts stages, trials, rows
+        and configurations writes `#` beside a number constantly, and the first
+        repair of this guard failed every one of them.
         """
         for citation in (
             "traigent-first-run#78",
             "Traigent/Traigent#2101",
             "traigent/traigent#2101",
             "Traigent/traigent-first-run#78",
+            # Assembled rather than written out: an owner segment followed by
+            # `Traigent` + CamelCase is exactly the private-repository shape the
+            # disclosure check in this same file refuses, so spelling one here
+            # would make this file fail that check. The demonstration is that
+            # the two guards agree.
+            "Traigent/" + "Traigent" + "Backend#2450",
             "Traigent/Traigent#2100, #2101 and #2102",
             "`traigent-first-run#78`",
             "```\nsee Traigent/Traigent#2101\n```",
@@ -3991,8 +4200,12 @@ class SkillPackageTests(unittest.TestCase):
             "Traigent/Traigent issues 1993",
             "traigent-first-run pull 42",
             "https://github.com/Traigent/Traigent/issues/2101",
+            "https://github.com/Traigent/traigent-first-run/issues/127",
             "https://github.com/Traigent/traigent-first-run/pull/142",
+            "https://github.com/Traigent/Traigent/discussions/45",
+            "https://gitlab.example.com/group/proj/-/issues/45",
             "see #2101 for why",
+            "issue #127",
         ):
             with self.subTest(citation=citation):
                 self.assertTrue(
@@ -4000,21 +4213,43 @@ class SkillPackageTests(unittest.TestCase):
                     "an internal tracker citation the guard cannot see",
                 )
 
-        # Near-misses that are not citations. The corpus legitimately names the
-        # public repository and the skill; flagging those would push authors to
-        # narrow the corpus, which is how run-safety.md escaped this check once.
         for legal in (
             "https://github.com/Traigent/traigent-first-run",
             "$traigent-first-run",
             "## A markdown heading",
             "traigent-first-run is the skill you install",
             "issue 2101 of the newsletter",
+            # Standard markdown cross-links. SKILL.md has eight numbered stage
+            # headings, so this anchor form is how a reader is sent to one.
+            "[stage 3 of the flow](../SKILL.md#3-complete-the-system)",
+            "[why](skills/traigent-first-run/SKILL.md#3-complete-the-system)",
+            # Ordinary counting, in a walkthrough that counts constantly.
+            "If trial #3 fails, stop and report it before spending more.",
+            "run #1 finished before run #2",
+            "configuration #7 of 12",
+            "step #2 of the five-stage journey",
         ):
             with self.subTest(legal=legal):
                 self.assertIsNone(
                     self.TRACKER_REFERENCE.search(" ".join(legal.split())),
                     "the guard flags copy that carries no tracker reference",
                 )
+
+        # And the disclosure half distinguishes this repository from any other.
+        self.assertEqual(
+            self.foreign_tracker_references("tracked in traigent-first-run#78"), []
+        )
+        self.assertEqual(
+            self.foreign_tracker_references("tracked in Traigent/Traigent#2101"),
+            ["Traigent/Traigent#2101"],
+        )
+        # ACCEPTED RESIDUAL: a bare project-key form (`ABC-127`) is not matched.
+        # It cannot be, without a prefix denylist: the shape is identical to
+        # `RFC-9562` and `ISO-8601`, both of which this package's comments have
+        # reason to write, and a denylist of internal project keys published
+        # here would be the disclosure it is meant to prevent. Nothing in this
+        # repository uses that form today - verified by grep - and if one is
+        # ever adopted the fix is to add its exact prefix, deliberately.
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
         readme_source = (ROOT / "README.md").read_text()
