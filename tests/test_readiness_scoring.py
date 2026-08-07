@@ -1133,30 +1133,79 @@ class AgentScoringTests(unittest.TestCase):
         pillar, _, _ = MODULE.score_agent(MODULE.AgentFacts(**kwargs))
         return next(s for s in pillar.subscores if s.name == "coverage")
 
-    def test_the_catalog_knows_exactly_one_spelling_of_each_knob(self) -> None:
-        """There is no synonym table, and there must not be a single-entry one.
+    def test_a_synonym_spelling_is_refused_rather_than_renamed_or_scored(
+        self,
+    ) -> None:
+        """No name is substituted, and no document is quietly scored lower.
 
         `KNOB_ALIASES` mapped `prompt_policy` onto `prompt_style` to keep a
         catalog defect from docking a correct walkthrough. That defect was
         fixed in the same commit - the `general` catalog spells the dimension
-        `prompt_style` - and the alias outlived its cause, one pair for one
-        knob, while `temp`/`temperature` and `n_shot`/`fewshot_k` got none. It
-        also invented a refusal: two spellings declared over different values
-        was an exit-2 error that only existed because the old name was kept.
+        `prompt_style` - so the RENAMING outlived its cause, one pair for one
+        knob, while `temp`/`temperature` and `n_shot`/`fewshot_k` got none.
 
-        So an unrecognized spelling is now what it always was for every other
-        knob in the catalog - a knob the scorer does not recognize as the
-        catalog dimension, reported as untuned rather than silently renamed.
-        Reinstating any alias table fails here.
+        What did not outlive its cause is the refusal it carried, and deleting
+        the table deleted that too. Measured end to end on one identical
+        bundle, a document declaring `prompt_policy` and `prompt_style` over
+        different values went from exit 2 to exit 0 with the agent pillar at
+        77, `4 of 4 wired knobs actually vary`, and 24 combinations against 12
+        for the same space written once. Two spellings of one dimension are
+        two dimensions to every count downstream, so declaring both doubles the
+        space and pays twice for one knob - which is verbatim the inflation the
+        deleted function's own docstring cited as its reason to exist.
+
+        The quieter half is a document written consistently in the synonym. It
+        matches itself, so nothing is phantom and nothing was refused; it just
+        scored lower - coverage 8.33/25 against 16.67/25 - with the missing
+        knob named in the evidence line as though the author had not tuned it.
+        Neither shape is silent now: both are refused, by name, naming the
+        spelling this scorer knows. That is the help this branch says it gives
+        for every knob rather than for `prompt_policy` alone, and it was the
+        one knob it did not reach.
         """
         knobs = {"model": ["a", "b"], "temperature": [0.0, 0.6]}
-        synonym = self._coverage(
-            agent_type="general",
-            knobs=dict(knobs, prompt_policy=["direct", "structured"]),
-            wired=("model", "temperature", "prompt_policy"),
+        # Written consistently in the synonym: not a phantom, and no longer a
+        # quiet deduction either.
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as consistent:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": dict(knobs, prompt_policy=["direct", "structured"]),
+                    "wired": ["model", "temperature", "prompt_policy"],
+                }
+            )
+        self.assertIn("'prompt_policy'", str(consistent.exception))
+        self.assertIn("another name for 'prompt_style'", str(consistent.exception))
+
+        # Both spellings, different values - the shape trunk refused and this
+        # branch briefly accepted at a higher score.
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as both:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": dict(
+                        knobs,
+                        prompt_policy=["p1", "p2"],
+                        prompt_style=["s1", "s2"],
+                    ),
+                    "wired": [
+                        "model",
+                        "temperature",
+                        "prompt_policy",
+                        "prompt_style",
+                    ],
+                }
+            )
+        self.assertIn("declare each search dimension once", str(both.exception))
+
+        # Nothing is renamed on the way through: the canonical document scores,
+        # and it scores under the name its author wrote.
+        facts = MODULE.agent_facts_from_config_space(
+            {
+                "knobs": dict(knobs, prompt_style=["direct", "structured"]),
+                "wired": ["model", "temperature", "prompt_style"],
+            }
         )
-        self.assertIn("not tuning: prompt_style", synonym.evidence)
-        self.assertLess(synonym.value, 25.0)
+        self.assertEqual(sorted(facts.knobs), ["model", "prompt_style", "temperature"])
+
         # And the name is judged exactly as written everywhere else too: the
         # phantom check no longer routes through an alias table, so its
         # ordering against a normalization step is not a defect surface.

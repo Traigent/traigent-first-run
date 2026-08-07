@@ -235,6 +235,19 @@ HIGH_IMPACT_KNOBS: dict[str, tuple[str, ...]] = {
     "general": ("model", "temperature", "prompt_style"),
 }
 
+# Names that mean a knob this file already knows, kept ONLY so a document
+# using one can be refused by name. Never read to rename anything: this
+# replaces `KNOB_ALIASES`, whose renaming had to run before every count, could
+# silently reset a field of the dataclass it rebuilt, and forced an ordering
+# between itself and the phantom-name check. `_reject_synonym_spellings` owns
+# what that table was actually for.
+#
+# Whoever merges the branch that removes `max_tokens` from every catalog:
+# its `test_max_tokens_is_absent_from_every_catalog` reads `MODULE.KNOB_ALIASES`,
+# which this branch deletes. It sits outside any conflict region, so the merge
+# is clean and the suite errors. Point that row at `KNOB_SYNONYMS`.
+KNOB_SYNONYMS: dict[str, str] = {"prompt_policy": "prompt_style"}
+
 # Evaluation-method profiles. `fidelity` is which task kinds the method actually
 # measures well; a method can be perfectly reproducible and still be the wrong
 # ruler, which is why task fit is scored separately from reproducibility.
@@ -2912,6 +2925,54 @@ CONFIG_SPACE_SPACE_KEYS = tuple(
 )
 
 
+def _reject_synonym_spellings(knobs: dict[str, Any], knobs_key: str) -> None:
+    """Refuse a knob written under a name that means a knob this file knows.
+
+    What `KNOB_ALIASES` bought was not the renaming - that was the part with
+    the ordering hazard, the rebuilt dataclass and the field it could silently
+    reset. What it bought was a REFUSAL: two spellings of one search dimension
+    are two dimensions to everything downstream, so declaring both doubled the
+    reported size of the space and paid a second dimension's credit for it.
+    Deleting the table deleted the refusal with it, and measured end to end on
+    one document declaring `prompt_policy` and `prompt_style` over different
+    values, the scorer went from exit 2 to exit 0 with the agent pillar at 77
+    against 61 for the same space written once, 24 combinations against 12, and
+    a card reading `4 of 4 wired knobs actually vary`. A deletion that raises a
+    score is the shape this repository has been wrong about before.
+
+    So the refusal stays and the substitution does not. `KNOB_SYNONYMS` is
+    never read to rename anything: no name the author wrote is replaced, no
+    facts object is rebuilt, and nothing downstream has to know the table
+    exists. It produces one message, and the message teaches the spelling the
+    rest of this file uses - which is the same help `_reject_phantom_names`
+    gives for a near miss, applied to the one case a near miss cannot reach
+    because the written name is not a misspelling of anything.
+
+    That case is the quieter half of the same defect. A document written
+    consistently in `prompt_policy` matches itself, so nothing was phantom and
+    nothing was refused - it simply scored lower, silently, than the identical
+    document written in `prompt_style`: coverage 8.33/25 against 16.67/25 on
+    one measured pair, with the missing knob named in the evidence line as
+    though the author had not tuned it. Refusing is what makes that visible.
+
+    Nothing is lost by refusing either shape: this repository has published no
+    config space, and the one producer of the document writes `prompt_style`.
+    """
+    written = [name for name in knobs if name in KNOB_SYNONYMS]
+    if not written:
+        return
+    detail = ", ".join(
+        f"'{name}', which is another name for '{KNOB_SYNONYMS[name]}'"
+        for name in sorted(written)
+    )
+    raise ConfigSpaceInputError(
+        f"config-space '{knobs_key}' declares {detail}: declare each search "
+        "dimension once, under the name this scorer knows. Two spellings of "
+        "one dimension are counted as two dimensions, which doubles the "
+        "reported size of the space and pays twice for one knob"
+    )
+
+
 def _reject_phantom_names(
     field: str, names: Iterable[str], knobs: dict[str, Any], knobs_key: str
 ) -> None:
@@ -3020,6 +3081,7 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
         # Reaching this line is the proof: a document was read.
         config_space_supplied=True,
     )
+    _reject_synonym_spellings(facts.knobs, knobs_key)
     # An unattested document names nothing, so there is no phantom to reject.
     if wired is not None:
         _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
