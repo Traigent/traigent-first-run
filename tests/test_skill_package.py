@@ -785,20 +785,6 @@ def billing_ceiling_mandates(documents: dict[str, str]) -> dict[str, list[str]]:
     return found
 
 
-RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
-SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
-
-# The config-space document is a contract between prose the assistant follows and
-# code that reads it, so these tests weld the documented shape to the real
-# consumer rather than re-describing it.
-_READINESS = SKILL_ROOT / "scripts" / "readiness.py"
-_SPEC = importlib.util.spec_from_file_location(
-    "first_run_readiness_for_prose", _READINESS
-)
-READINESS = importlib.util.module_from_spec(_SPEC)
-assert _SPEC.loader is not None
-sys.modules[_SPEC.name] = READINESS
-_SPEC.loader.exec_module(READINESS)
 
 
 def preflight_constant(name: str) -> object:
@@ -1590,8 +1576,18 @@ class SkillPackageTests(unittest.TestCase):
         #    place and still look enforced from the other.
         preview = text[text.index("give the connected stage a preview") :]
         self.assertIn("any knob of theirs left out and what the baseline", preview)
+        # `excluded` came out of this alternation on the merge, and the reason
+        # is a false positive rather than a narrowing. #149's routing bullet
+        # for `agent-no-varying-knobs` says "only knobs excluded from scoring",
+        # which is a statement about what the SCORER ignores - not about
+        # disclosing a customer's knob this run declined to carry. #169 wrote
+        # the alternation before that bullet existed, so the guard reported two
+        # homes for a mandate that still has one, and deleting #149's phrase to
+        # satisfy it would have removed load-bearing routing text to fix a
+        # regex. The three remaining spellings all describe leaving something
+        # OUT of the run, which is the mandate.
         omission_mandate = re.compile(
-            r"\bknobs?\b[^.]{0,40}?\b(?:left out|omitted|excluded|not carried)\b",
+            r"\bknobs?\b[^.]{0,40}?\b(?:left out|omitted|not carried)\b",
             re.IGNORECASE,
         )
         homes = {
