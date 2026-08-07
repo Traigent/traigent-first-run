@@ -2234,22 +2234,70 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(card.count("Every row was written by a model."), 1)
 
     def test_a_blocked_report_separates_the_band_from_the_gate(self) -> None:
-        """The durable artifact carries the same separation as the card."""
+        """The durable artifact carries the same separation as the card.
+
+        In the card's vocabulary, which is the point of the second half. The
+        report said "Status: PAID RUN BLOCKED" - a fourth token beside
+        `BLOCKER`, `FIX BEFORE PAID RUN` and `LIMITED TO n`, and the only one
+        no document defines. A reader of the durable artifact met a term the
+        guide does not carry.
+        """
+        ceiling = MODULE.FULLY_SYNTHETIC_CEILING
+        # Full confidence, so the band is the one the thresholds give rather
+        # than a thin-evidence demotion of it.
+        band, _ = MODULE.band_for(ceiling, 1.0, 1.0)
         pillars = [
             MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
         score = MODULE.aggregate(
             pillars,
-            caps=[MODULE.Cap("dataset-fully-synthetic", 65, "Model-written rows.")],
+            caps=[
+                MODULE.Cap("dataset-fully-synthetic", ceiling, "Model-written rows.")
+            ],
             knobs=(),
             weights=dict(MODULE.DEFAULT_WEIGHTS),
         )
         report = MODULE.render_markdown(score)
-        self.assertIn("**65/100 - WORKABLE**\n", report)
-        self.assertNotIn("**65/100 - WORKABLE**  ·", report)
-        self.assertIn("Status: PAID RUN BLOCKED.", report)
+        self.assertIn(f"**{ceiling}/100 - {band}**\n", report)
+        self.assertNotIn(f"**{ceiling}/100 - {band}**  ·", report)
+        self.assertIn("**BLOCKER.**", report)
         self.assertIn("Both can be true at once.", report)
+        # And no term the reader cannot look up. The machine-readable answer to
+        # this question is `status` in the `--json` payload, not a token here.
+        self.assertNotIn("PAID RUN BLOCKED", report)
+
+    def test_the_readme_worked_example_is_the_one_the_scorer_produces(self) -> None:
+        """`65/100 WORKABLE` is a claim about the scorer, made in two places.
+
+        README.md states it as the ordinary blocked-but-good card, and the
+        `blocker_lines` docstring states it again, and nothing related either to
+        `FULLY_SYNTHETIC_CEILING` or to `band_for`. Both happen to be right
+        today, which is exactly the state a shared value is in just before it
+        drifts: re-pricing the cap or moving a band threshold leaves two
+        documents describing a card the scorer no longer prints.
+
+        Welded to the scorer rather than to each other, because a check that two
+        documents agree passes when both are wrong.
+        """
+        ceiling = MODULE.FULLY_SYNTHETIC_CEILING
+        band, _ = MODULE.band_for(ceiling, 1.0, 1.0)
+        worked_example = f"{ceiling}/100 WORKABLE"
+        self.assertEqual(band, "WORKABLE", "the worked example is no longer WORKABLE")
+
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(
+            worked_example,
+            " ".join(readme.replace("`", "").split()),
+            f"README states a fully-synthetic worked example that is not "
+            f"{worked_example}, which is what the scorer produces",
+        )
+        docstring = MODULE.blocker_lines.__doc__ or ""
+        self.assertIn(
+            worked_example,
+            " ".join(docstring.split()),
+            f"the blocker_lines docstring no longer describes {worked_example}",
+        )
 
     def test_an_unblocked_card_says_nothing_about_a_blocker(self) -> None:
         """The line appears only when something actually blocks."""

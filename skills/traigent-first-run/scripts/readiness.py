@@ -2253,13 +2253,20 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             # Same separation the card makes, in the durable artifact: the band
             # grades the evidence, the status answers whether the paid run may
             # start, and putting them in one line made a grade look like a
-            # refusal. The status token stays, because this file is read by
-            # machines too - what changes is that it now arrives with the
-            # sentence that says what it is about.
+            # refusal.
+            #
+            # `BLOCKER`, which is the card's word and the one README.md and the
+            # glossary define. This line used to read "Status: PAID RUN
+            # BLOCKED", a fourth token beside `BLOCKER`, `FIX BEFORE PAID RUN`
+            # and `LIMITED TO n` that no document explains - so a reader who met
+            # the durable report first met a term the guide does not carry, and
+            # a reader who met both had to work out they were the same thing.
+            # The machine-readable answer to this question is `status` in the
+            # `--json` payload and has always been there; this file is prose.
             *(
                 [
-                    "Status: PAID RUN BLOCKED. The band above describes how good "
-                    "this evidence is; this describes whether the paid run may "
+                    "**BLOCKER.** The band above describes how good this "
+                    "evidence is; this describes whether the paid run may "
                     "start. Both can be true at once. See "
                     '"What is blocking a trustworthy result" below for what has '
                     "to clear first, then re-run this score.",
