@@ -192,7 +192,9 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
-any applicable calibration result. Apply the run-scoped evaluator-method rule above to both
+any applicable calibration result. When rows exist, do the row-level sanity check in
+`references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
+spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
@@ -398,6 +400,8 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
+- `dataset-unsound-expected-outputs` - put each flagged row to the user as one approval-gated
+  question, as your reading rather than a finding; never edit an expected answer on it yourself.
 - `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
   rankings exploratory, not stable comparisons, only where some example can be scored. Where none
   can, the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route that by its

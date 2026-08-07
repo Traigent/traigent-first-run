@@ -9332,6 +9332,69 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(document="evaluation-and-dataset.md", phrase=phrase):
                 self.assertIn(phrase, reference)
+    def test_the_row_level_sanity_check_keeps_its_five_constraints(self) -> None:
+        """The rules that stop an opinion behaving like a measurement.
+
+        Each of these is load-bearing on its own, and the check is unsafe
+        without any one of them - a judgement that can raise a score, or edit a
+        gold, or grade rows the run itself wrote, is a worse defect than the
+        one it was added to catch. They are pinned in prose because the scorer
+        can only enforce three of the five; the other two are things the
+        assistant does or does not do.
+        """
+        dataset = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        normalized = " ".join(dataset.split())
+        skill = " ".join(SKILL.read_text().split())
+
+        # 1. Unbilled, which is the whole reason it may sit at the opening gate.
+        self.assertIn("your own read, not a billed call", normalized)
+        self.assertIn("needs no approval", normalized)
+        self.assertIn("--row-review", skill)
+        # 2. Scoped to the rows the user brought, stated as a purpose.
+        self.assertIn(
+            "reads the rows the user brought, and skips the rows this run " "generated",
+            normalized,
+        )
+        self.assertIn("marking its own homework", normalized)
+        # 3. The direction rule, and no credit for a clean pass.
+        self.assertIn("lower the score and can never raise it", normalized)
+        self.assertIn("may withhold a claim; it may not manufacture one", normalized)
+        self.assertIn(
+            "a clean pass earns no points, no band, and no credit of any kind",
+            normalized,
+        )
+        self.assertIn("sentence in the readiness evidence line", normalized)
+        # 4. A finding is a question, never an edit.
+        self.assertIn("never a silent edit", normalized)
+        self.assertIn(
+            "approval-gated question the action table already requires", normalized
+        )
+        # 5. Declared as the assistant's judgement, never as the user's.
+        self.assertIn("never as the user's ground truth", normalized)
+        self.assertIn('"reviewer": "assistant"', dataset)
+        # And the scorer actually implements the three it can.
+        self.assertEqual(READINESS.ROW_REVIEW_REVIEWER, "assistant")
+        self.assertNotIn("synthesised", READINESS.ROW_REVIEW_ORIGINS)
+        self.assertLess(
+            READINESS.UNSOUND_ANSWER_CEILING, READINESS.GENERATED_ANSWER_KEY_CEILING
+        )
+
+    def test_the_row_level_check_is_ordered_at_the_opening_gate(self) -> None:
+        """Where it runs is a decision, so it is written down where flow lives.
+
+        Not merely a placement: the opening gate is the one point at which the
+        rule above - review what the user brought, skip what this run generated
+        - covers every row in the file, because nothing has been generated yet.
+        Later is also where a wrong expected answer has already been copied
+        into whatever stage 3 derived from it.
+        """
+        skill = " ".join(SKILL.read_text().split())
+        gate = skill.index("#### Opening readiness gate")
+        creation = skill.index("### 3. Complete the system")
+        instruction = skill.index("do the row-level sanity check")
+        self.assertLess(gate, instruction)
+        self.assertLess(instruction, creation)
+        self.assertIn("no generated row competes with it yet", skill)
 
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
@@ -9344,12 +9407,14 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("dataset-")
         }
-        # A twelfth dataset cap must be routed too, so pin the count rather
-        # than spot-checking the eleven that exist today. Ten when #149 wrote
+        # A fourteenth dataset cap must be routed too, so pin the count rather
+        # than spot-checking the thirteen that exist today. Ten when #149 wrote
         # this; #161 added the middle answer-key rung and #144 added
         # `dataset-shape-unrecognised`, and neither branch could see the other
         # two.
-        self.assertEqual(len(conditions), 13)
+        # #177 then added `dataset-unsound-expected-outputs`, the row-level
+        # sanity check's one ceiling, which is the fourteenth.
+        self.assertEqual(len(conditions), 14)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -9395,6 +9460,10 @@ class SkillPackageTests(unittest.TestCase):
             # shared phrase would find the earlier bullet for both.
             ("dataset-below-measurable-size", "more comparable examples is what lifts this"),
             ("dataset-coarse-resolution", "more comparable examples is what lifts this too"),
+            (
+                "dataset-unsound-expected-outputs",
+                "approval-gated question",
+            ),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)

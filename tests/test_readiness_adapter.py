@@ -2732,5 +2732,292 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             self.assertIn(f"{assumption['if_declared_collected']}/100", card)
 
 
+class RowReviewPipelineTests(unittest.TestCase):
+    """The row-level sanity check driven through the real two-script pipeline.
+
+    Hand-built facts cannot show the point of this check, which is that every
+    other dataset check passes on the broken row. These drive the real
+    `preflight.py --json | readiness.py --preflight -` path over a dataset whose
+    only defect is that three expected answers contradict their own inputs.
+    """
+
+    # Twenty distinct support tickets rather than one sentence with a number
+    # swapped, because a template makes every row a near-duplicate of every
+    # other and the duplicate checks would then be the thing that fired.
+    CASES = (
+        (
+            "Bought a standing desk on 2 March, asked for a refund on 9 March; "
+            "the plan allows 30 days.",
+            "approve",
+        ),
+        (
+            "Ordered noise-cancelling headphones, opened them, and requested a "
+            "return 41 days later against a 30-day window.",
+            "deny",
+        ),
+        (
+            "A subscriber cancelled mid-term after 3 days and wants the annual "
+            "fee back; annual plans refund within 14 days.",
+            "approve",
+        ),
+        (
+            "Espresso machine arrived damaged; the buyer reported it the same "
+            "afternoon and the damage policy has no time limit.",
+            "approve",
+        ),
+        (
+            "Mechanical keyboard bought in January, refund asked for in June, "
+            "policy window 30 days.",
+            "deny",
+        ),
+        (
+            "Running watch returned on day 30 of a 30-day window, unworn and " "boxed.",
+            "approve",
+        ),
+        (
+            "Office chair assembled and used for four months; the buyer now "
+            "dislikes the colour. Window is 30 days.",
+            "deny",
+        ),
+        (
+            "Monitor arm shipped to the wrong address by us; buyer asks for a "
+            "refund on day 52.",
+            "approve",
+        ),
+        (
+            "Label printer bought under a 60-day trial, returned on day 58 with "
+            "all accessories.",
+            "approve",
+        ),
+        (
+            "Projector lamp failed after 14 months; warranty covers 12 and the "
+            "refund window closed long ago.",
+            "deny",
+        ),
+        (
+            "Docking station never delivered; the carrier confirmed the loss and "
+            "the buyer wants their money back.",
+            "approve",
+        ),
+        (
+            "Gift card purchased two years ago; the buyer asks for cash back. "
+            "Gift cards are non-refundable.",
+            "deny",
+        ),
+        (
+            "Laptop sleeve ordered twice by mistake; the duplicate is unopened "
+            "and was flagged on day 2.",
+            "approve",
+        ),
+        (
+            "Software licence activated and used for a full quarter, refund "
+            "requested at renewal. Activated licences are final.",
+            "deny",
+        ),
+        (
+            "Webcam returned on day 12 of a 14-day window, in original " "packaging.",
+            "approve",
+        ),
+        (
+            "Conference ticket for an event that already took place; the buyer "
+            "did not attend and asks for a refund.",
+            "deny",
+        ),
+        (
+            "Ergonomic mouse developed a stuck button in week 3; the plan "
+            "refunds faults inside 90 days.",
+            "approve",
+        ),
+        (
+            "Custom-engraved pen returned after 5 days; personalised goods are "
+            "excluded from the refund policy.",
+            "deny",
+        ),
+        (
+            "Tablet stand refunded request filed on day 9 against a 30-day "
+            "window, item unused.",
+            "approve",
+        ),
+        (
+            "Annual membership used for eleven months, refund asked for in the "
+            "final week. Used memberships are not refundable.",
+            "deny",
+        ),
+    )
+
+    # The one wrong shape, applied to whichever rows the test names: the
+    # request is plainly outside the stated window and the expected answer
+    # approves it anyway. Well-formed, unique, tagged, perfectly scoreable.
+    WRONG_INPUT = (
+        "Refund requested {days} days after purchase for the {item}; the "
+        "policy window is 30 days."
+    )
+
+    @classmethod
+    def _rows(cls, wrong: tuple[str, ...] = ()) -> list[dict]:
+        rows = []
+        for index, (text, answer) in enumerate(cls.CASES):
+            identifier = f"row-{index}"
+            if identifier in wrong:
+                text = cls.WRONG_INPUT.format(
+                    days=45 + index, item=f"order {1000 + index}"
+                )
+                answer = "approve"
+            rows.append(
+                {
+                    "id": identifier,
+                    "input": text,
+                    "output": answer,
+                    "split": "tuning" if index < 12 else "holdout",
+                    "difficulty": ("easy", "medium", "hard", "very-hard")[index % 4],
+                    "provenance": "customer-support-export",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _review(rows: list[dict], wrong: tuple[str, ...] = ()) -> dict:
+        return {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": row["id"],
+                    "origin": "collected",
+                    "verdict": "no" if row["id"] in wrong else "yes",
+                    "note": (
+                        "45 days against a 30-day window cannot be 'approve'"
+                        if row["id"] in wrong
+                        else "the day count sits inside the stated window"
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
+    def _score(self, directory: Path, rows: list[dict], review: dict | None) -> dict:
+        dataset = _write_jsonl(directory, "dataset.jsonl", rows)
+        extra: tuple[str, ...] = ()
+        if review is not None:
+            review_path = directory / "row-review.json"
+            review_path.write_text(json.dumps(review))
+            extra = ("--row-review", str(review_path))
+        return _score(
+            dataset,
+            extra=("--evaluator-method", "normalized-exact", *extra),
+            preflight_extra=("--evaluator-method", "normalized-exact"),
+        )
+
+    def test_every_column_wise_check_passes_on_the_broken_dataset(self) -> None:
+        """The gap this closes: nothing else looks at the two fields together."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            sound = _preflight_records(
+                _write_jsonl(directory, "sound.jsonl", self._rows())
+            )
+            broken = _preflight_records(
+                _write_jsonl(
+                    directory, "broken.jsonl", self._rows(("row-1", "row-5", "row-13"))
+                )
+            )
+        statuses = {
+            record["check"]: record["status"]
+            for record in sound
+            if record["check"].startswith("dataset-")
+        }
+        self.assertEqual(
+            statuses,
+            {
+                record["check"]: record["status"]
+                for record in broken
+                if record["check"].startswith("dataset-")
+            },
+        )
+        self.assertNotIn("FAIL", statuses.values())
+        # The one check that is not PASS is about how many rows were held back,
+        # which both files share. Nothing here reads a row's answer against its
+        # own question, which is why the broken file is invisible to all of it.
+        self.assertEqual(
+            {check for check, status in statuses.items() if status != "PASS"},
+            {"dataset-holdout-resolution"},
+        )
+
+    def test_a_clean_pipeline_run_scores_identically_with_and_without_a_review(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = self._rows()
+            unreviewed = self._score(directory, rows, None)
+            reviewed = self._score(directory, rows, self._review(rows))
+        for field in ("overall", "weighted_average", "band", "status", "caps"):
+            with self.subTest(field=field):
+                self.assertEqual(reviewed[field], unreviewed[field])
+        self.assertEqual(
+            reviewed["recommended_action"], unreviewed["recommended_action"]
+        )
+
+    def test_the_reading_lowers_the_ceiling_and_routes_to_the_answer_key(
+        self,
+    ) -> None:
+        wrong = ("row-1", "row-5", "row-13")
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = self._rows(wrong)
+            before = self._score(directory, rows, None)
+            after = self._score(directory, rows, self._review(rows, wrong))
+        self.assertNotIn(
+            "dataset-unsound-expected-outputs",
+            [cap["condition"] for cap in before["caps"]],
+        )
+        cap = next(
+            entry
+            for entry in after["caps"]
+            if entry["condition"] == "dataset-unsound-expected-outputs"
+        )
+
+        # The lowest ceiling the DATASET may claim under falls. This fixture
+        # supplies no evaluator and no config space, so a stricter cap from
+        # elsewhere is already holding `overall` below 70 - which is the honest
+        # shape of a cap: it is a limit, and a limit only moves a number that
+        # had reached it.
+        def dataset_ceiling(score: dict) -> int:
+            return min(
+                entry["ceiling"]
+                for entry in score["caps"]
+                if entry["condition"].startswith("dataset-")
+            )
+
+        self.assertLess(dataset_ceiling(after), dataset_ceiling(before))
+        self.assertEqual(cap["ceiling"], 70)
+        # The remedy travels on the cap itself. Which remedy is recommended
+        # FIRST is a separate question, and on this fixture a stricter blocking
+        # cap (no evaluator is connected at all) rightly answers it.
+        self.assertEqual(cap["action_kind"], "review-answer-key")
+        self.assertLessEqual(after["overall"], before["overall"])
+
+    def test_a_review_without_the_preflight_it_describes_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            review_path = Path(raw) / "row-review.json"
+            review_path.write_text(json.dumps(self._review(self._rows())))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--row-review",
+                    str(review_path),
+                    "--agent",
+                    "real",
+                    "--dataset",
+                    "real",
+                    "--evaluation",
+                    "real",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("--row-review needs --preflight", process.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

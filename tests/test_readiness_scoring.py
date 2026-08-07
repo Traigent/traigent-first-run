@@ -6037,3 +6037,343 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
             for phrase in forbidden:
                 with self.subTest(evidence=evidence[:40], phrase=phrase):
                     self.assertNotIn(phrase, evidence)
+
+
+def _brought(rows: int, **extra) -> "MODULE.DatasetFacts":
+    """A healthy dataset of rows the user brought, with nothing generated."""
+    defaults = dict(
+        exists=True,
+        rows=rows,
+        labelled_rows=rows,
+        answerable_rows=rows,
+        collected_rows=rows,
+        difficulty_bands=("easy", "medium", "hard", "very-hard"),
+        difficulty_tagged_rows=rows,
+        duplicate_status="PASS",
+        near_duplicate_status="PASS",
+        sources=("customer-support-export",),
+    )
+    defaults.update(extra)
+    return MODULE.DatasetFacts(**defaults)
+
+
+def _review(**counts) -> "MODULE.RowReview":
+    reviewed = counts.pop("reviewed")
+    return MODULE.RowReview(
+        supplied=True,
+        reviewed=reviewed,
+        reviewed_collected=counts.pop("reviewed_collected", reviewed),
+        **counts,
+    )
+
+
+class RowLevelSanityTests(unittest.TestCase):
+    """The check that reads a row's input beside its own expected output.
+
+    Every other dataset check reads one column: empty golds, constant golds,
+    dominant answers, duplicates, split overlap. A row asking about a refund 45
+    days after purchase against a 30-day policy, expecting `approve`, passes all
+    of them - it is well-formed, unique, difficulty-tagged and perfectly
+    scoreable, and simply wrong. These tests pin what happens when the assistant
+    says so, and - more importantly - what may not happen when it says nothing
+    is wrong.
+    """
+
+    def test_a_clean_review_leaves_the_score_exactly_where_no_review_left_it(
+        self,
+    ) -> None:
+        """The load-bearing rule, proven by construction rather than asserted.
+
+        An assistant's opinion may withhold a claim; it may not manufacture one.
+        So the entire difference between "reviewed, all fine" and "not reviewed"
+        has to be words: same sub-score values, same maxima, same caps, same
+        pillar score and confidence.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10)
+        unreviewed, unreviewed_caps = MODULE.score_dataset(facts, "normalized-exact")
+        reviewed, reviewed_caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28)
+        )
+        self.assertEqual(reviewed.score, unreviewed.score)
+        self.assertEqual(reviewed.confidence, unreviewed.confidence)
+        self.assertEqual(
+            [(s.name, s.value, s.maximum, s.measured) for s in reviewed.subscores],
+            [(s.name, s.value, s.maximum, s.measured) for s in unreviewed.subscores],
+        )
+        self.assertEqual(
+            [cap.condition for cap in reviewed_caps],
+            [cap.condition for cap in unreviewed_caps],
+        )
+        # ... and the only thing that did change is the sentence, which names
+        # who did the checking.
+        differing = [
+            (before.name, after.evidence)
+            for before, after in zip(unreviewed.subscores, reviewed.subscores)
+            if before.evidence != after.evidence
+        ]
+        self.assertEqual([name for name, _ in differing], ["labels"])
+        self.assertIn("the coding assistant read 28 of 28", differing[0][1])
+        self.assertIn("none contradicts its own input", differing[0][1])
+
+    def test_a_material_share_of_wrong_answers_lowers_the_ceiling(self) -> None:
+        facts = _brought(28, tuning_rows=18, holdout_rows=10)
+        _, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=3)
+        )
+        cap = next(c for c in caps if c.condition == "dataset-unsound-expected-outputs")
+        self.assertEqual(cap.ceiling, MODULE.UNSOUND_ANSWER_CEILING)
+        self.assertLess(cap.ceiling, MODULE.GENERATED_ANSWER_KEY_CEILING)
+        # The remedy is the one the table already carries. A wrong answer key
+        # and an unobserved one are the same ask: a person looks at it.
+        self.assertEqual(cap.action_kind, "review-answer-key")
+        self.assertIn("3 answers do not answer their own question", cap.reason)
+        # Declared as a reading, never as a measurement, and never as an edit.
+        self.assertIn("coding assistant's reading, not a measurement", cap.reason)
+        self.assertIn("question for you rather than an edit", cap.reason)
+
+    def test_one_wrong_answer_is_reported_without_bounding_the_whole_run(
+        self,
+    ) -> None:
+        """Below the share, the finding is a question - not a ceiling.
+
+        It is still surfaced: the count is in the evidence line, and the flow
+        puts every `no` to the user. What it does not do is cap a 28-row dataset
+        on one row, which would let a single arguable reading decide the band.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10)
+        pillar, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=1)
+        )
+        self.assertEqual(
+            [c for c in caps if c.condition == "dataset-unsound-expected-outputs"], []
+        )
+        labels = next(s for s in pillar.subscores if s.name == "labels")
+        self.assertIn("1 expected answer contradicts its input", labels.evidence)
+
+    def test_an_undecided_row_is_named_and_never_scored(self) -> None:
+        """Uncertainty is reported; it does not grade the user's data."""
+        facts = _brought(20, tuning_rows=12, holdout_rows=8)
+        pillar, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=20, unsure=9)
+        )
+        self.assertEqual(
+            [c for c in caps if c.condition == "dataset-unsound-expected-outputs"], []
+        )
+        labels = next(s for s in pillar.subscores if s.name == "labels")
+        self.assertIn("9 undecided", labels.evidence)
+
+    def test_the_review_never_moves_a_score_upwards(self) -> None:
+        """Swept over every verdict mixture, at the sub-score and cap level.
+
+        The cap-set assertion is not decoration. "Cannot raise the score" has a
+        second reading that a ceiling check alone misses entirely: a review that
+        DELETES a cap someone else raised lifts the score without ever adding a
+        point. So the fixture deliberately carries a cap the review has no
+        business touching - the tuning/held-out overlap, which is measured from
+        the user's files - and every mixture must keep it.
+        """
+        facts = _brought(30, tuning_rows=20, holdout_rows=10, split_overlap=True)
+        baseline, baseline_caps = MODULE.score_dataset(facts, "normalized-exact")
+        base_conditions = {cap.condition for cap in baseline_caps}
+        self.assertIn("dataset-tune-holdout-overlap", base_conditions)
+        base_ceiling = min([c.ceiling for c in baseline_caps], default=100)
+        for unsound in range(0, 31):
+            for unsure in range(0, 31 - unsound):
+                with self.subTest(unsound=unsound, unsure=unsure):
+                    pillar, caps = MODULE.score_dataset(
+                        facts,
+                        "normalized-exact",
+                        _review(reviewed=30, unsound=unsound, unsure=unsure),
+                    )
+                    self.assertEqual(pillar.score, baseline.score)
+                    self.assertLessEqual(
+                        min([c.ceiling for c in caps], default=100), base_ceiling
+                    )
+                    self.assertLessEqual(
+                        base_conditions, {cap.condition for cap in caps}
+                    )
+
+    def test_the_evidence_line_says_how_much_of_the_dataset_was_read(self) -> None:
+        """Readiness scores the whole dataset, so the line cannot imply otherwise."""
+        facts = _brought(4812, tuning_rows=4000, holdout_rows=812)
+        pillar, _ = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28)
+        )
+        labels = next(s for s in pillar.subscores if s.name == "labels")
+        self.assertIn("read 28 of 4812 provided rows", labels.evidence)
+
+    def test_generated_rows_are_out_of_scope_and_the_line_says_so(self) -> None:
+        facts = _brought(
+            28,
+            collected_rows=18,
+            synthesised_rows=10,
+            tuning_rows=18,
+            holdout_rows=10,
+        )
+        pillar, _ = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=18)
+        )
+        labels = next(s for s in pillar.subscores if s.name == "labels")
+        self.assertIn("read 18 of 18 provided rows", labels.evidence)
+        self.assertIn("10 generated rows not reviewed", labels.evidence)
+
+    def test_a_reference_free_judge_reads_no_expected_output_so_none_can_cap(
+        self,
+    ) -> None:
+        """The same question `score_provenance` already asks about a generated key.
+
+        A rubric judge scores from the input and the rubric; the expected output
+        is not an input to it, so a wrong one mis-ranks nothing and there is no
+        claim to withhold. The reading is still reported.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10)
+        pillar, caps = MODULE.score_dataset(
+            facts, "llm-judge-rubric", _review(reviewed=28, unsound=14)
+        )
+        self.assertEqual(
+            [c for c in caps if c.condition == "dataset-unsound-expected-outputs"], []
+        )
+        labels = next(s for s in pillar.subscores if s.name == "labels")
+        self.assertIn("14 expected answers contradict their input", labels.evidence)
+
+    def test_a_dataset_with_no_expected_outputs_keeps_the_harder_ceiling(self) -> None:
+        """Nothing to be wrong about, and the 30 ceiling already binds anyway."""
+        facts = _brought(28, labelled_rows=0, answerable_rows=0)
+        _, caps = MODULE.score_dataset(
+            facts, "normalized-exact", _review(reviewed=28, unsound=28)
+        )
+        ceilings = {cap.condition: cap.ceiling for cap in caps}
+        self.assertEqual(ceilings["dataset-no-expected-outputs"], 30)
+        self.assertLess(30, MODULE.UNSOUND_ANSWER_CEILING)
+
+    def test_a_strong_project_is_bounded_and_routed_to_the_answer_key(self) -> None:
+        """The whole point, at the level the user sees: STRONG becomes WORKABLE.
+
+        A dataset good enough to score 89 is exactly the one this check exists
+        for - nothing else in the card has anything to say about it, so the
+        number is confident and the rows it is measured on are wrong.
+        """
+        facts = _brought(28, tuning_rows=18, holdout_rows=10)
+        evaluation = MODULE.Pillar("evaluation", 100, 1.0, ())
+        agent = MODULE.Pillar("agent", 91, 1.0, ())
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+
+        def total(review) -> MODULE.ReadinessScore:
+            pillar, caps = MODULE.score_dataset(facts, "normalized-exact", review)
+            return MODULE.aggregate([pillar, evaluation, agent], caps, (), weights)
+
+        before = total(None)
+        after = total(_review(reviewed=28, unsound=3))
+        self.assertEqual(before.band, "STRONG")
+        self.assertEqual(after.band, "WORKABLE")
+        self.assertEqual(after.overall, MODULE.UNSOUND_ANSWER_CEILING)
+        self.assertLess(after.overall, before.overall)
+        # Same weighted average - the pillars did not move. Only the ceiling did.
+        self.assertEqual(after.weighted_average, before.weighted_average)
+        self.assertEqual(after.recommended_action, "review-answer-key")
+        self.assertEqual(before.recommended_action, "proceed")
+        # And a clean reading of the same dataset changes neither.
+        clean = total(_review(reviewed=28))
+        self.assertEqual(clean.overall, before.overall)
+        self.assertEqual(clean.band, before.band)
+        self.assertEqual(clean.recommended_action, before.recommended_action)
+
+    def test_the_cap_reads_the_share_of_what_was_actually_read(self) -> None:
+        """The share is over reviewed rows, which is the only population it saw."""
+        self.assertIsNone(MODULE.unsound_answer_cap(_review(reviewed=100, unsound=9)))
+        self.assertIsNotNone(
+            MODULE.unsound_answer_cap(_review(reviewed=100, unsound=10))
+        )
+        self.assertIsNone(MODULE.unsound_answer_cap(MODULE.RowReview()))
+
+
+class RowReviewInputTests(unittest.TestCase):
+    """What the scorer refuses to accept as a reading.
+
+    This is the one input allowed to lower a score on nothing but its own word,
+    so it is also the one input that may not be quietly repaired into a usable
+    shape.
+    """
+
+    facts = _brought(30, collected_rows=25, undeclared_rows=5)
+
+    def _read(self, document) -> "MODULE.RowReview":
+        return MODULE.row_review_from_document(document, self.facts)
+
+    @staticmethod
+    def _rows(*entries) -> dict:
+        return {"reviewer": "assistant", "rows": list(entries)}
+
+    @staticmethod
+    def _entry(**overrides) -> dict:
+        entry = {
+            "id": "row-1",
+            "origin": "collected",
+            "verdict": "yes",
+            "note": "the expected answer follows from the input",
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_a_reading_attributed_to_the_user_is_refused(self) -> None:
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read({"reviewer": "user", "rows": [self._entry()]})
+        self.assertIn(
+            "arrives as an answer to the approval-gated question", str(raised.exception)
+        )
+
+    def test_a_generated_row_is_refused_rather_than_dropped(self) -> None:
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(self._rows(self._entry(origin="synthesised")))
+        self.assertIn("re-judging its own output", str(raised.exception))
+
+    def test_every_verdict_carries_a_sentence(self) -> None:
+        for note in (None, "", "   "):
+            with self.subTest(note=note):
+                with self.assertRaises(MODULE.RowReviewInputError):
+                    self._read(self._rows(self._entry(note=note)))
+
+    def test_a_verdict_without_a_row_id_is_refused(self) -> None:
+        with self.assertRaises(MODULE.RowReviewInputError):
+            self._read(self._rows(self._entry(id="")))
+
+    def test_a_repeated_row_cannot_inflate_the_share(self) -> None:
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(self._rows(self._entry(verdict="no"), self._entry(verdict="no")))
+        self.assertIn("inflates the share", str(raised.exception))
+
+    def test_an_unknown_verdict_is_refused(self) -> None:
+        with self.assertRaises(MODULE.RowReviewInputError):
+            self._read(self._rows(self._entry(verdict="probably")))
+
+    def test_a_review_cannot_claim_more_rows_than_the_dataset_holds(self) -> None:
+        entries = [
+            self._entry(id=f"row-{index}", origin="undeclared") for index in range(6)
+        ]
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(self._rows(*entries))
+        self.assertIn("not the same dataset", str(raised.exception))
+
+    def test_an_empty_review_is_refused_rather_than_read_as_all_clear(self) -> None:
+        for document in ({"reviewer": "assistant", "rows": []}, "assistant", []):
+            with self.subTest(document=document):
+                with self.assertRaises(MODULE.RowReviewInputError):
+                    self._read(document)
+
+    def test_a_well_formed_reading_is_counted_by_verdict_and_origin(self) -> None:
+        review = self._read(
+            self._rows(
+                self._entry(id="a", verdict="yes"),
+                self._entry(
+                    id="b", verdict="no", note="45 days against a 30-day window"
+                ),
+                self._entry(id="c", verdict="unsure", note="the row omits the plan"),
+                self._entry(id="d", origin="undeclared", note="reads correctly"),
+            )
+        )
+        self.assertTrue(review.supplied)
+        self.assertEqual(review.reviewed, 4)
+        self.assertEqual(review.unsound, 1)
+        self.assertEqual(review.unsure, 1)
+        self.assertEqual(review.reviewed_collected, 3)
+        self.assertEqual(review.reviewed_undeclared, 1)
