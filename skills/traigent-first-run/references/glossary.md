@@ -299,7 +299,7 @@ Provider key vs Traigent portal key
   never into chat.
 
 Portal
-  Plain: the Traigent website where your account lives - it generates your
+  Plain: the Traigent portal site where your account lives - it generates your
   Traigent portal key (listed there under "API keys") and shows your
   optimization runs and their results. You reach it the first time with the
   access code Traigent emails you, not by signing up on the page directly.
