@@ -3298,6 +3298,213 @@ class SkillPackageTests(unittest.TestCase):
         for text in (readme, safety):
             self.assertIn("traigent_log_example_content=false", text)
 
+    # Every guided-flow stage, listed so that adding one is a decision about
+    # the opening promise rather than a silent change to the journey. A stage
+    # the customer never notices still belongs here; what it may not do is
+    # appear without anyone asking whether the promise should have said so.
+    GUIDED_FLOW_STAGES = (
+        "1. inspect quietly",
+        "2. show readiness once",
+        "3. complete the system",
+        "4. validate components locally",
+        "5. prepare the environment and finish free checks",
+        "6. approve and run the baseline",
+        "7. run the honest comparison",
+        "8. verify and report",
+    )
+
+    # What the run asks of the customer, or hands them, in the order it happens
+    # - paired with the numbered promise item that has to name it.
+    #
+    # Three of these were absent from the promise while the flow performed them
+    # anyway: the SDK install, the account request, and the closing skills
+    # handover. The account request is the costly one. It lands mid-run, after
+    # a paid result, and a customer who was not told finds out at the moment
+    # trust is either kept or lost - so the item number is pinned, not merely
+    # the wording: promising the account in item 4 and not item 3 is the claim
+    # that a real result arrives before anything has to be created.
+    CUSTOMER_JOURNEY = (
+        # (what the flow does, promise item, words that item must carry)
+        ("perform safe, read-only discovery", 1, "inspect"),
+        ("render the initial real-world readiness board", 2, "readiness"),
+        ("install the exact declared dependencies", 3, "install the sdk"),
+        ("### 6. approve and run the baseline", 3, "measure today's setup"),
+        # The promise says ACCOUNT, so the flow phrase has to be the sentence
+        # that establishes one. Pinning "ask for the traigent key" instead
+        # left the promise's costliest item - create an account, mid-run,
+        # after a paid result - evidenced by a sentence about a key.
+        ("before being asked to create an account", 4, "traigent account"),
+        ("### 8. verify and report", 5, "compare the runs"),
+        ("hand over the traigent optimization skills", 5, "traigent skills"),
+    )
+
+    @staticmethod
+    def _promise_items() -> dict[int, str]:
+        """The numbered opening, as items, from SKILL.md's own blockquote.
+
+        Bounded by the blockquote itself rather than by the sentence that
+        happens to follow it: the trailing prose under this section is a
+        mandate that can be reworded, and a marker string that stops matching
+        silently widens this block to the rest of the file, where any other
+        numbered list would be read as promise items.
+
+        SKILL.md, not GUIDE.md. #154 deleted the blockquote from GUIDE.md and
+        left a pointer, because the opening script has to be self-contained in
+        the document the assistant actually loads; #164 edited three clauses
+        INSIDE that same blockquote. Either merge order fails loudly, which is
+        correct - a promise with two homes is one that can be changed in one of
+        them. The resolution is one home: #164's three clauses moved into
+        SKILL.md's "## Opening message", and this reads them there. Reading
+        GUIDE.md would now find a pointer and no items at all.
+        """
+        quoted: list[str] = []
+        for raw in (
+            SKILL.read_text().split("## Opening message", 1)[1]
+        ).splitlines():
+            if raw.startswith(">"):
+                quoted.append(raw)
+            elif quoted:
+                break
+        items: dict[int, list[str]] = {}
+        current: int | None = None
+        for raw in quoted:
+            line = raw.lstrip(">").strip()
+            numbered = re.match(r"(\d+)\.\s+(.*)", line)
+            if numbered:
+                current = int(numbered.group(1))
+                items[current] = [numbered.group(2)]
+            elif not line:
+                # A blank quote line closes the list; without this the trailer
+                # paragraph folds into the last item and every phrase below
+                # would pass from the wrong place.
+                current = None
+            elif current is not None:
+                items[current].append(line)
+        return {
+            number: " ".join(" ".join(parts).casefold().split())
+            for number, parts in items.items()
+        }
+
+    def test_the_opening_promise_names_every_stage_the_customer_reaches(self) -> None:
+        """The promise is welded to the flow, in both directions.
+
+        A promise is the first thing a customer reads and the only description
+        of the run they get before agreeing to it, so the failure mode is not a
+        wrong sentence - it is a true one that stops being complete when a
+        stage is added below it. Naming a step is not explaining it: these
+        assertions demand the word, and deliberately not the mandate, which
+        SKILL.md and run-safety.md own.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        items = self._promise_items()
+
+        self.assertEqual(
+            sorted(items), [1, 2, 3, 4, 5], f"unexpected promise items: {items}"
+        )
+        # The promise and the progress markers count the same journey. A sixth
+        # promise item with `Stage <n>/5` still printed underneath it is a
+        # customer told two different things about where they are.
+        denominators = {
+            match.group(1)
+            for text in (
+                skill,
+                " ".join(
+                    (SKILL_ROOT / "references" / "glossary.md")
+                    .read_text()
+                    .casefold()
+                    .split()
+                ),
+            )
+            for match in re.finditer(r"stage (?:<n>|\d)/(\d+)", text)
+        }
+        self.assertEqual(denominators, {str(len(items))})
+
+        headings = tuple(
+            " ".join(line[4:].casefold().split())
+            for line in SKILL.read_text().splitlines()
+            if line.startswith("### ")
+        )
+        self.assertEqual(
+            headings,
+            self.GUIDED_FLOW_STAGES,
+            "the guided flow gained, lost, or reordered a stage. Classify it "
+            "here, and if the customer does or receives anything in it, name "
+            "it in GUIDE.md's opening promise as well.",
+        )
+
+        positions: list[int] = []
+        for flow_phrase, item, promise_phrase in self.CUSTOMER_JOURNEY:
+            with self.subTest(step=promise_phrase):
+                # Counted, not merely found: the ordering check below reads
+                # `index`, which is the FIRST occurrence. A phrase that also
+                # appears in an earlier stage would order the journey by
+                # wherever it happened to be mentioned first rather than by
+                # where the step runs, and the check would still pass.
+                self.assertEqual(
+                    skill.count(flow_phrase),
+                    1,
+                    "the flow no longer does this exactly once, so the "
+                    "promise is either promising something that does not "
+                    "happen or being ordered by the wrong occurrence",
+                )
+                self.assertIn(
+                    promise_phrase,
+                    items[item],
+                    f"promise item {item} does not name this step",
+                )
+                positions.append(skill.index(flow_phrase))
+        # The promise has to tell the journey in the order it is lived, or the
+        # ordering it asserts is decoration.
+        self.assertEqual(
+            positions,
+            sorted(positions),
+            "the promise lists these steps in an order the flow does not run "
+            "them in",
+        )
+        self.assertEqual(
+            [item for _flow, item, _phrase in self.CUSTOMER_JOURNEY],
+            sorted(item for _flow, item, _phrase in self.CUSTOMER_JOURNEY),
+        )
+
+    def test_the_promise_keeps_the_two_mandates_that_bound_it(self) -> None:
+        """The opening promise carries its own scope, and cannot lose it quietly.
+
+        Rewriting the five numbered items is a change to what the run
+        advertises; deleting the two sentences around them is a change to what
+        the run is ALLOWED to do, and the second is invisible in a diff that
+        looks like a copy edit. Both were dropped while this branch rewrote the
+        items above them, which is how the class works: the sentences nobody is
+        editing are the ones that leave.
+
+        `Stop only for:` is a list of exceptions, so it needs the rule it
+        excepts from on the same page - without it the list reads as the whole
+        approval policy, which is the opposite of what it says. And the trailer
+        is what makes the five items a sequence rather than a menu.
+
+        Neither is a second home for a mandate. `SKILL.md` owns "perform safe,
+        read-only discovery without asking for approval" and `run-safety.md`
+        owns what the closing recommendation may claim; both are asserted here
+        so that if either home moves, this pin fails rather than becoming the
+        only surviving statement of a rule.
+        """
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+
+        for phrase in (
+            "baseline evidence decides the next step",
+            "proceed with read-only inspection after stating the plan",
+            "do not make the user approve safe discovery",
+            "stop only for:",
+        ):
+            with self.subTest(guide=phrase):
+                self.assertIn(phrase, guide)
+        self.assertIn(
+            "perform safe, read-only discovery without asking for approval",
+            skill,
+        )
+        self.assertIn("never promise improvement", safety)
+
     def test_continue_cta_is_direct_and_evidence_based(self) -> None:
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         skill = " ".join(SKILL.read_text().casefold().split())

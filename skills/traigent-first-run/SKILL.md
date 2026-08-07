@@ -138,9 +138,11 @@ For mixed states, show real components as `✅` and only generated substitutes a
 >
 > 1. **Inspect** - preserve your agent, dataset, and evaluator.
 > 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - measure today's setup with calls, cost, and time.
-> 4. **Optimize** - preview a bounded Traigent search after the baseline.
-> 5. **Results** - compare the runs and recommend one next step.
+> 3. **Baseline** - install the SDK, then measure today's setup with calls, cost, and time.
+> 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
+>    bounded managed search.
+> 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
+>    you can keep going alone.
 >
 > I will mark each stage with measured numbers when available. Readiness checks the score and
 > setup—not agent accuracy or an optimization result. I explain details only if action is needed.
