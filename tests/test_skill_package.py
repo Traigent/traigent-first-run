@@ -2646,6 +2646,17 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(document["agent_type"], namespace["AGENT_TYPE"])
         self.assertEqual(document["max_trials"], namespace["ENHANCED_MAX_TRIALS"])
         self.assertNotIn("configuration_space", document)
+        # Undeclared keys are refused, so the one producer in this package has
+        # to emit declared fields only. Asserting the set - not just the
+        # absence of the alias - is what makes that a checked carve-out rather
+        # than an assumption: a key added to the generator would fail here,
+        # where the message names it, instead of at the scorer.
+        self.assertEqual(
+            set(document),
+            set(document) & {spec.name for spec in READINESS.CONFIG_SPACE_FIELDS},
+            "the producer emits a key CONFIG_SPACE_FIELDS does not declare, "
+            "which the scorer now refuses",
+        )
         _pillar, conditions = score_config_space(document)
         self.assertNotIn(
             "agent-no-varying-knobs",
@@ -4949,6 +4960,12 @@ class SkillPackageTests(unittest.TestCase):
             ("an inverted range", dict(base, bounds={"widget": {"low": 5, "high": 1}})),
             ("a phantom wired name", dict(base, wired=["widgets"])),
             ("a fractional trial budget", dict(base, max_trials=1.5)),
+            # The section promises every other key is refused by name. It used
+            # to promise the opposite - "ignored whole" - and that promise is
+            # what let `max_trial` silently delete the trial budget.
+            ("a misspelled trial budget", dict(base, max_trial=3)),
+            ("a misspelled bounds key", dict(base, bound={"widget": {}})),
+            ("an undeclared key", dict(base, seed_policy="whatever")),
         ):
             with self.subTest(shape=description):
                 with self.assertRaises(READINESS.ConfigSpaceInputError):

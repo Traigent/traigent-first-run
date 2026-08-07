@@ -1306,17 +1306,132 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                     spec.read(spec.name, object())
                 self.assertIn(spec.name, str(raised.exception))
 
-    def test_a_key_the_declaration_does_not_name_is_ignored_whole(self) -> None:
-        """The documented behaviour for an unknown key: ignored, not half-read."""
-        facts = MODULE.agent_facts_from_config_space(
-            {
-                "knobs": {"temperature": [0.0, 1.0]},
-                "wired": ["temperature"],
-                "notes": {"anything": [object]},
-                "seed_policy": "whatever",
-            }
+    def test_a_key_the_declaration_does_not_name_is_refused(self) -> None:
+        """An undeclared key was ignored, and that ignoring inflated a score.
+
+        This test asserted the opposite. Ignoring the key was called a
+        compatibility guarantee, but nothing had ever been published for it to
+        be compatible with, and it made the schema's own front door the defect
+        class `CONFIG_SPACE_FIELDS` exists to close: a key the declaration does
+        not name cannot be told apart from a misspelling of one it does, and
+        the document is then scored as though the author had never written the
+        field at all. Measured end to end on the trunk this replaces,
+        `max_trial` for `max_trials` moved a 512-configuration space from
+        89 STRONG to 92 EXCELLENT under a byte-identical evidence line, exit 0.
+
+        `bounds` is dropped the same way by `bound`, and the knob then scores
+        against the canonical range instead of the declared one.
+        """
+        for field, typo in (("max_trials", "max_trial"), ("bounds", "bound")):
+            with self.subTest(field=field):
+                with self.assertRaises(MODULE.ConfigSpaceInputError) as raised:
+                    MODULE.agent_facts_from_config_space(
+                        {
+                            "knobs": {"temperature": [0.0, 1.0]},
+                            "wired": ["temperature"],
+                            typo: (
+                                3
+                                if field == "max_trials"
+                                else {"temperature": {"low": 0.0, "high": 1.0}}
+                            ),
+                        }
+                    )
+                message = str(raised.exception)
+                self.assertIn(repr(typo), message)
+                # Not just `repr(field)` anywhere in the message: the message
+                # also lists every declared field, so that assertion passes
+                # with the suggestion deleted. Pin the suggestion itself.
+                self.assertIn(
+                    f"did you mean {field!r}?",
+                    message,
+                    "a near miss must suggest the field it is a near miss of",
+                )
+
+        # A key nowhere near a declared field is still refused, just without a
+        # suggestion - the point is that no undeclared key is read around.
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as unrelated:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": {"temperature": [0.0, 1.0]},
+                    "wired": ["temperature"],
+                    "seed_policy": "whatever",
+                }
+            )
+        self.assertIn("'seed_policy'", str(unrelated.exception))
+
+    def test_every_declared_field_is_accepted_by_the_undeclared_key_guard(
+        self,
+    ) -> None:
+        """The guard must be derived from the declaration, not a second list.
+
+        A hand-written set of legal keys is the same two-artifact shape that
+        made the schema table drift from the validator: adding a field to
+        `CONFIG_SPACE_FIELDS` would then start refusing it.
+        """
+        sample = {
+            "knobs": {"temperature": [0.0, 1.0]},
+            "configuration_space": {"temperature": [0.0, 1.0]},
+            "agent_type": "general",
+            "max_trials": 3,
+            "wired": ["temperature"],
+            "bounds": {"temperature": {"low": 0.0, "high": 1.0}},
+        }
+        declared = {spec.name for spec in MODULE.CONFIG_SPACE_FIELDS}
+        # Built from the declaration, not listed beside it: a field removed
+        # from `CONFIG_SPACE_FIELDS` drops out of the document here, and a
+        # field added without a sample value fails on the line below rather
+        # than leaving the guard untested for it.
+        self.assertLessEqual(
+            declared,
+            set(sample),
+            "a newly declared field needs a sample value here",
         )
-        self.assertEqual(facts.knobs, {"temperature": [0.0, 1.0]})
+        MODULE.agent_facts_from_config_space({name: sample[name] for name in declared})
+
+    def test_the_undeclared_key_guard_reads_the_declaration_it_guards(self) -> None:
+        """The derivation has to be load-bearing today, not once a field moves.
+
+        The test above builds its document FROM `CONFIG_SPACE_FIELDS`, so it
+        proves the two agree - and two identical things agree whether one is
+        derived from the other or copied from it. Replacing
+        `{spec.name for spec in CONFIG_SPACE_FIELDS}` with a hand-written set
+        of the same six names fails nothing at all: measured, the whole suite
+        stays green apart from the behaviour lock, which is only stale because
+        the file's bytes changed. A guard whose mutation nothing catches is a
+        guard that documents an intention.
+
+        So the two sets are made to DIFFER here. A field is added to the
+        declaration at runtime and the same document is refused before and
+        accepted after; a copied list cannot follow that, and a hand-written
+        one fails on the second call.
+        """
+        document = {
+            "knobs": {"temperature": [0.0, 1.0]},
+            "wired": ["temperature"],
+            "a_field_declared_after_this_guard_was_written": "x",
+        }
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE._reject_undeclared_fields(document)
+
+        original = MODULE.CONFIG_SPACE_FIELDS
+        MODULE.CONFIG_SPACE_FIELDS = original + (
+            MODULE.ConfigSpaceField(
+                "a_field_declared_after_this_guard_was_written",
+                "string",
+                "no",
+                lambda field, value: value,
+            ),
+        )
+        try:
+            MODULE._reject_undeclared_fields(document)
+        finally:
+            MODULE.CONFIG_SPACE_FIELDS = original
+
+        # And back: the restore is part of the assertion, not cleanup. A guard
+        # that kept the added field would pass the line above for the wrong
+        # reason.
+        with self.assertRaises(MODULE.ConfigSpaceInputError):
+            MODULE._reject_undeclared_fields(document)
 
     def test_candidate_values_are_scalars_not_containers(self) -> None:
         """A nested value crashed where the schema promised a named refusal.
