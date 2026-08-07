@@ -4386,6 +4386,12 @@ class SkillPackageTests(unittest.TestCase):
             "dataset-no-expected-outputs",
             "dataset-integrity-fail",
             "dataset-tune-holdout-overlap",
+            # #165's two rungs. Same ceilings as the declared pair, and a
+            # different category: `declare-data-provenance` asks the user to
+            # change the file, which #149's rule reads as a repair. #165's own
+            # adapter tests assert the stop.
+            "dataset-undeclared-provenance",
+            "dataset-mostly-undeclared",
         }
         scoping = {
             "dataset-fully-synthetic",
@@ -4397,11 +4403,6 @@ class SkillPackageTests(unittest.TestCase):
             # as the rung above, on the model-written answers only, and says
             # the run proceeds meanwhile.
             "dataset-mostly-generated-answer-key",
-            # #165's two rungs. Same ceilings as the declared pair beside them
-            # and the same category: what the result IS does not change with
-            # how the corpus came to be unobserved, only the remedy does.
-            "dataset-undeclared-provenance",
-            "dataset-mostly-undeclared",
             "dataset-coarse-resolution",
         }
         # The third category, and the reason it has to exist: one condition
