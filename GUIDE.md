@@ -115,7 +115,7 @@ The default paid path uses two measurements with the same tuning data, evaluator
 agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible six-configuration sweep. The
+   when no baseline exists does the assistant prepare a credible twelve-configuration sweep. The
    assistant automatically uses the vendor the project already has configured when one is already
    available; the user only gets asked to choose if there is no usable vendor already configured
    for the project. The user sees its best configuration, primary tuning metric, cost, latency,
@@ -139,7 +139,7 @@ Do not add an offline baseline rerun or a mandatory third optimization pass. Do 
 shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
 the user actually defined. When the assistant prepares the walkthrough agent and its missing
 baseline,
-generate enough real controls for the six-row baseline and add further controls to the enhanced
+generate enough real controls for the twelve-row baseline and add further controls to the enhanced
 run. Another iteration is optional only after the result identifies a specific hypothesis.
 
 ## Result interpretation

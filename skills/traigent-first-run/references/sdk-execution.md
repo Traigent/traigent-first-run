@@ -958,7 +958,7 @@ configurations per allowed trial - grid would only ever reach a corner of it; us
 instead and say why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
-truncate the grid. Normally verify all six distinct points executed and that `BASELINE_CONFIG`
+truncate the grid. Normally verify all twelve distinct points executed and that `BASELINE_CONFIG`
 appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's
@@ -1127,7 +1127,7 @@ assert optimized_results.cloud_url is not None, "optimization is not available i
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
-returned all six intended distinct rows including its initial configuration. For an explicitly
+returned all twelve intended distinct rows including its initial configuration. For an explicitly
 approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
 failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
 as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from
