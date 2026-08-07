@@ -1,7 +1,8 @@
 # First-Run Field Test — multi-agent onboarding QA
 
 **What this is.** A field test of this repo's onboarding flow (README → `GUIDE.md` →
-`.env.example` → `templates/`) run the way a real user would: a coding assistant follows
+`.env.example` → `templates/`, the flow as it stood when this test ran; `templates/` has since
+been deleted in favour of the files it pointed at) run the way a real user would: a coding assistant follows
 `GUIDE.md` step by step. Instead of one run, we ran **seven in parallel**, each in a different
 "customer environment," to find where the guide breaks, misleads, or risks spend — **before**
 a real user hits it. The doc/flow fixes in this PR come from this test; this report is the
