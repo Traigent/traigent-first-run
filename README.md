@@ -156,12 +156,12 @@ walkthrough dataset scoring `65/100 WORKABLE` while blocked is therefore the ord
 a self-contradiction: the score stands, and the line says how many things have to clear first,
 where each of them is marked, and what happens once they are cleared.
 
-The card labels the two kinds differently, and the label is the whole message. `FIX BEFORE PAID
-RUN` means the current components cannot yet support a trustworthy paid comparison and something
-has to be created or repaired first - no dataset, no expected answers, an evaluator that scores a
-wrong answer as well as a right one, a tuning set that shares examples with validation, nothing
-scoreable in the split the search would tune on. Follow the named repair or evidence-gathering
-action first. `LIMITED TO 89` means the paid comparison can proceed, but the available evidence
+The card labels the two kinds differently, and the label is the whole message.
+`FIX BEFORE PAID RUN` means the current components cannot yet support a trustworthy paid
+comparison and something has to be created or repaired first - no dataset, no expected answers, an
+evaluator that scores a wrong answer as well as a right one, a tuning set that shares examples with
+validation, nothing scoreable in the split the search would tune on. Follow the named repair or
+evidence-gathering action first. `LIMITED TO 89` means the paid comparison can proceed, but the available evidence
 bounds what the result may claim; it names the number so "why is this 89" has an answer on the
 same line.
 

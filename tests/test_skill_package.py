@@ -2008,7 +2008,11 @@ class SkillPackageTests(unittest.TestCase):
                 break
 
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
-        gloss = readme.split("`paid run blocked` is the headline", 1)[1].split(
+        # Re-anchored on #171's wording: the README no longer says "`paid run
+        # blocked` is the headline", because #171 replaced that headline with a
+        # `BLOCKER` line under the score. The gloss this reads is the same
+        # paragraph, found by the label it now leads with.
+        gloss = readme.split("`fix before paid run` means", 1)[1].split(
             "`limited to 89` means", 1
         )[0]
         if thin_evidence_blocks:
@@ -2605,14 +2609,20 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """README named three labels; the code prints four.
 
-        `PAID RUN BLOCKED` is the headline flag, and every blocking condition
-        beneath it prints `FIX BEFORE PAID RUN` - the line that actually tells
-        the reader what to do, and the only one the public explanation omitted.
+        `BLOCKER` is the headline flag, and every blocking condition beneath it
+        prints `FIX BEFORE PAID RUN` - the line that actually tells the reader
+        what to do, and the only one the public explanation omitted.
+
+        The headline was `PAID RUN BLOCKED` until #171 moved the holding onto
+        its own line under the score, on the grounds that a tag beside the band
+        reads as the band being disbelieved. `BLOCKER` is what the card prints
+        now, so it is what this checks; the pairing - README says what the code
+        prints - is unchanged.
         """
         readme = (ROOT / "README.md").read_text()
         card_source = _READINESS.read_text()
         for label in (
-            "PAID RUN BLOCKED",
+            "BLOCKER",
             "FIX BEFORE PAID RUN",
             "LIMITED TO",
             "WOULD LIMIT TO",
