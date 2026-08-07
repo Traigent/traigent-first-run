@@ -3243,12 +3243,213 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
         # `power_ceiling(0)`, not `(3)`: three comparable examples is a wiring
         # check, which is a run the guide sanctions, so that cap is advisory
-        # now. Zero scoreable examples is the state that still blocks - there is
-        # nothing to compare, so there is no result for a ceiling to bound.
+        # now (#149). Zero scoreable examples is the state that still blocks -
+        # nothing to compare, so no result for a ceiling to bound. The string is
+        # `BLOCKER` and not `PAID RUN BLOCKED` because #171 moved the holding
+        # onto its own line under the score; both halves of this line changed,
+        # on different branches, for different reasons.
         blocking = rendered(MODULE.power_ceiling(0))
-        self.assertIn("PAID RUN BLOCKED", blocking)
+        self.assertIn("BLOCKER", blocking)
         self.assertIn("FIX BEFORE PAID RUN", blocking)
         self.assertNotIn("LIMITED TO", blocking)
+
+    def test_the_band_and_the_block_are_not_printed_as_one_verdict(self) -> None:
+        """A grade and a gate answer different questions, so they get two lines.
+
+        `65/100  WORKABLE  (PAID RUN BLOCKED)` put them adjacent with nothing
+        joining them, and it is the ordinary walkthrough card - a generated
+        dataset scores in the WORKABLE band and is blocked by
+        `dataset-fully-synthetic`. Read as one verdict it contradicts itself,
+        and a reader resolving it either way is wrong: the score is real and
+        the block is real.
+
+        Semantics are unchanged - which caps block and every ceiling stay
+        exactly as they were - so this pins presentation only: the headline
+        carries the band alone, and one BLOCKER line says the score stands,
+        that something has to clear first, and what happens once it does.
+        """
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        cap = MODULE.Cap(
+            "dataset-fully-synthetic",
+            65,
+            "Every row was written by a model.",
+        )
+        score = MODULE.aggregate(
+            pillars, caps=[cap], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.overall, 65)
+        self.assertEqual(score.band, "WORKABLE")
+        self.assertEqual(score.status, "BLOCKED")
+
+        card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
+        headline = card.splitlines()[0]
+        self.assertIn("65/100  WORKABLE", headline)
+        self.assertNotIn("BLOCK", headline)
+
+        blocker = next(line for line in card.splitlines() if "BLOCKER" in line)
+        self.assertIn("65/100 WORKABLE is what your evidence supports", blocker)
+        # Names what happens next, or the keyword is only a louder tag.
+        self.assertIn("run this score again", card)
+        self.assertIn("the paid comparison can start", card)
+        # The reason itself is not repeated up here; one problem, one statement.
+        self.assertEqual(card.count("Every row was written by a model."), 1)
+
+    def test_a_blocked_report_separates_the_band_from_the_gate(self) -> None:
+        """The durable artifact carries the same separation as the card.
+
+        In the card's vocabulary, which is the point of the second half. The
+        report said "Status: PAID RUN BLOCKED" - a fourth token beside
+        `BLOCKER`, `FIX BEFORE PAID RUN` and `LIMITED TO n`, and the only one
+        no document defines. A reader of the durable artifact met a term the
+        guide does not carry.
+        """
+        ceiling = MODULE.FULLY_SYNTHETIC_CEILING
+        # Full confidence, so the band is the one the thresholds give rather
+        # than a thin-evidence demotion of it.
+        band, _ = MODULE.band_for(ceiling, 1.0, 1.0)
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars,
+            caps=[
+                MODULE.Cap("dataset-fully-synthetic", ceiling, "Model-written rows.")
+            ],
+            knobs=(),
+            weights=dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        report = MODULE.render_markdown(score)
+        self.assertIn(f"**{ceiling}/100 - {band}**\n", report)
+        self.assertNotIn(f"**{ceiling}/100 - {band}**  ·", report)
+        self.assertIn("**BLOCKER.**", report)
+        self.assertIn("Both can be true at once.", report)
+        # And no term the reader cannot look up. The machine-readable answer to
+        # this question is `status` in the `--json` payload, not a token here.
+        self.assertNotIn("PAID RUN BLOCKED", report)
+
+    def test_the_readme_worked_example_is_the_one_the_scorer_produces(self) -> None:
+        """`65/100 WORKABLE` is a claim about the scorer, made in two places.
+
+        README.md states it as the ordinary blocked-but-good card, and the
+        `blocker_lines` docstring states it again, and nothing related either to
+        `FULLY_SYNTHETIC_CEILING` or to `band_for`. Both happen to be right
+        today, which is exactly the state a shared value is in just before it
+        drifts: re-pricing the cap or moving a band threshold leaves two
+        documents describing a card the scorer no longer prints.
+
+        Welded to the scorer rather than to each other, because a check that two
+        documents agree passes when both are wrong.
+        """
+        ceiling = MODULE.FULLY_SYNTHETIC_CEILING
+        band, _ = MODULE.band_for(ceiling, 1.0, 1.0)
+        worked_example = f"{ceiling}/100 WORKABLE"
+        self.assertEqual(band, "WORKABLE", "the worked example is no longer WORKABLE")
+
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(
+            worked_example,
+            " ".join(readme.replace("`", "").split()),
+            f"README states a fully-synthetic worked example that is not "
+            f"{worked_example}, which is what the scorer produces",
+        )
+        docstring = MODULE.blocker_lines.__doc__ or ""
+        self.assertIn(
+            worked_example,
+            " ".join(docstring.split()),
+            f"the blocker_lines docstring no longer describes {worked_example}",
+        )
+
+    def test_an_unblocked_card_says_nothing_about_a_blocker(self) -> None:
+        """The line appears only when something actually blocks."""
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        score = MODULE.aggregate(
+            pillars, caps=[], knobs=(), weights=dict(MODULE.DEFAULT_WEIGHTS)
+        )
+        self.assertEqual(score.status, "OK")
+        card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
+        self.assertNotIn("BLOCK", card)
+
+    def test_the_blocker_line_counts_what_actually_blocks(self) -> None:
+        """The sentence agrees in number with the things it is counting.
+
+        The line promises the reader an inventory: this many things stand
+        between you and the paid run, each one marked below. That promise is
+        the decision under test, so it is driven over several counts rather
+        than pinned once - a card that says "one thing has to be cleared" over
+        three marked lines is misinforming the reader about the size of the
+        job ahead, and a reader who trusts it clears one and re-runs.
+
+        Only blocking caps count. An advisory ceiling rides along in every
+        case here precisely because it must not be counted: it lowers what the
+        result may claim, it does not stand in the way of the run.
+        """
+
+        def announcement(card: str) -> str:
+            """The BLOCKER paragraph as one line, wrapping undone."""
+            lines = card.splitlines()
+            start = next(i for i, line in enumerate(lines) if "BLOCKER" in line)
+            body = []
+            for line in lines[start:]:
+                if not line.strip():
+                    break
+                body.append(line.strip())
+            return " ".join(body)
+
+        pillars = [
+            MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        # Distinct real conditions, so nothing is deduplicated away and the
+        # count the card renders is the count the caller asked for.
+        blockers = [
+            MODULE.Cap("dataset-fully-synthetic", 65, "Every row came from a model."),
+            MODULE.Cap("evaluator-invalid", 60, "It scores a wrong answer as right."),
+            MODULE.Cap("dataset-tune-holdout-overlap", 55, "The splits share rows."),
+        ]
+        advisory = MODULE.power_ceiling(15)
+        self.assertFalse(advisory.blocks)
+
+        for count in (1, 2, 3):
+            with self.subTest(blocking=count):
+                score = MODULE.aggregate(
+                    pillars,
+                    caps=[*blockers[:count], advisory],
+                    knobs=(),
+                    weights=dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                self.assertEqual(score.status, "BLOCKED")
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                said = announcement(card)
+
+                # What the reader is sent to find: one marked line per thing.
+                marked = [
+                    line
+                    for line in card.splitlines()
+                    if line.strip().startswith("FIX BEFORE PAID RUN")
+                ]
+                self.assertEqual(len(marked), count)
+
+                if count == 1:
+                    self.assertIn("one thing has to be cleared", said)
+                    self.assertIn("Fix it,", said)
+                    self.assertNotIn("things have", said)
+                    self.assertNotIn("each marked", said)
+                    self.assertNotIn("Fix them,", said)
+                else:
+                    self.assertIn(f"{count} things have to be cleared", said)
+                    self.assertIn("Fix them,", said)
+                    self.assertIn("each marked", said)
+                    self.assertNotIn("one thing has", said)
+                    self.assertNotIn("Fix it,", said)
 
     def test_a_ceiling_that_is_not_the_limit_is_not_printed_as_one(self) -> None:
         """A cap line may not state a number that describes nothing.

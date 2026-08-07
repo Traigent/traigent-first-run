@@ -142,19 +142,28 @@ the close, on a score no ceiling is capping.
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
 shares examples with validation, a dataset that is mostly or entirely generated, or simply too few
-comparable examples for a stable comparison. A cap is a ceiling on the result, not a
-deduction and not a refusal: the run continues, the pre-cap average stays in the report, and the
-number simply cannot claim more than the evidence supports.
+comparable examples for a stable comparison. What a cap does to the score is bound it: a cap is a
+ceiling on the number, not a deduction and not a refusal to score. The walkthrough carries on, the
+pre-cap average stays in the report, and the number simply cannot claim more than the evidence
+supports.
 
-The card labels the two kinds differently, and the label is the whole message. `PAID RUN BLOCKED`
-is the headline, and each blocking condition is listed under it as `FIX BEFORE PAID RUN` with the
-thing to fix. It means the current components cannot yet support a trustworthy paid comparison and
-something has to be created or repaired first - no dataset, no expected answers, an evaluator that
-scores a wrong answer as well as a right one, a tuning set that shares examples with validation,
-nothing scoreable in the split the search would tune on.
-Follow the named repair or evidence-gathering action first. `LIMITED TO 89` means the paid
-comparison can proceed, but the available evidence bounds what the result may claim; it names the
-number so "why is this 89" has an answer on the same line.
+Whether the paid run may start is a separate question, and some of those same conditions answer it
+too: they hold the paid comparison until they are cleared, while the rest only bound what the
+result may claim. The card says the holding on its own `BLOCKER` line under the score rather than
+as a tag beside the band, because the band and the block grade different things - the band grades
+how good the evidence is, the blocker says whether the paid comparison may start yet. A generated
+walkthrough dataset scoring `65/100 WORKABLE` while blocked is therefore the ordinary case and not
+a self-contradiction: the score stands, and the line says how many things have to clear first,
+where each of them is marked, and what happens once they are cleared.
+
+The card labels the two kinds differently, and the label is the whole message. `FIX BEFORE PAID
+RUN` means the current components cannot yet support a trustworthy paid comparison and something
+has to be created or repaired first - no dataset, no expected answers, an evaluator that scores a
+wrong answer as well as a right one, a tuning set that shares examples with validation, nothing
+scoreable in the split the search would tune on. Follow the named repair or evidence-gathering
+action first. `LIMITED TO 89` means the paid comparison can proceed, but the available evidence
+bounds what the result may claim; it names the number so "why is this 89" has an answer on the
+same line.
 
 Generated data and a small comparison set land on the second side, not the first. A walkthrough
 dataset is what this guide writes for a user who has none, and a handful of rows is a wiring check -

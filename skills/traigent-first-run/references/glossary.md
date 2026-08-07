@@ -278,14 +278,15 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
-  limit to" is one you have not reached: a stricter cap, or an average that has
-  not climbed that high yet.
-  Blocked: the flag the card shows when a blocking cap fired. It does not mean
-  every component is broken; it means one thing in the current state must be
-  created or repaired before a paid comparison is worth making. A cap
-  that only limits the claim does not set it, because the run is still worth
-  making. Either way the card names the specific thing rather than only lowering
-  a number.
+  limit to" is one that only starts to matter once something lower is cleared.
+  Blocked: a `BLOCKER` line under the score, shown when a blocking cap fired. It
+  does not mean every component is broken; it means one thing in the current
+  state must be created or repaired before a paid comparison is worth making. A
+  cap that only limits the claim does not set it, because the run is still worth
+  making. Band and block answer different questions - the band grades the
+  evidence, the block says whether the paid run may start - so a good band
+  beside a block is no contradiction. The line says the score stands, names what
+  clears first, and what follows. Never read it as the score disbelieved.
 
   Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
   measures, the strongest evidence, the one limitation that most affects the next action, and that
