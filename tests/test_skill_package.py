@@ -422,6 +422,68 @@ def conversation_contract_documents() -> list[Path]:
     ]
 
 
+CI_WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+
+
+def ci_workflow_jobs(workflow: Path) -> dict[str, int | None]:
+    """Every job in one workflow, mapped to its declared `timeout-minutes`.
+
+    `None` means the job declares no job-level bound, or declares more than one
+    and so states no single decision. Both are failures, and the caller says
+    which failure it is checking for.
+
+    Parsed by indentation rather than with PyYAML: the CI job that runs this
+    test installs `ruff`, `black` and the three pinned first-run dependencies,
+    none of which declares PyYAML, so importing it here would be relying on a
+    transitive dependency to stay transitive.
+
+    Written once because two tests ask different questions of the same parse.
+    Parsing twice would let them disagree about what a job even is, which is the
+    shape of defect they exist to catch.
+    """
+    in_jobs = False
+    bodies: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in workflow.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_jobs = line.startswith("jobs:")
+            current = None
+            continue
+        if in_jobs and indent == 2 and line.rstrip().endswith(":"):
+            current = line.strip().rstrip(":")
+            bodies[current] = []
+        elif in_jobs and current is not None and indent >= 4:
+            bodies[current].append(line)
+    jobs: dict[str, int | None] = {}
+    for job, body in bodies.items():
+        declared = [
+            line.strip()
+            for line in body
+            if len(line) - len(line.lstrip()) == 4
+            and line.strip().startswith("timeout-minutes:")
+        ]
+        jobs[job] = int(declared[0].split(":", 1)[1]) if len(declared) == 1 else None
+    return jobs
+
+
+def behavioral_harness():
+    """The offline harness module, imported the way the test runner reaches it.
+
+    `python -m unittest discover -s tests` puts `tests/` on the path, so
+    `tests/behavioral/test_contracts.py` can import this directly. This file is
+    also run on its own, so the insert is repeated here rather than assumed -
+    the same thing `tools/relock.py` does for the same reason.
+    """
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    from behavioral import harness
+
+    return harness
+
+
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
@@ -3007,6 +3069,82 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, offline_job)
         self.assertNotIn("pip install", offline_job)
         self.assertNotIn("setup-python", offline_job)
+
+    def test_every_ci_job_declares_its_own_timeout(self) -> None:
+        """An undeclared job inherits GitHub's 360-minute default.
+
+        Six hours of runner time for a job whose slowest observed run is under
+        two minutes, and the pull request stays blocked for all six. The bound
+        is asserted per job rather than per workflow because the default is
+        applied per job: adding one without a `timeout-minutes` silently
+        reintroduces the whole defect.
+
+        This asks only whether a bound EXISTS and is not GitHub's own default
+        written down. Whether the bound is large enough to be worth anything is
+        a different question, and asking only this one is what let the two
+        halves of this change disagree - see the sibling test below.
+        """
+        self.assertTrue(CI_WORKFLOWS, "no workflow files found")
+        for workflow in CI_WORKFLOWS:
+            jobs = ci_workflow_jobs(workflow)
+            with self.subTest(workflow=workflow.name):
+                self.assertTrue(jobs, f"{workflow.name} declares no jobs")
+                for job, minutes in jobs.items():
+                    with self.subTest(job=job):
+                        self.assertIsNotNone(
+                            minutes,
+                            f"{workflow.name}:{job} must declare exactly one "
+                            "job-level timeout-minutes",
+                        )
+                        self.assertGreater(minutes, 0)
+                        # Anything at or above GitHub's own default is not a
+                        # bound, it is the default written down.
+                        self.assertLess(minutes, 360)
+
+    def test_every_ci_job_outlives_the_harness_bound(self) -> None:
+        """A job cap below the harness bound destroys the harness's diagnostic.
+
+        The existence check above passed against both halves of this change
+        while they contradicted each other. `harness.py --all` calls the
+        calibrator with no `--timeout`, so it runs on the derived bound - 660s
+        today - and the two jobs declared 600s and 300s. On that path GitHub
+        cancelled the job first and reported a bare cancellation, so the partial
+        stdout and stderr `run_command` collects from the killed child, which is
+        the entire reason the derived bound exists, was never written.
+
+        So the relation is asserted, not the number: the workflow may declare
+        more than the floor, and a change to the calibrator's ceiling moves the
+        floor without this test or the workflow comment being edited. Failing
+        here means one of the two must move, and the message says which way.
+        """
+        harness = behavioral_harness()
+        floor = harness.minimum_ci_job_timeout_minutes()
+        self.assertGreater(
+            floor * 60,
+            harness.worst_case_command_timeout_seconds(),
+            "the floor must strictly outlive the command bound, not tie it",
+        )
+        self.assertTrue(CI_WORKFLOWS, "no workflow files found")
+        for workflow in CI_WORKFLOWS:
+            for job, minutes in ci_workflow_jobs(workflow).items():
+                with self.subTest(workflow=workflow.name, job=job):
+                    self.assertIsNotNone(minutes)
+                    self.assertGreaterEqual(
+                        minutes,
+                        floor,
+                        f"{workflow.name}:{job} declares timeout-minutes: "
+                        f"{minutes}, which is {minutes * 60}s. One allowlisted "
+                        "command can hold this job for "
+                        f"{harness.worst_case_command_timeout_seconds()}s "
+                        "(the calibrator's "
+                        f"{harness.calibration_budget_ceiling_seconds()}s "
+                        "ceiling plus "
+                        f"{harness.CALIBRATION_TIMEOUT_HEADROOM_SECONDS}s of "
+                        "headroom), so GitHub would cancel the job before the "
+                        "harness could write the partial output that explains "
+                        f"the hang. Raise it to at least {floor}, or lower the "
+                        "calibrator's ceiling.",
+                    )
 
     def test_baseline_pins_grid_and_warns_about_the_auto_fallback(self) -> None:
         """Verified against installed traigent 0.25.0.

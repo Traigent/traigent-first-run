@@ -7,6 +7,29 @@ on:
 jobs:
   offline-contract:
     runs-on: ubuntu-latest
+    # Measured, and re-derivable. Source: every successful `offline-contract`
+    # job on `first-run-guide` from 2026-07-20 to 2026-08-06, n=65, read with
+    # `gh run list --branch first-run-guide --workflow validate.yml` and
+    # `gh run view <id> --json jobs`. Durations: 13s min / 19s p50 / 31s p95 /
+    # 32s max.
+    #
+    # The median is the wrong number to bound against here, because the series
+    # trends upward as the package grows: the ten most recent runs are 27-32s
+    # against a whole-window p50 of 19s.
+    #
+    # But the measurement is not what sets this number, and this job is the
+    # reason. `harness.py --all` calls `calibrate_evaluator.py` with no
+    # `--timeout`, so that command runs on the DERIVED bound - the calibrator's
+    # own ceiling plus headroom, 660s today. A five-minute job cap is 360s below
+    # that, so a hung calibration was killed by GitHub with a bare cancellation
+    # and the harness never wrote the partial stdout and stderr that says why.
+    # The floor is therefore derived from the same constant, not chosen against
+    # the measurement, and
+    # `tests/test_skill_package.py::test_every_ci_job_outlives_the_harness_bound`
+    # fails if this number drops below it. It is 14 minutes today: 11 for the
+    # command, 3 for everything else in the job - a little over twice the
+    # slowest whole job of either kind ever recorded, 104s.
+    timeout-minutes: 14
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -51,6 +74,28 @@ jobs:
   validate:
     needs: offline-contract
     runs-on: ubuntu-latest
+    # Same source and window, n=68 (this job predates `offline-contract`, hence
+    # the three extra runs): 12s min / 22.5s p50 / 97s p95 / 104s max, with the
+    # same upward trend - the ten most recent are 59-104s. Added to the observed
+    # maximum, not to the median: the slow-evaluator end-to-end test this branch
+    # introduces sleeps 33s inside a local scorer - 33s by construction, and
+    # 34.2s wall for the test measured on a developer machine, not on a runner -
+    # so the projected worst case for the job's own work is about 140s.
+    #
+    # This job runs `tests/behavioral/test_contracts.py`, which drives the same
+    # `run_command`, so the same floor applies for the same reason: at ten
+    # minutes the job was killed 60s before the harness's own 660s bound could
+    # fire, and the preserved-output diagnostic was exactly what was lost. Both
+    # jobs now carry one derived floor rather than two hand-picked multiples of
+    # two different measurements - the earlier 5x/10x split was justified by the
+    # jobs' own runtimes, which is not the quantity that decides who kills the
+    # command first.
+    #
+    # The three-minute margin still covers what was reasoned about before: this
+    # job makes three `pip install` calls against live PyPI, the only step in
+    # either job whose duration depends on a third party, and a slow index must
+    # not be reported as a broken pull request.
+    timeout-minutes: 14
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
