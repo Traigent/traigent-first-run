@@ -539,6 +539,60 @@ def cap_construction_blocks(source: str, default: object) -> dict[str, set[str]]
     return found
 
 
+# A markdown block-level opener. Statements are cut at these as well as at
+# sentence punctuation: a bullet ends at the newline and carries no full stop,
+# so joining a block into one string makes two adjacent bullets a single
+# "sentence" - and this guidance states the rungs as bullets.
+_BLOCK_OPENER = re.compile(r"\s*(?:[-*+]\s|\d+[.)]\s|\||#{1,6}\s|>)")
+
+
+def prose_statements(text: str) -> list[str]:
+    """One document, cut into the statements a reader actually reads.
+
+    Wrapped lines are rejoined first, because this guidance hard-wraps and a
+    sentence routinely spans three source lines; splitting on newlines alone
+    would tear a statement in half and report each half as saying nothing.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            blocks.append(" ".join(" ".join(current).split()))
+            current.clear()
+
+    for line in text.splitlines():
+        if not line.strip():
+            flush()
+            continue
+        if _BLOCK_OPENER.match(line):
+            flush()
+        current.append(line)
+    flush()
+    return [
+        sentence
+        for block in blocks
+        for sentence in re.split(r"(?<=[.!?])\s+", block)
+        if sentence.strip()
+    ]
+
+
+RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
+SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
+
+# The config-space document is a contract between prose the assistant follows and
+# code that reads it, so these tests weld the documented shape to the real
+# consumer rather than re-describing it.
+_READINESS = SKILL_ROOT / "scripts" / "readiness.py"
+_SPEC = importlib.util.spec_from_file_location(
+    "first_run_readiness_for_prose", _READINESS
+)
+READINESS = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+sys.modules[_SPEC.name] = READINESS
+_SPEC.loader.exec_module(READINESS)
+
+
 def prose_sentences(text: str) -> list[str]:
     """Split markdown prose into sentences without gluing list items together.
 
@@ -706,7 +760,7 @@ def instructional_documents() -> dict[str, str]:
     return {
         name: (ROOT / name).read_text(encoding="utf-8")
         for name in sorted(listed.stdout.split("\0"))
-        if name and not name.startswith("tests/")
+        if name and not name.startswith(("tests/", "reports/"))
     }
 
 
@@ -3552,9 +3606,14 @@ class SkillPackageTests(unittest.TestCase):
         for expected in ("README.md", "AGENTS.md", "CLAUDE.md", "GUIDE.md"):
             with self.subTest(document=expected):
                 self.assertIn(expected, published)
+        # `templates/` was the directory this asserted, and #192 deleted it:
+        # the two compatibility templates in it were a second home for the run
+        # plan and the preflight script, which is the duplicate this corpus
+        # exists to find. `skills/` is asserted instead - a directory that is
+        # still published, so the check still fails if the corpus narrows.
         self.assertTrue(
-            any(name.startswith("templates/") for name in published),
-            "nothing under templates/ is in the corpus",
+            any(name.startswith("skills/") for name in published),
+            "nothing under skills/ is in the corpus",
         )
 
     # Where the user is sent, and how they get there. Both belong to the
