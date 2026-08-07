@@ -606,8 +606,8 @@ space unchanged, even when it contains one row. The generated walkthrough's two 
 sizes, stated as exact numbers and never as "roughly": the baseline is **3 models x 2 prompt
 styles x 2 thinking shapes = 12 configurations** and the enhanced space is **3 models x 4 binary
 behaviour knobs = 48 configurations**, both holding whether or not the strong rung reasons. The
-baseline's 12 trials are double the 6 this walkthrough used to spend, and the approval card says so
-in those words before any of it is spent.
+baseline's 12 trials are one per configuration, and the approval card names that count - as a
+count, never as a change from whatever this guide did before, which the customer has never run.
 `references/sdk-execution.md` owns the spaces, the derivation, and the asserts.
 
 The four behaviour knobs are prompt style, pre-action reflect, thinking shape (direct or

@@ -1,5 +1,5 @@
 {
-  "digest": "1ff74b6318067c7b9409c976ef51274b5fa98bf1b07694c2dd2060e5f4a5d09a",
+  "digest": "e75e6ad54df6da373188ed4f90a8b2bc1fcf4310dd9e80ed5c41730ea5111c49",
   "paths": [
     {"path": "GUIDE.md", "sha256": "7f748e51aac7118d9eb12dd15d8a14e5ab5dd205d78c453102aa719cc119f2dd", "size": 9622},
     {"path": "skills/traigent-first-run/SKILL.md", "sha256": "9a944d44c3c9296323f6eba8f38babc27fd89849e306def0c65b153a8d78cdf6", "size": 51542},
@@ -9,8 +9,8 @@
     {"path": "skills/traigent-first-run/references/component-creation.md", "sha256": "3d5faab08e65965c304930cc7724a32ac7222c09069b66209b4d39f972930c95", "size": 7035},
     {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "b844f5c16c351cb106f0e79c9d4ae6bde9edde9b2f4e45e6207460a5ed0a77a9", "size": 29207},
     {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "91c5006f74f5a2b77c51d7ff0c9a2c382593e85f72d41426aa43e31cdc195428", "size": 19030},
-    {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "f78965b869eab66f8f8917abff24891e0ca1e99ebec0c2006b8b96269c65d8a4", "size": 64052},
-    {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "a6075c96001b839ffb02cfc09402873c61e99dad6d0c295b297e28f3c51afe70", "size": 58811},
+    {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "e46948c1598dd1583cc71f8a3de0da51ab0b2bdda8666121ca9fbb29e9dd1e74", "size": 64100},
+    {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "f97e647a381a4cf21f74b709c16ba641550d3091b4be1f4320c1a8b74eca61b0", "size": 58997},
     {"path": "skills/traigent-first-run/scripts/calibrate_evaluator.py", "sha256": "da410a20054d849eb20a1b90cfd22c346fddef5071ef8e94ce556a299345f4aa", "size": 50599},
     {"path": "skills/traigent-first-run/scripts/preflight.py", "sha256": "21698c479ee377ae3870365fc0c00c0edcb6d8b7fe76e456661b4a81ff994260", "size": 53881},
     {"path": "skills/traigent-first-run/scripts/readiness.py", "sha256": "3e0c3cc7cb64541dfc085c8178aab9fc4ccc65b242d8923df244374b06e04600", "size": 145333}
