@@ -652,6 +652,28 @@ def published_prose_documents() -> dict[str, str]:
     plant mandate sentences deliberately, as the inputs that prove the rule can
     see one; scanning them would flag a guard's own fixtures. Nothing under
     `tests/` is prose a user or the assistant reads.
+
+    Kept beside `instructional_documents()` below rather than merged with it,
+    because the two answer different questions and #163 was right to want a
+    second corpus: this one is EVERYTHING published, which is what the
+    corpus-drift check needs, and that one additionally drops `reports/`,
+    which quotes superseded guidance verbatim on purpose.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    return {
+        name: (ROOT / name).read_text(encoding="utf-8")
+        for name in sorted(listed.stdout.split("\0"))
+        if name and not name.startswith("tests/")
+    }
+
+
 def instructional_documents() -> dict[str, str]:
     """Every markdown document this repository publishes AS INSTRUCTION.
 
