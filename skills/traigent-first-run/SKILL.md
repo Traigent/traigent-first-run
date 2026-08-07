@@ -31,7 +31,7 @@ Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight
 useful: score all three pillars at the start of every guided run before any creation or repair,
 again as a required step of local validation, and again after each repair or creation, so nothing
 is ever paid for against a blocking condition believed fixed but never rechecked - and once more
-after the run, to rank the close. Use
+after the run, to measure the space it searched. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
@@ -674,7 +674,7 @@ auditable:
    persisted runs.
 3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
    phases, and any small-sample held-out gap.
-4. **Next action** - one action selected from the latest closing evidence.
+4. **Next action** - one action the recorded opening state earns.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
 
@@ -729,12 +729,16 @@ different claim from one quoted on 30, and the reader cannot reproduce either wi
 which rows they were. State it even when nothing was excluded, so silence never has to be
 interpreted.
 
-Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence to read
-which caps remain, passing the current run's `--config-space traigent-runs/config-space.json` only
-when its enhanced search emitted it; otherwise score the agent from absent evidence. Rank the close
-from those caps, and never show that score or set it beside the opening one - once this run has
-filled the gaps, a score mostly grades our own substitutes. Leave the user knowing which remaining
-gap to close first.
+Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
+reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
+actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
+when that search emitted it; otherwise score the agent from absent evidence. The opening and stage-4
+scores withhold every config-space document by construction, so this is the run's only measurement
+of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
+nothing about what is still open: a gap this run filled with a substitute reads exactly like one the
+customer closed themselves, because on disk the evidence is the same either way. Never show that
+score or set it beside the opening one - once this run has filled the gaps, a score mostly grades
+our own substitutes. Leave the user knowing which remaining gap to close first.
 
 Feature-detect local audit and connected insight capabilities. Report only fields actually
 returned, attribute each claim to its artifact, and otherwise say no verified local artifact was
@@ -745,12 +749,18 @@ over substitutes, every insight describes only the walkthrough.
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close. Then give the one next action the **latest validated state** earns: re-rank the
-remaining closing caps and run limits, ignore cleared gaps, and name its value:
+cannot close. Then give the one next action the **recorded opening state** earns: rank the opening
+score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
+substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
+what closing it properly takes:
 
-- Generated or mostly generated data - collect or export a real sample of the same task and re-run.
-  This is the gap that ceilings the score no matter how good everything else is, so it is first
-  whenever it applies.
+- Generated or mostly generated data, or an evaluation method this run wrote - two ways to close
+  it, in this order. **Best:** collect or export real examples of the same task, and build the
+  evaluation method from them and from what their expected results actually are. **Otherwise:**
+  keep what this run generated and have a person read and approve it - the rows and their expected
+  answers, and the generated method too, whose grading logic has to match what the agent is really
+  scored on and what its expected result is. This is the gap that ceilings the score no matter how
+  good everything else is, so it is first whenever it applies.
 - Real inputs with model-written answers - have a person review a sample of the answer key. Until
   then the accuracy number measures agreement with a model, not correctness.
 - Rows without expected outputs when the evaluator requires references - label a representative
@@ -762,6 +772,13 @@ remaining closing caps and run limits, ignore cleared gaps, and name its value:
   evaluator it replaced, and say which of the reported numbers would change.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
+
+Then the forward half, which is not a gap in anything. The run-scope statement already recorded the
+three bounds this walkthrough chose - rows scored, configurations tested, controls varied - so name
+whichever bound this run hardest and what lifting it would let the user do: more of the agent's
+controls, the whole dataset instead of the slice, a space wider than a first look needs. It is a
+clause on the recommendation above, not a second one, and it names an action they can take, never a
+result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
