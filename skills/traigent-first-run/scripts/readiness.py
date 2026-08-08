@@ -172,19 +172,15 @@ def render_text(plan: ReadinessPlan) -> str:
 # project. Left at 1, a consumer seeing no `recommended_action` could not tell
 # which it was looking at.
 #
-# 3: `weighted_average` is no longer always an average over all three pillars.
-#
-# Bumped where `provenance_assumption` was not, and the difference is the point.
-# That field was purely additive: a consumer ignoring it read every other key
-# exactly as before. This one changes what an existing key MEANS. A pillar
-# nothing could be measured for is now left out of the average rather than
-# averaged in as a zero (`unmeasured_pillars` names which, and is empty in the
-# ordinary case) - so a consumer that divides `weighted_average` back out over
-# the three declared weights gets a different answer than the one this script
-# computed, silently, and only on the runs where the difference matters most.
-# Reading the version is how it finds out; reading the new field is how it
-# recovers the denominator.
-SCHEMA_VERSION = 3
+# Still 2 after #201, and that is a measured decision rather than an oversight.
+# An earlier revision of this branch bumped it to 3 because `weighted_average`
+# had stopped being an average over all three pillars: a pillar nothing could be
+# measured for was left out of the denominator, so a consumer dividing the
+# average back out over three declared weights got a different number than this
+# script computed. That renormalization is gone (see `aggregate`), the average
+# is once again over every declared weight, and no key changed meaning - so
+# there is nothing for a consumer to find out and nothing to bump.
+SCHEMA_VERSION = 2
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -767,23 +763,25 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
     "evaluator-timeout": CREATION_OR_REPAIR,
-    # Back to CREATION_OR_REPAIR, where #149 first put it, and #201 is what
-    # makes that right again rather than a revert.
+    # Conditional, and classified the same way `dataset-below-measurable-size`
+    # above already is: by what the result IS, not by whether the run waits.
+    # Four caps carry this condition and they do not agree about waiting, which
+    # is why this is the only category that fits.
     #
-    # This condition carried three caps and now carries two. #144 added a third
-    # that fired when no config-space document reached the score at all - a
-    # ceiling for a state where nothing in the customer's project was broken -
-    # and CLAIM_SCOPING was the only category that could hold a blocking pair
-    # and an advisory single together. #201 deleted that third branch: an
-    # unmeasured pillar is now left out of the average instead of ceilinged, so
-    # there is no longer an advisory reading of this condition to accommodate.
+    # Three of them are findings about the project and block: a settings
+    # document listing nothing, one listing settings while marking none as ones
+    # the agent uses, and a read of the agent's own source that found nothing it
+    # can vary. All three say the same thing about the run - it would compare
+    # one configuration - and all three name a repair.
     #
-    # What is left is two caps that both block and both name a repair: a
-    # settings document listing nothing, and one listing settings while marking
-    # none of them as ones the agent uses. Both are `vary-knobs`, both wait.
-    # Leaving CLAIM_SCOPING here would say this condition can bound a claim
-    # while the run proceeds, which is now true of none of its branches.
-    "agent-no-varying-knobs": CREATION_OR_REPAIR,
+    # The fourth (`NO_SEARCH_SPACE_ESTABLISHED_CAP`) fires when neither a
+    # document nor a read reached this score. Nothing is known to be broken;
+    # what is bounded is what the card may CLAIM while a third of the picture is
+    # unestablished, and it declares `blocks=False`. #149's own agent-routing
+    # test already asserts this condition must have both a blocking and an
+    # advisory branch, and the two compose only under the category that admits
+    # both.
+    "agent-no-varying-knobs": CLAIM_SCOPING,
 }
 
 
@@ -1433,18 +1431,6 @@ class ReadinessScore:
     pillars: tuple[Pillar, ...]
     caps: tuple[Cap, ...]
     knobs: tuple[KnobScore, ...]
-    # The pillars left OUT of `weighted_average`, because nothing in them was
-    # observed and nothing in them was withheld (see `nothing_was_looked_at`).
-    # Empty on the ordinary run, and empty is the honest default: a consumer
-    # that never reads this key still divides the average over the right weights
-    # on every score where the two agree.
-    #
-    # It is a key rather than a derivation for the same reason
-    # `provenance_assumption` is. A consumer CAN re-derive it from `pillars`,
-    # and re-deriving is how two implementations of one rule drift - especially
-    # this rule, whose whole content is a distinction between two kinds of
-    # unmeasured that a `confidence` of 0.00 does not express.
-    unmeasured_pillars: tuple[str, ...]
     gaps: tuple[str, ...]
     # `None` when no row was silent, which is the ordinary case: there is no
     # assumption to disclose, so nothing is printed. Additive, so a consumer
@@ -1704,8 +1690,6 @@ def band_for(
     score: int,
     confidence: float,
     weakest_pillar_confidence: float | None = None,
-    *,
-    pillar_excluded: bool = False,
 ) -> tuple[str, bool]:
     """Return the band, demoted when too little of the score was measured.
 
@@ -1729,18 +1713,7 @@ def band_for(
     thinnest = confidence
     if weakest_pillar_confidence is not None:
         thinnest = min(confidence, weakest_pillar_confidence)
-    # A pillar left out of the average is thin evidence by the same argument,
-    # and it is the one shape the two confidences above cannot see: `aggregate`
-    # excludes the pillar from both, so a run scored on two fully-observed
-    # pillars reports 1.00 coverage and 1.00 for its weakest - a perfect
-    # evidence record for a score computed without a third of the picture.
-    #
-    # This guard exists to refuse exactly that trade. Renormalizing is the right
-    # arithmetic, because averaging in a zero nobody measured states something
-    # false about the project; presenting the result as EXCELLENT is a different
-    # claim, and the missing pillar is the reason it may not be made. So the
-    # number renormalizes and the band does not follow it up (#201).
-    if thinnest >= MIN_CONFIDENCE_FOR_TOP_BANDS and not pillar_excluded:
+    if thinnest >= MIN_CONFIDENCE_FOR_TOP_BANDS:
         return band, False
     ceiling_index = BAND_ORDER.index(CONFIDENCE_BAND_CEILING)
     if BAND_ORDER.index(band) <= ceiling_index:
@@ -3707,31 +3680,68 @@ NOTHING_WIRED_CAP = Cap(
     "nothing to search.",
 )
 
-# There is no third cap here, and its absence is a decision (#201).
+# The read of the agent established no setting it can vary. That is a finding
+# ABOUT THE PROJECT and not about this score's inputs, which is exactly what
+# separates it from the cap below: somebody opened the agent's source and there
+# was nothing in it to search. A run over one configuration compares nothing, so
+# this waits, and its remedy is the same `vary-knobs` the document branches
+# carry - expose something the agent can be told to do differently.
 #
-# `NOT_YET_MEASURED_CAP` used to sit between these two: an advisory ceiling of
-# 45 whose own reason said "nothing in your project needs repairing for this".
-# It fired on every guided run by construction, because the guide withholds
-# every config-space file found before this run's search - so no opening card
-# could exceed 45/PARTIAL for any customer, however good their project.
-# Measured on the strongest realistic opening project (200 production rows,
-# difficulty-tagged, 180/20 split, evaluator calibrated and passing all seven
-# probes): dataset 94, evaluation 100, agent 0 at confidence 0.00, weighted
-# average 73, overall 45 PARTIAL, with that cap the only one firing.
+# It is a MEASURED zero rather than an absent one, and #201 is where that
+# distinction was got wrong. An earlier revision of this branch reported this
+# state as unmeasured and had `aggregate` renormalize the pillar out of the
+# average entirely, which scored it 99 against 92 for a read that found four
+# settings. This module already had the right answer for the shape one line
+# above: a config-space document that lists nothing IS a measurement of the
+# search space - one configuration, read off the file - and a read of the source
+# that finds nothing is the same measurement taken from the other document.
+NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "The agent was read and no setting it can vary was found, so every "
+    "configuration a search compared would be identical.",
+)
+
+# And the third reading, which is neither of the two above: no settings document
+# and no read of the agent reached this score at all.
 #
-# A ceiling is a statement about the customer's project, and that one was a
-# statement about this walkthrough's own sequencing. It is deleted rather than
-# reworded, and what replaces it is two things that are each more honest than a
-# number: the agent is READ, so the space is usually measured rather than
-# missing (`score_discovered_agent`), and where it genuinely cannot be, the
-# pillar is left out of the average instead of averaged in as a zero
-# (`aggregate`) - which is what README.md has always promised for a check that
-# cannot be computed.
+# A cap stood here before #201 and its reason was the defect - "nothing in your
+# project needs repairing for this", printed while holding every card in the
+# product at 45. It said the customer was fine and capped them anyway, and it
+# fired on every guided run by construction, because the guide withholds every
+# config-space file found before this run's search. Measured on the strongest
+# realistic opening project (200 production rows, difficulty-tagged, 180/20
+# split, evaluator calibrated and passing all seven probes): dataset 94,
+# evaluation 100, agent 0 at confidence 0.00, weighted average 73, overall 45
+# PARTIAL, with that cap the only one firing.
 #
-# The other two caps here are untouched, and the difference is not a matter of
-# degree. Both are findings about a document that exists: one lists no settings,
-# the other lists settings and marks none of them as ones the agent uses. Those
-# are defects in material the customer handed over, and they still block.
+# What changed is not the ceiling. It is that there is now something a run can
+# DO about this state at the gate where it is reported: read the agent
+# (`--agent-knobs`) and the space is measured instead of missing. So the reason
+# names the two ways to establish it, claims nothing about the customer's
+# project either way, and the ceiling says only what it can support - that a
+# card cannot present as ready on a third of the picture nobody supplied.
+#
+# Advisory, where the two findings above block, and that is the whole difference
+# between them. Those two say something is wrong; this one says something is
+# unknown, and a low score has never stopped this walkthrough.
+#
+# Deliberately NOT deleted, which the revision of this branch that produced the
+# 99 did try. With no ceiling here, saying nothing about the agent scored 75
+# while handing over a settings document that declares the same empty space
+# scored 45 - omission outscoring declaration by 30 points, the class this
+# repository has now shipped in six places. Every other pillar in this module
+# already caps its own absence for the same reason: `dataset-absent` at 20 and
+# `evaluator-absent` at 40. The agent pillar was the only one where saying
+# nothing was free.
+NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "No settings document and no reading of the agent reached this score, so "
+    "the settings a search would vary cannot be counted. Reading the agent is "
+    "what counts them.",
+    blocks=False,
+)
 
 UNATTESTED_WIRING_CAP = Cap(
     "agent-no-varying-knobs",
@@ -3765,22 +3775,24 @@ def nothing_to_search_pillar(
     confidence. Supplying nothing gives 0.00; supplying a document that lists
     nothing gives 1.00; supplying a real one gives 1.00.
 
-    `withheld` splits the `supplied=False` half in two, and #201 is what made
-    the split load-bearing. Both halves score 0 at confidence 0.00; what differs
-    is whether that zero counts.
+    #201 adds a FOURTH input that lands here - a read of the agent's own source
+    that found nothing it can vary - and it is `supplied=True`, because it is a
+    measurement by the same argument the paragraph above makes about a file. The
+    source is the document in that case.
 
-    * Nothing about the agent reached this score - no settings document and no
-      read of the agent's source. This run was asked for that evidence, so the
-      check is WITHHELD: it keeps its full weight and earns nothing, exactly as
-      `--task-kind` and the probe scores do. Measured on the same 200-row
-      project, the alternative is not academic - excluding it scored 99 for a
-      run that looked at nothing against 92 for a run that read the agent and
-      found four parameters. Not looking would have been worth 7 points.
-    * The agent WAS read and no varying parameter could be established. Nothing
-      further was withheld; the tool looked with the evidence it had and could
-      not compute the check. That is the state README.md promises is "marked
-      unmeasured and excluded rather than scored zero", and `aggregate` excludes
-      it.
+    So `supplied` now separates two states rather than three, and both of the
+    unsupplied ones are the same state: nothing about the agent reached this
+    score at all. `withheld` records it. The check keeps its full weight and
+    earns nothing, exactly as `--task-kind` and the probe scores do, and the
+    caller pairs it with an advisory ceiling rather than a blocking one.
+
+    What must NOT happen to that zero is that it stops counting. An earlier
+    revision of #201 marked the read-found-nothing state unmeasured and had
+    `aggregate` drop the whole pillar out of the weighted average; measured on
+    one 200-row project, that scored 99 for a run that read the agent and found
+    nothing against 92 for a run that read it and found four settings. A zero
+    that leaves the denominator is worth more than a low score, which is
+    `SubScore.withheld`'s own defect one level up.
     """
     return combine(
         "agent",
@@ -3844,12 +3856,31 @@ def score_discovered_agent(
     """
     credited = [knob for knob in facts.discovered if knob.credited]
     if not credited:
-        # The look happened and credited nothing. That is still not a
-        # measurement OF the space: a parameter this read did not establish may
-        # exist anyway - reading source is how you find what is there, not proof
-        # of what is not - so the honest report is that the space was not
-        # established, and `aggregate` leaves the pillar out rather than
-        # averaging in a zero for it.
+        # The look happened and credited nothing. That is a MEASUREMENT of the
+        # search space, and reporting it as anything else is what produced the
+        # defect this branch was rewritten for.
+        #
+        # The state is the same one `score_agent` already answers one function
+        # down for a config-space document that lists nothing: the space is one
+        # configuration, read off a file. Here the file is the agent's own
+        # source. So it is scored the same way - `supplied=True`, a measured
+        # zero at confidence 1.00 - and it raises the same condition.
+        #
+        # The alternative was tried and measured. Reporting this as unmeasured
+        # let `aggregate` renormalize the pillar out of the average, and on one
+        # 200-row project that scored 99 for a run that read the agent and found
+        # nothing against 92 for a run that read it and found four settings.
+        # Removing a pillar from a weighted average raises the result, so the
+        # weaker finding won.
+        #
+        # The epistemic caveat that argued for "unmeasured" is real and belongs
+        # in the sentence rather than in the arithmetic: a parameter this read
+        # did not establish may exist anyway, because reading source is how you
+        # find what is there and not proof of what is not. That is why the
+        # evidence line below names what was refused and why, so the customer
+        # can disagree with a read of their own code - and it is the same
+        # qualification a settings document that lists nothing already carries,
+        # where nobody proposed dropping the pillar over it.
         refused = [knob for knob in facts.discovered if not knob.credited]
         detail = (
             "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
@@ -3860,9 +3891,9 @@ def score_discovered_agent(
             nothing_to_search_pillar(
                 f"the agent was read and no varying setting was established - "
                 f"{detail}",
-                supplied=False,
+                supplied=True,
             ),
-            [],
+            [NOTHING_IN_THE_AGENT_TO_VARY_CAP],
             [],
         )
     reachable = 1
@@ -3930,22 +3961,24 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             # was made true at both gates.
             else "no settings document was provided to this score"
         )
-        # A cap in one of these two states and not the other, and #201 is why.
+        # A cap in both states, and a DIFFERENT one, which is what #201 got
+        # wrong in each direction before it settled here.
         #
         # `blocks` answers "does this stop the run", not "is this true" - the
         # comment on the field says so, and says every cap used to imply BLOCKED
         # back when every cap meant something was broken.
         #
         # A supplied document that lists nothing IS a defect: the user handed
-        # over their wiring and there is nothing in it. That still caps, and
-        # still blocks. No document at all is not a defect and now carries no
-        # ceiling either. The advisory cap that used to sit here bounded every
-        # opening card in the product at 45 while its own reason said "nothing
-        # in your project needs repairing for this" - a ceiling that describes
-        # this walkthrough's sequencing rather than the customer's project. What
-        # is true of that state is that nothing was measured, and the honest way
-        # to say so is to leave the pillar out of the average, which `aggregate`
-        # now does. A number is not a way of saying "I did not look".
+        # over their wiring and there is nothing in it. That caps and blocks. No
+        # document and no read is not a defect, so it caps and does NOT block:
+        # the run proceeds, and what the card may claim is bounded because a
+        # third of the picture is unestablished.
+        #
+        # Dropping the second ceiling entirely was tried on this branch and is
+        # the reason the pair is written out here. It made saying nothing worth
+        # 75 where handing over a document that declares the same empty space
+        # was worth 45, so the customer who told the truth about their agent
+        # scored 30 points below the one who said nothing at all.
         #
         # This branch is also reached at the CLOSE by a stopped, failed, or
         # zero-trial search, which emits no document either
@@ -3962,7 +3995,13 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
                 # every gate, so this is silence, and silence keeps its weight.
                 withheld=not facts.config_space_supplied,
             ),
-            [NOTHING_WIRED_CAP] if facts.config_space_supplied else [],
+            [
+                (
+                    NOTHING_WIRED_CAP
+                    if facts.config_space_supplied
+                    else NO_SEARCH_SPACE_ESTABLISHED_CAP
+                )
+            ],
             [],
         )
 
@@ -4214,71 +4253,36 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     return PROCEED
 
 
-def nothing_was_looked_at(pillar: Pillar) -> bool:
-    """Whether this pillar's zero is a measurement or the absence of one.
-
-    The distinction `SubScore.withheld` already draws, read one level up.
-
-    A check that is `measured` was looked at. A check that is `withheld` was
-    this run's to supply and was not supplied, which is not the same as
-    unavailable - dropping those from the denominator made silence pay, and
-    that is exactly the defect the field was added to close. So a pillar counts
-    as looked-at when ANY of its checks is either, and only a pillar where
-    nothing was measured and nothing was withheld is genuinely unobserved.
-
-    That rule is what keeps this from re-opening the hole `withheld` closed. An
-    evaluation pillar on an uncalibrated evaluator has three withheld checks and
-    confidence 0.00; it is NOT excluded, because the run was asked for that
-    evidence. An agent pillar with no settings document has one check that
-    nobody could look at, and it is.
-
-    A pillar carrying NO sub-scores at all is never excluded, and the empty
-    `any()` is why that needs saying: `not any([])` is True, so the rule read
-    backwards on the one shape that has no evidence record to read. `aggregate`
-    accepts such a pillar and several callers build them directly with a score
-    and a confidence of their own - excluding those would drop a caller's stated
-    number out of the average on the strength of a field they never filled in.
-    No sub-scores is not "nothing was looked at"; it is "this pillar does not
-    report at that granularity".
-    """
-    return bool(pillar.subscores) and not any(
-        sub.measured or sub.withheld for sub in pillar.subscores
-    )
-
-
 def aggregate(
     pillars: Sequence[Pillar],
     caps: Sequence[Cap],
     knobs: Sequence[KnobScore],
     weights: dict[str, float],
 ) -> ReadinessScore:
-    # README.md's promise - "a check that cannot be computed is marked
-    # unmeasured and excluded rather than scored zero" - applied to a whole
-    # pillar, which is where it was being broken (#201). The agent pillar at the
-    # opening gate was scored 0 at confidence 0.00, and the engine averaged that
-    # zero in anyway: 94 dataset and 100 evaluation came out as 73, and the same
-    # evidence renormalized over the two pillars that were actually observed
-    # comes out as 97. A 24-point gap between what the document promised and
-    # what the arithmetic did.
+    # Every declared weight stays in the denominator, and #201 is the reason
+    # that sentence is worth writing down rather than assuming.
     #
-    # Never all of them. A score with no observed pillar at all has nothing to
-    # renormalize over, and the old denominator is the only defined answer there
-    # - so the exclusion switches itself off rather than dividing by zero or
-    # inventing a number out of no evidence whatsoever.
-    unobserved = {pillar.name for pillar in pillars if nothing_was_looked_at(pillar)}
-    if len(unobserved) >= len(pillars):
-        unobserved = set()
-    observed = [pillar for pillar in pillars if pillar.name not in unobserved]
-
-    # Summed over the weights DICT, not over the pillars, exactly as before:
-    # several callers score fewer pillars than they declare weights for, and
-    # changing that denominator would silently re-scale them. Only the excluded
-    # pillars' weights come out.
-    total_weight = sum(
-        weight for name, weight in weights.items() if name not in unobserved
-    )
+    # An earlier revision of this branch renormalized a whole pillar out of the
+    # average when nothing in it was measured and nothing in it was withheld -
+    # README.md's "a check that cannot be computed is marked unmeasured and
+    # excluded rather than scored zero", applied one level up. Removing a pillar
+    # from a weighted average RAISES the result, so on the same 200-row project
+    # a run that read the agent and found nothing scored 99 against 92 for a run
+    # that read it and found four settings. Looking and finding nothing paid 7
+    # points over looking and finding something, which is the defect
+    # `SubScore.withheld` exists to refuse, one level up from where it refuses
+    # it.
+    #
+    # Measured before it was removed: across 743 combinations of dataset,
+    # evaluation and agent facts, exactly two reached that exclusion, and both
+    # were the state that scored 99. It was not a general rule about unmeasured
+    # pillars - there is no other pillar this scorer can fail to look at - so it
+    # is gone rather than bounded, and "nothing establishes a search space" is
+    # answered where every other absence in this module is answered: by a zero
+    # that keeps its weight, and a ceiling that names what would lift it.
+    total_weight = sum(weights.values())
     weighted = sum(
-        weights.get(pillar.name, 0.0) * pillar.score for pillar in observed
+        weights.get(pillar.name, 0.0) * pillar.score for pillar in pillars
     ) / (total_weight or 1.0)
     weighted_average = round_half_up(weighted)
 
@@ -4286,22 +4290,14 @@ def aggregate(
     ceiling = min((cap.ceiling for cap in ordered_caps), default=100)
     overall = min(weighted_average, ceiling)
 
-    # Confidence and the band follow the same exclusion, and they have to. A
-    # pillar that is not in the average must not be in the evidence coverage
-    # either - reporting 67% coverage for a number computed entirely from
-    # fully-observed evidence describes a different score than the one printed -
-    # and `band_for`'s weakest-pillar guard would otherwise hold every such run
-    # at WORKABLE on the confidence of a pillar it just declined to score.
-    confidence_total = sum(weights.get(p.name, 0.0) for p in observed) or 1.0
+    confidence_total = sum(weights.get(p.name, 0.0) for p in pillars) or 1.0
     confidence = (
-        sum(weights.get(p.name, 0.0) * p.confidence for p in observed)
-        / confidence_total
+        sum(weights.get(p.name, 0.0) * p.confidence for p in pillars) / confidence_total
     )
     band, limited = band_for(
         overall,
         confidence,
-        min((pillar.confidence for pillar in observed), default=None),
-        pillar_excluded=bool(unobserved),
+        min((pillar.confidence for pillar in pillars), default=None),
     )
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
@@ -4316,7 +4312,6 @@ def aggregate(
         pillars=tuple(sorted(pillars, key=lambda pillar: pillar.name)),
         caps=ordered_caps,
         knobs=tuple(sorted(knobs, key=lambda knob: knob.name)),
-        unmeasured_pillars=tuple(sorted(unobserved)),
         gaps=collect_gaps(pillars, knobs, ordered_caps, overall),
     )
 
@@ -4610,25 +4605,6 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
     return lines
 
 
-def unmeasured_pillar_sentence(score: ReadinessScore) -> str:
-    """Say which pillars the average was NOT computed over, and what that means.
-
-    Printed wherever the average is, because a number that silently changed its
-    denominator is the defect this field was added to prevent, not to record.
-    The sentence deliberately does not say the pillar is fine or bad: it says
-    nothing was seen, which is the only claim the evidence supports.
-    """
-    names = ", ".join(score.unmeasured_pillars)
-    plural = len(score.unmeasured_pillars) > 1
-    return (
-        f"Nothing could be measured for the {names} pillar{'s' if plural else ''}, "
-        f"so {'they were' if plural else 'it was'} left out of that average "
-        f"rather than counted as zero. This score is over the "
-        f"{'others' if plural else 'other pillars'}; it is not a verdict on "
-        f"{'those' if plural else 'that one'}."
-    )
-
-
 def render_card(
     score: ReadinessScore, *, palette: Palette = PLAIN, unicode_ok: bool = True
 ) -> str:
@@ -4734,15 +4710,6 @@ def render_card(
             f"{assumption_sentence(score.provenance_assumption)}"
         )
         lines.append("")
-    if score.unmeasured_pillars:
-        # On the card and not only in the durable report. The pillar prints
-        # 0/100 in the rows above - it has no other number to print - and a
-        # reader who can add would otherwise reconcile those three rows against
-        # the headline and get a different answer. This is the line that says
-        # the zero was not counted.
-        lines.append(
-            f"  {palette.dim}{unmeasured_pillar_sentence(score)}{palette.reset}"
-        )
     if score.band_limited_by_confidence:
         # Grounded in the rows above rather than in a percentage: the reader can
         # see which checks did not run and why.
@@ -4809,11 +4776,6 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",
-            *(
-                [unmeasured_pillar_sentence(score), ""]
-                if score.unmeasured_pillars
-                else []
-            ),
             *(
                 [assumption_sentence(score.provenance_assumption), ""]
                 if score.provenance_assumption is not None

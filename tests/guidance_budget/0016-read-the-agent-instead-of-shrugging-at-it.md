@@ -2,9 +2,9 @@
 
 follows: 0015
 resident-ceiling: 66_500
-resident-measured: 66_212
+resident-measured: 66_198
 total-ceiling: 305_500
-total-measured: 305_349
+total-measured: 305_490
 
 #201 turns a blank pillar into a measured one, and measuring costs instructions
 where shrugging cost none. Until now the opening gate said only which file to
@@ -22,10 +22,18 @@ card that the customer's project cannot support. The document shape, the worked
 example, the qualification rules and what the reading does NOT attest live in
 `references/component-creation.md`, which loads for one stage and leaves.
 
-The rest is subtraction paying for itself imperfectly. Three paragraphs across
-`glossary.md`, `run-safety.md` and `README.md` described a ceiling that no
-longer exists and had to be rewritten rather than deleted, because each also
-explained something still true beside it - why the closing card stays quiet
-after a failed search, why two evaluator rows start blank, why a band can sit
-below its number. Rewriting those cost less than the gate instruction and more
-than nothing, and the honest total is above the old ceiling by 2_349 bytes.
+What is NOT bought here is a rewrite of the ceiling paragraphs, and an earlier
+revision of this branch spent bytes on exactly that. It deleted the 45 for a
+project whose search space is unestablished, so three passages in `glossary.md`,
+`run-safety.md` and `README.md` had to describe its absence. Measuring the agent
+turned out not to need that: what stops a customer being pinned at 45 is that
+their agent now gets read, not that the number went away. Those passages say
+what they said, with the reading added to the list of things that can establish
+a space, and the paragraph in `run-safety.md` about a failed search keeps its
+original shape rather than acquiring a second one.
+
+Both figures re-measured against this tree after the last edit, not carried
+from the revision above: it declared 305_349, and pinning the ceiling paragraphs
+back to what they describe moved the total to 305_490. That is 10 bytes of
+headroom under a ceiling this entry does not raise again - the next branch to
+edit a reference here should expect to prune or to declare its own raise.

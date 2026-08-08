@@ -436,13 +436,13 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then update the latest recorded result without overwriting
 the opening one.
 
-`agent-no-varying-knobs` always blocks now, and only fires where a settings document exists and
-nothing in it varies - no knobs, none marked as wired, one value each, or only knobs excluded from
-scoring. The card prints `FIX BEFORE PAID RUN`; route by its reason, and mark the settings the
-agent actually uses or give one of them a second value. An absent settings document raises no cap
-at all: the score reports the agent pillar as not measured and leaves it out of the average instead
-of ceilinging the whole card for it. That silence is never a verdict on the search - after a
-stopped, failed, or zero-trial enhanced run it is that run's own outcome to report.
+`agent-no-varying-knobs` blocks where something was read and found empty - a settings document with
+no knobs, none marked as wired, one value each, or only knobs excluded from scoring; or a reading
+of the agent that established nothing it can vary. The card prints `FIX BEFORE PAID RUN`; route by
+its reason - mark the settings the agent uses, give one a second value, or expose a parameter it
+has none of. It is an advisory ceiling only where its reason says neither a document nor a reading
+reached the score: nothing there is a verdict on the project, and after a stopped, failed, or
+zero-trial enhanced run it is that run's own outcome to report.
 
 ### 5. Prepare the environment and finish free checks
 

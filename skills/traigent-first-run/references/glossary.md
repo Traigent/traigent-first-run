@@ -263,17 +263,15 @@ The lines under each pillar on the card
   check the run will do later keeps its weight, so the pillar reads under 100
   until calibration. That is why 2 of 4 measured is not 100.
 
-  The Agent pillar is the third thing missing from an opening card, and it no
-  longer has to be. Every config-space file found before this run's search is
-  omitted on every guided run, so no settings document ever reaches an opening
-  score - but your agent is still there to read, and the assistant reads it:
-  which parameters it can already vary, and the line of your own code that
-  shows each one. That is what the opening pillar is scored from, and it says
-  "at least N configurations" because nobody has chosen the sweep yet. Where
-  there is no agent to read, or nothing in it that can vary, the pillar is
-  reported as not measured and left OUT of the average rather than counted as
-  zero - so the score describes the parts that were measured, and the card
-  says which part it is not describing.
+  The Agent pillar used to be the third blank and no longer is. Every
+  config-space file found before this run's search is omitted, so no settings
+  document ever reaches an opening score - but your agent is still there to
+  read, and the assistant reads it: which parameters it can already vary, and
+  the line of your code showing each. That is what the opening pillar is
+  scored from, and it says "at least N configurations" because nobody has
+  chosen the sweep yet. Where nothing establishes a space - nothing read or
+  supplied, or a reading that found nothing your agent can vary - the pillar
+  scores zero and the card is held at 45: one configuration compares nothing.
 
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
@@ -285,10 +283,11 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   repair, create, or continue as a clearly labeled walkthrough. A low number
   alone does not stop a safe walkthrough, but a blocking cap does stop paid
   optimization when the current components or evidence cannot support a
-  trustworthy comparison. `agent-no-varying-knobs` fires only on a settings
-  document that exists and holds nothing to search, and it blocks; an absent
-  document raises no cap at all - see that entry above for why one never is
-  provided at the opening score.
+  trustworthy comparison. `agent-no-varying-knobs` fires wherever nothing your
+  agent can vary is established. It blocks where something was read and found
+  empty - a settings document, or your agent's own code - and is advisory
+  where neither reached the score, bounding it at 45 and stopping nothing; see
+  that entry above for why one never is provided at the opening score.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

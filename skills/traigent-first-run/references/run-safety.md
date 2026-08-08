@@ -350,17 +350,18 @@ A scoreable file means one thing: *this is the space the search that just comple
 The generated wrapper serializes the finalized space, removes any earlier file before the call, and
 writes `traigent-runs/config-space.json` only after the search returns nonzero trials. Only that
 current-run file enters closing readiness. A stopped, failed, or zero-trial search emits none, so
-the agent pillar is reported as not measured and left out of the closing average.
+the agent pillar is scored from absent evidence and its 45 ceiling stays in force - the closing
+score cannot exceed it.
 
-No cap fires for that absence, because the scorer cannot tell a document withheld before the search
-from one the search failed to produce - both are the same absent input, and a ceiling on either
-would be a claim about the project that neither supports. So on a closing card after
-a stopped, failed, or zero-trial search, `status: OK` and `recommended_action: proceed` describe
-only the evidence the agent pillar was given, and are not a verdict that the search succeeded.
-Report that search's outcome from the run itself - trials executed, spend, the error it stopped on
-- and never let a silent agent pillar stand in for it. Whether a search that produced nothing may be retried
-or paid for again is the approval question it always was, decided on that outcome, not on this
-score.
+`agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
+because the scorer cannot tell a document withheld before the search from one the search failed to
+produce - both are the same absent input. So on a closing card after a stopped, failed, or
+zero-trial search, `status: OK` and
+`recommended_action: proceed` describe only the evidence this cap was given, and are not a verdict
+that the search succeeded. Report that search's outcome from the run itself - trials executed,
+spend, the error it stopped on - and never let an advisory agent cap stand in for it. Whether a
+search that produced nothing may be retried or paid for again is the approval question it always
+was, decided on that outcome, not on this score.
 
 These are the only fields the scorer reads and the only keys it accepts: any other key is refused
 by name (exit 2), listing the fields it may declare and naming the closest when there is one,

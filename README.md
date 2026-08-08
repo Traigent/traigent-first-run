@@ -135,12 +135,12 @@ it is the card declining to call a project Strong on evidence it has not seen. T
 pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
 what fills that one in.
 
-The same promise covers a whole pillar, and the opening card is where it has to. No settings
-document exists before the search, so the agent pillar has no document to read - it is read from
-the agent's own code instead, which is what the opening score grades the search space from. Where
-there is nothing to read, or nothing in it that can vary, the pillar is excluded from the average
-rather than averaged in as a zero, the card names it, and the band stays at Workable because a
-score computed without a third of the picture may not present as Strong or Excellent. What the
+No settings document exists before the search, so the agent pillar is read from the agent's own
+code instead - which parameters it can already vary, each against the line that shows it - and that
+is what the opening score grades the search space from. Where the read finds settings, no agent
+ceiling applies and calibrating can carry the band the whole way. Where nothing establishes a space at
+all - no reading and no document, or a reading that found nothing your agent can vary - the score
+is held at 45, inside Partial, because a search over one configuration compares nothing. What the
 opening card no longer does is hold every project at 45 for a document nobody was supposed to
 bring.
 

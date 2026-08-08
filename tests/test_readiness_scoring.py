@@ -3569,12 +3569,24 @@ class CliTests(unittest.TestCase):
         self.assertGreater(with_document["confidence"], without["confidence"])
         conditions = {cap["condition"] for cap in with_document["caps"]}
         self.assertIn("agent-no-varying-knobs", conditions)
-        # And the absent-document run names the condition nowhere at all, which
-        # is the half of this that changed. Only this condition is asserted
-        # away: the fixture carries no evaluator, so `evaluator-absent` fires in
-        # both runs and asserting an empty cap list would pin something else.
-        self.assertNotIn(
-            "agent-no-varying-knobs", [cap["condition"] for cap in without["caps"]]
+
+        # The absent-document run raises the SAME condition, and that is the
+        # half of this that #201 kept changing its mind about. Deleting the
+        # ceiling there made saying nothing outscore handing over a document
+        # that declares the same empty space, so both states carry it and what
+        # separates them is `blocks`: a document nobody could read is not a
+        # defect, and a document that declares nothing is.
+        def agent_cap(payload: dict) -> dict:
+            return next(
+                cap
+                for cap in payload["caps"]
+                if cap["condition"] == "agent-no-varying-knobs"
+            )
+
+        self.assertFalse(agent_cap(without)["blocks"])
+        self.assertTrue(agent_cap(with_document)["blocks"])
+        self.assertEqual(
+            agent_cap(without)["ceiling"], agent_cap(with_document)["ceiling"]
         )
 
     def test_absent_wiring_card_reports_an_unattested_connection(self) -> None:
@@ -3801,29 +3813,33 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(small.ceiling, MODULE.WIRING_CHECK_CEILING)
         self.assertTrue(MODULE.power_ceiling(0).blocks)
 
-    def test_an_absent_settings_document_raises_no_cap_at_all(
+    def test_an_absent_settings_document_bounds_a_claim_and_stops_nothing(
         self,
     ) -> None:
-        """The cap that fired on every run does not fire on any of them (#201).
+        """What #201 actually changed about this cap: its reason, not its number.
 
         The guide deliberately withholds any config-space document found before
-        this run's search, so `agent-no-varying-knobs` used to fire on the
-        opening card of every project including a perfect one - first blocking
-        it, then bounding it at 45 while its own reason said "nothing in your
-        project needs repairing for this". A ceiling is a statement about the
-        customer's project; that one was a statement about this walkthrough's
-        sequencing, and no opening card could exceed 45/PARTIAL because of it.
+        this run's search, so `agent-no-varying-knobs` fires on the opening card
+        of every project that supplies no agent evidence - and its reason used
+        to say "nothing in your project needs repairing for this" while holding
+        the card at 45. That sentence was the defect. It told the customer they
+        were fine and capped them anyway, and it left them nothing to do about
+        it, because before #201 there was nothing to do: no document could be
+        supplied at the opening gate by the guide's own design.
 
-        What replaces it is not a softer ceiling. It is the arithmetic: the
-        check keeps its full weight and earns nothing, so the score is the plain
-        weighted average with a zero for the pillar nobody supplied evidence
-        for. That is deliberately NOT renormalized - see
-        `test_looking_at_the_agent_beats_saying_nothing_about_it`, which pins
-        the direction that decision exists to protect.
+        #201 gives the state a remedy - read the agent - so the reason names it
+        and the ceiling stands. Deleting the ceiling instead was tried on this
+        branch and measured: it put this state at 71 while a settings document
+        declaring the same empty space stayed at 45, so the customer who told
+        the truth about their agent scored 26 points below the one who said
+        nothing. Every other pillar in this module already caps its own absence
+        (`dataset-absent`, `evaluator-absent`); the agent pillar was the only
+        one where saying nothing was free.
 
-        Asserting `blocks`, `status` and `recommended_action` end to end, the
-        way the test this replaces did: the ceiling's absence has to be visible
-        in the score a caller gets, not only in a list of caps.
+        Asserting `blocks`, `status` and `recommended_action` end to end: what
+        separates this from the document branch is that the run PROCEEDS, and
+        that has to be visible in the score a caller gets rather than in a list
+        of caps.
         """
 
         def scored(facts: MODULE.AgentFacts) -> tuple:
@@ -3842,39 +3858,44 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
         # No document reached the scorer - the ordinary opening state.
         caps, score = scored(MODULE.AgentFacts())
-        self.assertEqual(caps, [])
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        # The ceiling stands and the run proceeds. That pair is the whole
+        # finding: nothing here is known to be broken, so nothing waits.
+        self.assertFalse(caps[0].blocks)
         self.assertEqual(score.status, "OK")
         self.assertEqual(score.recommended_action, MODULE.PROCEED)
-        # The score is now the average itself, not a ceiling. 71 stays a literal
-        # deliberately: it is the arithmetic of DEFAULT_WEIGHTS over the two
-        # pillars this test pins itself, and it is the SAME 71 the replaced test
-        # asserted - the average never moved, only what was done to it
-        # afterwards. The old assertion was `overall == 45`.
+        # 71 stays a literal deliberately: it is the arithmetic of
+        # DEFAULT_WEIGHTS over the two pillars this test pins itself, and the
+        # zero for the third counts. The ceiling is what the card actually
+        # lands on.
         self.assertEqual(score.weighted_average, 71)
-        self.assertEqual(score.overall, 71)
-        self.assertGreater(score.overall, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
-        # The pillar is still reported as unmeasured - what went away is the
-        # ceiling, not the honesty about evidence. `band_limited_by_confidence`
-        # is deliberately NOT asserted: 71 is inside Workable already, so
-        # nothing was demoted, and asserting a demotion that did not happen
-        # would pin the arithmetic of DEFAULT_WEIGHTS rather than this decision.
+        self.assertEqual(score.overall, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+        # The reason names what would lift it. A ceiling whose remedy is
+        # unstatable is the one this branch shipped before #201.
+        self.assertIn("reading of the agent", caps[0].reason.casefold())
+        self.assertNotIn("needs repairing", caps[0].reason.casefold())
+        # The pillar is still reported as unmeasured - the honesty about
+        # evidence is unchanged.
         agent_sub = score.pillars[0].subscores[0]
         self.assertEqual(score.pillars[0].name, "agent")
         self.assertFalse(agent_sub.measured)
         self.assertEqual(score.pillars[0].confidence, 0.0)
-        # And it is NOT excluded from the average: this run was asked for agent
-        # evidence and supplied none, which is withheld, not unobtainable.
+        # This run was asked for agent evidence and supplied none, which is
+        # withheld: the check keeps its weight and the zero counts.
         self.assertTrue(agent_sub.withheld)
-        self.assertEqual(score.unmeasured_pillars, ())
 
         # A document that was supplied and lists nothing IS a defect: the user
-        # handed over their wiring and there is nothing in it.
-        caps, score = scored(MODULE.AgentFacts(config_space_supplied=True))
+        # handed over their wiring and there is nothing in it. Same ceiling,
+        # and the ceiling being the same is the point - it is the same finding
+        # about the same project, so it may not be graded differently for
+        # having been declared.
+        caps, blocked = scored(MODULE.AgentFacts(config_space_supplied=True))
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         self.assertTrue(caps[0].blocks)
-        self.assertEqual(score.status, "BLOCKED")
-        self.assertEqual(score.recommended_action, "vary-knobs")
-        self.assertEqual(score.overall, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertEqual(blocked.recommended_action, "vary-knobs")
+        self.assertEqual(blocked.overall, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+        self.assertEqual(blocked.overall, score.overall)
 
     def test_the_absent_document_lines_are_true_at_both_gates(self) -> None:
         """Both spellings of one fact, not just the one that was fixed.
@@ -3892,15 +3913,16 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         gates. `not yet measured` elsewhere in the file is untouched - that is a
         different check and a different claim.
 
-        The cap whose reason was the other half of this pair is gone (#201), so
-        only the pillar line is left to check - and it is the line that mattered
-        most, because it is the one the card actually renders. Its absence is
-        asserted here rather than assumed, since a cap reappearing on this
-        branch would restore a second, unchecked spelling of the same fact.
+        Both halves are still here, so both are checked. #201 rewrote the cap's
+        reason rather than deleting the cap, and a rewrite is exactly where the
+        tense could come back - the sentence had to gain a remedy ("reading the
+        agent is what counts them"), and "read the agent first" is one edit away
+        from "the enhanced run will write that document".
         """
         pillar, caps, _ = MODULE.score_agent(MODULE.AgentFacts())
-        self.assertEqual(caps, [])
-        lines = [sub.evidence for sub in pillar.subscores]
+        lines = [sub.evidence for sub in pillar.subscores] + [
+            cap.reason for cap in caps
+        ]
         for line in lines:
             with self.subTest(line=line):
                 self.assertNotIn(" yet", line)
@@ -3993,19 +4015,19 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertTrue(caps[0].blocks)
 
     def test_looking_at_the_agent_beats_saying_nothing_about_it(self) -> None:
-        """Silence may not outscore a read, in either direction.
+        """A read that found settings must outscore one that found none.
 
-        The first draft of #201 renormalized every unmeasured agent pillar out
-        of the average, and measured on the 200-row project that scored 99 for
-        a run that looked at nothing against 92 for a run that read the agent
-        and found four parameters. Not doing the work was worth 7 points - the
-        exact defect `SubScore.withheld` exists to prevent, one level up.
+        The first draft of #201 renormalized an unmeasured agent pillar out of
+        the average, and measured on the 200-row project that scored 99 for a
+        run that read the agent and found nothing against 92 for a run that read
+        it and found four parameters. Not finding anything was worth 7 points -
+        the exact defect `SubScore.withheld` exists to prevent, one level up
+        from where it prevents it, because removing a pillar from a weighted
+        average raises the result.
 
-        So the two states are separated by whose evidence it was. Nothing
-        supplied is WITHHELD: this run was asked and did not answer, the check
-        keeps its weight, and the zero counts. A read that found nothing is
-        genuinely unmeasurable and is excluded, which is what README.md
-        promises for a check that cannot be computed.
+        `LessEvidenceMayNotOutscoreMoreTests` sweeps that property. This keeps
+        the one comparison the owner reported, spelled out, so the regression
+        has a named home rather than only a swept one.
         """
         pillars = [
             MODULE.Pillar(name=name, score=100, confidence=1.0, subscores=())
@@ -4032,22 +4054,42 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             )
         )
         silent = overall(MODULE.AgentFacts())
+        found_nothing = overall(
+            self._knob(
+                model={
+                    "values": ["gpt-4o-mini"],
+                    "evidence": "agent.py:8 model= is hard-coded to one id",
+                }
+            )
+        )
         self.assertGreater(read.overall, silent.overall)
-        self.assertEqual(silent.unmeasured_pillars, ())
-        self.assertEqual(read.unmeasured_pillars, ())
+        self.assertGreater(read.overall, found_nothing.overall)
+        # And the read that found nothing is not punished for having looked
+        # either: same finding as silence about the same project, same number.
+        self.assertEqual(found_nothing.overall, silent.overall)
 
-    def test_a_read_that_finds_nothing_is_excluded_not_scored_zero(self) -> None:
-        """README.md's promise, applied to a pillar and named on the card.
+    def test_a_read_that_finds_nothing_is_a_measured_zero(self) -> None:
+        """The read happened, so its answer is a measurement - of zero.
 
-        "A check that cannot be computed is marked unmeasured and excluded
-        rather than scored zero" - which the engine was breaking at exactly the
-        point it mattered most.
+        This is the state the owner rejected #201's first answer over. That
+        draft reported it as unmeasured and had `aggregate` renormalize the
+        whole pillar out of the average, which scored it 99 against 92 for a
+        read that found four settings: finding nothing beat finding something,
+        by 7 points, on the same project.
 
-        Excluding is not the same as forgiving. The number renormalizes over
-        the pillars that were observed, and the BAND does not follow it up:
-        a score computed without a third of the picture may not present as
-        Strong or Excellent, so the run lands at Workable with the missing
-        pillar named in the payload and on the card.
+        The scorer already had the right answer for the same shape one branch
+        over. A config-space document that lists nothing IS a measurement of the
+        search space - one configuration, read off the file - and this is that
+        measurement taken from the agent's source instead. So it is `measured`
+        at confidence 1.00, it earns zero, and it raises the same condition,
+        which is what a project with nothing to search deserves whichever
+        document says so.
+
+        The epistemic caveat that argued for "unmeasured" - a parameter this
+        read did not establish may exist anyway - is real and belongs in the
+        sentence rather than in the arithmetic, so the evidence line names each
+        refusal and its reason. A settings document that lists nothing carries
+        exactly the same caveat and nobody proposed dropping the pillar over it.
         """
         facts = self._knob(
             model={
@@ -4061,9 +4103,12 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             },
         )
         pillar, caps, _knobs = MODULE.score_agent(facts)
-        self.assertEqual(caps, [])
-        self.assertFalse(pillar.subscores[0].measured)
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertTrue(caps[0].blocks)
+        self.assertTrue(pillar.subscores[0].measured)
         self.assertFalse(pillar.subscores[0].withheld)
+        self.assertEqual(pillar.score, 0)
+        self.assertEqual(pillar.confidence, 1.0)
         # Each refusal keeps its own reason - a reader can act on "one option is
         # not a choice" and cannot act on silence.
         self.assertIn("one option is not a choice", pillar.subscores[0].evidence)
@@ -4079,15 +4124,15 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             (),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
-        self.assertEqual(score.unmeasured_pillars, ("agent",))
-        # Renormalized over the two observed pillars rather than averaged with
-        # a zero: 100 and 100 over weights 40 and 35.
-        self.assertEqual(score.weighted_average, 100)
-        self.assertEqual(score.band, MODULE.CONFIDENCE_BAND_CEILING)
-        self.assertTrue(score.band_limited_by_confidence)
+        # Averaged with the zero over all three declared weights, not
+        # renormalized over two. 100 and 100 and 0 over 40, 35 and 25.
+        self.assertEqual(score.weighted_average, 75)
+        self.assertEqual(score.overall, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+        self.assertEqual(score.status, "BLOCKED")
+        # The card says what was read and what it found, in the pillar's own
+        # row, rather than explaining a denominator the reader cannot see.
         card = MODULE.render_card(score)
-        self.assertIn("left out of that average rather than counted as zero", card)
-        self.assertIn("Nothing could be measured for the agent pillar", card)
+        self.assertIn("no varying setting was established", card)
 
     def test_a_discovered_knob_earns_nothing_without_evidence_for_it(self) -> None:
         """Never invent a space: the owner's rule, enforced per field.
@@ -4593,6 +4638,267 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_an_unknown_size_is_not_capped(self) -> None:
         """No size reported is not the same claim as a small size."""
         self.assertIsNone(MODULE.power_ceiling(None))
+
+
+class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
+    """The agent pillar's ordering, swept rather than sampled.
+
+    Six times in this repository's history, omitting evidence has scored better
+    than supplying it - undeclared provenance, an absent `--task-kind`, missing
+    probe scores, an untagged dataset, an unattested wiring claim, and #201's
+    own first draft, where a read of the agent that found nothing scored 99
+    against 92 for a read that found four settings. Each was found by somebody
+    noticing one pair of numbers. Each fix pinned that pair.
+
+    A pair is not the property. This asserts the property over the whole space
+    of agent-evidence states this scorer can be given, crossed with the other
+    two pillars, because the defect has never once recurred in the pair anybody
+    already pinned - it recurs in the state next to it.
+
+    THE ORDER BEING ASSERTED is the number of configurations the evidence
+    ESTABLISHES, which is the only thing the agent pillar claims to measure. A
+    state that establishes a space of one - nobody looked, a read found nothing
+    varying, a document lists nothing, a document lists settings that are all
+    pinned - establishes exactly as much searchable surface as any other of
+    them: none. So they must all score the SAME, and every state that
+    establishes more must score at least as much.
+
+    That equality is the load-bearing half, and it is the half both of #201's
+    rejected drafts broke. Draft one renormalized the read-found-nothing pillar
+    out of the average, putting it 25 points above every other empty state.
+    Draft two fixed that and deleted the ceiling on the silent state instead,
+    putting silence 30 points above a document that declares the same empty
+    space - omission outscoring declaration, the class the fix was for.
+
+    What is deliberately NOT asserted is that more evidence scores STRICTLY
+    more. Looking and finding nothing is more work than not looking, and it
+    tells the customer something; it does not make their agent more searchable,
+    and a score that paid for the looking would be measuring this run's effort
+    rather than the project. The difference between those two states belongs to
+    `blocks`, `confidence` and the evidence sentence, all of which are asserted
+    in their own tests. Only the score is ordered here.
+    """
+
+    # Dataset and evaluation pillars across their whole range, at the same
+    # granularity as the modelled opening-card sweep in test_skill_package.
+    # They are built directly rather than scored from facts because the subject
+    # here is the agent pillar: what has to hold is that no setting of the other
+    # two can invert the order, including the ones where a cap is not the
+    # operative limit at all.
+    GRID = tuple(range(0, 101, 10))
+
+    def _states(self) -> list[tuple[str, int, object]]:
+        """Every agent-evidence state, each with the space it establishes.
+
+        The count beside each is what the evidence puts on the table: 1 means
+        "one configuration", which is another way of writing "nothing to
+        search". Read states go through `agent_facts_from_discovery` and
+        document states through `agent_facts_from_config_space`, so a change to
+        either adapter reaches this sweep instead of being masked by
+        hand-built facts.
+        """
+
+        def read(**knobs: object) -> object:
+            return MODULE.agent_facts_from_discovery({"knobs": knobs})
+
+        def document(knobs: dict, **rest: object) -> object:
+            return MODULE.agent_facts_from_config_space(
+                {"knobs": knobs, **rest},
+            )
+
+        cited = "agent.py:8 the value reaches chat.completions.create"
+        states: list[tuple[str, int, object]] = [
+            ("no document and no read", 1, MODULE.AgentFacts()),
+            ("read: nothing at all", 1, read()),
+            (
+                "read: one pinned value",
+                1,
+                read(model={"values": ["gpt-4o-mini"], "evidence": cited}),
+            ),
+            (
+                "read: categorical with one option",
+                1,
+                read(thinking_shape={"values": ["direct"], "evidence": cited}),
+            ),
+            (
+                "read: a range inside the noise floor",
+                1,
+                read(temperature={"low": 0.20, "high": 0.22, "evidence": cited}),
+            ),
+            (
+                "read: seed only",
+                1,
+                read(seed={"low": 0, "high": 1000, "evidence": cited}),
+            ),
+            (
+                "read: one numeric knob",
+                2,
+                read(temperature={"low": 0.0, "high": 1.0, "evidence": cited}),
+            ),
+            (
+                "read: one categorical knob",
+                2,
+                read(model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited}),
+            ),
+            (
+                "read: two knobs",
+                4,
+                read(
+                    model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
+                    temperature={"low": 0.0, "high": 1.0, "evidence": cited},
+                ),
+            ),
+            (
+                "read: three knobs",
+                8,
+                read(
+                    model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
+                    temperature={"low": 0.0, "high": 1.0, "evidence": cited},
+                    top_p={"low": 0.1, "high": 1.0, "evidence": cited},
+                ),
+            ),
+            (
+                "read: four knobs",
+                24,
+                read(
+                    model={
+                        "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
+                        "evidence": cited,
+                    },
+                    temperature={"low": 0.0, "high": 1.0, "evidence": cited},
+                    top_p={"low": 0.1, "high": 1.0, "evidence": cited},
+                    thinking_shape={
+                        "values": ["direct", "chain-of-thought"],
+                        "evidence": cited,
+                    },
+                ),
+            ),
+            ("document: lists nothing", 1, document({})),
+            ("document: wiring unattested", 1, document({"model": ["a", "b"]})),
+            (
+                "document: wired names nothing",
+                1,
+                document({"model": ["a", "b"]}, wired=[]),
+            ),
+            (
+                "document: one wired pinned knob",
+                1,
+                document({"model": ["a"]}, wired=["model"]),
+            ),
+            (
+                "document: one wired varying knob",
+                2,
+                document({"model": ["a", "b"]}, wired=["model"]),
+            ),
+            (
+                "document: two wired varying knobs",
+                4,
+                document(
+                    {"model": ["a", "b"], "thinking_shape": ["direct", "cot"]},
+                    wired=["model", "thinking_shape"],
+                ),
+            ),
+        ]
+        return states
+
+    def _overall(self, facts: object, dataset: int, evaluation: int) -> int:
+        agent, caps, knobs = MODULE.score_agent(facts)
+        pillars = [
+            MODULE.Pillar(name="dataset", score=dataset, confidence=1.0, subscores=()),
+            MODULE.Pillar(
+                name="evaluation", score=evaluation, confidence=1.0, subscores=()
+            ),
+            agent,
+        ]
+        return MODULE.aggregate(
+            pillars, caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
+        ).overall
+
+    def test_every_state_reaches_the_branch_it_claims_to(self) -> None:
+        """The sweep is worthless if its fixtures land somewhere else.
+
+        Each state declares the space it establishes; this checks the scorer
+        agrees, by reading the pillar rather than the overall. A fixture whose
+        document was silently rejected, or whose knob was silently uncredited,
+        would otherwise sweep a state nobody meant to test and pass for the
+        wrong reason - which is how a fixture that reaches no branch at all
+        still goes green.
+        """
+        for name, established, facts in self._states():
+            with self.subTest(state=name):
+                pillar, caps, _knobs = MODULE.score_agent(facts)
+                conditions = [cap.condition for cap in caps]
+                if established == 1:
+                    self.assertEqual(pillar.score, 0, "an empty space earns nothing")
+                    self.assertEqual(
+                        conditions,
+                        ["agent-no-varying-knobs"],
+                        "a state that establishes no space must say so",
+                    )
+                else:
+                    self.assertGreater(
+                        pillar.score, 0, "a real space has to earn something"
+                    )
+                    self.assertEqual(
+                        conditions, [], "a real space raises no nothing-to-search cap"
+                    )
+
+    def test_no_state_outscores_one_that_establishes_more(self) -> None:
+        """The property, over every pair, at every dataset and evaluation."""
+        states = self._states()
+        checked = 0
+        for dataset in self.GRID:
+            for evaluation in self.GRID:
+                scores = {
+                    name: (established, self._overall(facts, dataset, evaluation))
+                    for name, established, facts in states
+                }
+                for low, (low_space, low_score) in scores.items():
+                    for high, (high_space, high_score) in scores.items():
+                        if low_space > high_space:
+                            continue
+                        checked += 1
+                        self.assertLessEqual(
+                            low_score,
+                            high_score,
+                            f"at dataset={dataset} evaluation={evaluation}, "
+                            f"{low!r} establishes {low_space} configuration(s) "
+                            f"and scores {low_score}, while {high!r} "
+                            f"establishes {high_space} and scores {high_score} "
+                            "- less searchable evidence scored higher",
+                        )
+        # The sweep has to be big enough to be worth calling a property, and a
+        # helper that quietly returned no states would pass every assertion
+        # above by vacuity.
+        self.assertGreater(checked, 20_000)
+
+    def test_states_that_establish_nothing_all_score_the_same(self) -> None:
+        """The equality both rejected drafts broke, stated on its own.
+
+        Separated from the ordering above because it fails differently: an
+        ordering violation says one state is too generous, and this says two
+        readings of the SAME finding disagree about what it is worth. Every one
+        of these establishes a search space of one configuration, on the same
+        project, and the only thing that differs is which document said so.
+        """
+        empty = [
+            (name, facts)
+            for name, established, facts in self._states()
+            if established == 1
+        ]
+        self.assertGreater(len(empty), 5)
+        for dataset in self.GRID:
+            for evaluation in self.GRID:
+                landings = {
+                    name: self._overall(facts, dataset, evaluation)
+                    for name, facts in empty
+                }
+                self.assertEqual(
+                    len(set(landings.values())),
+                    1,
+                    f"at dataset={dataset} evaluation={evaluation} the states "
+                    f"that establish no search space disagree: {landings}",
+                )
 
 
 class AModelWrittenAnswerKeyCannotPresentAsStrongTests(unittest.TestCase):
@@ -5896,15 +6202,16 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            3,
-            "a consumer must be able to tell 'emits no remedy' from 'has none' "
-            "- and, since #201, an average over three pillars from one over "
-            "the pillars that were actually observed",
+            2,
+            "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
-        # The key that carries the second of those, present on every payload so
-        # that "no pillar was excluded" is something a consumer reads rather
-        # than infers from a missing field.
-        self.assertEqual(payload["unmeasured_pillars"], [])
+        # And `weighted_average` still means what schema 2 says it means: an
+        # average over every declared weight. #201 bumped this to 3 while a
+        # pillar could drop out of that denominator; that renormalization is
+        # gone, so the version went back rather than staying bumped for a
+        # change no payload carries.
+        self.assertEqual(payload["weighted_average"], 60)
+        self.assertNotIn("unmeasured_pillars", payload)
 
 
 class NumbersOnTheCardMustDescribeTheRunTests(unittest.TestCase):
