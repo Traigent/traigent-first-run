@@ -12416,9 +12416,18 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # `stop target` is here for the same reason - it is the phrase
         # run-safety.md requires the user be given, so it is the phrase the
         # ceiling is most likely to be restated under.
+        # `estimate` joined the three anchors below after the coverage check
+        # in `test_every_stated_cost_figure_is_read_by_the_ceiling_entry` was
+        # written: SKILL.md states the ceiling as "if the estimate exceeds
+        # `$5.00`", which names none of the other three words, so the pattern
+        # read four of the five documents that carry the figure and SKILL.md
+        # could have drifted to `$8.00` with this entry green. That is the same
+        # miss as the `$5` one recorded above, found the same way - by asking
+        # what the pattern does NOT reach rather than whether it passes.
         (
             "the total walkthrough ceiling",
-            r"(?:ceiling|walkthrough|stop target)[^.]{0,40}?\$(\d+(?:\.\d{2})?)",
+            r"(?:ceiling|walkthrough|stop target|estimate)"
+            r"[^.]{0,40}?\$(\d+(?:\.\d{2})?)",
         ),
         # The enhanced run's ceiling, matched as the ceiling phrase the user
         # reads rather than as a range: the range shape it used to have is now
@@ -12475,6 +12484,78 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     "different numbers for one decision, and it will follow "
                     "whichever it read last.",
                 )
+
+    # Cost figures that are deliberately NOT the walkthrough ceiling: a free
+    # route genuinely costs nothing, and `$0.00` is the value sdk-execution.md
+    # forbids printing for an absent cost. Both are decisions of their own, so
+    # they are named here rather than being swept up by a check about a
+    # different number.
+    NON_CEILING_COST_FIGURES = frozenset({"0", "0.00"})
+
+    def test_every_stated_cost_figure_is_read_by_the_ceiling_entry(self) -> None:
+        """The shared-value table checks agreement; this checks it is looking.
+
+        Its own comment records how this fails: the ceiling pattern could not
+        match a bare `$5`, so the one shape the value actually drifted into was
+        the one shape the check could not see, and the entry stayed green
+        through it. That is a property of anchored patterns generally, not of
+        that one spelling - the entry reads whichever sentences happen to use
+        its words, and says nothing about the sentences that do not.
+
+        Measured before `estimate` was added to it: five documents carry the
+        ceiling figure and the pattern reached four. SKILL.md states it as "if
+        the estimate exceeds `$5.00`", so SKILL.md - the document that carries
+        the flow - could have drifted alone with the agreement check green.
+
+        So every cost figure in the corpus is now accounted for: either the
+        ceiling entry read it, or it is named above as a different decision. A
+        sixth restatement in a new phrasing fails here rather than silently
+        leaving the table's coverage one document smaller.
+
+        One case it does not flag, stated rather than left to be discovered: an
+        unreadable restatement of the SAME figure, in a document that already
+        states it readably, passes - the value is accounted for in that
+        document either way. It cannot drift while passing, which is the risk
+        this exists for; measured, moving that restatement to `$8.00` fails
+        here naming the document and the figure.
+        """
+        ceiling = dict(self.SHARED_VALUES)["the total walkthrough ceiling"]
+        unread: dict[str, list[str]] = {}
+        for name, text in self.conversation().items():
+            read = set(re.findall(ceiling, text, re.IGNORECASE))
+            missed = [
+                amount
+                for amount in re.findall(r"\$(\d+(?:\.\d{1,2})?)", text)
+                if amount not in read and amount not in self.NON_CEILING_COST_FIGURES
+            ]
+            if missed:
+                unread[name] = sorted(set(missed))
+        self.assertEqual(
+            unread,
+            {},
+            "a cost figure is stated in a phrasing the shared-value ceiling "
+            "entry does not read, and is not declared to be a different "
+            "number. It can drift alone, which is what that entry exists to "
+            "prevent.",
+        )
+        # The entry is asserted to actually reach the document whose phrasing
+        # it was widened for, so a later tightening cannot quietly undo it.
+        self.assertTrue(
+            re.search(ceiling, self.conversation()["SKILL.md"], re.IGNORECASE),
+            "the ceiling entry no longer reads SKILL.md, which states the "
+            "figure without using the word `ceiling`",
+        )
+        # Both directions against invented text: a new phrasing must be
+        # unreadable by the pattern (so the coverage check above has something
+        # to catch), and the declared exemptions must stay exempt.
+        self.assertIsNone(
+            re.search(ceiling, "A single trial may cost `$0.40` on this model."),
+            "the coverage check is meaningless if the pattern reads every "
+            "sentence that mentions money",
+        )
+        self.assertTrue(
+            re.search(ceiling, "Use one total walkthrough ceiling, `$5.00`."),
+        )
 
     # Every way a document states the size of one of the two generated spaces.
     # Each entry captures the QUANTITY and nothing else, so the check is
