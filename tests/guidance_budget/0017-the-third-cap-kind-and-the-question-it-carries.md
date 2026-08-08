@@ -1,10 +1,10 @@
 # 0017 - the third cap kind, and the question it was invented to ask
 
 follows: 0016
-resident-ceiling: 68_450
-resident-measured: 68_372
-total-ceiling: 311_450
-total-measured: 311_320
+resident-ceiling: 69_300
+resident-measured: 69_225
+total-ceiling: 312_300
+total-measured: 312_173
 
 #203, stacked on #202. The scorer grew a third state some waves back and every
 document that explains the taxonomy stayed at two, so a reader of this package
@@ -62,8 +62,9 @@ card in the safety reference stopped guaranteeing a `proceed` verdict that an
 asking condition legitimately overrides, and a comment in the scorer stopped
 describing a card line the space-sized evidence sentence retired.
 
-68_372 and 311_320, read with `assistant_facing_documents()` on this branch as
-it sits on #202's head, which is the only tree either number has been taken on,
-and re-taken after the review corrections above rather than carried across from
-the figures this entry first declared. A merge with any other open branch moves
-both; take fresh readings there instead of importing these.
+69_225 and 312_173, read with `assistant_facing_documents()` on this branch as
+it sits on #202's head, re-taken after the review corrections above rather than
+carried across from the figures this entry first declared, and re-taken again
+once #202's own corrections were merged forward into this branch. A merge with
+any other open branch moves both; take fresh readings there instead of importing
+these.
