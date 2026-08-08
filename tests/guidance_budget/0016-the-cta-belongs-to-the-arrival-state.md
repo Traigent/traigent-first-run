@@ -1,10 +1,10 @@
 # 0016 - the closing recommendation belongs to the state the customer arrived in
 
 follows: 0015
-resident-ceiling: 67_400
-resident-measured: 67_298
-total-ceiling: 304_800
-total-measured: 304_694
+resident-ceiling: 68_250
+resident-measured: 68_151
+total-ceiling: 305_650
+total-measured: 305_547
 
 One branch, #202. Almost every byte lands in SKILL.md because the close is flow
 and flow has one home; the glossary takes the rest, three lines, because its
@@ -36,13 +36,38 @@ rows it scored, how many configurations it paid for, how many controls it moved 
 are not shortcomings of anybody's project, and the close now says what widening
 each would buy, phrased as something to go and do rather than as a promise about
 what would turn up. And the post-run score keeps exactly one job, which is
-spelled out where the call is made: it is the only moment in the walkthrough at
-which the agent pillar is scored on anything, since both earlier gates refuse a
-settings document on purpose. Deleting the call would have stranded the
-freeze-remove-persist sequence that manufactures that document, for a ranking
-nobody reads any more.
+spelled out where the call is made: it reads the space the enhanced search was
+actually handed, and both earlier gates refuse a settings document on purpose,
+so nothing before the close has that reading to take.
 
-67_298 and 304_694, taken with `assistant_facing_documents()` on this branch
+That much was already written down. What the first draft of this entry offered
+as the justification was not: that removing the call would strand the
+freeze-remove-persist sequence which manufactures the document. Review pointed
+out the shape of that - the sequence exists in order to feed this reading, and
+the reading was being defended by the sequence - and then traced the surviving
+job to nobody. It is not displayed, the recommendation is ranked off the
+arrival state instead, two of its three pillars are declared inert in the same
+paragraph, and the safety reference forbids its agent cap from standing in for
+the search's own outcome report. A number computed and dropped is a cost with
+no reader, whatever produced it.
+
+So the call now names who reads it, and the extra bytes are those two readers
+rather than more argument. The agent cap is a finding about the search that
+just finished: a document listing nothing that varies means the paid comparison
+ran over one configuration, which blocks and belongs in the close. And no other
+caller anywhere opens the emitted file, so this is also where a document this
+run wrote and cannot parse gets refused by name instead of sitting unread in
+somebody's project. Both are checked against the module now, not against the
+sentence claiming them.
+
+The gap bullet is corrected in the same pass. It offered two routes out of the
+generated-data ceiling, and only one of them is: a person reading and approving
+rows this run invented leaves their provenance exactly where it was, and the
+scorer refuses a review entry over its own synthesised rows outright, so that
+move answers the weaker finding at 74 and never the stronger one at 65. The
+review is still worth having; the bullet stops implying it lifts anything.
+
+68_151 and 305_547, taken with `assistant_facing_documents()` on this branch
 sitting directly on #200's head at dad09e0f, which is where it was written and
 the only tree it has been weighed on. Neither figure survives a merge with
 another open branch untouched; re-measure there rather than carrying these

@@ -738,7 +738,15 @@ of the space the customer paid to search. Its dataset and evaluation caps rank n
 nothing about what is still open: a gap this run filled with a substitute reads exactly like one the
 customer closed themselves, because on disk the evidence is the same either way. Never show that
 score or set it beside the opening one - once this run has filled the gaps, a score mostly grades
-our own substitutes. Leave the user knowing which remaining gap to close first.
+our own substitutes.
+
+Two things read that call. Its agent cap is a finding about the search that just ran: a document
+that varies nothing means the paid run compared one configuration, so the card blocks and the close
+reports it beside the search's own outcome. And this is the only place anything reads
+`traigent-runs/config-space.json`, so a file this run wrote and cannot itself parse is refused here
+by name rather than left in the customer's project for them to find. `references/run-safety.md`
+owns how that card reads after a stopped, failed, or zero-trial search. Leave the user knowing which
+remaining gap to close first.
 
 Feature-detect local audit and connected insight capabilities. Report only fields actually
 returned, attribute each claim to its artifact, and otherwise say no verified local artifact was
@@ -754,13 +762,16 @@ score's caps and this run's own recorded limits, and name its value. A gap this 
 substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
 what closing it properly takes:
 
-- Generated or mostly generated data, or an evaluation method this run wrote - two ways to close
-  it, in this order. **Best:** collect or export real examples of the same task, and build the
-  evaluation method from them and from what their expected results actually are. **Otherwise:**
-  keep what this run generated and have a person read and approve it - the rows and their expected
+- Generated or mostly generated data, or an evaluation method this run wrote - one move that closes
+  it and one worth making anyway, in this order. **Best:** collect or export real examples of the
+  same task, and build the evaluation method from them and from what their expected results actually
+  are. This is the only one of the two that lifts the ceiling. **Otherwise:** keep what this run
+  generated and have a person read and approve it - the rows and their expected
   answers, and the generated method too, whose grading logic has to match what the agent is really
-  scored on and what its expected result is. This is the gap that ceilings the score no matter how
-  good everything else is, so it is first whenever it applies.
+  scored on and what its expected result is. Say plainly that this one does not lift the ceiling:
+  the score reads where the rows came from, and a person approving generated rows leaves them
+  generated. It is still worth doing, and it is not the way out. This is the gap that ceilings the
+  score no matter how good everything else is, so it is first whenever it applies.
 - Real inputs with model-written answers - have a person review a sample of the answer key. Until
   then the accuracy number measures agreement with a model, not correctness.
 - Rows without expected outputs when the evaluator requires references - label a representative

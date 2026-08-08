@@ -7186,9 +7186,36 @@ class SkillPackageTests(unittest.TestCase):
             "more of the agent's controls, the whole dataset instead of the "
             "slice, a space wider than a first look needs",
             "it names an action they can take, never a result a wider run would find",
+            # Only one of the two moves lifts the ceiling, and the bullet says
+            # which. It offered human review - the remedy for the LESSER gap,
+            # `dataset-generated-answer-key` at 74 - as a second route out of
+            # the greater one at 65, which it is not.
+            "this is the only one of the two that lifts the ceiling",
+            "say plainly that this one does not lift the ceiling",
+            "a person approving generated rows leaves them generated",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+        # Derived, not restated. The row review is the mechanism a human verdict
+        # would travel on, and it refuses this run's own generated rows outright
+        # - `synthesised` is not a reviewable origin - so no amount of reading
+        # and approving what this run wrote can reach the provenance counts that
+        # `dataset-fully-synthetic` fires on. The ordering of the two ceilings
+        # is the other half: 65 is the greater finding and 74 the lesser, so the
+        # lesser one's remedy cannot be a route out of the greater.
+        self.assertNotIn(
+            "synthesised",
+            READINESS.ROW_REVIEW_ORIGINS,
+            "a review entry may now carry this run's own generated rows, so a "
+            "human verdict can reach the synthetic ceiling after all and this "
+            "bullet should stop saying it cannot",
+        )
+        self.assertLess(
+            READINESS.FULLY_SYNTHETIC_CEILING,
+            READINESS.GENERATED_ANSWER_KEY_CEILING,
+            "the generated-data ceiling is no longer the stricter of the two, "
+            "so 'the gap that ceilings the score' names the wrong one",
+        )
         # Order is the argument. Reversed, the close recommends keeping our own
         # rows first and getting real data reads as the afterthought. Located
         # with `find` rather than `index` so a missing half is reported as the
@@ -7232,14 +7259,28 @@ class SkillPackageTests(unittest.TestCase):
 
         What is left is a reading nothing else in the run takes. The opening
         gate and the stage-4 score each omit every config-space document, in
-        their own words rather than by inheriting the rule, so the agent pillar
-        is measured nowhere before the close; the post-run call, handed the
-        document this run's own search received, is the only place it is
-        measured at all. That same call is the sole consumer of
-        `--config-space`, so removing it would orphan the freeze/unlink/write
-        lifecycle that produces the document - and the two omissions pinned here
-        are why the safety property they carry, that a historical `wired`
-        attestation is never current wiring, does not depend on this decision.
+        their own words rather than by inheriting the rule, so the space the
+        search actually received is measured nowhere before the close - and the
+        two omissions pinned here are why the safety property they carry, that
+        a historical `wired` attestation is never current wiring, does not
+        depend on this decision.
+
+        Review found the surviving job had no reader. Not shown, not ranked
+        from, dataset and evaluation caps declared inert, and the agent cap
+        forbidden from standing in for the search's own outcome report - so the
+        score was computed and discarded, and the only reason left for keeping
+        the call was that deleting it would strand the freeze/unlink/write
+        lifecycle, which is circular: the lifecycle exists to feed this score.
+
+        So the call keeps two STATED readers instead of a defence. Its agent
+        cap is a finding about the search that just ran - an emitted document
+        that varies nothing means the paid run compared one configuration, and
+        that blocks and gets reported. And this is the sole reader of
+        `traigent-runs/config-space.json` anywhere in the package, so it is
+        also what refuses a document this run wrote and cannot parse, rather
+        than leaving a broken artifact in the customer's project unremarked.
+        Both are asserted below against the module and the corpus rather than
+        against the sentence describing them.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
@@ -7250,9 +7291,34 @@ class SkillPackageTests(unittest.TestCase):
             "document by construction",
             "its dataset and evaluation caps rank nothing and settle nothing "
             "about what is still open",
+            # The readers, named. Without these the paragraph describes a score
+            # nothing consumes, which is what review found.
+            "two things read that call",
+            "its agent cap is a finding about the search that just ran",
+            "the only place anything reads `traigent-runs/config-space.json`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+        # Reader one, derived: the agent condition really does have a blocking
+        # branch, so "the card blocks" is a state the close can reach and not a
+        # sentence about a cap that only ever advises.
+        blocking_agent = [
+            cap
+            for cap in vars(READINESS).values()
+            if isinstance(cap, READINESS.Cap)
+            and cap.condition == "agent-no-varying-knobs"
+            and cap.blocks
+        ]
+        self.assertTrue(
+            blocking_agent,
+            "no agent cap blocks any more, so the closing card cannot reach "
+            "the finding this paragraph says it reports - and the call is back "
+            "to having one reader",
+        )
+        # Reader two, derived: the scorer refuses a document it cannot read, by
+        # name, rather than scoring around it. That refusal is the whole value
+        # of putting the file through this call.
+        self.assertIn("exit 2", " ".join(RUN_SAFETY.read_text().casefold().split()))
         omissions = re.findall(
             r"omit every config-space file found before this run's enhanced search",
             skill,
