@@ -373,8 +373,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 "continue as is" as permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
-`recommended_action`: `proceed` unless a blocking cap fires, otherwise the lowest-ceiling blocking
-remedy.
+`recommended_action`: the lowest-ceiling blocking remedy, else the remedy of a cap that only asks,
+else `proceed`.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
