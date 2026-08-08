@@ -3569,13 +3569,11 @@ class SkillPackageTests(unittest.TestCase):
         for document in assistant_facing_documents():
             body = self._FENCED_BLOCK.sub("", document.read_text())
             for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
-                if not self._GRID_TO_RANDOM.search(sentence):
-                    continue
-                ratio = self._A_RATIO.search(sentence)
-                if ratio:
+                ratio = self._threshold_in(sentence)
+                if ratio is not None:
                     offenders.append(
                         f"{document.relative_to(ROOT).as_posix()}: "
-                        f"{ratio.group(0)!r} in {sentence!r}"
+                        f"{ratio!r} in {sentence!r}"
                     )
         self.assertEqual(
             offenders,
@@ -3587,6 +3585,48 @@ class SkillPackageTests(unittest.TestCase):
         )
         owner = " ".join(SDK_EXECUTION.read_text().casefold().split())
         self.assertIn("could not reach most of it", owner)
+
+        # Measured before this probe existed: `_GRID_TO_RANDOM` reaches five
+        # sentences in the corpus and `_A_RATIO` fires on none of them. So the
+        # violation half of this guard had never once matched anything, and an
+        # empty `offenders` was equally the answer for "the prose is honest"
+        # and for "this regex can no longer see a threshold". The deleted
+        # sentence is the first probe; the other two are the spellings the
+        # docstring above says will come next, neither of which the original
+        # phrase-ban would have caught.
+        for planted in (
+            "Above roughly twenty configurations per allowed trial, move a "
+            "preserved baseline from `grid` to `random`.",
+            "Switch from grid to random above 40 configurations per trial.",
+            "Use grid, then random at ten times the trial cap.",
+            "Prefer grid below 20 configurations per trial and random above it.",
+        ):
+            with self.subTest(planted=planted):
+                self.assertIsNotNone(
+                    self._threshold_in(planted),
+                    "a numeric grid-to-random crossover this guard cannot see",
+                )
+        # And the qualitative rule the guidance is supposed to state, plus a
+        # ratio in a sentence about something else entirely - neither is an
+        # offence, or the guard is a false red that teaches authors to stop
+        # writing the rule at all.
+        for innocent in (
+            "The baseline pins `grid`; never pin `random` on the connected search.",
+            'Keep `algorithm="auto"` here, and never pin `grid` or `random`.',
+            "The knob-count sub-score is damped above 20 configurations per trial.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertIsNone(
+                    self._threshold_in(innocent),
+                    "the guard reads an honest sentence as a threshold",
+                )
+
+    def _threshold_in(self, sentence: str) -> str | None:
+        """The ratio stated in a grid-versus-random sentence, if it states one."""
+        if not self._GRID_TO_RANDOM.search(sentence):
+            return None
+        ratio = self._A_RATIO.search(sentence)
+        return None if ratio is None else ratio.group(0)
 
     # An authoring label: the artifact ordinal and template letter a drafter
     # uses to say which block this is, which is not a thing the reader knows
@@ -3628,6 +3668,37 @@ class SkillPackageTests(unittest.TestCase):
             "in prose the assistant reads out; nothing here defines that "
             "numbering, so it names a thing the reader cannot look up",
         )
+
+        # Measured before this probe existed: this pattern matches zero times
+        # across the whole corpus, so `labelled == []` was being asserted about
+        # text the regex has never once fired on. A guard that has never
+        # matched anything is indistinguishable from a guard that cannot. The
+        # first probe is the label that actually leaked; the rest are the
+        # family the docstring says comes next.
+        for planted in (
+            "Artifact-2 template A: show this after registration.",
+            "Artifact 3 - the closing summary.",
+            "artifact-11 goes here",
+            "Template B: paste this block.",
+        ):
+            with self.subTest(planted=planted):
+                self.assertTrue(
+                    self._AUTHORING_LABEL.search(planted),
+                    "a drafting label this guard cannot see",
+                )
+        # The words themselves are ordinary and the guidance uses both, so the
+        # shape has to be what fails. A false red here would be paid for in
+        # prose nobody is allowed to write.
+        for innocent in (
+            "the run-plan template and the artifact it writes",
+            "Use the template in `assets/run-plan.md`.",
+            "Stage 2 produces one artifact the user keeps.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertIsNone(
+                    self._AUTHORING_LABEL.search(innocent),
+                    "the guard flags prose that carries no drafting label",
+                )
 
     def test_the_card_labels_the_readme_documents_are_the_ones_it_prints(
         self,
