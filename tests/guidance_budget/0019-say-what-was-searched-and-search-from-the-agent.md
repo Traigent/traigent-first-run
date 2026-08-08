@@ -1,10 +1,10 @@
 # 0019 - say what was searched, and search from the agent
 
 follows: 0018
-resident-ceiling: 71_400
-resident-measured: 71_233
-total-ceiling: 316_450
-total-measured: 316_276
+resident-ceiling: 72_550
+resident-measured: 72_434
+total-ceiling: 319_400
+total-measured: 319_245
 
 Two owner corrections land here and neither can be spent more cheaply. The
 first is a truthfulness bound on the sentence the customer actually hears at
@@ -34,7 +34,17 @@ home in one clause; searching from the agent turns that later check into a
 confirmation instead of a coin toss. Nor is the dataset-versus-evaluator order
 pinned, because no measurement here supports preferring either.
 
-Both figures were taken with `assistant_facing_documents()` on this branch as
-it sits on #209's head, the same tree entry 0018 was measured on. The resident
-share is the flow edit alone; the larger half of the total is the reference,
-which loads for one stage and leaves.
+Both figures were re-taken with `assistant_facing_documents()` after review
+corrections to #202 and #203 were merged forward into this branch, which is the
+tree they now describe rather than the #209 head entry 0018 was measured on.
+The resident share is the flow edit alone; the larger half of the total is the
+reference, which loads for one stage and leaves.
+
+Two further edits land here, and both were verified on a composed tree before
+being written. The gap ask now fires on material the inventory found and could
+not read out of, not only on material it failed to find: the opening gate defers
+an unreadable agent to this question, and while the trigger said "did not find"
+that deferral arrived nowhere, so an unreadable agent reached a ceiling with
+nobody asked. And the `I have it` reply accepts an agent path beside the other
+two, because a customer whose agent lives in a sibling repository was offered
+`proceed` and nothing else.

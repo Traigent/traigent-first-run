@@ -53,8 +53,8 @@ Say it in their words, naming only what this run looked for and did not find:
 > your product: the score carries the generated-data ceiling because of it, so this run can show the
 > workflow working and cannot tell you how your product performs.
 >
-> Shall I go ahead? Or reply `I have it` with a path - `dataset: <path>`, `evaluation: <path>` - and
-> I will use yours.
+> Shall I go ahead? Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`,
+> `evaluation: <path>` - and I will use yours.
 
 Never say the material does not exist. This run reads the project directory, and a dataset can be
 real, in use, and outside it - a shared mount, a sibling repo, a path configured somewhere this

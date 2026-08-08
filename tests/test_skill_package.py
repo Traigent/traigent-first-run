@@ -7186,9 +7186,36 @@ class SkillPackageTests(unittest.TestCase):
             "more of the agent's controls, the whole dataset instead of the "
             "slice, a space wider than a first look needs",
             "it names an action they can take, never a result a wider run would find",
+            # Only one of the two moves lifts the ceiling, and the bullet says
+            # which. It offered human review - the remedy for the LESSER gap,
+            # `dataset-generated-answer-key` at 74 - as a second route out of
+            # the greater one at 65, which it is not.
+            "this is the only one of the two that lifts the ceiling",
+            "say plainly that this one does not lift the ceiling",
+            "a person approving generated rows leaves them generated",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+        # Derived, not restated. The row review is the mechanism a human verdict
+        # would travel on, and it refuses this run's own generated rows outright
+        # - `synthesised` is not a reviewable origin - so no amount of reading
+        # and approving what this run wrote can reach the provenance counts that
+        # `dataset-fully-synthetic` fires on. The ordering of the two ceilings
+        # is the other half: 65 is the greater finding and 74 the lesser, so the
+        # lesser one's remedy cannot be a route out of the greater.
+        self.assertNotIn(
+            "synthesised",
+            READINESS.ROW_REVIEW_ORIGINS,
+            "a review entry may now carry this run's own generated rows, so a "
+            "human verdict can reach the synthetic ceiling after all and this "
+            "bullet should stop saying it cannot",
+        )
+        self.assertLess(
+            READINESS.FULLY_SYNTHETIC_CEILING,
+            READINESS.GENERATED_ANSWER_KEY_CEILING,
+            "the generated-data ceiling is no longer the stricter of the two, "
+            "so 'the gap that ceilings the score' names the wrong one",
+        )
         # Order is the argument. Reversed, the close recommends keeping our own
         # rows first and getting real data reads as the afterthought. Located
         # with `find` rather than `index` so a missing half is reported as the
@@ -7232,14 +7259,28 @@ class SkillPackageTests(unittest.TestCase):
 
         What is left is a reading nothing else in the run takes. The opening
         gate and the stage-4 score each omit every config-space document, in
-        their own words rather than by inheriting the rule, so the agent pillar
-        is measured nowhere before the close; the post-run call, handed the
-        document this run's own search received, is the only place it is
-        measured at all. That same call is the sole consumer of
-        `--config-space`, so removing it would orphan the freeze/unlink/write
-        lifecycle that produces the document - and the two omissions pinned here
-        are why the safety property they carry, that a historical `wired`
-        attestation is never current wiring, does not depend on this decision.
+        their own words rather than by inheriting the rule, so the space the
+        search actually received is measured nowhere before the close - and the
+        two omissions pinned here are why the safety property they carry, that
+        a historical `wired` attestation is never current wiring, does not
+        depend on this decision.
+
+        Review found the surviving job had no reader. Not shown, not ranked
+        from, dataset and evaluation caps declared inert, and the agent cap
+        forbidden from standing in for the search's own outcome report - so the
+        score was computed and discarded, and the only reason left for keeping
+        the call was that deleting it would strand the freeze/unlink/write
+        lifecycle, which is circular: the lifecycle exists to feed this score.
+
+        So the call keeps two STATED readers instead of a defence. Its agent
+        cap is a finding about the search that just ran - an emitted document
+        that varies nothing means the paid run compared one configuration, and
+        that blocks and gets reported. And this is the sole reader of
+        `traigent-runs/config-space.json` anywhere in the package, so it is
+        also what refuses a document this run wrote and cannot parse, rather
+        than leaving a broken artifact in the customer's project unremarked.
+        Both are asserted below against the module and the corpus rather than
+        against the sentence describing them.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
@@ -7250,9 +7291,34 @@ class SkillPackageTests(unittest.TestCase):
             "document by construction",
             "its dataset and evaluation caps rank nothing and settle nothing "
             "about what is still open",
+            # The readers, named. Without these the paragraph describes a score
+            # nothing consumes, which is what review found.
+            "two things read that call",
+            "its agent cap is a finding about the search that just ran",
+            "the only place anything reads `traigent-runs/config-space.json`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+        # Reader one, derived: the agent condition really does have a blocking
+        # branch, so "the card blocks" is a state the close can reach and not a
+        # sentence about a cap that only ever advises.
+        blocking_agent = [
+            cap
+            for cap in vars(READINESS).values()
+            if isinstance(cap, READINESS.Cap)
+            and cap.condition == "agent-no-varying-knobs"
+            and cap.blocks
+        ]
+        self.assertTrue(
+            blocking_agent,
+            "no agent cap blocks any more, so the closing card cannot reach "
+            "the finding this paragraph says it reports - and the call is back "
+            "to having one reader",
+        )
+        # Reader two, derived: the scorer refuses a document it cannot read, by
+        # name, rather than scoring around it. That refusal is the whole value
+        # of putting the file through this call.
+        self.assertIn("exit 2", " ".join(RUN_SAFETY.read_text().casefold().split()))
         omissions = re.findall(
             r"omit every config-space file found before this run's enhanced search",
             skill,
@@ -7422,8 +7488,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### the pre-spend approval card", safety)
         for phrase in (
             "it adds no pause of its own",
-            "**the gap, and how it was filled.**",
-            "**absolute paths.**",
+            "**the gap, and how it was filled**",
+            "**absolute paths**",
             "**two rows: the easiest and the hardest.**",
             "**what the evaluation method counts as correct.**",
             "**where we are.** `stage 3/5 · baseline`",
@@ -7434,6 +7500,45 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, safety)
+        # Each bullet states the condition it fires under. The card has two
+        # unlike triggers - this run wrote something, or a cap asks - and the
+        # bullets were written for the first one only, so the asking-cap path
+        # told the assistant to name a gap that did not exist and to print a
+        # path for a file the run never created.
+        for degradation in (
+            "where this run generated or repaired the dataset or the evaluation method",
+            "where this run created and repaired nothing, drop the bullet",
+            "one for each file this run actually wrote",
+            "a run that wrote neither lists neither",
+        ):
+            with self.subTest(condition=degradation):
+                self.assertIn(degradation, safety)
+        # One question, one home. The only cap that asks on this branch already
+        # owns a complete quoted question that stage 4 routes it to by name, and
+        # the two disagreed about when it is put, what it says and what the
+        # answers are called - so answering it once was not enough.
+        for reconciliation in (
+            "**what an asking cap asked, and what was answered**",
+            "do not put the question a second time in different words",
+            "where the cap's route owns no question of its own, this card is "
+            "that one home and asks it here",
+            "discharging it means the customer meets its remedy at the moment "
+            "they are asked to pay - not that its question is put here a "
+            "second time",
+        ):
+            with self.subTest(reconciliation=reconciliation):
+                self.assertIn(reconciliation, safety)
+        # And the route that owns the question still names it, so the card's
+        # pointer is not aimed at a section somebody deleted.
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("a `no` is never a silent edit", evaluation)
+        self.assertIn("a `no` is never a silent edit", safety)
+        self.assertIn("a `no` is never a silent edit", skill)
         # SKILL.md says when it fires and points at the owner; it does not
         # restate the card.
         for phrase in (
@@ -9969,10 +10074,10 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn(
-            "where the scope leaves a person something to settle, put it to "
-            "them at the pre-spend approval in stage 6; where it leaves "
-            "nothing to do, the ceiling is advisory and there is no repair to "
-            "route",
+            "where the scope leaves a person something to settle, put it once "
+            "in the home that owns that question and carry the answer to the "
+            "pre-spend approval in stage 6; where it leaves nothing to do, the "
+            "ceiling is advisory and there is no repair to route",
             normalized,
         )
         blocking = {
@@ -10025,6 +10130,31 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
         sites = cap_construction_blocks(
             source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
+        # The universal claim this paragraph used to make - "a route that only
+        # scopes what the result may claim never blocks" - was false the day it
+        # was written, and SKILL.md contradicted it twenty-five lines later in
+        # two separate bullets that both say "the same condition blocks".
+        # Derived from the module instead of restated: any CLAIM_SCOPING
+        # condition whose construction sites do not all read `blocks=False` is
+        # a scoping route that blocks, and while one exists the guidance may
+        # not promise a reader that none does.
+        scoping_that_blocks = {
+            condition
+            for condition, category in READINESS.ROUTE_CATEGORY.items()
+            if category == READINESS.CLAIM_SCOPING and sites[condition] != {"False"}
+        }
+        self.assertTrue(
+            scoping_that_blocks,
+            "no scoping route can block any more, so the guidance may state "
+            "the simple rule again - and this guard should be removed with it "
+            "rather than left asserting a distinction that stopped existing",
+        )
+        self.assertNotIn(
+            "only scopes what the result may claim never blocks",
+            normalized,
+            f"SKILL.md promises that scoping routes never block, and "
+            f"{sorted(scoping_that_blocks)} do",
         )
         for condition in sorted(conditions):
             with self.subTest(cap=condition):
@@ -13132,6 +13262,19 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         ask = " ".join(self._ask().casefold().split())
         self.assertIn("`i have it` and a path", ask)
         creation = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        # An agent path is one of the three the form accepts. Without it, a
+        # customer whose agent lives in a sibling repository - which the
+        # inventory walks one directory and cannot see - is offered `proceed`
+        # and nothing else, on the one question that exists to let them point.
+        quoted = " ".join(
+            line.lstrip("> ") for line in creation.casefold().splitlines()
+        )
+        quoted = " ".join(quoted.split())
+        self.assertIn(
+            "reply `i have it` with a path - `agent: <path>`, `dataset: <path>`, "
+            "`evaluation: <path>`",
+            quoted,
+        )
         self.assertIn("### When a path arrives", creation)
         hatch = " ".join(creation.casefold().split()).split("when a path arrives", 1)[1]
         for landing in (
@@ -13159,6 +13302,19 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         ask = " ".join(self._ask().casefold().split())
         self.assertIn("ask nothing else here", ask)
         self.assertIn("pre-spend approval in stage 6", ask)
+        # The trigger covers material the inventory found and could not read
+        # out of, not only material it failed to find. The opening gate defers
+        # an unreadable agent to this question; while the trigger read "did not
+        # find", that deferral landed nowhere - an unreadable agent was FOUND -
+        # so nothing fired and the customer reached a ceiling unasked. The
+        # matching clause in the opening gate belongs to #210, which is not on
+        # this branch, so only this half is asserted here - the pair composes on
+        # the merged tree and the deferral is worded to be harmless without it.
+        self.assertIn(
+            "or found and could not read out of, which the opening gate above "
+            "defers here for the same reason",
+            ask,
+        )
         self.assertIn(
             "### the pre-spend approval card", RUN_SAFETY.read_text().casefold()
         )
