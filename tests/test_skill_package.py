@@ -1596,18 +1596,39 @@ class SkillPackageTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
 
-    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+    def _tracked_under(self, pathspec: str) -> str:
         listed = subprocess.run(
-            ["git", "-C", str(ROOT), "ls-files", "--", "traigent-runs"],
+            ["git", "-C", str(ROOT), "ls-files", "--", pathspec],
             capture_output=True,
             text=True,
             check=False,
         )
         if listed.returncode != 0:
             raise RuntimeError(
-                f"could not inspect tracked run artifacts: {listed.stderr.strip()}"
+                f"could not inspect tracked files under {pathspec}: "
+                f"{listed.stderr.strip()}"
             )
-        self.assertEqual(listed.stdout.strip(), "")
+        return listed.stdout.strip()
+
+    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+        """A run writes `traigent-runs/`; committing it ships someone's run.
+
+        The pathspec is the whole check, and `git ls-files` answers a pathspec
+        that matches nothing exactly as it answers a clean tree: exit 0, empty
+        output. So a typo in the thirteen characters below is byte-identical to
+        the passing case, and this would stay green for the rest of the
+        repository's life while tracking every artifact it exists to refuse.
+        The positive control fixes that - the same call must find something
+        where something is known to be tracked.
+        """
+        self.assertEqual(self._tracked_under("traigent-runs"), "")
+        self.assertNotEqual(
+            self._tracked_under("skills"),
+            "",
+            "`git ls-files` reports nothing under a directory this repository "
+            "certainly tracks, so the empty result above is the tool failing "
+            "to look rather than the tree being clean",
+        )
 
     def test_user_facing_skill_language_does_not_label_the_user(self) -> None:
         combined = "\n".join(
@@ -7879,10 +7900,17 @@ class SkillPackageTests(unittest.TestCase):
         there is no second bearer credential and no cold-start branch beside
         it. These phrases described the retired model; if one reappears the
         guide has drifted back to teaching a path that no longer exists.
+
+        The corpus is `conversation_contract_documents()`. It was a fourth
+        hand-rebuilt list - SKILL.md plus the references - which left out
+        GUIDE.md, `assets/run-plan.md`, and README.md: the entry point, the
+        record the user keeps, and the most-read file in a public repository.
+        A retired phrase reappearing in any of them was invisible here by
+        construction, which is the omission `assistant_facing_documents()`
+        exists to stop being made a fourth time.
         """
         combined = "\n".join(
-            path.read_text()
-            for path in [SKILL, *sorted((SKILL_ROOT / "references").glob("*.md"))]
+            path.read_text() for path in conversation_contract_documents()
         ).casefold()
         for phrase in (
             "self-register",
@@ -12066,16 +12094,20 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         identifier vocabulary the decision explicitly kept. What is banned is
         prose - a script explaining a split to the reader in a third noun.
         """
-        for path in sorted((SKILL_ROOT / "scripts").glob("*.py")):
-            literals = [
-                node.value
-                for node in ast.walk(ast.parse(path.read_text()))
-                if isinstance(node, ast.Constant) and isinstance(node.value, str)
-                # Prose has spaces; an identifier, a split label, and a check
-                # id do not.
-                and " " in node.value
-            ]
-            prose = " ".join(literals).casefold()
+        scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
+        self.assertEqual(
+            [path.name for path in scripts],
+            ["calibrate_evaluator.py", "preflight.py", "readiness.py"],
+            "the bundled scripts have changed; this ban covers whatever this "
+            "glob finds, so a script outside it is a script nobody checks",
+        )
+        for path in scripts:
+            prose = self.script_prose(path.read_text())
+            self.assertTrue(
+                prose,
+                f"no prose literal was extracted from {path.name}, so every "
+                "ban below passed over an empty string",
+            )
             for noun in self.THIRD_NOUNS:
                 with self.subTest(script=path.name, noun=noun):
                     self.assertNotIn(
@@ -12085,6 +12117,47 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         '"tuning set" and "held-out set"; a third noun sends '
                         "the reader looking for a third split.",
                     )
+
+        # The extractor is the whole guard, and it fails OPEN: anything that
+        # makes it return less - the `" " in` filter inverted, the glob
+        # narrowed, a parse it stops reaching - leaves every ban above
+        # asserting a noun is absent from a string that is empty. So it is run
+        # against invented sources instead of only against the clean tree.
+        # Both spellings below are the ones that actually shipped.
+        self.assertIn(
+            "validation split",
+            self.script_prose(
+                'MESSAGE = "no independent validation split was declared"'
+            ),
+        )
+        self.assertIn(
+            "held-back",
+            self.script_prose('def f():\n    return "held-back test set"\n'),
+        )
+        # And the identifier vocabulary the decision deliberately KEPT is still
+        # invisible to it, or the ban would be a false red against the names
+        # the scripts are required to use.
+        for kept in (
+            'HOLDOUT_DATASET = "holdout.jsonl"',
+            'CHECK = "dataset-tune-holdout-overlap"',
+            'LABELS = ("tuning", "holdout")',
+        ):
+            with self.subTest(kept=kept):
+                self.assertEqual(self.script_prose(kept), "")
+
+    @staticmethod
+    def script_prose(source: str) -> str:
+        """Every multi-word string literal in `source`, casefolded and joined.
+
+        Prose has spaces; an identifier, a split label, and a check id do not.
+        """
+        return " ".join(
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and " " in node.value
+        ).casefold()
 
     def test_the_card_and_preflight_name_the_two_splits_the_settled_way(self) -> None:
         """The other half: the replacements are pinned, not merely the absence.
