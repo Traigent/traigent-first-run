@@ -12310,6 +12310,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         and the split labels a user's dataset may legitimately carry are the
         identifier vocabulary the decision explicitly kept. What is banned is
         prose - a script explaining a split to the reader in a third noun.
+
+        The extractor is named for what it RETURNS, not for what it is for.
+        #206 independently added a `script_prose` to this same class returning
+        a list of comments; git merged both cleanly, Python kept one, and the
+        `assertNotIn` below became a list-membership test that can never fire.
+        `tests/test_module_symbol_collisions.py` now watches class bodies for
+        exactly that.
         """
         scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
         self.assertEqual(
@@ -12319,7 +12326,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "glob finds, so a script outside it is a script nobody checks",
         )
         for path in scripts:
-            prose = self.script_prose(path.read_text())
+            prose = self.script_string_literals(path.read_text())
             self.assertTrue(
                 prose,
                 f"no prose literal was extracted from {path.name}, so every "
@@ -12343,13 +12350,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # Both spellings below are the ones that actually shipped.
         self.assertIn(
             "validation split",
-            self.script_prose(
+            self.script_string_literals(
                 'MESSAGE = "no independent validation split was declared"'
             ),
         )
         self.assertIn(
             "held-back",
-            self.script_prose('def f():\n    return "held-back test set"\n'),
+            self.script_string_literals('def f():\n    return "held-back test set"\n'),
         )
         # And the identifier vocabulary the decision deliberately KEPT is still
         # invisible to it, or the ban would be a false red against the names
@@ -12360,10 +12367,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             'LABELS = ("tuning", "holdout")',
         ):
             with self.subTest(kept=kept):
-                self.assertEqual(self.script_prose(kept), "")
+                self.assertEqual(self.script_string_literals(kept), "")
 
     @staticmethod
-    def script_prose(source: str) -> str:
+    def script_string_literals(source: str) -> str:
         """Every multi-word string literal in `source`, casefolded and joined.
 
         Prose has spaces; an identifier, a split label, and a check id do not.
