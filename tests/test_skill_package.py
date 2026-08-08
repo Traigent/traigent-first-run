@@ -13041,5 +13041,127 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 self.assertDefect(entries, "more than once")
 
 
+class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
+    """A ceiling is for a fact about the project, not about our reach.
+
+    `--agent-knobs` is what turns the agent pillar from unestablished into
+    measured, and the gate used to make it conditional: "omit it only when
+    there is no agent to read". Under a literal reading that covers an agent
+    that exists and cannot be read out of - not Python, compiled, behind an
+    HTTP call - so a customer with a real agent could land on the advisory
+    ceiling because this run could not open their file, and be told nothing
+    they could act on.
+
+    The scorer cannot tell those two apart and is not asked to: `AgentFacts`
+    records whether a document or a read was SUPPLIED and has no field for
+    whether an agent exists, so both states arrive as the same silence. That is
+    why the fix is at the gate. The read is unconditional wherever an agent was
+    found, and where it cannot be completed the run asks to be pointed at a
+    config space instead of letting the ceiling stand as its answer - the same
+    shape as the one ask at discovery, and folded onto that same question so it
+    never becomes a second one.
+
+    The ceiling itself is deliberately NOT removed. It is what stops silence
+    outscoring a settings document that declares the same empty space, and it
+    remains the right answer for the caller this guidance does not govern: a
+    direct `readiness.py` invocation in CI or over a fixture, which has nobody
+    to ask.
+    """
+
+    def _gate(self) -> str:
+        text = SKILL.read_text()
+        self.assertIn("#### Opening readiness gate", text)
+        gate = text.split("#### Opening readiness gate", 1)[1].split(
+            "#### Zero-anchor intent gate", 1
+        )[0]
+        return " ".join(gate.casefold().split())
+
+    def test_the_read_is_not_conditional_where_an_agent_was_found(self) -> None:
+        gate = self._gate()
+        self.assertIn("every guided run that found an agent does this read", gate)
+        self.assertIn("not conditionally", gate)
+        self.assertIn(
+            "the flag is left off only where the inventory found no agent at all",
+            gate,
+        )
+        # The wording this replaces made the read contingent on a judgement
+        # about the agent rather than on whether one exists, which is what let
+        # an unreadable-but-present agent fall through to the ceiling.
+        self.assertNotIn("omit it only when there is no agent to read", gate)
+
+    def test_a_read_that_cannot_be_done_asks_instead_of_capping(self) -> None:
+        """Our reach is not their project, and it gets a question."""
+        gate = self._gate()
+        self.assertIn("a limit of this run's reach", gate)
+        self.assertIn("not a finding about the project", gate)
+        self.assertIn("ceiling is not the answer to it", gate)
+        # Named, so the user can disagree with a read of their own code.
+        self.assertIn("name the agent you could not read", gate)
+        self.assertIn("ask to be pointed at a config space", gate)
+        # One question, not two - the constraint the whole discovery ask exists
+        # to keep, applied to this state rather than restated for it.
+        self.assertIn("rather than raising a second one", gate)
+        # And it does not become a wait: no path back still runs.
+        self.assertIn("proceed with whatever can be varied", gate)
+
+    def test_the_ceiling_is_kept_and_scoped_to_the_caller_with_nobody_to_ask(
+        self,
+    ) -> None:
+        """Guidance and scorer together, because either alone pins nothing.
+
+        Guidance saying "advisory, and only for a machine caller" over a scorer
+        that blocks would be the contradiction; so would a scorer that stopped
+        capping while the guidance still explained the cap. Both halves are read
+        here.
+        """
+        gate = self._gate()
+        self.assertIn("settles the state only for a caller with nobody to ask", gate)
+        self.assertIn("`readiness.py` invoked directly, in ci or over a fixture", gate)
+
+        # The scorer half. The silent state still caps, still does not block,
+        # and still sits at the shared ceiling.
+        silent = READINESS.AgentFacts()
+        _pillar, caps, _knobs = READINESS.score_agent(silent)
+        self.assertEqual(len(caps), 1)
+        self.assertEqual(caps[0].condition, "agent-no-varying-knobs")
+        self.assertEqual(caps[0].ceiling, READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
+        self.assertFalse(
+            caps[0].blocks,
+            "the unestablished-space reading bounds the claim; it does not stop "
+            "a customer whose agent this run could not open",
+        )
+
+        # And the two findings ABOUT the project still block, which is the whole
+        # difference between them.
+        read_found_nothing = READINESS.AgentFacts(discovery_supplied=True)
+        document_lists_nothing = READINESS.AgentFacts(config_space_supplied=True)
+        for label, facts in (
+            ("the agent was read and had nothing", read_found_nothing),
+            ("a document was handed over and had nothing", document_lists_nothing),
+        ):
+            with self.subTest(state=label):
+                _p, blocking, _k = READINESS.score_agent(facts)
+                self.assertTrue(blocking[0].blocks)
+
+    def test_the_two_silences_really_are_indistinguishable_to_the_scorer(
+        self,
+    ) -> None:
+        """Why the fix is at the gate and not in `score_agent`.
+
+        `AgentFacts` carries no fact about whether an agent exists, so "no agent
+        in this project" and "an agent this run could not read" reach the scorer
+        as one state and one cap. Nothing downstream can separate them, which is
+        exactly why the guidance above must stop producing the second one.
+        """
+        fields = set(READINESS.AgentFacts.__dataclass_fields__)
+        self.assertIn("discovery_supplied", fields)
+        self.assertIn("config_space_supplied", fields)
+        # Both are facts about what reached this score. If a fact about the
+        # agent's EXISTENCE is ever added, this state can be split in the
+        # scorer and the gate's routing should be revisited with it.
+        self.assertNotIn("agent_present", fields)
+        self.assertNotIn("agent_exists", fields)
+
+
 if __name__ == "__main__":
     unittest.main()
