@@ -14,9 +14,12 @@ space describing the agent's knobs, and returns one 0-100 score per pillar and
 an aggregate.
 
 The score is deliberately modest about itself. It runs before any optimization,
-from local evidence only, so it estimates rather than measures: a sub-score that
-cannot be computed is marked unmeasured and excluded rather than scored zero,
-and the user-facing evidence coverage says how much of the pillar was actually observed.
+from local evidence only, so it estimates rather than measures: a sub-score this
+module could not compute is marked unmeasured and excluded rather than scored
+zero, while one this run was asked for and did not supply is marked unmeasured
+and kept in the denominator (`SubScore.withheld`), so silence cannot outscore an
+honest answer. The user-facing evidence coverage reports both as unchecked and
+says how much of the pillar was actually observed.
 The config space's 'wired' list is the one input that is weaker than that: it is
 an attestation, taken at its word and never verified, because nothing here reads
 the agent's code. Declaring a knob is not a statement that the agent consumes
@@ -763,6 +766,13 @@ ROUTE_CATEGORY: dict[str, str] = {
     # explicit by giving the cap `blocks=False` and `asks=True`, and the guard
     # below refuses any non-scoping route that does not block - so this is the
     # only category the merged behaviour admits.
+    #
+    # #187 set both flags on its own cap only, and the two siblings that
+    # predate it kept `asks=False` - so the argument this comment makes was
+    # true of all three and implemented on one, and a wholly model-written
+    # answer key emitted `proceed`. All three now carry `asks=True`, and the
+    # remedy-keyed guard in `tests/test_readiness_scoring.py` is what stops the
+    # next cap from being added to one of these tables and not the other flag.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # The sweep found a second one. A file is connected and no method could be
@@ -1298,6 +1308,25 @@ class Cap:
                 f"{self.blocks!r}; `blocks` decides BLOCKED against OK and a "
                 "truthy string decides it silently in one direction"
             )
+        # And `asks`, which this block was written without because `asks` did
+        # not exist yet. It arrived after the guard above and inherited none of
+        # it, so the field added to express a third state was the one field
+        # nothing checked: `Cap(..., asks="no")` constructed, and every reader
+        # of the flag is a truthiness test - `recommended_action` and the
+        # durable report's remedy both ask `if cap.asks` - so a cap declaring
+        # `asks="no"` ASKS. Measured: `recommended_action` returned `get-data`
+        # for a cap whose author had written the word "no".
+        #
+        # That is the same failure `blocks="yes"` had and the same reason it is
+        # refused: a flag read for truth decides in one direction only, and the
+        # string that says the opposite is the one that never fires the guard.
+        if not isinstance(self.asks, bool):
+            raise ValueError(
+                f"cap {self.condition!r} carries a non-boolean asks flag "
+                f"{self.asks!r}; `asks` decides whether the payload and the "
+                "report name a remedy, and every reader tests it for truth, so "
+                "a string saying no asks anyway"
+            )
         if self.asks and self.blocks:
             raise ValueError(
                 f"cap {self.condition!r} both blocks and asks; a blocking cap "
@@ -1515,8 +1544,12 @@ class DatasetFacts:
     # kept as labels while their intentional-label/placeholder meaning is unverified.
     placeholder_rows: int = 0
     sources: tuple[str, ...] = ()
-    # Custom source tokens that preflight credited as collected for backward
-    # compatibility but could not verify from its vocabulary.
+    # Source tokens preflight could not verify from its vocabulary. They are
+    # counted in `undeclared_rows`, not in `collected_rows`: an unverifiable
+    # declaration must not outscore a verifiable one, so an unreadable word
+    # scores where silence scores. Kept as their own list because the card
+    # names them - the row DID declare something, and a customer using their
+    # own vocabulary has to be told which word was not read.
     unrecognised_sources: tuple[str, ...] = ()
 
 
@@ -2001,7 +2034,18 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
 
 
 def size_points(effective_n: int | None) -> tuple[float, str]:
-    """Place the smaller scoreable split in a pre-run sample-size planning band.
+    """Place the scoreable rows THE SEARCH COMPARES ON in a planning band.
+
+    Not "the smaller scoreable split", which is what this said and what no
+    caller passes. All three sites in `score_dataset` hand over the scoreable
+    tuning count where a tuning split is declared, and the scoreable
+    whole-dataset count where none is - the holdout is deliberately absent from
+    every one of them, because `min(tuning, holdout, ...)` was removed on the
+    finding that the held-out set was bounding a number it does not produce
+    (the reasoning is beside that call site, not restated here). The old
+    sentence still described the removed reading, so it named the holdout as an
+    input to a band the holdout cannot reach: 10 tuning rows against 8 held out
+    reports "10 examples - small comparison set" through the CLI, not 8.
 
     Sample size alone cannot supply paired uncertainty or a detectable effect:
     both depend on completed paired outcomes. These ordinal bands reward more
@@ -2072,9 +2116,17 @@ GENERATED_ANSWER_KEY_SHARE = 1.0
 # user who by construction has none. The glossary says the opposite in so many
 # words: "synthetic data is fine for a first run but cannot prove real-world".
 #
-# The ceilings are untouched and still bind - 65, 70 and 75 are exactly how
+# The ceilings are untouched and still bind - 65, 70 and 74 are exactly how
 # "cannot prove real-world" is said in a number. `aggregate` takes the minimum
 # over all caps whatever their `blocks`.
+#
+# Advisory is not the same as silent, and only the third of them ASKS. The two
+# synthetic caps route to `connect-real-data`, which is a scope on the claim
+# and nothing the user is asked to do before this run; the answer-key cap
+# routes to `review-answer-key`, which is a question whose answer changes the
+# key the run is graded against. `asks` is a property of the remedy, so it is
+# set wherever that remedy is - and the guard in
+# `tests/test_readiness_scoring.py` reads `ACTION_FOR_CONDITION` to say so.
 FULLY_SYNTHETIC_CAP = Cap(
     "dataset-fully-synthetic",
     FULLY_SYNTHETIC_CEILING,
@@ -2095,6 +2147,37 @@ GENERATED_ANSWER_KEY_CAP = Cap(
     "Every expected answer was written by a model, so a score measures "
     "agreement with that model rather than correctness.",
     blocks=False,
+    # And ASKS - the half `blocks=False` alone deletes, ported here from the
+    # sibling that already carries it. `recommended_action` returns `proceed`
+    # unless a cap blocks or asks, so a dataset whose ENTIRE answer key is
+    # model-written was emitting "nothing to do" beside SKILL.md's route for
+    # this very condition: "require that a person reviews a sample of the
+    # answers before a correctness claim". What the port moves is the remedy
+    # and nothing else - `proceed` becomes `review-answer-key` while the score,
+    # the band, the status and the pre-cap average are identical on both sides.
+    #
+    # That claim carries no score beside it, because no score is a property of
+    # the thing it would be evidence for. An earlier revision quoted "59
+    # WORKABLE / OK, measured on 28 collected rows with 28 model-written
+    # answers", and those inputs do not determine an overall: the answer key is
+    # one input to one of three weighted pillars, so the rest of the fixture
+    # decides the number. Re-measured through the CLI on exactly those 28 rows,
+    # the same dataset scores 45 and PARTIAL against a calibrated exact
+    # evaluator with no config space, and 74 and WORKABLE once an
+    # 18-configuration wired space is supplied - and 59 is neither. The
+    # structural claim survives both readings unchanged, which is what makes it
+    # the claim worth stating; it is measured by
+    # `OneRemedyOneQuestionTests.test_un_porting_one_sibling_is_caught_here_and_by_no_table`,
+    # which builds a copy of this module with `asks=False` and asserts the
+    # overall and the status match across the two while the remedy does not.
+    # A number that cannot be re-derived from the text beside it is not
+    # evidence, which is the rule `_reject_synonym_spellings` states below and
+    # deleted a pair of numbers to keep.
+    #
+    # `blocks` stays False and that is not incidental: this ceiling bounds what
+    # the run may claim and does not stop it, which is the distinction
+    # `asks` exists to keep expressible rather than collapse.
+    asks=True,
 )
 # The reasons for the same two rungs of that ladder, reached by silence instead
 # of by a declaration. The ceilings are identical because the assumption IS
@@ -2383,6 +2466,13 @@ def score_provenance(
                     # not stop the run, exactly as the small-sample ceiling at
                     # the same number does not.
                     blocks=False,
+                    # And it asks, for the same reason the rung above does and
+                    # on the strength of the same route: SKILL.md sends this
+                    # one to "the same review, on the model-written answers
+                    # only". A remedy is a property of the condition, so two
+                    # conditions carrying one remedy cannot differ on whether
+                    # that remedy reaches the payload at all.
+                    asks=True,
                 )
             )
 
@@ -3154,11 +3244,18 @@ def score_dataset(
     caps.extend(provenance_caps)
     subs.append(SubScore("provenance", provenance, 10.0, True, evidence))
 
-    # Guarded by the same question the generated-answer-key cap asks: when the
-    # evaluator never reads an expected output, a wrong one cannot mis-rank
-    # anything, so there is nothing to withhold. A dataset with no expected
-    # outputs at all needs no guard - it already carries a ceiling of 30, well
-    # below this one, so this cap could never be the binding number there.
+    # Guarded on the same fact the generated-answer-key ladder above is guarded
+    # on - `uses_expected_outputs`, which is this `reference_free` read from the
+    # other side: when the evaluator never reads an expected output, a wrong one
+    # cannot mis-rank anything, so there is nothing to withhold. A dataset with
+    # no expected outputs at all needs no guard - it already carries a ceiling
+    # of 30, well below this one, so this cap could never be the binding number
+    # there.
+    #
+    # Not "the question that cap asks". `asks` is a flag on the cap and names
+    # what the CUSTOMER is asked once the cap has fired; this is a condition on
+    # whether it fires at all, and the two were one sentence here while the cap
+    # it named asked nothing.
     if not reference_free:
         unsound = unsound_answer_cap(review, run_rows(facts))
         if unsound is not None:
@@ -4571,18 +4668,42 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # deliberately does not - the guide keeps that vocabulary out of
         # user-facing lines. Both are machine-readable artifacts here.
         #
-        # Only for a cap that blocks, though. `action_kind` is keyed by
-        # CONDITION, so all three `agent-no-varying-knobs` sites share
+        # Only for a cap that blocks OR asks - the same three-way distinction
+        # `recommended_action` reads, and for the same reason. A cap is in one
+        # of three states, and only the third owes the reader nothing:
+        #
+        #   blocks - the run waits on a repair              -> name the remedy
+        #   asks   - the run proceeds, a question comes first -> name the remedy
+        #   neither - the ceiling bounds a claim and asks nothing -> say nothing
+        #
+        # The third is what this condition was written for. `action_kind` is
+        # keyed by CONDITION, so all three `agent-no-varying-knobs` sites share
         # `vary-knobs` - and printing "fix: `vary-knobs`" under "What limits how
         # high this can score" hands a perfect project a repair for a defect it
-        # does not have, in the durable artifact, which is the exact line this
+        # does not have, in the durable artifact, which is the exact line that
         # change set out to stop showing. `dataset-coarse-resolution` had the
-        # same shape ("fix: `get-data`" for a healthy 15-row set), so both are
-        # fixed here rather than one: it is one rule, not two instances.
+        # same shape ("fix: `get-data`" for a healthy 15-row set), so both were
+        # fixed at once: it is one rule, not two instances.
+        #
+        # But `blocks` alone read that rule as two states rather than three, so
+        # it suppressed the remedy for a cap that asks as well as for one that
+        # asks nothing - and an asking cap is the one whose entire content IS a
+        # remedy. Measured end to end through the CLI on 28 collected rows whose
+        # every expected answer is model-written, against a calibrated exact
+        # evaluator and a 9-configuration wired space: `--json` returned
+        # `recommended_action: "review-answer-key"` while the durable report
+        # printed the ceiling and the reason with no remedy beside them. The
+        # report is the artifact that outlives the terminal, so that is the copy
+        # a reader keeps.
+        #
+        # `asks` is the flag that makes the third state expressible, and it is
+        # deliberately not `not cap.blocks`: `dataset-coarse-resolution` bounds
+        # a claim and asks nothing, so it still prints no remedy, which is the
+        # false-red direction this line is guarded in both ways against.
         # `--json` still carries `action_kind` on every cap for consumers that
         # want it; what goes away is the word "fix" over a state that is not
         # broken.
-        remedy = f", fix: `{cap.action_kind}`" if cap.blocks else ""
+        remedy = f", fix: `{cap.action_kind}`" if cap.blocks or cap.asks else ""
         return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
@@ -5525,12 +5646,31 @@ def _reject_synonym_spellings(knobs: dict[str, Any], knobs_key: str) -> None:
     reset. What it bought was a REFUSAL: two spellings of one search dimension
     are two dimensions to everything downstream, so declaring both doubled the
     reported size of the space and paid a second dimension's credit for it.
-    Deleting the table deleted the refusal with it, and measured end to end on
-    one document declaring `prompt_policy` and `prompt_style` over different
-    values, the scorer went from exit 2 to exit 0 with the agent pillar at 77
-    against 61 for the same space written once, 24 combinations against 12, and
-    a card reading `4 of 4 wired knobs actually vary`. A deletion that raises a
-    score is the shape this repository has been wrong about before.
+    Deleting the table deletes the refusal with it, and the measurement is
+    stated with the document that produces it, because it does not survive
+    being quoted without one:
+
+        temperature [0.0, 0.5, 1.0], prompt_style ["direct", "structured"],
+        model ["gpt-4o-mini", "gpt-4o"], every knob wired
+
+    written once scores exit 0 and `12 distinct configurations`. The same
+    document with `prompt_policy ["terse", "verbose"]` added and wired is
+    refused here - exit 2, no score at all - and against a copy of this file
+    whose body below returns instead of raising it scores exit 0 and `24
+    distinct configurations`. Doubling the reported space is the whole of what
+    that buys the author, which is what the refusal stops - and a deletion that
+    raises a score is the shape this repository has been wrong about before.
+
+    An earlier revision also quoted an agent pillar of 77 against 61 and a card
+    line reading `4 of 4 wired knobs actually vary`. Both are deleted rather
+    than repaired: neither names the document it was read from, and neither can
+    be produced by this file at all. They were measured against the two-part
+    agent pillar - `knob-count` damped by the trial budget, blended 55/45 with
+    `variation` - which the note at the top of this module records as replaced
+    by the single `search-space` sub-score; that sub-score prints a
+    configuration count and no knob line, and re-measuring the space above
+    scores it 100. A number that cannot be re-derived from the text beside it
+    is not evidence, however carefully it was once taken.
 
     So the refusal stays and the substitution does not. `KNOB_SYNONYMS` is
     never read to rename anything: no name the author wrote is replaced, no

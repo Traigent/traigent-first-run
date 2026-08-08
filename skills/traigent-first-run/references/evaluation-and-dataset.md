@@ -331,9 +331,8 @@ product policy, or broaden a rubric. For those judgment-dependent changes, propo
 and ask first.
 
 After any repair, re-run the same checks that produced the advisory, the applicable calibration,
-and the readiness score; record the new score, band, and caps beside the opening result. Do not
-clear `❗` because a file changed or because the score rose; clear it only when new evidence
-resolves the limitation.
+and the readiness score. Do not clear `❗` because a file changed or because the score rose; clear
+it only when new evidence resolves the limitation.
 
 Name what changed by row id. Whenever this run repairs rows into a working copy or generates rows
 to fill a gap, record both lists in `traigent-runs/run-plan.md` and say them to the user: these ids
@@ -384,13 +383,15 @@ Words are matched by prefix, so `production-2026-q1` and `synthetic-walkthrough`
 would expect. `scripts/preflight.py` declares the three classes once and is the only copy:
 `SYNTHESISED_SOURCE_PREFIXES` (nobody observed this), `COLLECTED_SOURCE_PREFIXES` (somebody did),
 and `UNDECLARED_SOURCE_TOKENS`, matched whole not by prefix - a row saying `n/a` or `tbd` declines
-to answer, scores 6 like a row with no field, raises no vocabulary warning, and prints as
+to answer, scores 3 like a row with no field, raises no vocabulary warning, and prints as
 `declared sources: n/a` under a card line calling it undeclared.
 
-A word on none of the three keeps the collected score, so a project's own vocabulary (`crm-export`)
-is not silently demoted - but preflight raises `dataset-provenance-vocabulary` naming it, because an
-unknown word quietly earning the production band is the failure that check exists to prevent. If the
-data is generated, say so with a word from the first list.
+A word on none of the three is read as `undeclared` too: it scores 3 like a row with no field and
+never above a row that declares itself generated, because an unverifiable declaration must not
+outscore a verifiable one - `crm-export` and three junk characters read the same from here.
+Preflight raises `dataset-provenance-vocabulary` naming the word and the card prints both grades,
+so a project using its own vocabulary sees what one relabel onto the lists above is worth before it
+changes anything. If the data is generated, say so with a word from the first list.
 
 Do not express a generated answer in the row's own `provenance` token: that marks the whole row
 generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
@@ -412,7 +413,10 @@ ceiling on the entire run:
 An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
 declaration rather than new data unless over half the corpus is declared generated - a ceiling no
 declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
-capped by neither.
+capped by neither. The two do differ in one further way: declaring is a change to the file, so the
+undeclared rungs are routed as a repair and hold the paid run until cleared, where the declared
+twins only bound the claim. That is this ladder's one exception to the rule closing this section: a
+dataset with no `provenance` field at all reads `FIX BEFORE PAID RUN` at 65.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an
@@ -423,15 +427,17 @@ the Strong boundary itself, and presenting as Strong is the one claim they exist
 are also not raised at all for a corpus where no row was observed: the 65 above governs there and
 says strictly more.
 
-The last two share a ceiling and differ in what they ask of you. When most of the expected answers
-are a model's, the run proceeds and the claim is bounded. When *all* of them are, it waits until a
-person has reviewed a sample - there is nothing left in the answer key that was not written by the
-same kind of thing the run is scoring. The rung exists because with one rung the cap turned on the
-last row: a dataset with every answer generated was blocked at 74 and the same dataset with one
-human-written answer scored 94 and Excellent.
+The last two share a ceiling and a remedy, and differ only in how much of the key it covers. Each
+bounds the run and never stops it: the review is what to do first rather than instead, and neither
+waits for it. When most of the expected answers are a model's, the review covers
+those answers only; when *all* of them are, a sample of the whole key, because nothing left in it
+was written by anything but the kind of thing the run is scoring. The rung exists because with one
+rung the cap turned on the last row: a dataset with every answer generated was capped at 74 and the
+same dataset with one human-written answer scored 94 and Excellent.
 
-A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average stays in the
-output, and the number simply cannot claim more than the data supports.
+A ceiling is not a deduction: the pre-cap average stays in the output, and the number simply cannot
+claim more than the data supports. Whether the run also waits is the remedy's answer, not the
+ceiling's.
 
 Every generated row must:
 
@@ -720,15 +726,15 @@ one cluster - plus the held-out ten below, drawn to their own composition.
 
 Five rules make the subset honest:
 
-1. **Score the dataset, not the subset.** Both readiness scores - the opening gate and the
-   re-score after local validation - run on the **whole** dataset. The subset is chosen afterwards,
-   as run scoping, immediately before the paid comparison. Getting this backwards makes the user's
-   data wear the run's limitation: measured on 500 labelled, difficulty-tagged production rows, the
-   dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row subset sees
-   only 8 and calls it `a wiring check, not a score`. That sentence
-   is true of the run and false of the dataset, and the recorded opening-to-closing transition would
-   show an 18-point drop that is nothing but our own sampling. Difficulty and diversity survive a
-   compliant sample; evidence volume collapses, so that limitation must be attributed correctly.
+1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
+   validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
+   afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
+   the user's data wear the run's limitation: measured on 500 labelled, difficulty-tagged production
+   rows, the dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row
+   subset sees only 8 and calls it `a wiring check, not a score`. That sentence is true of the run
+   and false of the dataset, and the gate re-score would read 18 points below the opening one on
+   nothing but our own sampling. Difficulty and diversity survive a compliant sample; evidence
+   volume collapses, so that limitation must be attributed correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small
    difference as directional unless paired uncertainty from the completed outputs supports it."

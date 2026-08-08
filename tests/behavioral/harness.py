@@ -1130,7 +1130,7 @@ def partial_missing_dataset(
     append_event(events, "readiness", real_ready=2, create=["dataset"])
 
     # Opening readiness gate: scored before anything is created or repaired, so
-    # the closing score has an honest baseline to be measured against.
+    # the record holds one score of material this run did not write.
     opening_preflight = opening_preflight_command(project, audit_log)
     opening = score_command(project, audit_log, opening_preflight["stdout"])
     commands.extend((opening_preflight, opening))
@@ -1165,8 +1165,8 @@ def partial_missing_dataset(
         "verdict": "sufficient",
         "known_gap": "Synthetic walkthrough cases are not customer-traffic evidence.",
     }
-    # The run record is written once, at the end, so it can carry the recorded
-    # opening score beside the closing one without overwriting either.
+    # The run record is written once, at the end, so the recorded opening score
+    # is never overwritten by the gate result that follows it.
     run_plan_lines = [
         "# Internal first-run record\n",
         "\n",
@@ -1235,43 +1235,41 @@ def partial_missing_dataset(
         provider_access=False,
     )
 
-    # Closing readiness gate: re-scored on the post-creation, post-calibration
-    # evidence, then reported beside the recorded opening score.
-    closing = score_command(
+    # Revalidation gate: re-scored on the post-creation, post-calibration
+    # evidence to establish which caps that opened blocking have cleared. Its
+    # overall number is not reported beside the opening one - after this run has
+    # written the missing dataset, a second score largely grades that substitute.
+    revalidation = score_command(
         project,
         audit_log,
         preflight["stdout"],
         calibration=run_dir / "calibration-results.json",
     )
-    commands.append(closing)
-    closing_score = closing["parsed"]
-    closing_caps = cap_conditions(closing_score)
-    if not set(expected["closing_caps"]) <= set(closing_caps):
-        raise ContractError("partial scenario closing score lost its required caps")
-    if "evaluator-absent" in closing_caps or "evaluator-absent" not in opening_caps:
+    commands.append(revalidation)
+    revalidation_score = revalidation["parsed"]
+    revalidation_caps = cap_conditions(revalidation_score)
+    if not set(expected["revalidation_caps"]) <= set(revalidation_caps):
+        raise ContractError("partial scenario revalidation lost its required caps")
+    if (
+        "evaluator-absent" in revalidation_caps
+        or "evaluator-absent" not in opening_caps
+    ):
         raise ContractError(
             "the calibrated evaluator must clear the evaluator-absent cap it opened with"
         )
-    if expected["closing_beats_opening"] != (
-        closing_score["overall"] > opening_score["overall"]
-    ):
-        raise ContractError("readiness transition direction violated its declaration")
     run_plan_lines.append(
-        f"- Latest revalidated readiness score: {closing_score['overall']} "
-        f"({closing_score['band']}); caps: {', '.join(closing_caps)}.\n"
-    )
-    run_plan_lines.append(
-        "- Readiness transition: the gain came from a `🛠️` synthetic substitute, "
-        "not from real-world readiness.\n"
+        "- Revalidation gate results: cleared "
+        f"{', '.join(sorted(set(opening_caps) - set(revalidation_caps)))} on the "
+        "calibrated evaluator and the generated dataset; remaining "
+        f"{', '.join(revalidation_caps)}.\n"
     )
     (run_dir / "run-plan.md").write_text("".join(run_plan_lines))
     append_event(
         events,
-        "readiness_transition",
-        opening=score_event_fields(opening_score),
-        closing=score_event_fields(closing_score),
-        caps_cleared=sorted(set(opening_caps) - set(closing_caps)),
-        caps_remaining=sorted(set(closing_caps)),
+        "revalidation_gate",
+        caps_cleared=sorted(set(opening_caps) - set(revalidation_caps)),
+        caps_remaining=sorted(set(revalidation_caps)),
+        cleared_by_substitute=True,
         production_evidence=False,
     )
     append_event(

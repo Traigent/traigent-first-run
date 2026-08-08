@@ -29,16 +29,16 @@ Load each reference when its stage begins:
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any creation or repair,
-again as a required step of local validation, and again after each repair or creation, so the
-closing report can show the recorded opening score beside the closing one. Use
+again as a required step of local validation, again after each repair or creation, and once more
+after the run, to rank the close. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
 the score. A config-space file found before this run's enhanced search is historical context, not
 current-run readiness evidence. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
-discovered evidence. Record every readiness result there: overall score, band, and binding caps.
-Update the latest result in place and never overwrite the recorded opening score.
+discovered evidence. Record the opening result there - overall score, band, and binding caps - and
+never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
@@ -200,16 +200,16 @@ Explicitly omit every config-space file found before this run's enhanced search,
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
 `wired` list does not make it current. Every guided run does this, including a zero-anchor run.
-The opening score is not skippable, always reports all three pillars, and is the baseline the
-closing report measures against. Show it before anything is created or repaired.
+The opening score is not skippable, always reports all three pillars, and is the score this run
+reports for the project. Show it before anything is created or repaired.
 
 Say that the score reads the project and changes nothing in it. Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary.
 
 Use the readiness-score presentation in `references/glossary.md`: lead with
-`Stage 2/5 · Readiness - <score>/100 (<band>)` and show `<opening> → <current>` on re-score. Do not
-animate with invented progress or narrate every card line.
+`Stage 2/5 · Readiness - <score>/100 (<band>)`. Do not animate with invented progress or narrate
+every card line.
 
 The score grades measured evidence, not declared existence. Report an uncalibrated real evaluator
 and an agent without current-run wiring evidence as not yet measured, never as absent. Do not infer
@@ -346,10 +346,10 @@ Follow this order:
    calibration/scored invocation uses that containment; otherwise do not run it.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
    result. Omit every config-space file found before this run's enhanced search here just as at the
-   opening gate. This score is required even when a low score or cap is expected. Record its
-   overall score, band, and every binding cap in `traigent-runs/run-plan.md` beside the opening
-   score. If calibration was deferred for an installed local dependency, record the preflight-only
-   result now and re-run the score immediately after that calibration.
+   opening gate. This score is required even when a low score or cap is expected. Record its gate
+   result in `traigent-runs/run-plan.md`. If calibration was deferred for an installed local
+   dependency, record the preflight-only result now and re-run the score immediately after that
+   calibration.
 
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed unsupported SDK is
 a failure, and an optional provider package may defer only its own check. The rendered readiness
@@ -373,8 +373,8 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 "continue as is" as permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
-`recommended_action`: `proceed` unless a blocking cap fires, otherwise the lowest-ceiling blocking
-remedy.
+`recommended_action`: the lowest-ceiling blocking remedy, else the remedy of a cap that only asks,
+else `proceed`.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
@@ -425,8 +425,8 @@ how long it may take, and on a timeout ask the one five-option question in
 wait into a paid run. Bounding what one scoring call costs is one option inside that question, not
 the route. Name any avoidable cause of the slowness in the readiness summary and again at the
 close if it was not fixed. After any repair or substitute creation, re-run the affected checks, the
-applicable calibration, and the score, then update the latest recorded result without overwriting
-the opening one.
+applicable calibration, and the score, then record that gate result without overwriting the opening
+one.
 
 `agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
 provided to the score: before the enhanced run there is no document to score, and afterwards a
@@ -684,8 +684,10 @@ Include:
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
 - Which components were `✅` real and which were `🛠️` walkthrough substitutes.
-- The readiness transition: the recorded opening score and band, the closing score and band, and
-  which caps cleared and which remain.
+- What this run created or repaired, and what that costs the claim: examples it wrote are weaker
+  evidence than examples collected from the product, and an evaluation method it wrote is a
+  starting point rather than the product's grading policy - one a person may want to move in
+  either direction, so it rewards what their product values.
 - The run's scope, in this run's own recorded numbers: rows scored beside the dataset's usable
   rows, trials executed beside the enhanced space's combination count, and knobs varied beside the
   controls this run identified on the agent. Say plainly that those bounds were the walkthrough's
@@ -724,12 +726,11 @@ different claim from one quoted on 30, and the reader cannot reproduce either wi
 which rows they were. State it even when nothing was excluded, so silence never has to be
 interpreted.
 
-Close the loop on the readiness score the run opened with: re-run `scripts/readiness.py` on the
-post-run evidence and show opening beside closing, naming cleared and remaining caps. Pass the
-current run's `--config-space traigent-runs/config-space.json` only when its enhanced search emitted
-it; otherwise score the agent from absent evidence. Treat every gain from a `🛠️` substitute as
-walkthrough setup, restate its real-world cost, and leave the user knowing which remaining gap to
-close first.
+Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence to read
+which caps remain, passing the current run's `--config-space traigent-runs/config-space.json` only
+when its enhanced search emitted it; otherwise score the agent from absent evidence. Rank the close
+from those caps, and never show that score or set it beside the opening one. Leave the user knowing
+which remaining gap to close first.
 
 Feature-detect local audit and connected insight capabilities. Report only fields actually
 returned, attribute each claim to its artifact, and otherwise say no verified local artifact was
@@ -738,11 +739,10 @@ returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer l
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
 
-After the readiness transition, close by saying what a further run would be worth. Name the ones
-still open and what each is now costing; use the user's own measured evidence rather than
-encouragement. Say what this walkthrough cannot close. Then give the one next action the **latest
-validated state** earns: re-rank the remaining closing caps and run limits, ignore cleared gaps,
-and name its value:
+Close by saying what a further run would be worth. Name the gaps still open and what each is now
+costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
+cannot close. Then give the one next action the **latest validated state** earns: re-rank the
+remaining closing caps and run limits, ignore cleared gaps, and name its value:
 
 - Generated or mostly generated data - collect or export a real sample of the same task and re-run.
   This is the gap that ceilings the score no matter how good everything else is, so it is first
@@ -787,7 +787,7 @@ The first run is complete only when:
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.
 - The opening readiness score was computed before any creation or repair, recorded with its band
-  and caps, and closed with the later score in the final report.
+  and caps, and is the only readiness number the report gives.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.
 - The evaluator passes the recorded semantic mode for every case: graded tasks distinguish
