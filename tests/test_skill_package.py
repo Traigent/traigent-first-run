@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import math
 import posixpath
@@ -16,6 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -847,6 +849,18 @@ READINESS = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
 sys.modules[_SPEC.name] = READINESS
 _SPEC.loader.exec_module(READINESS)
+
+# The other half of that contract. Preflight classifies each provenance token
+# and readiness prices the class, so a prose claim about what a word is worth
+# has to be read against both.
+_PREFLIGHT = SKILL_ROOT / "scripts" / "preflight.py"
+_PREFLIGHT_SPEC = importlib.util.spec_from_file_location(
+    "first_run_preflight_for_package", _PREFLIGHT
+)
+PREFLIGHT = importlib.util.module_from_spec(_PREFLIGHT_SPEC)
+assert _PREFLIGHT_SPEC.loader is not None
+sys.modules[_PREFLIGHT_SPEC.name] = PREFLIGHT
+_PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT)
 
 
 def quoted_prose(path: Path) -> str:
@@ -3132,14 +3146,63 @@ class SkillPackageTests(unittest.TestCase):
             "a mixture scores like a mixture",
             "99 collected rows and one generated one score 9.93, not 3",
             "provenance ceilings",
-            "a ceiling is not a deduction and not a refusal",
+            # Only the stable half of that closing rule is pinned here. The
+            # other half - whether a ceiling ALSO holds the run - is what this
+            # weld used to assert the wrong answer for, so it is derived from
+            # `Cap.blocks` in
+            # `test_the_ceilings_section_says_which_of_its_rungs_hold_the_run`
+            # instead of being written down twice.
+            "a ceiling is not a deduction:",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset_text)
 
-        # An unknown word keeps its score but must never do so silently.
+        # An unknown word must never be scored silently.
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
-        self.assertIn("is not silently demoted", dataset_text)
+
+        # What that word is SCORED as, derived from `classify_provenance`
+        # rather than welded to a sentence. The weld that stood here asserted
+        # "is not silently demoted" - true of the classifier that returned
+        # `collected` for any unrecognised token, and false since it stopped:
+        # `crm-export` now classifies exactly where silence classifies. A
+        # presence check cannot notice that its sentence has become the
+        # opposite of the code, so the paragraph is read against the classifier
+        # here: it must name the class the module returns and neither of the
+        # other two.
+        preflight = PREFLIGHT
+        klass, recognised = preflight.classify_provenance("crm-export")
+        self.assertFalse(
+            recognised, "crm-export is recognised now, so the example is stale"
+        )
+        silence, _ = preflight.classify_provenance(None)
+        self.assertEqual(
+            klass, silence, "an unreadable word no longer scores where silence scores"
+        )
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        paragraph = " ".join(
+            next(block for block in source.split("\n\n") if "crm-export" in block)
+            .casefold()
+            .split()
+        )
+        self.assertIn(klass, paragraph)
+        for other in (
+            preflight.PROVENANCE_COLLECTED,
+            preflight.PROVENANCE_SYNTHESISED,
+            preflight.PROVENANCE_UNDECLARED,
+        ):
+            if other == klass:
+                continue
+            with self.subTest(other=other):
+                self.assertNotIn(other, paragraph)
+        # And the points, from the scorer that awards them: the paragraph
+        # states a figure, and it has to be this one.
+        self.assertEqual(
+            READINESS.UNDECLARED_ROW_POINTS, READINESS.SYNTHESISED_ROW_POINTS
+        )
+        self.assertIn(
+            f"scores {READINESS.UNDECLARED_ROW_POINTS:g} like a row with no field",
+            dataset_text,
+        )
 
     def test_the_provenance_vocabulary_is_read_from_preflight_not_retyped(
         self,
@@ -3217,6 +3280,137 @@ class SkillPackageTests(unittest.TestCase):
             3,
             "the vocabulary is being retyped here again; preflight.py declares it",
         )
+
+    def _provenance_rung_caps(self) -> dict[str, Any]:
+        """The four rungs of the provenance ladder, built by the scorer.
+
+        Through `score_provenance` rather than by naming the constants, so the
+        fixture has to reach the branch that constructs each cap: a twelve-row
+        corpus that is entirely silent, entirely declared generated, and each
+        of those at nine rows of twelve.
+        """
+
+        def rung(**counts: int) -> Any:
+            facts = READINESS.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=12,
+                labelled_rows=12,
+                answerable_rows=12,
+                **counts,
+            )
+            _, _, caps = READINESS.score_provenance(facts)
+            self.assertEqual(len(caps), 1, "the fixture reached no single rung")
+            return caps[0]
+
+        built = {
+            cap.condition: cap
+            for cap in (
+                rung(undeclared_rows=12),
+                rung(synthesised_rows=12),
+                rung(undeclared_rows=9, collected_rows=3),
+                rung(synthesised_rows=9, collected_rows=3),
+            )
+        }
+        self.assertEqual(
+            sorted(built),
+            [
+                "dataset-fully-synthetic",
+                "dataset-mostly-synthetic",
+                "dataset-mostly-undeclared",
+                "dataset-undeclared-provenance",
+            ],
+            "the four rungs the ceilings table documents are not what fired",
+        )
+        return built
+
+    def test_the_ceilings_section_says_which_of_its_rungs_hold_the_run(self) -> None:
+        """A ceiling and a stop are two fields, and this section stated one as the other.
+
+        Its closing sentence said a ceiling is "not a refusal: the run
+        continues". Nineteen lines above it, the same section said both
+        undeclared rungs hold the paid run until a declaration is added -
+        which `Cap.blocks` does, so an assistant reading to the end of the
+        section was told the opposite of what the middle of it said. Neither
+        sentence was derived from anything, which is why the pair could stand
+        in one screen of prose.
+
+        The closing rule is the correct one and it is now general: `ceiling`
+        and `blocks` are separate fields, so whether a run waits is the
+        remedy's answer and never the ceiling's, in every state of this table.
+        That is not a claim about these four rungs, so nothing here can be read
+        against a per-cap value - it is checked against the invariant that
+        makes it true, which `Cap.__post_init__` enforces.
+
+        The exception is the part that moves, so the exception is the part
+        derived. #211/#213 re-route the undeclared pair to `CLAIM_SCOPING`, and
+        on that tree these caps stop blocking; this test then requires the
+        sentence to go with them, rather than leaving the file describing a
+        block that no longer happens. It fails in both directions: a restored
+        block with the sentence deleted is red too.
+        """
+        rungs = self._provenance_rung_caps()
+        holds = {
+            condition
+            for condition, cap in rungs.items()
+            if cap.blocks and cap.ceiling in (65, 70)
+        }
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        section = " ".join(
+            source.split("### Provenance ceilings", 1)[1]
+            .split("Every generated row must", 1)[0]
+            .casefold()
+            .split()
+        )
+        exception = "the undeclared rungs are routed as a repair and hold the paid run"
+        if holds:
+            self.assertEqual(
+                holds,
+                {"dataset-undeclared-provenance", "dataset-mostly-undeclared"},
+                "a rung this section describes as advisory now holds the run",
+            )
+            self.assertIn(
+                exception,
+                section,
+                "the undeclared rungs hold the paid run and the section that "
+                "ranks them does not say so - which is how a customer "
+                "bringing an ordinary unlabelled dataset was blocked by a "
+                "document describing no block at all",
+            )
+            self.assertIn("`fix before paid run` at 65", section)
+        else:
+            self.assertNotIn(
+                exception,
+                section,
+                "no rung on this ladder holds the run any more, so the "
+                "exception has to go with the block it described rather than "
+                "survive as prose about behaviour that stopped",
+            )
+            self.assertNotIn("`fix before paid run`", section)
+        # The declared twins are the other half of the contrast and never
+        # blocked; a change there rewrites the sentence too.
+        for advisory in ("dataset-fully-synthetic", "dataset-mostly-synthetic"):
+            with self.subTest(cap=advisory):
+                self.assertFalse(rungs[advisory].blocks)
+
+        # And the closing rule, which is general and stays general. The
+        # unconditional half is refused by name, because it is what was there.
+        self.assertNotIn("not a deduction and not a refusal", section)
+        self.assertIn(
+            "whether the run also waits is the remedy's answer, not the ceiling's",
+            section,
+        )
+        # What makes that sentence true, from the module rather than from the
+        # prose: a route that asks for a creation or a repair cannot decline to
+        # block, so the remedy really is what decides.
+        with self.assertRaises(ValueError) as refused:
+            READINESS.Cap(
+                "dataset-absent",
+                65,
+                "probe",
+                blocks=False,
+            )
+        self.assertIn("does not block", str(refused.exception))
 
     def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
         """`component-creation.md`'s example is a line the customer sees.
@@ -3752,6 +3946,79 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertIn("every guided run does this", skill)
 
+    _EVALUATION_SWEEP: list[tuple[Any, Any]] = []
+
+    def _reachable_evaluation_pillars(self) -> list[tuple[Any, Any]]:
+        """Every `(pillar, caps)` pair `score_evaluation` can produce.
+
+        Exhaustive over the inputs that select a branch rather than over every
+        value: presence, each declared method and none, every task kind the
+        profiles name plus one none of them fits plus none at all, calibration
+        present/supplied/timed-out against representative check sets, probe
+        spreads at both ends, and the parse flag. What is read off it is the
+        ceiling at a given coverage, which is a property of the branches and
+        not of any particular float.
+        """
+        if self._EVALUATION_SWEEP:
+            return self._EVALUATION_SWEEP
+        kinds: set[str] = set()
+        for profile in READINESS.METHOD_PROFILES.values():
+            kinds.update(profile["fits"])
+        task_kinds: list[str | None] = [None, "no-such-kind", *sorted(kinds)]
+        check_sets: tuple[tuple[dict[str, bool], ...], ...] = (
+            (),
+            ({"non_constant": True, "bad_fails": True},),
+            ({"non_constant": True, "bad_fails": False},),
+            (
+                {"non_constant": True, "bad_fails": True},
+                {"non_constant": False, "bad_fails": True},
+            ),
+        )
+        probe_sets: tuple[tuple[tuple[float, ...], ...], ...] = (
+            (),
+            ((1.0, 0.0),),
+            ((0.05, 0.0),),
+        )
+        swept: list[tuple[Any, Any]] = []
+        for (
+            present,
+            method,
+            task_kind,
+            calibration_present,
+            calibration_supplied,
+            checks,
+            probes,
+            timed_out,
+            parses,
+        ) in itertools.product(
+            (False, True),
+            (None, *sorted(READINESS.METHOD_PROFILES)),
+            task_kinds,
+            (False, True),
+            (False, True),
+            check_sets,
+            probe_sets,
+            (False, True),
+            (None, True, False),
+        ):
+            swept.append(
+                READINESS.score_evaluation(
+                    READINESS.EvaluationFacts(
+                        present=present,
+                        method=method,
+                        task_kind=task_kind,
+                        calibration_present=calibration_present,
+                        calibration_supplied=calibration_supplied,
+                        checks=checks,
+                        probe_scores=probes,
+                        timed_out=timed_out,
+                        parses=parses,
+                    )
+                )
+            )
+        type(self)._EVALUATION_SWEEP = swept
+        return swept
+
     def _opening_card(self, evaluation: int, dataset: int) -> tuple[int, str]:
         """Score one modelled opening card: no settings document, so 45 caps it.
 
@@ -3846,7 +4113,6 @@ class SkillPackageTests(unittest.TestCase):
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
             "the card names which pillar is thin",
-            "`evaluation 100/100 (2 of 4 checks measured)`",
             "calibrating the evaluator is what fills that one in",
             "cannot carry the band past partial",
             "leaves `45/100 partial` exactly where it was",
@@ -3854,6 +4120,75 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+
+        # The card line the README teaches, derived from `score_evaluation`
+        # instead of pinned as a literal. It was pinned, at
+        # `EVALUATION 100/100 (2 of 4 checks measured)`, which no reachable
+        # state of this scorer prints: `probe-spread` is withheld before
+        # calibration, keeps its 15 points in the denominator and earns none,
+        # so the pillar reads 75. The presence check could not see that - it
+        # asserted the wrong number had to stay - so the number is read out of
+        # the scorer here and the README has to follow it.
+        opening = READINESS.EvaluationFacts(
+            present=True, method="exact", task_kind="closed-label", parses=True
+        )
+        pillar, _ = READINESS.score_evaluation(opening)
+        observed = sum(1 for sub in pillar.subscores if sub.measured)
+        taught = (
+            f"`evaluation {pillar.score}/100 "
+            f"({observed} of {len(pillar.subscores)} checks measured)`"
+        )
+        self.assertIn(
+            taught,
+            readme,
+            "the README teaches a card line this scorer does not print",
+        )
+        # And no OTHER evaluation card line, wherever it sits in the file, may
+        # state a pair this scorer cannot reach. Requiring one true literal is
+        # not enough on its own - the false one stood beside a true one for two
+        # paragraphs - so every occurrence is checked against the sweep.
+        reachable = {
+            (
+                candidate.score,
+                sum(1 for sub in candidate.subscores if sub.measured),
+                len(candidate.subscores),
+            )
+            for candidate, _ in self._reachable_evaluation_pillars()
+        }
+        printed = re.findall(
+            r"`evaluation (\d+)/100 \((\d+) of (\d+) checks measured\)`", readme
+        )
+        self.assertTrue(printed, "the README no longer shows an evaluation card line")
+        for score, observed_here, total in printed:
+            with self.subTest(line=f"{score}/100 ({observed_here} of {total})"):
+                self.assertIn(
+                    (int(score), int(observed_here), int(total)),
+                    reachable,
+                    "the README prints an evaluation card no state of the "
+                    "scorer produces",
+                )
+        # And it is the CEILING at that coverage, which is the whole reason the
+        # line is worth teaching: swept exhaustively below, no state measuring
+        # two of four reads higher. A scorer change that moves either number
+        # fails here rather than quietly outdating the paragraph.
+        best_at_coverage = max(
+            candidate.score
+            for candidate, _ in self._reachable_evaluation_pillars()
+            if sum(1 for sub in candidate.subscores if sub.measured) == observed
+        )
+        self.assertEqual(pillar.score, best_at_coverage)
+        # The sentence beside it, on the same evidence: a withheld check is
+        # marked unmeasured like any other and still keeps its weight, so
+        # supplying nothing cannot beat supplying a poor answer.
+        withheld = [sub for sub in pillar.subscores if sub.withheld]
+        self.assertTrue(withheld, "nothing is withheld on the opening card")
+        for sub in withheld:
+            self.assertFalse(sub.measured)
+        supplied, _ = READINESS.score_evaluation(
+            READINESS.replace(opening, probe_scores=((0.05, 0.0),))
+        )
+        self.assertGreater(supplied.score, pillar.score)
+        self.assertIn("keeps its weight and earns nothing", readme)
 
         # The two claims this test now derives rather than restates. Each
         # branch is reachable: a cap that pinned the score would make `below`
@@ -11149,6 +11484,55 @@ class SkillPackageTests(unittest.TestCase):
             "the documented schema table no longer matches CONFIG_SPACE_FIELDS",
         )
 
+    def test_the_max_trials_cell_states_the_property_the_scorer_has(self) -> None:
+        """The cell stated an absolute the ladder holds only above a budget.
+
+        "Deleting the field can never raise this score" is true wherever the
+        declared budget reaches `SEARCH_SPACE_INTERACTION`, because past that
+        the space is the smaller number and an undeclared budget is damped one
+        rung anyway. Below it the budget IS the smaller number and the credit
+        is read off it, so deleting the line raises the score - the exact
+        omission-outscores-declaration shape the sentence exists to warn about,
+        stated as impossible in the table the assistant relies on.
+
+        Every figure below comes out of `search_space_points`, so retuning the
+        ladder rewrites what the cell has to say instead of quietly outdating
+        it. That is deliberate: the row-length prose here is not checkable by
+        presence, and a presence check is what let the absolute stand.
+        """
+        points = READINESS.search_space_points
+        configurations = READINESS.SEARCH_SPACE_FULL
+        absent = points(configurations, None)
+        beaten = [
+            budget
+            for budget in range(1, configurations + 1)
+            if points(configurations, budget) < absent
+        ]
+        self.assertTrue(beaten, "no declared budget is beaten by deleting the field")
+        self.assertTrue(
+            all(budget < READINESS.SEARCH_SPACE_INTERACTION for budget in beaten),
+            "deleting the field now wins at a budget the cell does not warn about",
+        )
+        # It still cannot buy the top rung, which is the half that was right.
+        self.assertLess(absent, points(configurations, configurations))
+
+        row = next(
+            line
+            for line in RUN_SAFETY.read_text().splitlines()
+            if line.startswith("| `max_trials`")
+        )
+        self.assertNotIn("can never raise this score", row)
+        self.assertIn("can never buy full credit", row)
+        self.assertIn(f"one {configurations}-configuration space", row)
+        for budget in (2, 1):
+            with self.subTest(budget=budget):
+                self.assertIn(budget, beaten, "the cell illustrates a budget that wins")
+                self.assertIn(
+                    f"`max_trials: {budget}` scores {points(configurations, budget):g}",
+                    row,
+                )
+        self.assertIn(f"the {absent:g} the field's absence earns", row)
+
     def test_the_documented_schema_refusals_hold_through_the_real_consumer(
         self,
     ) -> None:
@@ -11946,6 +12330,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "non-blind validation evidence",
                 "the held-out ten from the holdout split",
             ),
+        ),
+        (
+            # The ceilings section said both. Its middle told a reader that the
+            # undeclared rungs hold the paid run, and nineteen lines later its
+            # closing sentence told the same reader a ceiling never does. The
+            # settled answer is the README's, which had it right all along: the
+            # ceiling bounds the number, and whether the run waits is a
+            # separate question its remedy answers. Only the reference's
+            # phrasing is banned - the README's "not a refusal to score" is
+            # about the score and is the sentence this decision agrees with.
+            "whether a ceiling also stops the run",
+            ("whether the run also waits is the remedy's answer, not the ceiling's",),
+            ("not a refusal: the run continues",),
         ),
     )
 

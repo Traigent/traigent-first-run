@@ -132,16 +132,19 @@ tuning in whichever direction your product needs, so that it rewards, say, how a
 rather than which words it reuses.
 
 It is deliberately modest about itself. It runs before any optimization, from evidence on your own
-machine, so it estimates rather than measures: a check that cannot be computed is marked unmeasured
-and excluded rather than scored zero, and the card says how much of each pillar it actually observed
-- `EVALUATION 100/100 (2 of 4 checks measured)` is a pillar whose two remaining checks nobody has
-run yet, not a verified perfect one. A low score never stops the run; it decides which gaps are
-worth explaining and which are worth fixing first.
+machine, so it estimates rather than measures. A check this tool could not compute is marked
+unmeasured and excluded rather than scored zero; a check the run was asked for and did not supply
+is marked unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay.
+The card says how much of each pillar it actually observed, and
+`EVALUATION 75/100 (2 of 4 checks measured)` is what an opening card prints before any calibration
+has run - 75 is the most that pillar can read while two of its four checks are unmeasured, not a
+verdict on your evaluator. A low score never stops the run; it decides which gaps are worth
+explaining and which are worth fixing first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
-pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
+pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating the evaluator is
 what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
 the opening card the missing settings document holds the whole score to at most 45, inside Partial,
 so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
