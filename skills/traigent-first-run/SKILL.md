@@ -211,11 +211,16 @@ Every guided run that found an agent does this read - not conditionally, not dep
 agent's language or on how the card would look without it - and the flag is left off only where the
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
 name it and say what stopped the read, then offer to be pointed at source that can be read: that
-offer changes the opening score, which is what makes it worth asking, and it rides on whatever
-question this run already puts in the same turn rather than adding one. Proceed with what can be
-varied if nothing comes back. Never ask for a config-space file here - the paragraph above omits
+offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
+stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
+read found, and no read completed, so passing an empty one reports a finding about the customer's
+agent that nothing established. Proceed with what can be varied if nothing comes back. Never ask
+for a config-space file here - the paragraph above omits
 every one of those found before this run's search, so it cannot answer this. The ceiling left
-standing is read by stage 4's cap routing below, which is unchanged.
+standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
+later re-score in this run, re-reading the agent only where this run created or repaired it: a
+re-score that quietly drops the flag reports the agent pillar falling from what the opening read
+established to nothing, and that fall reaches the customer as an honest change in their project.
 `references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the baseline the
 closing report measures against. Show it before anything is created or repaired.

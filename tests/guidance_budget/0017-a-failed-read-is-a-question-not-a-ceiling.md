@@ -1,10 +1,10 @@
 # 0017 - a failed read is a question, not a ceiling
 
 follows: 0016
-resident-ceiling: 67_050
-resident-measured: 66_997
-total-ceiling: 306_350
-total-measured: 306_289
+resident-ceiling: 67_550
+resident-measured: 67_481
+total-ceiling: 307_650
+total-measured: 307_548
 
 Entry 0016 bought the instruction to open the agent and write down what it can
 already vary, and closed with one conditional clause: skip that work when there
@@ -38,3 +38,14 @@ restated that ruling and shrank it to callers with nobody present - untrue,
 because a closing card following a halted or empty search lands on the identical
 advisory reading while the customer watches. Pointing costs a clause; owning it
 twice costs a disagreement nobody would notice.
+
+The figures above were restated after review, and three corrections moved them.
+The invitation now names where it rides and tells the caller to withhold the
+flag while no reading finished, since handing the scorer an empty one converts a
+question about our reach into a published verdict about somebody's agent. Every
+later scoring call in the walkthrough inherits the same reading, because a gate
+that drops it silently prints a fall the customer is invited to believe happened
+inside their own project. And the one call that keeps withholding it says why in
+the safety reference: the closing number weighs what a search was handed, so
+letting source stand in for a document nothing produced would raise exactly the
+ceiling protecting a run that bought no trial.

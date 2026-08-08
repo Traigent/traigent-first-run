@@ -138,10 +138,12 @@ what fills that one in.
 No settings document exists before the search, so the agent pillar is read from the agent's own
 code instead - which parameters it can already vary, each against the line that shows it - and that
 is what the opening score grades the search space from. Where the read finds settings, no agent
-ceiling applies and calibrating can carry the band the whole way. Where nothing establishes a space at
-all - no reading and no document, or a reading that found nothing your agent can vary - the score
-is held at 45, inside Partial, because a search over one configuration compares nothing. What the
-opening card no longer does is hold every project at 45 for a document nobody was supposed to
+ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
+inside Partial, and they are different findings. A reading that found nothing your agent can vary
+says a search here would compare one configuration - a measurement of your project - so it blocks
+the paid run until something can vary. No reading and no document says only that this score was
+given nothing to count: it claims nothing about your project either way, and it stops nothing. What
+the opening card no longer does is hold every project at 45 for a document nobody was supposed to
 bring.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a

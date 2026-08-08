@@ -343,8 +343,9 @@ free-tier run as mocked.
 `scripts/readiness.py --config-space` scores the agent pillar from the space this run actually
 built. A file found before the current enhanced search - including one left by an earlier guided
 run - is historical context only. Its existence, timestamp, hash, or non-empty `wired` list cannot
-prove current wiring. Record its provenance, omit it from opening and stage-4 readiness, and report
-the pillar as not yet measured.
+prove current wiring. Record its provenance and omit it from opening and stage-4 readiness. What
+those scores report the agent pillar from instead is the read of the agent's own source they are
+passed as `--agent-knobs`, never this file.
 
 A scoreable file means one thing: *this is the space the search that just completed received*.
 The generated wrapper serializes the finalized space, removes any earlier file before the call, and
@@ -352,6 +353,12 @@ writes `traigent-runs/config-space.json` only after the search returns nonzero t
 current-run file enters closing readiness. A stopped, failed, or zero-trial search emits none, so
 the agent pillar is scored from absent evidence and its 45 ceiling stays in force - the closing
 score cannot exceed it.
+
+`--agent-knobs` is deliberately not passed at the close, and it is the only score in the run that
+leaves it off. The opening read says what the agent makes reachable; this score says what the search
+actually received, and they are different quantities. Letting a read of the source stand in for a
+document the search never emitted would lift this ceiling on exactly the runs it exists for - the
+ones that stopped, failed, or bought no trial.
 
 `agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
 because the scorer cannot tell a document withheld before the search from one the search failed to

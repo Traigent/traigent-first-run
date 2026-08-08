@@ -3840,7 +3840,10 @@ class SkillPackageTests(unittest.TestCase):
             # The pillar-level half of the same promise, which is what #201
             # made the opening card actually keep.
             "where the read finds settings, no agent ceiling applies",
-            "the score is held at 45",
+            # Both states that land on 45, and the fact that there are two of
+            # them. They share a ceiling and they do not share a verdict; the
+            # shared number is what made one sentence look able to carry both.
+            "two states hold the score at 45",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
@@ -3857,6 +3860,70 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(retired=retired):
                 self.assertNotIn(retired, readme)
+
+    def test_the_two_states_that_share_45_are_not_told_as_one(self) -> None:
+        """One ceiling, two findings - and only one of them is about the customer.
+
+        `agent-no-varying-knobs` reaches 45 from two places on the opening
+        card. A read of the agent that established nothing it can vary is a
+        MEASUREMENT of the project - a search here would compare one
+        configuration - so it blocks the paid run. No document and no read is a
+        statement about what this score was given, and the module's own comment
+        beside that cap says it "claims nothing about the customer's project
+        either way", so it is advisory and stops nothing.
+
+        Fused into one clause, the justification that belongs to the first
+        state is asserted about a customer whose agent nobody opened, and the
+        difference that decides whether they may pay for a run goes unmentioned
+        in both documents. The glossary states the split correctly fourteen
+        lines further down, which is what makes the fused version a
+        contradiction inside one document rather than merely a thin sentence.
+
+        Derived from the module rather than restated from either paragraph, so
+        the day the two caps stop disagreeing about blocking, this fails here
+        instead of leaving two documents describing a distinction that no
+        longer exists.
+        """
+        measured = READINESS.NOTHING_IN_THE_AGENT_TO_VARY_CAP
+        unsupplied = READINESS.NO_SEARCH_SPACE_ESTABLISHED_CAP
+        self.assertEqual(measured.condition, unsupplied.condition)
+        self.assertEqual(
+            measured.ceiling,
+            unsupplied.ceiling,
+            "the two states no longer share a ceiling, so the paragraphs below "
+            "may not present 45 as the number both arrive at",
+        )
+        self.assertNotEqual(
+            measured.blocks,
+            unsupplied.blocks,
+            "the two states that share this ceiling now agree about stopping "
+            "the paid run; if that is deliberate, these documents must stop "
+            "telling a reader the two answers differ",
+        )
+        self.assertTrue(measured.blocks)
+        self.assertFalse(unsupplied.blocks)
+
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        for document, text in (("README.md", readme), ("glossary.md", glossary)):
+            with self.subTest(document=document):
+                # Both states named, the blocking one named as a finding about
+                # the project, and the advisory one named as a finding about
+                # this score's inputs.
+                self.assertIn("a reading that found nothing your agent can vary", text)
+                self.assertIn("blocks the paid run", text)
+                self.assertIn("claims nothing about your project either way", text)
+                self.assertIn("stops nothing", text)
+                # The fusion itself, in both spellings that shipped: one clause
+                # covering the two states, justified by the claim only the
+                # measured one supports.
+                for fused in (
+                    "nothing read or supplied, or a reading that found nothing",
+                    "no reading and no document, or a reading that found nothing",
+                ):
+                    self.assertNotIn(fused, text)
 
     def test_local_example_retention_is_stated_the_same_way_in_both_homes(
         self,
@@ -13098,9 +13165,67 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         # the result. Stated, because "do not ask the user to solve missing
         # setup pieces" sits two stages away and this is not that.
         self.assertIn("changes the opening score", gate)
-        # And it never becomes a second question or a wait.
-        self.assertIn("rather than adding one", gate)
+        # And it never becomes a second question or a wait. The carrier is
+        # named rather than left as "whatever question this run already puts in
+        # the same turn": the offer sits in stage 1 and the ask it rides on is
+        # in stage 2, so an unnamed carrier let an unreadable agent reach the
+        # ceiling with nobody asked at all.
+        self.assertIn("the one ask in stage 2 below rather than adding one", gate)
         self.assertIn("proceed with what can be varied if nothing comes back", gate)
+        # The flag is withheld while the read is unfinished. Passing an empty
+        # one makes `discovery_supplied` true with nothing credited, which is
+        # the state that prints "the agent was read and no varying setting was
+        # established" - a statement about the customer's agent that no read
+        # supports - and blocks their run on it.
+        self.assertIn("leave `--agent-knobs` off in that case", gate)
+        self.assertIn(
+            "passing an empty one reports a finding about the customer's agent "
+            "that nothing established",
+            gate,
+        )
+        empty_read = READINESS.AgentFacts(discovery_supplied=True, discovered=())
+        _pillar, caps, _knobs = READINESS.score_agent(empty_read)
+        self.assertEqual([cap.blocks for cap in caps], [True])
+        self.assertIn("the agent was read", _pillar.subscores[0].evidence)
+
+    def test_every_later_re_score_is_passed_the_reading_the_opening_took(
+        self,
+    ) -> None:
+        """One gate mandated the flag; the rest of the run silently dropped it.
+
+        `--agent-knobs` appeared only at the opening gate, so the stage-4 and
+        post-repair re-scores scored the agent from absent evidence again. On
+        the project this branch is written for that is 92 at the opening and 45
+        afterwards, and the guide tells the assistant to show the later number
+        beside the earlier one as an honest change - so the customer is shown
+        their project losing something it never had.
+
+        The closing score is the one deliberate exception and it is stated as
+        one, in the reference that owns the config-space document rather than
+        here: that score weighs the space the search actually received, and a
+        read of the source standing in for a document the search never emitted
+        would lift the 45 ceiling on exactly the runs it exists for.
+        """
+        gate = self._gate()
+        self.assertIn("pass this same reading to every later re-score", gate)
+        self.assertIn(
+            "re-reading the agent only where this run created or repaired it", gate
+        )
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("`--agent-knobs` is deliberately not passed at the close", safety)
+        self.assertIn(
+            "letting a read of the source stand in for a document the search "
+            "never emitted would lift this ceiling",
+            safety,
+        )
+        # And the stale sentence the opening read replaced. run-safety.md still
+        # told the opening and stage-4 scores to report the pillar as not yet
+        # measured, which is the behaviour this branch removed.
+        self.assertNotIn(
+            "omit it from opening and stage-4 readiness, and report the pillar "
+            "as not yet measured",
+            safety,
+        )
 
     def test_the_offer_cannot_ask_for_the_file_this_gate_withholds(self) -> None:
         """The contradiction this nearly shipped, pinned so it cannot return.

@@ -269,9 +269,12 @@ The lines under each pillar on the card
   read, and the assistant reads it: which parameters it can already vary, and
   the line of your code showing each. That is what the opening pillar is
   scored from, and it says "at least N configurations" because nobody has
-  chosen the sweep yet. Where nothing establishes a space - nothing read or
-  supplied, or a reading that found nothing your agent can vary - the pillar
-  scores zero and the card is held at 45: one configuration compares nothing.
+  chosen the sweep yet. Two different states hold the card at 45 and they are
+  not the same finding about you. A reading that found nothing your agent can
+  vary is a measurement of your project - a search here would compare one
+  configuration - so it blocks the paid run until something can vary. Nothing
+  read and nothing supplied is a statement about what this score was given; it
+  claims nothing about your project either way, and it stops nothing.
 
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
