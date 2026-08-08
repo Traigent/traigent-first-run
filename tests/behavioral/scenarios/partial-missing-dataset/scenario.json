@@ -59,9 +59,8 @@
     "opening_caps": [
       "dataset-absent"
     ],
-    "closing_caps": [
+    "revalidation_caps": [
       "dataset-fully-synthetic"
-    ],
-    "closing_beats_opening": true
+    ]
   }
 }

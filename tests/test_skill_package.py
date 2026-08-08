@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import math
 import posixpath
@@ -16,6 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -863,6 +865,18 @@ assert _SPEC.loader is not None
 sys.modules[_SPEC.name] = READINESS
 _SPEC.loader.exec_module(READINESS)
 
+# The other half of that contract. Preflight classifies each provenance token
+# and readiness prices the class, so a prose claim about what a word is worth
+# has to be read against both.
+_PREFLIGHT = SKILL_ROOT / "scripts" / "preflight.py"
+_PREFLIGHT_SPEC = importlib.util.spec_from_file_location(
+    "first_run_preflight_for_package", _PREFLIGHT
+)
+PREFLIGHT = importlib.util.module_from_spec(_PREFLIGHT_SPEC)
+assert _PREFLIGHT_SPEC.loader is not None
+sys.modules[_PREFLIGHT_SPEC.name] = PREFLIGHT
+_PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT)
+
 
 def quoted_prose(path: Path) -> str:
     """The whole document, whitespace-normalized, with leading `>` dropped.
@@ -1299,6 +1313,78 @@ def claims_no_effect(sentence: str) -> bool:
     """
     for match in _NO_EFFECT_CLAIM.finditer(sentence):
         if not _NO_EFFECT_HEDGE.search(sentence[: match.start()]):
+            return True
+    return False
+
+
+# A claim that the run's REPORT carries two readiness scores - the opening one
+# and a later one - as a pair the reader is meant to read as progress. Written
+# as a predicate rather than as a blocklist of the literals this package used to
+# contain, for the reason the registry below states about itself: the literal
+# list refuses the wording someone already found, and every rewording of it
+# walks straight past. `25 → 78`, "show opening beside closing", "the readiness
+# change from start to finish: both scores" and "render the pair as opening ->
+# current" are the same claim in four sets of words, and only the first three
+# were ever written down.
+#
+# `readiness transition` is matched in the singular on purpose.
+# `references/component-creation.md` has a "Readiness transitions" section, and
+# it is about a component moving from `❗` to `✅` - a different fact, which this
+# guidance still makes, and which a plural-tolerant pattern would have refused.
+_PAIRED_READINESS_SCORES = re.compile(
+    r"(?:"
+    # the render templates: the pair drawn as an arrow.
+    r"<?\bopening\b>?\s*(?:→|->|=>)\s*<?\b(?:current|closing|latest|final)\b>?"
+    r"|\bopening\s+to\s+(?:the\s+)?(?:current|closing|latest|final)\b"
+    r"|\bopening[- ]to[- ]closing\b"
+    # one of the two set against the other.
+    r"|\b(?:opening|closing|latest|current)\b[^.;:]{0,50}?"
+    r"\b(?:beside|next to|alongside|side by side with)\b[^.;:]{0,50}?"
+    r"\b(?:opening|closing|latest|current)\b"
+    # or a score, band or cap set against the opening one. Anchored on `the
+    # opening` rather than on any of the four, because "the held-out score is
+    # disclosed once, beside the tuning score, in the closing report" is a
+    # different pair entirely and this package really says it.
+    r"|\b(?:scores?|bands?|caps?|numbers?|results?)\b[^.;:]{0,50}?"
+    r"\b(?:beside|next to|alongside|side by side with)\b[^.;:]{0,50}?"
+    r"\bthe opening\b"
+    # or the pair named as one thing the report carries.
+    r"|\breadiness (?:transition|change)\b"
+    r"|\b(?:show|shows|showing) the transition\b"
+    r"|\bboth (?:scores|bands)\b"
+    r"|\bfrom start to finish\b"
+    # or the record fields that used to hold it.
+    r"|\bopening/(?:latest|closing|current)\b"
+    r"|\blatest revalidated readiness score\b"
+    r")",
+    re.IGNORECASE,
+)
+# Naming the pairing in order to forbid it is how this guide states the rule -
+# "never show that score or set it beside the opening one" is the settled
+# answer, and a classifier that could not see the `never` would fail the
+# document for stating it. Searched across the clause up to and including the
+# match rather than only in front of it: the negator sits inside the span for
+# "lead with the caps that cleared, never with a new score beside the opening
+# one", where the match opens on `caps` and `never` arrives four words later.
+_PAIRED_READINESS_HEDGE = re.compile(
+    r"\b(?:never|not|no|nothing|none|cannot|can't|must not|may not"
+    r"|rather than|instead of|without|avoid|refuse[sd]?|forbid(?:s|den)?"
+    r"|stop|stops|do not|does not|did not|will not|won't|don't|doesn't)\b",
+    re.IGNORECASE,
+)
+
+
+def pairs_the_readiness_scores(sentence: str) -> bool:
+    """Does this sentence present a later readiness score beside the opening one?
+
+    The guide may re-run the score as a gate and may never report the result of
+    that re-run beside the opening number, because once the run has written the
+    missing dataset or evaluator most of what a second score grades is those
+    substitutes. So a prohibition is not a violation and an instruction to
+    render the pair is - whichever words it happens to reach for.
+    """
+    for match in _PAIRED_READINESS_SCORES.finditer(sentence):
+        if not _PAIRED_READINESS_HEDGE.search(sentence[: match.end()]):
             return True
     return False
 
@@ -3237,14 +3323,63 @@ class SkillPackageTests(unittest.TestCase):
             "a mixture scores like a mixture",
             "99 collected rows and one generated one score 9.93, not 3",
             "provenance ceilings",
-            "a ceiling is not a deduction and not a refusal",
+            # Only the stable half of that closing rule is pinned here. The
+            # other half - whether a ceiling ALSO holds the run - is what this
+            # weld used to assert the wrong answer for, so it is derived from
+            # `Cap.blocks` in
+            # `test_the_ceilings_section_says_which_of_its_rungs_hold_the_run`
+            # instead of being written down twice.
+            "a ceiling is not a deduction:",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset_text)
 
-        # An unknown word keeps its score but must never do so silently.
+        # An unknown word must never be scored silently.
         self.assertIn("dataset-provenance-vocabulary", dataset_text)
-        self.assertIn("is not silently demoted", dataset_text)
+
+        # What that word is SCORED as, derived from `classify_provenance`
+        # rather than welded to a sentence. The weld that stood here asserted
+        # "is not silently demoted" - true of the classifier that returned
+        # `collected` for any unrecognised token, and false since it stopped:
+        # `crm-export` now classifies exactly where silence classifies. A
+        # presence check cannot notice that its sentence has become the
+        # opposite of the code, so the paragraph is read against the classifier
+        # here: it must name the class the module returns and neither of the
+        # other two.
+        preflight = PREFLIGHT
+        klass, recognised = preflight.classify_provenance("crm-export")
+        self.assertFalse(
+            recognised, "crm-export is recognised now, so the example is stale"
+        )
+        silence, _ = preflight.classify_provenance(None)
+        self.assertEqual(
+            klass, silence, "an unreadable word no longer scores where silence scores"
+        )
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        paragraph = " ".join(
+            next(block for block in source.split("\n\n") if "crm-export" in block)
+            .casefold()
+            .split()
+        )
+        self.assertIn(klass, paragraph)
+        for other in (
+            preflight.PROVENANCE_COLLECTED,
+            preflight.PROVENANCE_SYNTHESISED,
+            preflight.PROVENANCE_UNDECLARED,
+        ):
+            if other == klass:
+                continue
+            with self.subTest(other=other):
+                self.assertNotIn(other, paragraph)
+        # And the points, from the scorer that awards them: the paragraph
+        # states a figure, and it has to be this one.
+        self.assertEqual(
+            READINESS.UNDECLARED_ROW_POINTS, READINESS.SYNTHESISED_ROW_POINTS
+        )
+        self.assertIn(
+            f"scores {READINESS.UNDECLARED_ROW_POINTS:g} like a row with no field",
+            dataset_text,
+        )
 
     def test_the_provenance_vocabulary_is_read_from_preflight_not_retyped(
         self,
@@ -3322,6 +3457,137 @@ class SkillPackageTests(unittest.TestCase):
             3,
             "the vocabulary is being retyped here again; preflight.py declares it",
         )
+
+    def _provenance_rung_caps(self) -> dict[str, Any]:
+        """The four rungs of the provenance ladder, built by the scorer.
+
+        Through `score_provenance` rather than by naming the constants, so the
+        fixture has to reach the branch that constructs each cap: a twelve-row
+        corpus that is entirely silent, entirely declared generated, and each
+        of those at nine rows of twelve.
+        """
+
+        def rung(**counts: int) -> Any:
+            facts = READINESS.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=12,
+                labelled_rows=12,
+                answerable_rows=12,
+                **counts,
+            )
+            _, _, caps = READINESS.score_provenance(facts)
+            self.assertEqual(len(caps), 1, "the fixture reached no single rung")
+            return caps[0]
+
+        built = {
+            cap.condition: cap
+            for cap in (
+                rung(undeclared_rows=12),
+                rung(synthesised_rows=12),
+                rung(undeclared_rows=9, collected_rows=3),
+                rung(synthesised_rows=9, collected_rows=3),
+            )
+        }
+        self.assertEqual(
+            sorted(built),
+            [
+                "dataset-fully-synthetic",
+                "dataset-mostly-synthetic",
+                "dataset-mostly-undeclared",
+                "dataset-undeclared-provenance",
+            ],
+            "the four rungs the ceilings table documents are not what fired",
+        )
+        return built
+
+    def test_the_ceilings_section_says_which_of_its_rungs_hold_the_run(self) -> None:
+        """A ceiling and a stop are two fields, and this section stated one as the other.
+
+        Its closing sentence said a ceiling is "not a refusal: the run
+        continues". Nineteen lines above it, the same section said both
+        undeclared rungs hold the paid run until a declaration is added -
+        which `Cap.blocks` does, so an assistant reading to the end of the
+        section was told the opposite of what the middle of it said. Neither
+        sentence was derived from anything, which is why the pair could stand
+        in one screen of prose.
+
+        The closing rule is the correct one and it is now general: `ceiling`
+        and `blocks` are separate fields, so whether a run waits is the
+        remedy's answer and never the ceiling's, in every state of this table.
+        That is not a claim about these four rungs, so nothing here can be read
+        against a per-cap value - it is checked against the invariant that
+        makes it true, which `Cap.__post_init__` enforces.
+
+        The exception is the part that moves, so the exception is the part
+        derived. #211/#213 re-route the undeclared pair to `CLAIM_SCOPING`, and
+        on that tree these caps stop blocking; this test then requires the
+        sentence to go with them, rather than leaving the file describing a
+        block that no longer happens. It fails in both directions: a restored
+        block with the sentence deleted is red too.
+        """
+        rungs = self._provenance_rung_caps()
+        holds = {
+            condition
+            for condition, cap in rungs.items()
+            if cap.blocks and cap.ceiling in (65, 70)
+        }
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        section = " ".join(
+            source.split("### Provenance ceilings", 1)[1]
+            .split("Every generated row must", 1)[0]
+            .casefold()
+            .split()
+        )
+        exception = "the undeclared rungs are routed as a repair and hold the paid run"
+        if holds:
+            self.assertEqual(
+                holds,
+                {"dataset-undeclared-provenance", "dataset-mostly-undeclared"},
+                "a rung this section describes as advisory now holds the run",
+            )
+            self.assertIn(
+                exception,
+                section,
+                "the undeclared rungs hold the paid run and the section that "
+                "ranks them does not say so - which is how a customer "
+                "bringing an ordinary unlabelled dataset was blocked by a "
+                "document describing no block at all",
+            )
+            self.assertIn("`fix before paid run` at 65", section)
+        else:
+            self.assertNotIn(
+                exception,
+                section,
+                "no rung on this ladder holds the run any more, so the "
+                "exception has to go with the block it described rather than "
+                "survive as prose about behaviour that stopped",
+            )
+            self.assertNotIn("`fix before paid run`", section)
+        # The declared twins are the other half of the contrast and never
+        # blocked; a change there rewrites the sentence too.
+        for advisory in ("dataset-fully-synthetic", "dataset-mostly-synthetic"):
+            with self.subTest(cap=advisory):
+                self.assertFalse(rungs[advisory].blocks)
+
+        # And the closing rule, which is general and stays general. The
+        # unconditional half is refused by name, because it is what was there.
+        self.assertNotIn("not a deduction and not a refusal", section)
+        self.assertIn(
+            "whether the run also waits is the remedy's answer, not the ceiling's",
+            section,
+        )
+        # What makes that sentence true, from the module rather than from the
+        # prose: a route that asks for a creation or a repair cannot decline to
+        # block, so the remedy really is what decides.
+        with self.assertRaises(ValueError) as refused:
+            READINESS.Cap(
+                "dataset-absent",
+                65,
+                "probe",
+                blocks=False,
+            )
+        self.assertIn("does not block", str(refused.exception))
 
     def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
         """`component-creation.md`'s example is a line the customer sees.
@@ -3928,6 +4194,79 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertIn("every guided run does this", skill)
 
+    _EVALUATION_SWEEP: list[tuple[Any, Any]] = []
+
+    def _reachable_evaluation_pillars(self) -> list[tuple[Any, Any]]:
+        """Every `(pillar, caps)` pair `score_evaluation` can produce.
+
+        Exhaustive over the inputs that select a branch rather than over every
+        value: presence, each declared method and none, every task kind the
+        profiles name plus one none of them fits plus none at all, calibration
+        present/supplied/timed-out against representative check sets, probe
+        spreads at both ends, and the parse flag. What is read off it is the
+        ceiling at a given coverage, which is a property of the branches and
+        not of any particular float.
+        """
+        if self._EVALUATION_SWEEP:
+            return self._EVALUATION_SWEEP
+        kinds: set[str] = set()
+        for profile in READINESS.METHOD_PROFILES.values():
+            kinds.update(profile["fits"])
+        task_kinds: list[str | None] = [None, "no-such-kind", *sorted(kinds)]
+        check_sets: tuple[tuple[dict[str, bool], ...], ...] = (
+            (),
+            ({"non_constant": True, "bad_fails": True},),
+            ({"non_constant": True, "bad_fails": False},),
+            (
+                {"non_constant": True, "bad_fails": True},
+                {"non_constant": False, "bad_fails": True},
+            ),
+        )
+        probe_sets: tuple[tuple[tuple[float, ...], ...], ...] = (
+            (),
+            ((1.0, 0.0),),
+            ((0.05, 0.0),),
+        )
+        swept: list[tuple[Any, Any]] = []
+        for (
+            present,
+            method,
+            task_kind,
+            calibration_present,
+            calibration_supplied,
+            checks,
+            probes,
+            timed_out,
+            parses,
+        ) in itertools.product(
+            (False, True),
+            (None, *sorted(READINESS.METHOD_PROFILES)),
+            task_kinds,
+            (False, True),
+            (False, True),
+            check_sets,
+            probe_sets,
+            (False, True),
+            (None, True, False),
+        ):
+            swept.append(
+                READINESS.score_evaluation(
+                    READINESS.EvaluationFacts(
+                        present=present,
+                        method=method,
+                        task_kind=task_kind,
+                        calibration_present=calibration_present,
+                        calibration_supplied=calibration_supplied,
+                        checks=checks,
+                        probe_scores=probes,
+                        timed_out=timed_out,
+                        parses=parses,
+                    )
+                )
+            )
+        type(self)._EVALUATION_SWEEP = swept
+        return swept
+
     def _opening_card(self, evaluation: int, dataset: int) -> tuple[int, str]:
         """Score one modelled opening card: no settings document, so 45 caps it.
 
@@ -4022,7 +4361,6 @@ class SkillPackageTests(unittest.TestCase):
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
             "the card names which pillar is thin",
-            "`evaluation 100/100 (2 of 4 checks measured)`",
             "calibrating the evaluator is what fills that one in",
             "cannot carry the band past partial",
             "leaves `45/100 partial` exactly where it was",
@@ -4030,6 +4368,75 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+
+        # The card line the README teaches, derived from `score_evaluation`
+        # instead of pinned as a literal. It was pinned, at
+        # `EVALUATION 100/100 (2 of 4 checks measured)`, which no reachable
+        # state of this scorer prints: `probe-spread` is withheld before
+        # calibration, keeps its 15 points in the denominator and earns none,
+        # so the pillar reads 75. The presence check could not see that - it
+        # asserted the wrong number had to stay - so the number is read out of
+        # the scorer here and the README has to follow it.
+        opening = READINESS.EvaluationFacts(
+            present=True, method="exact", task_kind="closed-label", parses=True
+        )
+        pillar, _ = READINESS.score_evaluation(opening)
+        observed = sum(1 for sub in pillar.subscores if sub.measured)
+        taught = (
+            f"`evaluation {pillar.score}/100 "
+            f"({observed} of {len(pillar.subscores)} checks measured)`"
+        )
+        self.assertIn(
+            taught,
+            readme,
+            "the README teaches a card line this scorer does not print",
+        )
+        # And no OTHER evaluation card line, wherever it sits in the file, may
+        # state a pair this scorer cannot reach. Requiring one true literal is
+        # not enough on its own - the false one stood beside a true one for two
+        # paragraphs - so every occurrence is checked against the sweep.
+        reachable = {
+            (
+                candidate.score,
+                sum(1 for sub in candidate.subscores if sub.measured),
+                len(candidate.subscores),
+            )
+            for candidate, _ in self._reachable_evaluation_pillars()
+        }
+        printed = re.findall(
+            r"`evaluation (\d+)/100 \((\d+) of (\d+) checks measured\)`", readme
+        )
+        self.assertTrue(printed, "the README no longer shows an evaluation card line")
+        for score, observed_here, total in printed:
+            with self.subTest(line=f"{score}/100 ({observed_here} of {total})"):
+                self.assertIn(
+                    (int(score), int(observed_here), int(total)),
+                    reachable,
+                    "the README prints an evaluation card no state of the "
+                    "scorer produces",
+                )
+        # And it is the CEILING at that coverage, which is the whole reason the
+        # line is worth teaching: swept exhaustively below, no state measuring
+        # two of four reads higher. A scorer change that moves either number
+        # fails here rather than quietly outdating the paragraph.
+        best_at_coverage = max(
+            candidate.score
+            for candidate, _ in self._reachable_evaluation_pillars()
+            if sum(1 for sub in candidate.subscores if sub.measured) == observed
+        )
+        self.assertEqual(pillar.score, best_at_coverage)
+        # The sentence beside it, on the same evidence: a withheld check is
+        # marked unmeasured like any other and still keeps its weight, so
+        # supplying nothing cannot beat supplying a poor answer.
+        withheld = [sub for sub in pillar.subscores if sub.withheld]
+        self.assertTrue(withheld, "nothing is withheld on the opening card")
+        for sub in withheld:
+            self.assertFalse(sub.measured)
+        supplied, _ = READINESS.score_evaluation(
+            READINESS.replace(opening, probe_scores=((0.05, 0.0),))
+        )
+        self.assertGreater(supplied.score, pillar.score)
+        self.assertIn("keeps its weight and earns nothing", readme)
 
         # The two claims this test now derives rather than restates. Each
         # branch is reachable: a cap that pinned the score would make `below`
@@ -4318,7 +4725,12 @@ class SkillPackageTests(unittest.TestCase):
             "what the score measures",
             "the strongest evidence",
             "the one limitation that most affects the next action",
-            "<opening> → <current>",
+            # A re-score used to be presented as `<opening> → <current>`. The
+            # arrow was the whole claim: it read as the project improving when
+            # what had changed was that this run wrote the missing pieces. What
+            # a re-score is allowed to present now is the gate result.
+            "a re-score is a gate result: lead with the caps that cleared, never with a "
+            "new score beside the opening one",
             "do not animate with invented progress",
         ):
             self.assertIn(phrase, presentation)
@@ -4827,16 +5239,16 @@ class SkillPackageTests(unittest.TestCase):
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
         """Motivation for a further run must come from measured evidence.
 
-        The report already carries the readiness transition; what this pins is
-        that the close names the gaps still open and what each costs, rather
-        than offering encouragement or implying a further run fixes a gap the
-        walkthrough cannot close.
+        The close reads the post-run caps without reporting their score; what
+        this pins is that it names the gaps still open and what each costs,
+        rather than offering encouragement or implying a further run fixes a gap
+        the walkthrough cannot close.
         """
         skill_text = " ".join(SKILL.read_text().casefold().split())
 
         self.assertIn("saying what a further run would be worth", skill_text)
         self.assertIn(
-            "name the ones still open and what each is now costing", skill_text
+            "name the gaps still open and what each is now costing", skill_text
         )
         self.assertIn(
             "the user's own measured evidence rather than encouragement", skill_text
@@ -4874,9 +5286,9 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(state=state):
                 self.assertIn(state, skill_text)
-        # It closes on the opening score, so it must follow the readiness
-        # transition and precede the optional next steps.
-        transition = skill_text.index("the readiness transition")
+        # It ranks from the remaining caps, so it must follow the paragraph that
+        # reads them and precede the optional next steps.
+        transition = skill_text.index("do not close on a second number")
         motivation = skill_text.index("saying what a further run would be worth")
         next_steps = skill_text.index(
             "these are available whenever the user wants them"
@@ -6038,37 +6450,40 @@ class SkillPackageTests(unittest.TestCase):
             # survives.
             "accuracy-cost frontier for each run - its points, the recommended "
             "one, and the score claim with paired outcome counts",
+            # The safety half of the readiness re-score. The narrative half was
+            # removed from this record; this field is what may not follow it,
+            # because a repair that was never rechecked is how a paid run gets
+            # made against a component only believed fixed.
+            "revalidation gate results - which caps cleared, and on what evidence",
         ):
             self.assertIn(phrase, text)
-        # 61, raised from 60 when the held-out branch merged, and the raise is
-        # the part that needs an argument rather than the line.
+        # 60, lowered from 61, and the lowering is what needs the argument.
         #
-        # The cap is shared, and twice a trunk branch measured itself against
-        # the open held-out branch and gave a line back for it: 4ba2311 folded
-        # the record's two frontier lines into one ("the cap is shared, and the
-        # one that can spend less should"), and 351f312 rejoined the
-        # connected-run field, "which wrapped for width rather than for
-        # meaning". Both reserves were then spent by later trunk work - the
-        # width wrap returned in 3f57acf, and the repaired/generated row-ids
-        # field took the other - so trunk arrived at this merge holding 60 of
-        # 60 with no reserve left, and the held-out score is a 61st line.
+        # 61 was bought for the held-out score when that branch merged, over a
+        # trunk that had arrived holding 60 of 60 with no reserve left. The
+        # raise came with an OWNER note offering one way back: fold the two
+        # readiness-score lines under "Quality evidence". The owner did not take
+        # the fold, and took a different line instead.
         #
-        # It is not a line that can be given back the same way. Every bullet in
-        # the template is now one physical line and one distinct field, so the
-        # only remaining saving is folding two fields into one - which is a
-        # decision about what the run record must keep separate, not a
-        # reflow. The held-out score for the recommended configuration is the
-        # result the holdout exists to produce, so the field stays and the
-        # budget moves by exactly one.
+        # What the decision removed is a NUMBER, not a field. Both readiness
+        # fields under "Quality evidence" survive: the opening score unchanged,
+        # and the second rewritten from "latest revalidated readiness score -
+        # overall, band, binding caps, and what changed" to the gate result
+        # above, because a re-score taken after this run has created or repaired
+        # components mostly measures those substitutes. The line that went is
+        # the "Interpretation" transition bullet, which paired the two scores
+        # and had nothing left to pair once neither field carried a second one.
         #
-        # OWNER: if the record should stay at 60, the fold to make is a
-        # judgement call about the two readiness-score lines under "Quality
-        # evidence"; this raise is the reversible choice, not the settled one.
-        self.assertLessEqual(len(text.splitlines()), 61)
+        # So the line came back, but not as a reserve and not by a reflow.
+        # 61 - 1 = 60, measured on this template, and the ceiling follows it
+        # down rather than sitting above it as unspent room for the next field
+        # nobody argued for.
+        self.assertLessEqual(len(text.splitlines()), 60)
         for removed_detail in (
             "provider retry count",
             "provider-request timeout",
             "aggregate budget ledger",
+            "latest revalidated readiness score",
         ):
             self.assertNotIn(removed_detail, text)
 
@@ -7544,8 +7959,8 @@ class SkillPackageTests(unittest.TestCase):
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "close the loop on the readiness score the run opened with",
-            "show opening beside closing",
+            "do not close on a second number",
+            "never show that score or set it beside the opening one",
             "which remaining gap to close first",
             "one action selected from the latest closing evidence",
             "re-rank the remaining closing caps",
@@ -10425,17 +10840,26 @@ class SkillPackageTests(unittest.TestCase):
             "history is made of",
         )
 
-    def test_run_record_keeps_the_readiness_transition(self) -> None:
+    def test_run_record_keeps_the_opening_score_and_the_gate_results(self) -> None:
+        """One score of the customer's own material, and the gate above it.
+
+        The record used to carry three readiness fields: the opening score, the
+        latest re-score, and a transition line pairing them. The pair was the
+        defect - a re-score taken after this run has written the missing dataset
+        or evaluator mostly grades those substitutes, so `25 → 78` reads as the
+        project having improved when nothing of theirs changed. What the run
+        genuinely needs from a re-score is the safety half: whether the repair
+        cleared the blocking condition, and on what evidence, before money is
+        spent against a component believed fixed and never rechecked.
+        """
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
-            # both entries must keep the three fields the audited before/after
-            # transition is made of, not just their headings
             "opening readiness score before any creation or repair - overall, "
             "band, binding caps:",
-            "latest revalidated readiness score - overall, band, binding caps, "
-            "and what changed:",
-            "readiness transition",
-            "`🛠️` substitute",
+            # the gate half, pinned so the removal above cannot take it too: a
+            # repair that clears a cap has to be recorded as clearing it, with
+            # the evidence that says so
+            "revalidation gate results - which caps cleared, and on what evidence:",
             # the record has to have somewhere to put what this run changed on
             # the customer's behalf, or the obligation to name it lands in
             # free text and stops being auditable
@@ -10444,22 +10868,41 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
-        # a transition needs a fixed baseline: without this rule the opening
-        # entry can be updated in place and the before/after becomes after/after
+        self.assertNotIn("readiness transition", text)
+        # the opening entry is the one score taken on material this run did not
+        # write, so updating it in place would leave the record with no honest
+        # reading of what the customer arrived with
         self.assertIn(
             "never overwrite the recorded opening score",
             " ".join(SKILL.read_text().casefold().split()),
         )
 
-    def test_final_report_shows_the_readiness_transition(self) -> None:
+    def test_the_close_explains_the_substitutes_instead_of_scoring_them(self) -> None:
+        """Prose now carries what the closing number used to.
+
+        Removing the transition only works if the close still says what was
+        created or repaired and what that does to the claim - the owner's
+        condition on the removal. Two statements do that work and are pinned
+        here: generated examples are weaker evidence than collected ones, and a
+        generated evaluation method is a starting point the customer may want to
+        move in either direction rather than the product's grading policy.
+        """
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            "the recorded opening score beside the closing one",
-            "naming cleared and remaining caps",
-            "treat every gain from a `🛠️` substitute as walkthrough setup",
+            "what this run created or repaired, and what that costs the claim",
+            "examples it wrote are weaker evidence than examples collected from the product",
+            "an evaluation method it wrote is a starting point rather than the "
+            "product's grading policy - one a person may want to move in either direction",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        for removed in (
+            "the readiness transition",
+            "the recorded opening score beside the closing one",
+            "show opening beside closing",
+        ):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, normalized)
 
     def test_repair_paths_require_rescoring_and_active_branches(self) -> None:
         def norm(name: str) -> str:
@@ -10476,6 +10919,50 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never real-world readiness", norm("component-creation.md"))
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
+
+    def test_every_site_that_mandates_the_repair_gate_is_pinned(self) -> None:
+        """The half of the re-score that stayed, held down where it is stated.
+
+        This branch removed the narrative half of the readiness re-score and
+        kept the safety half - re-run the score after a repair, so nothing is
+        paid for against a component only believed fixed. The claim is only
+        worth its argument if the surviving half is actually enforced, and it
+        was not: SKILL.md states the gate at four sites, and deleting any one of
+        them left the suite at 774 run / 773 passed / 1 skipped, measured on
+        this branch and on its merge-base. The stage-4 step and the post-repair
+        sentence come to nine lines between them and their removal reported the
+        same headline number as the branch that keeps them.
+
+        So each site is pinned by the words that carry the obligation rather
+        than by its heading. The invalid-evaluator paragraph is here for the
+        same reason and had no coverage at all: it is what stops a paid run
+        against a grading signal known to be broken, which is the one refusal
+        "continue as is" is most likely to be read as overriding.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            # after any repair or substitute creation, at any stage
+            "after any repair or substitute creation, re-run the affected "
+            "checks, the applicable calibration, and the score, then record "
+            "that gate result without overwriting the opening one",
+            # stage 4, step 5 - required even when the answer is unwelcome
+            "re-run `scripts/readiness.py` on the fresh preflight json plus "
+            "any applicable calibration result",
+            "this score is required even when a low score or cap is expected",
+            "record its gate result in `traigent-runs/run-plan.md`",
+            # and the run is not complete until the revalidation happened
+            "any repaired component was revalidated before its status changed",
+            # the invalid-evaluator refusal
+            "for an invalid evaluator, incompatible schema, corrupted required "
+            "rows, or unverified call path, do not run paid optimization "
+            "against it",
+            "offer to repair and revalidate it, pause for a user-authored fix, "
+            "or use a generated `🛠️` substitute for the walkthrough",
+            'never treat "continue as is" as permission to optimize against a '
+            "broken grading signal",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
 
     def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
         self,
@@ -11488,6 +11975,55 @@ class SkillPackageTests(unittest.TestCase):
             "the documented schema table no longer matches CONFIG_SPACE_FIELDS",
         )
 
+    def test_the_max_trials_cell_states_the_property_the_scorer_has(self) -> None:
+        """The cell stated an absolute the ladder holds only above a budget.
+
+        "Deleting the field can never raise this score" is true wherever the
+        declared budget reaches `SEARCH_SPACE_INTERACTION`, because past that
+        the space is the smaller number and an undeclared budget is damped one
+        rung anyway. Below it the budget IS the smaller number and the credit
+        is read off it, so deleting the line raises the score - the exact
+        omission-outscores-declaration shape the sentence exists to warn about,
+        stated as impossible in the table the assistant relies on.
+
+        Every figure below comes out of `search_space_points`, so retuning the
+        ladder rewrites what the cell has to say instead of quietly outdating
+        it. That is deliberate: the row-length prose here is not checkable by
+        presence, and a presence check is what let the absolute stand.
+        """
+        points = READINESS.search_space_points
+        configurations = READINESS.SEARCH_SPACE_FULL
+        absent = points(configurations, None)
+        beaten = [
+            budget
+            for budget in range(1, configurations + 1)
+            if points(configurations, budget) < absent
+        ]
+        self.assertTrue(beaten, "no declared budget is beaten by deleting the field")
+        self.assertTrue(
+            all(budget < READINESS.SEARCH_SPACE_INTERACTION for budget in beaten),
+            "deleting the field now wins at a budget the cell does not warn about",
+        )
+        # It still cannot buy the top rung, which is the half that was right.
+        self.assertLess(absent, points(configurations, configurations))
+
+        row = next(
+            line
+            for line in RUN_SAFETY.read_text().splitlines()
+            if line.startswith("| `max_trials`")
+        )
+        self.assertNotIn("can never raise this score", row)
+        self.assertIn("can never buy full credit", row)
+        self.assertIn(f"one {configurations}-configuration space", row)
+        for budget in (2, 1):
+            with self.subTest(budget=budget):
+                self.assertIn(budget, beaten, "the cell illustrates a budget that wins")
+                self.assertIn(
+                    f"`max_trials: {budget}` scores {points(configurations, budget):g}",
+                    row,
+                )
+        self.assertIn(f"the {absent:g} the field's absence earns", row)
+
     def test_the_documented_schema_refusals_hold_through_the_real_consumer(
         self,
     ) -> None:
@@ -11528,10 +12064,11 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("traigent-runs/config-space.json", skill)
         self.assertIn("--config-space", skill)
         # the producer instruction has to land in the run stage, not only in the
-        # closing recap - otherwise there is nothing for the closing score to read
+        # closing recap - otherwise the post-run score has no current-run
+        # document to read, and reports the agent pillar from absent evidence
         self.assertLess(
             skill.index("traigent-runs/config-space.json"),
-            skill.index("close the loop on the readiness score the run opened with"),
+            skill.index("do not close on a second number"),
         )
         self.assertIn("### config-space document", safety)
         self.assertIn("only the controls the agent call really consumes", safety)
@@ -11924,6 +12461,55 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ("select before preflight, not after",),
         ),
         (
+            # The score was re-run for two purposes that read as one. The gate
+            # half - did this repair clear the blocking condition, before money
+            # is spent against a component only believed fixed - is a safety
+            # requirement and stayed. The narrative half was `25 → 78`, and the
+            # owner removed it: after the walkthrough has written the missing
+            # dataset or evaluator, most of what a second score grades is those
+            # substitutes, so the arrow reads as the customer's project having
+            # improved when nothing of theirs changed. What carries the weight
+            # instead is prose - what was created or repaired, and what that
+            # costs the claim.
+            #
+            # Five documents stated the transition, which is why it is worth a
+            # registry entry: SKILL.md's presentation line and report bullet,
+            # the run record's two readiness fields, README.md's promise that
+            # the report "shows the transition", and the glossary. Any one of
+            # them coming back reinstates the claim on its own.
+            #
+            # Affirmative render templates and record labels only, per the knob
+            # entry above. The first draft of this list banned the rule's own
+            # words - "show opening beside closing", "the recorded opening score
+            # beside the closing one", "the same score is taken again at the
+            # end", "latest revalidated readiness score" - and each of those
+            # also appears inside the sentence that forbids the thing. "The
+            # closing report does not show opening beside closing" and "this
+            # record no longer carries a latest revalidated readiness score" are
+            # both correct, both the kind of explanation CLAUDE.md permits a
+            # document to give locally, and all four entries failed them.
+            #
+            # What is left here is the shapes that only ever get written while
+            # doing it: the arrow template, the two record-field labels, and the
+            # reference's instruction in the words it actually used. The reworded
+            # forms - "show the opening score next to the closing score", "render
+            # the pair as opening -> current", "both scores, both bands" - are a
+            # substring list's blind spot and are caught by
+            # `pairs_the_readiness_scores` instead, which reads the claim as a
+            # predicate and can see a negation in front of it.
+            "whether the report shows a closing readiness score beside the opening one",
+            ("never show that score or set it beside the opening one",),
+            (
+                "the readiness transition:",
+                "opening/latest scores",
+                "<opening> → <current>",
+                # evaluation-and-dataset.md's post-repair instruction, which
+                # survived the branch that removed its three siblings and was
+                # left telling the assistant to do the removed thing.
+                "record the new score, band, and caps beside the opening result",
+            ),
+        ),
+        (
             "who creates temporary walkthrough components",
             ("temporary walkthrough substitute created by the coding assistant",),
             (
@@ -12236,6 +12822,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "the held-out ten from the holdout split",
             ),
         ),
+        (
+            # The ceilings section said both. Its middle told a reader that the
+            # undeclared rungs hold the paid run, and nineteen lines later its
+            # closing sentence told the same reader a ceiling never does. The
+            # settled answer is the README's, which had it right all along: the
+            # ceiling bounds the number, and whether the run waits is a
+            # separate question its remedy answers. Only the reference's
+            # phrasing is banned - the README's "not a refusal to score" is
+            # about the score and is the sentence this decision agrees with.
+            "whether a ceiling also stops the run",
+            ("whether the run also waits is the remedy's answer, not the ceiling's",),
+            ("not a refusal: the run continues",),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -12427,6 +13026,103 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "wording was settled and reintroducing it puts the "
                         "guidance back in conflict",
                     )
+
+    def test_no_document_presents_a_later_readiness_score_beside_the_opening_one(
+        self,
+    ) -> None:
+        """The catch side of the entry above, as a predicate rather than a list.
+
+        The registry entry refuses the four wordings this package actually
+        carried. It cannot refuse the fifth, and the fifth is the one that gets
+        written: "show the opening score next to the closing score", "render the
+        pair as opening -> current", "the readiness change from start to finish:
+        both scores, both bands" all reinstate exactly the claim the entry was
+        added to police, and every one of them passes a substring list built
+        from the sentences that were deleted.
+
+        Corpus-wide and not scoped to the close, for the same reason the
+        no-effect check is: the temptation lives wherever a result gets
+        summarised, and the report sections are the furthest thing from the
+        paragraph that states the rule.
+        """
+        offenders = [
+            f"{path.name}: {part}"
+            for path in conversation_contract_documents()
+            for part in sentences(path.read_text())
+            if pairs_the_readiness_scores(part)
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "the opening score is the one this run reports; a later score is "
+            "read for which caps cleared and may not be set beside it, because "
+            "once this run has written the missing pieces the second number "
+            "mostly grades those pieces",
+        )
+
+    def test_the_paired_score_classifier_can_tell_the_two_directions_apart(
+        self,
+    ) -> None:
+        """Invented sentences, both directions, as with the no-effect classifier.
+
+        Half of these are the wordings the branch that removed the transition
+        deleted, so this measures that the guard would have caught the thing it
+        was written for. The other half are sentences a correct document is
+        entitled to contain - the prohibition itself, and the plain explanation
+        of it a reader may need locally - which is what a substring list of the
+        deleted phrases got wrong.
+        """
+        must_refuse = (
+            "Show the opening score next to the closing score so the user sees "
+            "how far the project came.",
+            "On a re-score render the pair as opening -> current and explain the jump.",
+            "- The readiness change from start to finish: both scores, both "
+            "bands, and which caps cleared.",
+            "So the closing report can show the recorded opening score beside "
+            "the closing one.",
+            "Show `<opening> → <current>` on re-score.",
+            "- Latest revalidated readiness score - overall, band, binding "
+            "caps, and what changed:",
+            "- Readiness transition - opening/latest scores, caps, and the repair.",
+            "The same score is taken again at the end, so the report shows the "
+            "transition rather than a single number.",
+            "Record the new score, band, and caps beside the opening result.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    pairs_the_readiness_scores(sentence),
+                    "this pairs a later readiness score with the opening one "
+                    "and must be refused",
+                )
+
+        must_accept = (
+            "Never show that score or set it beside the opening one.",
+            "The closing report does not show opening beside closing.",
+            "Never put the recorded opening score beside the closing one.",
+            "Your report will not show opening beside closing, because the "
+            "second number would mostly grade our own substitutes.",
+            "Nothing is measured twice for show: the same score is taken again "
+            "at the end only as a gate.",
+            "This record no longer carries a latest revalidated readiness score.",
+            "A re-score is a gate result: lead with the caps that cleared, "
+            "never with a new score beside the opening one.",
+            # the ❗ -> ✅ sense of the word, which this package still uses
+            "Readiness transitions: real-world readiness changes to `✅` only "
+            "when concrete real evidence passes validation.",
+            # a different pair the guide really does report
+            "The held-out score is disclosed once, beside the tuning score, in "
+            "the closing report after the enhanced run.",
+            "The approval card names that space's total combination count "
+            "beside the ceiling.",
+        )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    pairs_the_readiness_scores(sentence),
+                    "this forbids the pairing, explains the decision, or names "
+                    "a different pair, and must be allowed",
+                )
 
     # A value the guidance states in more than one document, and the pattern
     # that finds it. Anchored on the CONCEPT, never on the shape of the value:

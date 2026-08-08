@@ -109,35 +109,49 @@ spread across the difficulty range - drawn inside each split so it cannot invent
 the selected row ids recorded so the run can be repeated. The report names that subset size beside
 your full row count, and states the resulting sample-size limitation separately.
 
-Your readiness score is never taken on that subset. Both scores read the whole dataset, because the
-score is a statement about your data and the subset is a limit on this one comparison - scoring the
-sample would report our sampling as though it were a property of your dataset, and tell someone with
-500 good rows that they have "a wiring check, not a score". A first run shows the capability in one
-sitting; the full dataset is what a real optimization uses.
+Your readiness score is never taken on that subset. Every readiness run reads the whole dataset,
+because the score is a statement about your data and the subset is a limit on this one comparison -
+scoring the sample would report our sampling as though it were a property of your dataset, and tell
+someone with 500 good rows that they have "a wiring check, not a score". A first run shows the
+capability in one sitting; the full dataset is what a real optimization uses.
 
 ## The readiness score
 
 Before anything is created or repaired, the assistant scores what your project has today: a number
 out of 100 from three pillars - dataset, evaluation, and agent - and a named band from Not ready to
-Excellent. The same score is taken again at the end, so the report shows the transition rather than
-a single number with nothing to compare it to.
+Excellent. That opening number is the one the report keeps, because it is the only one taken on
+material the walkthrough did not write. The score is re-run during the run to check that a repair
+really cleared what it failed on before anything is paid for, but no closing number is put beside
+the opening one and called progress: once the assistant has filled your gaps, a second score mostly
+grades the substitutes it just wrote.
+
+What the close gives you instead is what was created or repaired and what that costs the claim.
+Examples written for the walkthrough are weaker evidence than examples collected from your product.
+A generated evaluation method is a starting point rather than your grading policy - it is worth
+tuning in whichever direction your product needs, so that it rewards, say, how an answer reads
+rather than which words it reuses.
 
 It is deliberately modest about itself. It runs before any optimization, from evidence on your own
-machine, so it estimates rather than measures: a check that cannot be computed is marked unmeasured
-and excluded rather than scored zero, and the card says how much of each pillar it actually observed
-- `EVALUATION 100/100 (2 of 4 checks measured)` is a pillar whose two remaining checks nobody has
-run yet, not a verified perfect one. A low score never stops the run; it decides which gaps are
-worth explaining and which are worth fixing first.
+machine, so it estimates rather than measures. A check this tool could not compute is marked
+unmeasured and excluded rather than scored zero; a check the run was asked for and did not supply
+is marked unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay.
+The card says how much of each pillar it actually observed, and
+`EVALUATION 75/100 (2 of 4 checks measured)` is what an opening card prints before any calibration
+has run - 75 is the most that pillar can read while two of its four checks are unmeasured, not a
+verdict on your evaluator. A low score never stops the run; it decides which gaps are worth
+explaining and which are worth fixing first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
-pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating the evaluator is
+pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating the evaluator is
 what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
 the opening card the missing settings document holds the whole score to at most 45, inside Partial,
 so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
-already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent wait for
-the close, on a score no ceiling is capping.
+already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent are
+therefore out of reach of an opening card: they need a settings document, and one exists only after
+a search has run. That is a bound on what a pre-run check can see rather than a verdict on your
+project, and the card gives the reason on its own line.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
