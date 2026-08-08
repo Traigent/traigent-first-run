@@ -6,10 +6,11 @@ before creating any of them.
 ## Contents
 
 1. Evidence and provenance
-2. Dependency matrix
-3. Agent creation
-4. Compatibility contract
-5. Readiness transitions
+2. The one ask, and the path that answers it
+3. Dependency matrix
+4. Agent creation
+5. Compatibility contract
+6. Readiness transitions
 
 ## Evidence and provenance
 
@@ -36,6 +37,51 @@ repairing a working copy and revalidating it; if the user explicitly continues u
 it as the real anchor in the matching `real` row but keep its readiness state `❗`. For `invalid`,
 repair it successfully or treat it as missing and create a clearly labeled `🛠️` substitute. A
 broken evaluator or incompatible dataset is not safe to continue unchanged.
+
+## The one ask, and the path that answers it
+
+The matrix below says what gets built. This is what the user was told before it was, and SKILL.md
+owns that it is one question, when it is asked, and what it has to carry. Here is what it sounds
+like and what happens to the answer.
+
+Say it in their words, naming only what is actually missing:
+
+> Your agent is here and it runs. What is not here is any set of examples to score it on, or
+> anything that says what a right answer looks like. I can write both from the agent itself -
+> examples that exercise what it actually does, and a grading method to match. Examples I write are
+> weaker evidence than examples out of your product: the score carries the generated-data ceiling
+> because of it, so this run can show the workflow working and cannot tell you how your product
+> performs.
+>
+> Shall I go ahead? Or reply `I have it` with a path - `dataset: <path>`, `evaluation: <path>` - and
+> I will use yours.
+
+Keep the two answers on the last line and the cost to one sentence. Three hedges in front of a
+choice reads as a compliance gate; one reads as a colleague who has already done the work. Do not
+soften that sentence, and do not oversell the other exit either: what the user is choosing between
+is a real demonstration on generated material today and a delay of unknown length. Proceeding is
+one keystroke, and it is what a user with nothing to point at should do.
+
+### When a path arrives
+
+Read it before anything is built. Material the user points at is material this run did not create,
+so it is scored rather than trusted, and it enters the matrix below as `real`, `limited`, or
+`invalid` on that evidence like any other candidate.
+
+Three ways it does not resolve. Each lands somewhere, and none of them is a retry loop:
+
+- **The path does not exist.** Say so, quoting the path exactly as given - a mistyped path is the
+  common case and it is invisible when the message paraphrases it. Ask once more and name the other
+  exit in the same breath. A second miss takes that exit: build the substitute, record the path that
+  was offered and missed in `traigent-runs/run-plan.md`, and do not ask a third time.
+- **The path exists and does not parse.** Not a verdict on their file. Read and re-map it per
+  `references/evaluation-and-dataset.md` first, because a fully correct file in an unexpected shape
+  produces this exact state. Only when mapping genuinely fails is it a defect rather than a gap:
+  classify it `invalid` under "Resolve `limited` and `invalid` candidates" above, which is what keeps
+  the later gates on it - nobody consented to being graded by something broken.
+- **A path for one of two gaps.** Take it and build the other. The question has already been
+  answered: a user who hands over a dataset and says nothing about a grading method has said to
+  write the grading method, and asking again is the second question the one ask exists to prevent.
 
 ## Dependency matrix
 

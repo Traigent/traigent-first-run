@@ -9980,16 +9980,21 @@ class SkillPackageTests(unittest.TestCase):
             "dataset-no-expected-outputs",
             "dataset-integrity-fail",
             "dataset-tune-holdout-overlap",
-            # #165's two rungs. Same ceilings as the declared pair, and a
-            # different category: `declare-data-provenance` asks the user to
-            # change the file, which #149's rule reads as a repair. #165's own
-            # adapter tests assert the stop.
-            "dataset-undeclared-provenance",
-            "dataset-mostly-undeclared",
         }
         scoping = {
             "dataset-fully-synthetic",
             "dataset-mostly-synthetic",
+            # #165's two rungs, moved here by #211. They were `blocking`,
+            # because `declare-data-provenance` asks the user to change the
+            # file and #149's two-way rule read any change as a repair. Measured
+            # on one corpus with only the provenance token varying, that made a
+            # silent corpus wait where its declared-generated twin - identical
+            # points, identical ceiling - proceeded. A repair asserts the file
+            # is defective and these files are not: they parse, they are
+            # labelled, and the missing thing is a word about who wrote them.
+            # So they scope, and the question rides on the pre-spend approval.
+            "dataset-undeclared-provenance",
+            "dataset-mostly-undeclared",
             "dataset-generated-answer-key",
             # #161's second rung, added here because #149 wrote this partition
             # before that rung existed and #161 added the rung without seeing
@@ -10352,8 +10357,14 @@ class SkillPackageTests(unittest.TestCase):
         """
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
+            # The one ask's answer is folded onto this same line rather than
+            # given one of its own, because the record is capped at 60 lines and
+            # the two facts are taken at the same moment: SKILL.md records the
+            # opening result after the ask is answered, so a supplied path is
+            # part of what that score was read from.
             "opening readiness score before any creation or repair - overall, "
-            "band, binding caps:",
+            "band, binding caps, and the one ask's gaps, answer, and any path "
+            "given or missed:",
             # the gate half, pinned so the removal above cannot take it too: a
             # repair that clears a cap has to be recorded as clearing it, with
             # the evidence that says so
@@ -12992,6 +13003,204 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "why the addition earns it. If two branches just merged, this is "
             f"the arithmetic neither could do alone - {total} is the number "
             "that matters, not either side's.",
+        )
+
+
+class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
+    """One ask at discovery, and the two checkpoints that are the whole design.
+
+    A missing dataset used to be created silently and explained afterwards by a
+    ceiling on the card. The owner's flow asks instead, before anything is
+    built and while nothing costs money, and then shows what was built once
+    more before the first billed call. Two checkpoints, and nothing else stops
+    the customer.
+
+    The rule these guard is the one that is easy to lose a piece at a time: it
+    is ONE question. A guide that asks about the dataset, then about the
+    evaluator, then about the agent has satisfied every sentence about
+    disclosure and produced a form.
+    """
+
+    ASK = "#### One ask for every gap"
+    # The ask lives at the end of stage 2, so its section ends where stage 3
+    # begins. It is placed there deliberately: the board that names the `❗`
+    # gaps is rendered in stage 2, and an ask that arrives in its own later turn
+    # names them a second time - which is the seam, not a saving.
+    ASK_END = "### 3. Complete the system"
+    GATE = "#### Zero-anchor intent gate"
+
+    def _ask(self) -> str:
+        text = SKILL.read_text()
+        self.assertIn(self.ASK, text)
+        self.assertIn(self.ASK_END, text)
+        # Ordering first, because every other check here slices between these
+        # two markers: an ask moved after stage 3 would otherwise report as a
+        # stray question mark in stage 4 rather than as the misplacement it is,
+        # which is a real message about the wrong defect.
+        self.assertLess(
+            text.index(self.ASK),
+            text.index(self.ASK_END),
+            "the ask has moved past the stage that fills the gap, where it is a "
+            "notification rather than a question",
+        )
+        return text.split(self.ASK, 1)[1].split(self.ASK_END, 1)[0]
+
+    def test_the_ask_is_one_question_covering_every_gap(self) -> None:
+        """Not one per component, and pinned the way the sibling gate is.
+
+        `count("?")` is the same guard the zero-anchor gate carries, and it is
+        the one that actually catches the failure: prose promising a single
+        question, followed by three of them.
+        """
+        section = self._ask()
+        normalized = " ".join(section.casefold().split())
+        self.assertEqual(section.count("?"), 0, "the ask states its two answers")
+        self.assertIn("in one question", normalized)
+        self.assertIn("never one question per component", normalized)
+        for component in ("agent", "dataset", "evaluation method"):
+            with self.subTest(component=component):
+                self.assertIn(component, normalized)
+        self.assertIn("before anything is built", normalized)
+        # It rides on the readiness board rather than repeating it, and it comes
+        # before the stage that fills the gap - an ask placed after creation is
+        # a notification.
+        self.assertIn("riding on the board above", normalized)
+        skill = SKILL.read_text()
+        self.assertLess(
+            skill.index("#### Opening readiness gate"), skill.index(self.ASK)
+        )
+        self.assertLess(
+            skill.index("### 2. Show readiness once"), skill.index(self.ASK)
+        )
+        self.assertLess(skill.index(self.ASK), skill.index(self.ASK_END))
+        # And a quality advisory in the same turn folds into it, because two
+        # choice lists in one message is the form this ask exists to refuse.
+        self.assertIn("when a quality advisory fires in the same turn", normalized)
+
+    def test_the_zero_anchor_gate_is_not_a_second_question(self) -> None:
+        """All three missing is the case where two asks are likeliest.
+
+        The zero-anchor gate already asks one question, and this ask has to
+        ride on it rather than precede or follow it. Both halves are pinned:
+        the ask says so, and the gate says what it must carry.
+        """
+        self.assertIn("this is not a second question", " ".join(self._ask().split()))
+        gate = (
+            SKILL.read_text()
+            .split(self.GATE, 1)[1]
+            .split("### 2. Show readiness once", 1)[0]
+        )
+        normalized_gate = " ".join(gate.casefold().split())
+        self.assertIn("one ask for every gap", normalized_gate)
+        self.assertIn("`i have it`", normalized_gate)
+        self.assertIn("so it stays one and not two", normalized_gate)
+
+    def test_the_ask_says_what_generated_material_costs(self) -> None:
+        """The truthful half, and it is not allowed to be a shrug.
+
+        Three claims, each of which an existing mandate already makes
+        elsewhere, so none of them is a new promise: the substitute stays
+        walkthrough setup, generated examples carry a ceiling that keeps the
+        score out of the top bands, and nothing may be promoted off the result.
+        """
+        normalized = " ".join(self._ask().casefold().split())
+        for claim in (
+            "never becomes real-world readiness",
+            "generated-data ceiling",
+            "cannot present as strong",
+            "may be promoted",
+        ):
+            with self.subTest(claim=claim):
+                self.assertIn(claim, normalized)
+        # And the ceiling claim is true of the scorer rather than only stated:
+        # the ceiling a generated corpus carries really does land below STRONG.
+        band, _limited = READINESS.band_for(READINESS.FULLY_SYNTHETIC_CEILING, 1.0, 1.0)
+        self.assertLess(
+            READINESS.BAND_ORDER.index(band),
+            READINESS.BAND_ORDER.index("STRONG"),
+        )
+
+    def test_the_escape_hatch_is_offered_and_lands_three_ways(self) -> None:
+        """ "I have it" is first-class, and none of its failures is a loop.
+
+        A path that is not there, a path that is there and unreadable, and a
+        path for one of two gaps. Each has to land somewhere: the first two
+        because a wrong path is the commonest thing a user types, and the
+        third because taking a partial answer as no answer is exactly how one
+        question becomes two.
+        """
+        ask = " ".join(self._ask().casefold().split())
+        self.assertIn("`i have it` and a path", ask)
+        creation = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        self.assertIn("### When a path arrives", creation)
+        hatch = " ".join(creation.casefold().split()).split("when a path arrives", 1)[1]
+        for landing in (
+            "the path does not exist",
+            "do not ask a third time",
+            "the path exists and does not parse",
+            "a path for one of two gaps",
+            "take it and build the other",
+        ):
+            with self.subTest(landing=landing):
+                self.assertIn(landing, hatch)
+        # The distinction the whole design rests on: a file that turns out
+        # broken is not what the user consented to, so it leaves this section
+        # for the repair route rather than being absorbed by the answer.
+        self.assertIn("a defect rather than a gap", hatch)
+        self.assertIn("consented", hatch)
+
+    def test_the_second_checkpoint_is_the_only_other_stop(self) -> None:
+        """Ask once when we discover, show once before money, nothing else.
+
+        The ask points forward at the pre-spend approval instead of adding a
+        review of its own, which is the prohibition this package already keeps
+        twice - a generic outside-review wait is not a gate.
+        """
+        ask = " ".join(self._ask().casefold().split())
+        self.assertIn("ask nothing else here", ask)
+        self.assertIn("pre-spend approval in stage 6", ask)
+        self.assertIn(
+            "### the pre-spend approval card", RUN_SAFETY.read_text().casefold()
+        )
+        # And the routing bullet for the conditions #211 moved sends its
+        # question to that same approval, paired with the scorer rather than
+        # only quoted: guidance saying "advisory" over a scorer that blocks is
+        # the contradiction, and so is a cap that asks over a bullet with
+        # nowhere to ask it. Probed by reverting the bullet alone - nothing
+        # else in the suite noticed.
+        routing = " ".join(SKILL.read_text().casefold().split()).split(
+            "route every active dataset cap", 1
+        )[1]
+        bullet = routing.split("`dataset-undeclared-provenance`", 1)[1].split("- `", 1)[
+            0
+        ]
+        self.assertIn("put that offer at the pre-spend approval", bullet)
+        self.assertIn("holds nothing up", bullet)
+        for condition in ("dataset-undeclared-provenance", "dataset-mostly-undeclared"):
+            with self.subTest(condition=condition):
+                self.assertEqual(
+                    READINESS.ROUTE_CATEGORY[condition], READINESS.CLAIM_SCOPING
+                )
+
+    def test_the_record_carries_what_was_chosen(self) -> None:
+        """A consent nobody wrote down cannot be reported at the close.
+
+        Folded onto the opening-score line rather than given one of its own:
+        the record is capped at 60 lines, and the two facts are taken at the
+        same moment because the score is recorded after the ask is answered.
+        """
+        record = (SKILL_ROOT / "assets" / "run-plan.md").read_text()
+        self.assertLessEqual(len(record.splitlines()), 60)
+        self.assertIn(
+            "the one ask's gaps, answer, and any path given or missed", record
+        )
+        # Stated once, and as a widening of the zero-anchor gate's own rule
+        # rather than a second copy of it: that gate already says recording is a
+        # write that waits, and this says the same wait covers every gap run
+        # because a path given at the ask changes what the opening score reads.
+        self.assertIn(
+            "the record waits for this answer in any gap run",
+            " ".join(SKILL.read_text().casefold().split()),
         )
 
 

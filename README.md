@@ -34,9 +34,12 @@ The assistant performs the technical work and asks only when it needs:
   directory is about to change - and a repeat run does not re-ask about the environment the last
   one made.
 
-No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
-the assistant prepares a coherent substitute around everything that already exists, then Traigent
-runs the managed optimization.
+No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
+missing you are told before anything is written, in one question however many pieces are absent:
+what it did not find, that material it writes is weaker evidence than examples out of your product
+and what that costs the result, and two ways to answer - go ahead, or point it at yours. Only then
+does it prepare a coherent substitute around everything that already exists, and Traigent runs the
+managed optimization.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
@@ -181,8 +184,10 @@ same line.
 
 Between those two there is a third, and it is the only one that needs anything from you. Some
 conditions do not hold the run up and still leave a person something to agree with before the
-number means what it looks like - an answer key a model wrote end to end, or rows whose expected
-answer does not appear to match their own input. Those are put to you once, inside the approval
+number means what it looks like - an answer key a model wrote end to end, rows whose expected
+answer does not appear to match their own input, or a dataset that never says where its rows came
+from, which is read as generated precisely because nothing here can check it. Those are put to you
+once, inside the approval
 before the first paid call, with the material to judge them on and a straight proceed-or-fix
 choice. Stopping a paid run over the assistant's reading of your data would be wrong; showing you a
 ceiling with no way to act on it was the older mistake, and this is the fix for it.
