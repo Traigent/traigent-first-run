@@ -414,9 +414,10 @@ ceiling on the entire run:
 An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
 declaration rather than new data unless over half the corpus is declared generated - a ceiling no
 declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
-capped by neither. The two do differ in one further way: a declaration is a change to the file, so
-both undeclared rungs hold the paid run until cleared, where the declared twins only bound the claim.
-A dataset with no `provenance` field at all therefore reads `FIX BEFORE PAID RUN` at 65.
+capped by neither. The two do differ in one further way: declaring is a change to the file, so the
+undeclared rungs are routed as a repair and hold the paid run until cleared, where the declared
+twins only bound the claim. That is this ladder's one exception to the rule closing this section: a
+dataset with no `provenance` field at all reads `FIX BEFORE PAID RUN` at 65.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an
@@ -434,8 +435,9 @@ same kind of thing the run is scoring. The rung exists because with one rung the
 last row: a dataset with every answer generated was blocked at 74 and the same dataset with one
 human-written answer scored 94 and Excellent.
 
-A ceiling is not a deduction and not a refusal: the run continues, the pre-cap average stays in the
-output, and the number simply cannot claim more than the data supports.
+A ceiling is not a deduction: the pre-cap average stays in the output, and the number simply cannot
+claim more than the data supports. Whether the run also waits is the remedy's answer, not the
+ceiling's.
 
 Every generated row must:
 

@@ -3074,7 +3074,13 @@ class SkillPackageTests(unittest.TestCase):
             "a mixture scores like a mixture",
             "99 collected rows and one generated one score 9.93, not 3",
             "provenance ceilings",
-            "a ceiling is not a deduction and not a refusal",
+            # Only the stable half of that closing rule is pinned here. The
+            # other half - whether a ceiling ALSO holds the run - is what this
+            # weld used to assert the wrong answer for, so it is derived from
+            # `Cap.blocks` in
+            # `test_the_ceilings_section_says_which_of_its_rungs_hold_the_run`
+            # instead of being written down twice.
+            "a ceiling is not a deduction:",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset_text)
@@ -3202,6 +3208,137 @@ class SkillPackageTests(unittest.TestCase):
             3,
             "the vocabulary is being retyped here again; preflight.py declares it",
         )
+
+    def _provenance_rung_caps(self) -> dict[str, Any]:
+        """The four rungs of the provenance ladder, built by the scorer.
+
+        Through `score_provenance` rather than by naming the constants, so the
+        fixture has to reach the branch that constructs each cap: a twelve-row
+        corpus that is entirely silent, entirely declared generated, and each
+        of those at nine rows of twelve.
+        """
+
+        def rung(**counts: int) -> Any:
+            facts = READINESS.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=12,
+                labelled_rows=12,
+                answerable_rows=12,
+                **counts,
+            )
+            _, _, caps = READINESS.score_provenance(facts)
+            self.assertEqual(len(caps), 1, "the fixture reached no single rung")
+            return caps[0]
+
+        built = {
+            cap.condition: cap
+            for cap in (
+                rung(undeclared_rows=12),
+                rung(synthesised_rows=12),
+                rung(undeclared_rows=9, collected_rows=3),
+                rung(synthesised_rows=9, collected_rows=3),
+            )
+        }
+        self.assertEqual(
+            sorted(built),
+            [
+                "dataset-fully-synthetic",
+                "dataset-mostly-synthetic",
+                "dataset-mostly-undeclared",
+                "dataset-undeclared-provenance",
+            ],
+            "the four rungs the ceilings table documents are not what fired",
+        )
+        return built
+
+    def test_the_ceilings_section_says_which_of_its_rungs_hold_the_run(self) -> None:
+        """A ceiling and a stop are two fields, and this section stated one as the other.
+
+        Its closing sentence said a ceiling is "not a refusal: the run
+        continues". Nineteen lines above it, the same section said both
+        undeclared rungs hold the paid run until a declaration is added -
+        which `Cap.blocks` does, so an assistant reading to the end of the
+        section was told the opposite of what the middle of it said. Neither
+        sentence was derived from anything, which is why the pair could stand
+        in one screen of prose.
+
+        The closing rule is the correct one and it is now general: `ceiling`
+        and `blocks` are separate fields, so whether a run waits is the
+        remedy's answer and never the ceiling's, in every state of this table.
+        That is not a claim about these four rungs, so nothing here can be read
+        against a per-cap value - it is checked against the invariant that
+        makes it true, which `Cap.__post_init__` enforces.
+
+        The exception is the part that moves, so the exception is the part
+        derived. #211/#213 re-route the undeclared pair to `CLAIM_SCOPING`, and
+        on that tree these caps stop blocking; this test then requires the
+        sentence to go with them, rather than leaving the file describing a
+        block that no longer happens. It fails in both directions: a restored
+        block with the sentence deleted is red too.
+        """
+        rungs = self._provenance_rung_caps()
+        holds = {
+            condition
+            for condition, cap in rungs.items()
+            if cap.blocks and cap.ceiling in (65, 70)
+        }
+        source = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        section = " ".join(
+            source.split("### Provenance ceilings", 1)[1]
+            .split("Every generated row must", 1)[0]
+            .casefold()
+            .split()
+        )
+        exception = "the undeclared rungs are routed as a repair and hold the paid run"
+        if holds:
+            self.assertEqual(
+                holds,
+                {"dataset-undeclared-provenance", "dataset-mostly-undeclared"},
+                "a rung this section describes as advisory now holds the run",
+            )
+            self.assertIn(
+                exception,
+                section,
+                "the undeclared rungs hold the paid run and the section that "
+                "ranks them does not say so - which is how a customer "
+                "bringing an ordinary unlabelled dataset was blocked by a "
+                "document describing no block at all",
+            )
+            self.assertIn("`fix before paid run` at 65", section)
+        else:
+            self.assertNotIn(
+                exception,
+                section,
+                "no rung on this ladder holds the run any more, so the "
+                "exception has to go with the block it described rather than "
+                "survive as prose about behaviour that stopped",
+            )
+            self.assertNotIn("`fix before paid run`", section)
+        # The declared twins are the other half of the contrast and never
+        # blocked; a change there rewrites the sentence too.
+        for advisory in ("dataset-fully-synthetic", "dataset-mostly-synthetic"):
+            with self.subTest(cap=advisory):
+                self.assertFalse(rungs[advisory].blocks)
+
+        # And the closing rule, which is general and stays general. The
+        # unconditional half is refused by name, because it is what was there.
+        self.assertNotIn("not a deduction and not a refusal", section)
+        self.assertIn(
+            "whether the run also waits is the remedy's answer, not the ceiling's",
+            section,
+        )
+        # What makes that sentence true, from the module rather than from the
+        # prose: a route that asks for a creation or a repair cannot decline to
+        # block, so the remedy really is what decides.
+        with self.assertRaises(ValueError) as refused:
+            READINESS.Cap(
+                "dataset-absent",
+                65,
+                "probe",
+                blocks=False,
+            )
+        self.assertIn("does not block", str(refused.exception))
 
     def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
         """`component-creation.md`'s example is a line the customer sees.
@@ -11991,6 +12128,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "non-blind validation evidence",
                 "the held-out ten from the holdout split",
             ),
+        ),
+        (
+            # The ceilings section said both. Its middle told a reader that the
+            # undeclared rungs hold the paid run, and nineteen lines later its
+            # closing sentence told the same reader a ceiling never does. The
+            # settled answer is the README's, which had it right all along: the
+            # ceiling bounds the number, and whether the run waits is a
+            # separate question its remedy answers. Only the reference's
+            # phrasing is banned - the README's "not a refusal to score" is
+            # about the score and is the sentence this decision agrees with.
+            "whether a ceiling also stops the run",
+            ("whether the run also waits is the remedy's answer, not the ceiling's",),
+            ("not a refusal: the run continues",),
         ),
     )
 

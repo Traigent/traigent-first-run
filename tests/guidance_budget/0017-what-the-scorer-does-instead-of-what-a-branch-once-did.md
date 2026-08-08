@@ -3,7 +3,7 @@
 follows: 0015
 
 total-ceiling: 303_750
-total-measured: 303_295
+total-measured: 303_410
 
 Three passages in two references described behaviour that a merge had already
 replaced, and correcting them costs more bytes than the wrong version did,
@@ -40,9 +40,12 @@ and `search_space_points` rather than pinning the new wording - so the next
 merge that moves one of those numbers fails a test instead of quietly making
 this file wrong again.
 
-303_295 measured on this branch with `assistant_facing_documents()`, against
-trunk `8f8d780a` at 302_507. The ceiling is set 455 above the measurement
-rather than at it, so the two adjacent corrections this work predicts - the
-undeclared ceiling's own wording, and whatever the open agent-pillar branch
-does to the closing paragraph above the schema table - do not each need an
-entry of their own.
+303_410 measured on this branch with `assistant_facing_documents()`, against
+trunk `8f8d780a` at 302_507. The ceiling is set above the measurement rather
+than at it, so the two adjacent corrections this work predicts do not each need
+an entry of their own. The first has since been made here: the ceilings section
+closed by saying a ceiling never stops a run, nineteen lines under its own new
+sentence saying two of these rungs do, and both were prose nothing derived. The
+115 bytes that cost went into the reserve, which leaves 340 for the second -
+whatever the open agent-pillar branch does to the closing paragraph above the
+schema table.
