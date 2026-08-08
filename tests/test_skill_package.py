@@ -764,6 +764,51 @@ def _quantity(spelling: str) -> int:
     return resolved
 
 
+def generated_space_widths() -> dict[str, dict[str, int]]:
+    """Each generated space's knobs, mapped to how many values it sweeps.
+
+    Split out of `generated_space_sizes` below, which discarded these after
+    multiplying them: the prose does not only state the products, it states the
+    factors - "3 models x 2 prompt styles x 2 thinking shapes" - and a factor
+    can go stale on its own while the product still agrees.
+    """
+    fence = re.findall(r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL)[
+        0
+    ]
+    spaces: dict[str, dict[str, int]] = {}
+    for node in ast.parse(fence).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Dict):
+            continue
+        name = target.id.removesuffix("_SPACE")
+        if f"{name}_SPACE" != target.id:
+            continue
+        widths: dict[str, int] = {}
+        for key, value in zip(node.value.keys, node.value.values):
+            assert isinstance(key, ast.Constant), f"{target.id} has a computed key"
+            if isinstance(value, ast.List):
+                widths[key.value] = len(value.elts)
+            elif (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and isinstance(value.slice, ast.Constant)
+            ):
+                # `ENHANCED_SPACE["model"] = BASELINE_SPACE["model"]` - the
+                # width lives in the space it is borrowed from.
+                borrowed = value.value.id.removesuffix("_SPACE").casefold()
+                widths[key.value] = spaces[borrowed][value.slice.value]
+            else:
+                raise AssertionError(
+                    f"{target.id}[{key.value!r}] is neither a list of candidate "
+                    "values nor a reference to another space's list, so its "
+                    "width cannot be derived"
+                )
+        spaces[name.casefold()] = widths
+    return spaces
+
+
 def generated_space_sizes() -> dict[str, int]:
     """The two generated space sizes, derived from `sdk-execution.md` twice.
 
@@ -794,46 +839,16 @@ def generated_space_sizes() -> dict[str, int]:
         "ENHANCED",
     ], f"the fence must assert both space sizes; it asserts {sorted(asserted)}"
 
-    fence = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-    spaces: dict[str, dict[str, int]] = {}
-    for node in ast.parse(fence).body:
-        if not isinstance(node, ast.Assign):
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Dict):
-            continue
-        name = target.id.removesuffix("_SPACE")
-        if f"{name}_SPACE" != target.id:
-            continue
-        widths: dict[str, int] = {}
-        for key, value in zip(node.value.keys, node.value.values):
-            assert isinstance(key, ast.Constant), f"{target.id} has a computed key"
-            if isinstance(value, ast.List):
-                widths[key.value] = len(value.elts)
-            elif (
-                isinstance(value, ast.Subscript)
-                and isinstance(value.value, ast.Name)
-                and isinstance(value.slice, ast.Constant)
-            ):
-                # `ENHANCED_SPACE["model"] = BASELINE_SPACE["model"]` - the
-                # width lives in the space it is borrowed from.
-                widths[key.value] = spaces[value.value.id.removesuffix("_SPACE")][
-                    value.slice.value
-                ]
-            else:
-                raise AssertionError(
-                    f"{target.id}[{key.value!r}] is neither a list of candidate "
-                    "values nor a reference to another space's list, so its "
-                    "width cannot be derived"
-                )
-        spaces[name] = widths
-
-    constructed = {name: math.prod(widths.values()) for name, widths in spaces.items()}
-    assert constructed == asserted, (
-        f"the fence asserts {asserted} but the spaces it defines are "
+    constructed = {
+        name: math.prod(widths.values())
+        for name, widths in generated_space_widths().items()
+    }
+    folded = {name.casefold(): size for name, size in asserted.items()}
+    assert constructed == folded, (
+        f"the fence asserts {folded} but the spaces it defines are "
         f"{constructed}; the template contradicts its own asserts"
     )
-    return {name.casefold(): size for name, size in asserted.items()}
+    return folded
 
 
 # The config-space document is a contract between prose the assistant follows and
@@ -6470,19 +6485,22 @@ class SkillPackageTests(unittest.TestCase):
         green, because a number can be tested and a frame cannot unless it is
         pinned here.
         """
+        sizes = generated_space_sizes()
         sdk = SDK_EXECUTION.read_text()
         for phrase in (
             'State them exactly,\nnever as "roughly" or "about"',
-            "3 models × 2 prompt styles × 2 thinking shapes = 12 configurations",
-            "3 models × 4 binary behaviour knobs = 48 configurations",
+            "3 models × 2 prompt styles × 2 thinking shapes "
+            f"= {sizes['baseline']} configurations",
+            f"3 models × 4 binary behaviour knobs = {sizes['enhanced']} configurations",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, sdk)
 
         run_safety = " ".join(RUN_SAFETY.read_text().split())
         for phrase in (
-            "**The same 48 whatever the customer brings.**",
-            "gets a 48-configuration enhanced space too, not a larger one",
+            f"**The same {sizes['enhanced']} whatever the customer brings.**",
+            f"gets a {sizes['enhanced']}-configuration enhanced space too, "
+            "not a larger one",
             "the four slots are filled from what they brought",
             "baseline evidence decides which four",
             "Every knob replaced and every value narrowed is named on the "
@@ -6495,6 +6513,123 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, run_safety)
+
+    # "3 models x 2 prompt styles x 2 thinking shapes = 12 configurations", in
+    # either document's multiplication sign and with markdown emphasis already
+    # stripped. A knob counted as "N binary ..." contributes 2**N, which is how
+    # the enhanced space is written: 3 models x 4 binary knobs is 3 x 2**4.
+    _STATED_ARITHMETIC = re.compile(
+        r"((?:\d+ [a-z][a-z ]*?[x×] )+\d+ [a-z][a-z ]*?)= (\d+)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _stated_factors(cls, phrase: str) -> list[int]:
+        """One multiplicand per knob a stated space arithmetic claims.
+
+        "4 binary knobs" is four knobs of two values each, not one knob of
+        four, so it expands to `[2, 2, 2, 2]`. The product is the same either
+        way; the expansion is what lets the factors be compared against the
+        fence's per-knob widths, which is where a knob quietly leaving the
+        space shows up.
+        """
+        factors: list[int] = []
+        for count, noun in re.findall(r"(\d+) ([a-z][a-z ]*)", phrase, re.IGNORECASE):
+            if "binary" in noun.casefold():
+                factors.extend([2] * int(count))
+            else:
+                factors.append(int(count))
+        return factors
+
+    def test_every_stated_space_arithmetic_multiplies_out_to_the_real_space(
+        self,
+    ) -> None:
+        """The sizes are stated in more places than the check above looked.
+
+        `test_the_reduced_space_is_stated_exactly_and_framed_honestly` pins two
+        sentences in `sdk-execution.md` and two clauses in `run-safety.md`.
+        Measured, the arithmetic itself is written FIVE times across the two
+        documents - run-safety.md restates the whole baseline-and-enhanced
+        sentence at its "exact sizes" paragraph, and states it a third time at
+        "the space stays 3 models x 4 binary knobs = 48" - and three of those
+        five were pinned by nothing. A re-sizing that updated the owner and the
+        pinned clauses would leave the restatements contradicting them, with
+        the suite green.
+
+        So every statement of the form is found rather than listed, and each is
+        checked three ways against the fence: the factors multiply out to the
+        total it claims, the total is a size the fence actually builds, and the
+        factors are that space's own non-trivial widths. A knob dropped from
+        the space fails here even when the product is edited to agree.
+        """
+        sizes = generated_space_sizes()
+        widths = generated_space_widths()
+        swept = {
+            name: sorted((width for width in space.values() if width > 1), reverse=True)
+            for name, space in widths.items()
+        }
+
+        found: list[str] = []
+        for document in conversation_contract_documents():
+            body = " ".join(document.read_text().replace("*", " ").split())
+            for phrase, total in self._STATED_ARITHMETIC.findall(body):
+                where = f"{document.relative_to(ROOT).as_posix()}: {phrase}= {total}"
+                found.append(where)
+                factors = self._stated_factors(phrase)
+                with self.subTest(statement=where):
+                    self.assertEqual(
+                        math.prod(factors),
+                        int(total),
+                        f"{factors} multiplies to {math.prod(factors)}, not the "
+                        f"{total} this sentence states",
+                    )
+                    named = [name for name, size in sizes.items() if size == int(total)]
+                    self.assertEqual(
+                        len(named),
+                        1,
+                        f"no generated space has {total} configurations; the "
+                        f"fence builds {sizes}",
+                    )
+                    self.assertEqual(
+                        sorted(factors, reverse=True),
+                        swept[named[0]],
+                        f"the {named[0]} space sweeps {swept[named[0]]} values "
+                        f"per knob; this sentence claims {factors}",
+                    )
+        # Five statements, and the count is asserted because a regex that stops
+        # matching reports the same clean result as prose that stopped lying.
+        self.assertEqual(
+            len(found),
+            5,
+            "the number of stated space arithmetics has changed. Adding one is "
+            "a sixth home for a decision `sdk-execution.md` owns; losing one "
+            f"means this check no longer reads them. Found: {found}",
+        )
+
+        # Both directions, against invented sentences. The first is the shape a
+        # re-sizing leaves behind: a product nobody recomputed.
+        self.assertEqual(self._stated_factors("3 models x 2 prompt styles "), [3, 2])
+        self.assertEqual(
+            self._stated_factors("3 models x 4 binary knobs "), [3, 2, 2, 2, 2]
+        )
+        planted = "3 models x 2 prompt styles x 2 thinking shapes = 14 configurations"
+        self.assertEqual(
+            [
+                math.prod(self._stated_factors(phrase)) == int(total)
+                for phrase, total in self._STATED_ARITHMETIC.findall(planted)
+            ],
+            [False],
+            "a stated arithmetic that does not multiply out is what this guard "
+            "exists to catch, and it must be able to see one",
+        )
+        self.assertEqual(
+            self._STATED_ARITHMETIC.findall(
+                "The baseline runs 12 trials over 12 configurations."
+            ),
+            [],
+            "a sentence that states a count without stating an arithmetic is "
+            "not this check's business",
+        )
 
     def test_user_owned_baseline_is_not_padded_to_generated_row_target(self) -> None:
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
