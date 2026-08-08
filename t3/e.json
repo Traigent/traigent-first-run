@@ -1,0 +1,50 @@
+[
+  {
+    "check": "env-source",
+    "status": "PASS",
+    "detail": "process environment only; process values take precedence",
+    "metrics": null
+  },
+  {
+    "check": "env-file",
+    "status": "WARN",
+    "detail": ".env not found; create a minimal file before paid work",
+    "metrics": null
+  },
+  {
+    "check": "python-version",
+    "status": "PASS",
+    "detail": "3.12.3",
+    "metrics": null
+  },
+  {
+    "check": "sdk-version",
+    "status": "SKIP",
+    "detail": "traigent is not installed yet; verify it in the isolated environment after installation",
+    "metrics": null
+  },
+  {
+    "check": "provider-credentials",
+    "status": "WARN",
+    "detail": "no LLM provider credentials are available; inspect the agent route separately, and do not begin paid work until that route's credential is present",
+    "metrics": null
+  },
+  {
+    "check": "traigent-key",
+    "status": "PASS",
+    "detail": "not configured yet; required only for connected execution",
+    "metrics": null
+  },
+  {
+    "check": "cost-cap",
+    "status": "PASS",
+    "detail": "no custom per-optimization cap; the installed SDK default applies",
+    "metrics": null
+  },
+  {
+    "check": "dataset-shape",
+    "status": "FAIL",
+    "detail": "dataset has no usable rows",
+    "metrics": null
+  }
+]

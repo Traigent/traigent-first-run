@@ -1,0 +1,2 @@
+preflight.py: internal error - IsADirectoryError: [Errno 21] Is a directory: '/tmp/claude-1000/-home-nimrodbu-AA-projects-traigent-workspace/8ded0908-62dc-4e4b-85e8-11b15eb08591/scratchpad/final/t3/dsdir'
+preflight.py could not finish, and this is a defect in the check rather than in your project. No result was produced, so treat nothing as checked. Re-run with TRAIGENT_FIRST_RUN_TRACEBACK=1 and report the output.

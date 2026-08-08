@@ -109,18 +109,27 @@ spread across the difficulty range - drawn inside each split so it cannot invent
 the selected row ids recorded so the run can be repeated. The report names that subset size beside
 your full row count, and states the resulting sample-size limitation separately.
 
-Your readiness score is never taken on that subset. Both scores read the whole dataset, because the
-score is a statement about your data and the subset is a limit on this one comparison - scoring the
-sample would report our sampling as though it were a property of your dataset, and tell someone with
-500 good rows that they have "a wiring check, not a score". A first run shows the capability in one
-sitting; the full dataset is what a real optimization uses.
+Your readiness score is never taken on that subset. Every readiness run reads the whole dataset,
+because the score is a statement about your data and the subset is a limit on this one comparison -
+scoring the sample would report our sampling as though it were a property of your dataset, and tell
+someone with 500 good rows that they have "a wiring check, not a score". A first run shows the
+capability in one sitting; the full dataset is what a real optimization uses.
 
 ## The readiness score
 
 Before anything is created or repaired, the assistant scores what your project has today: a number
 out of 100 from three pillars - dataset, evaluation, and agent - and a named band from Not ready to
-Excellent. The same score is taken again at the end, so the report shows the transition rather than
-a single number with nothing to compare it to.
+Excellent. That opening number is the one the report keeps, because it is the only one taken on
+material the walkthrough did not write. The score is re-run during the run to check that a repair
+really cleared what it failed on before anything is paid for, but no closing number is put beside
+the opening one and called progress: once the assistant has filled your gaps, a second score mostly
+grades the substitutes it just wrote.
+
+What the close gives you instead is what was created or repaired and what that costs the claim.
+Examples written for the walkthrough are weaker evidence than examples collected from your product.
+A generated evaluation method is a starting point rather than your grading policy - it is worth
+tuning in whichever direction your product needs, so that it rewards, say, how an answer reads
+rather than which words it reuses.
 
 It is deliberately modest about itself. It runs before any optimization, from evidence on your own
 machine, so it estimates rather than measures: a check that cannot be computed is marked unmeasured
@@ -136,8 +145,10 @@ pillar is thin - `EVALUATION 100/100 (2 of 4 checks measured)` - and calibrating
 what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
 the opening card the missing settings document holds the whole score to at most 45, inside Partial,
 so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
-already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent wait for
-the close, on a score no ceiling is capping.
+already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent are
+therefore out of reach of an opening card: they need a settings document, and one exists only after
+a search has run. That is a bound on what a pre-run check can see rather than a verdict on your
+project, and the card gives the reason on its own line.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that

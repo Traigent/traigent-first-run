@@ -20,7 +20,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Quality advisory, user choice, and revalidation result if applicable:
 - Row ids repaired into the working copy, and row ids generated to fill a gap:
 - Opening readiness score before any creation or repair - overall, band, binding caps:
-- Latest revalidated readiness score - overall, band, binding caps, and what changed:
+- Revalidation gate results - which caps cleared, and on what evidence:
 
 ## Shared comparison
 
@@ -58,4 +58,3 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - What the result demonstrates:
 - What the result does not establish:
 - Recommended next real-world improvement:
-- Readiness transition - opening/latest scores, caps, and real repair or `🛠️` substitute:
