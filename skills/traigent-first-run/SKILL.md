@@ -164,8 +164,7 @@ Perform safe, read-only discovery without asking for approval:
   callable or command. When an old artifact names another target or agent, preserve it as
   historical context but exclude it from this run's score and report.
 - Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
-  contract and the product behavior being attempted. Finish this before the search below; the order
-  is the point and not the layout of this list.
+  contract and the product behavior being attempted. Finish this before the search below.
 - Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
   and outcome checks, searching outward from that agent. What it does, the contract just inferred,
   and the files its own call sites and tests reach are what tell its examples and its grading method
@@ -176,9 +175,8 @@ Perform safe, read-only discovery without asking for approval:
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
 Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
-reached this way really grades the selected agent is settled later, by the compatibility contract in
-`references/component-creation.md`; searching from the agent is what makes that check a confirmation
-rather than a coin toss.
+reached this way really grades the selected agent is settled by the compatibility contract in
+`references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
@@ -305,7 +303,8 @@ way to grade them has a single gap in it, and asking twice asks the same person 
 same substitution twice. When a quality advisory fires in the same turn, fold it in - a gap and a
 weakness are one decision about what this run will measure. That question carries four things:
 
-1. What is missing, named plainly and all of it at once.
+1. What the inventory did not find, named plainly and all of it at once - what was searched for and
+   not seen, never what the project does not have.
 2. That this run can build each missing piece, derived from whatever does exist.
 3. What that costs, in terms the score already uses: what this run writes stays `🛠️` and never
    becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot

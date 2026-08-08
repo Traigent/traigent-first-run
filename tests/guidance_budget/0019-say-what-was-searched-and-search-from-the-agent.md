@@ -2,9 +2,9 @@
 
 follows: 0018
 resident-ceiling: 71_400
-resident-measured: 71_294
+resident-measured: 71_233
 total-ceiling: 316_450
-total-measured: 316_337
+total-measured: 316_276
 
 Two owner corrections land here and neither can be spent more cheaply. The
 first is a truthfulness bound on the sentence the customer actually hears at

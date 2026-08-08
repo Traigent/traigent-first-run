@@ -13876,6 +13876,22 @@ class TheAskReportsTheSearchAndNotTheWorldTests(unittest.TestCase):
         self.assertIn('"you have no data" and "I could not read the', readiness)
         self.assertIn("tells a customer holding a", readiness)
 
+    def test_the_flow_asks_for_the_same_thing_the_copy_delivers(self) -> None:
+        """The four things the ask carries, swept for the same shape.
+
+        `references/component-creation.md` owns the wording, but the first of
+        SKILL.md's four things is what the wording renders, and it read "what is
+        missing" - the instruction whose most natural rendering is exactly the
+        sentence this correction removed. A reference that hedges under a flow
+        that does not is one edit away from going back.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        section = skill.split("#### one ask for every gap", 1)[1].split(
+            "### 3. complete the system", 1
+        )[0]
+        self.assertIn("what the inventory did not find, named plainly", section)
+        self.assertIn("never what the project does not have", section)
+
 
 class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
     """Find the agent, then let it lead to its dataset and its ruler.
@@ -13907,9 +13923,6 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
             "the material is searched for before the agent that would identify it",
         )
         self.assertIn("finish this before the search below", normalized)
-        self.assertIn(
-            "the order is the point and not the layout of this list", normalized
-        )
         # The reason, which is the instruction: search FROM the agent.
         self.assertIn("searching outward from that agent", normalized)
         for lead in (
