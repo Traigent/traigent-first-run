@@ -5752,6 +5752,33 @@ class SkillPackageTests(unittest.TestCase):
         # satisfied by the entry point simply dropping the subject.
         self.assertIn("`references/run-safety.md`", documents["GUIDE.md"])
 
+        # The equality above proves the pattern fires on ONE real sentence. It
+        # does not prove the pattern can see a RESTATEMENT, which is the whole
+        # defect - a second home worded differently is exactly what "at least
+        # three ways" above predicts, and narrowing the regex would report the
+        # same clean single home. Measured against the spellings this rule has
+        # actually been written in, including the one deleted from GUIDE.md.
+        for restatement in (
+            "open it only for the missing key, never to duplicate one that is "
+            "already available.",
+            "open the key file only when the key is missing.",
+            "never reopen it for a key already available.",
+            "do not open the file to duplicate a key already held.",
+        ):
+            with self.subTest(restatement=restatement):
+                self.assertTrue(
+                    self._WHEN_THE_FILE_IS_OPENED.search(restatement),
+                    "a second home for this rule that the guard cannot see",
+                )
+        # A sentence about the same file that states no such rule is not a
+        # home, or every mention of the credential file would read as one.
+        self.assertIsNone(
+            self._WHEN_THE_FILE_IS_OPENED.search(
+                "read the credential file whenever a key is needed."
+            ),
+            "the guard counts an ordinary mention as a second home",
+        )
+
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
