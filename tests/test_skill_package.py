@@ -767,6 +767,51 @@ def _quantity(spelling: str) -> int:
     return resolved
 
 
+def generated_space_widths() -> dict[str, dict[str, int]]:
+    """Each generated space's knobs, mapped to how many values it sweeps.
+
+    Split out of `generated_space_sizes` below, which discarded these after
+    multiplying them: the prose does not only state the products, it states the
+    factors - "3 models x 2 prompt styles x 2 thinking shapes" - and a factor
+    can go stale on its own while the product still agrees.
+    """
+    fence = re.findall(r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL)[
+        0
+    ]
+    spaces: dict[str, dict[str, int]] = {}
+    for node in ast.parse(fence).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Dict):
+            continue
+        name = target.id.removesuffix("_SPACE")
+        if f"{name}_SPACE" != target.id:
+            continue
+        widths: dict[str, int] = {}
+        for key, value in zip(node.value.keys, node.value.values):
+            assert isinstance(key, ast.Constant), f"{target.id} has a computed key"
+            if isinstance(value, ast.List):
+                widths[key.value] = len(value.elts)
+            elif (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and isinstance(value.slice, ast.Constant)
+            ):
+                # `ENHANCED_SPACE["model"] = BASELINE_SPACE["model"]` - the
+                # width lives in the space it is borrowed from.
+                borrowed = value.value.id.removesuffix("_SPACE").casefold()
+                widths[key.value] = spaces[borrowed][value.slice.value]
+            else:
+                raise AssertionError(
+                    f"{target.id}[{key.value!r}] is neither a list of candidate "
+                    "values nor a reference to another space's list, so its "
+                    "width cannot be derived"
+                )
+        spaces[name.casefold()] = widths
+    return spaces
+
+
 def generated_space_sizes() -> dict[str, int]:
     """The two generated space sizes, derived from `sdk-execution.md` twice.
 
@@ -797,46 +842,16 @@ def generated_space_sizes() -> dict[str, int]:
         "ENHANCED",
     ], f"the fence must assert both space sizes; it asserts {sorted(asserted)}"
 
-    fence = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-    spaces: dict[str, dict[str, int]] = {}
-    for node in ast.parse(fence).body:
-        if not isinstance(node, ast.Assign):
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Dict):
-            continue
-        name = target.id.removesuffix("_SPACE")
-        if f"{name}_SPACE" != target.id:
-            continue
-        widths: dict[str, int] = {}
-        for key, value in zip(node.value.keys, node.value.values):
-            assert isinstance(key, ast.Constant), f"{target.id} has a computed key"
-            if isinstance(value, ast.List):
-                widths[key.value] = len(value.elts)
-            elif (
-                isinstance(value, ast.Subscript)
-                and isinstance(value.value, ast.Name)
-                and isinstance(value.slice, ast.Constant)
-            ):
-                # `ENHANCED_SPACE["model"] = BASELINE_SPACE["model"]` - the
-                # width lives in the space it is borrowed from.
-                widths[key.value] = spaces[value.value.id.removesuffix("_SPACE")][
-                    value.slice.value
-                ]
-            else:
-                raise AssertionError(
-                    f"{target.id}[{key.value!r}] is neither a list of candidate "
-                    "values nor a reference to another space's list, so its "
-                    "width cannot be derived"
-                )
-        spaces[name] = widths
-
-    constructed = {name: math.prod(widths.values()) for name, widths in spaces.items()}
-    assert constructed == asserted, (
-        f"the fence asserts {asserted} but the spaces it defines are "
+    constructed = {
+        name: math.prod(widths.values())
+        for name, widths in generated_space_widths().items()
+    }
+    folded = {name.casefold(): size for name, size in asserted.items()}
+    assert constructed == folded, (
+        f"the fence asserts {folded} but the spaces it defines are "
         f"{constructed}; the template contradicts its own asserts"
     )
-    return {name.casefold(): size for name, size in asserted.items()}
+    return folded
 
 
 # The config-space document is a contract between prose the assistant follows and
@@ -1683,18 +1698,39 @@ class SkillPackageTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
 
-    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+    def _tracked_under(self, pathspec: str) -> str:
         listed = subprocess.run(
-            ["git", "-C", str(ROOT), "ls-files", "--", "traigent-runs"],
+            ["git", "-C", str(ROOT), "ls-files", "--", pathspec],
             capture_output=True,
             text=True,
             check=False,
         )
         if listed.returncode != 0:
             raise RuntimeError(
-                f"could not inspect tracked run artifacts: {listed.stderr.strip()}"
+                f"could not inspect tracked files under {pathspec}: "
+                f"{listed.stderr.strip()}"
             )
-        self.assertEqual(listed.stdout.strip(), "")
+        return listed.stdout.strip()
+
+    def test_generated_run_artifacts_are_not_tracked(self) -> None:
+        """A run writes `traigent-runs/`; committing it ships someone's run.
+
+        The pathspec is the whole check, and `git ls-files` answers a pathspec
+        that matches nothing exactly as it answers a clean tree: exit 0, empty
+        output. So a typo in the thirteen characters below is byte-identical to
+        the passing case, and this would stay green for the rest of the
+        repository's life while tracking every artifact it exists to refuse.
+        The positive control fixes that - the same call must find something
+        where something is known to be tracked.
+        """
+        self.assertEqual(self._tracked_under("traigent-runs"), "")
+        self.assertNotEqual(
+            self._tracked_under("skills"),
+            "",
+            "`git ls-files` reports nothing under a directory this repository "
+            "certainly tracks, so the empty result above is the tool failing "
+            "to look rather than the tree being clean",
+        )
 
     def test_user_facing_skill_language_does_not_label_the_user(self) -> None:
         combined = "\n".join(
@@ -1704,10 +1740,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("non-technical", combined)
         self.assertNotIn("not for experienced", combined)
 
-    def test_active_run_guidance_contains_only_required_account_links(self) -> None:
-        combined = "\n".join(path.read_text() for path in assistant_facing_documents())
-        urls = re.findall(r"https?://[^`\s)]+", combined)
-        allowed_hosts = {
+    ACCOUNT_LINK_HOSTS = frozenset(
+        {
             "portal.traigent.ai",
             # The public site is the ONLY destination for a user who holds no
             # access code yet - the portal's register page refuses them, so
@@ -1718,18 +1752,75 @@ class SkillPackageTests(unittest.TestCase):
             "platform.openai.com",
             "console.anthropic.com",
         }
+    )
+
+    @classmethod
+    def _account_link_offence(cls, url: str) -> str | None:
+        """Why this address may not be handed to a user, or `None`.
+
+        Trailing sentence punctuation is stripped BEFORE the host is read, not
+        only before the path is compared. The bare-site rule below already did
+        that; the host check did not, so an address written at the end of a
+        sentence - `https://traigent.ai.` - was read as the host
+        `traigent.ai.` and reported as a destination the guide may not name.
+        A false red on the one address the guidance is required to hand over,
+        waiting for the first author who ends a sentence with it.
+        """
+        url = url.rstrip(").,")
+        host = url.split("/", 3)[2]
+        if host not in cls.ACCOUNT_LINK_HOSTS:
+            return f"{host} is not a destination this guide may name"
+        # Host granularity is enough for the provider links, and not enough for
+        # this one: `traigent.ai/register` is a page that does not exist and is
+        # the exact shape run-safety forbids handing to a user with no access
+        # code. The public site is only ever given bare.
+        if host == "traigent.ai" and url != "https://traigent.ai":
+            return "the public site is handed over bare, never with a path"
+        return None
+
+    def test_active_run_guidance_contains_only_required_account_links(self) -> None:
+        """Every address the guidance hands a user, and nothing else.
+
+        Both halves are probed. A clean corpus proves the documents are tidy
+        today, not that this check can see an address that is not - and it
+        never had, because no disallowed URL has ever been in the tree for it
+        to reject. The bare-site rule in particular had no failing case at all,
+        so it could have been deleted without anything going red.
+        """
+        combined = "\n".join(path.read_text() for path in assistant_facing_documents())
+        urls = re.findall(r"https?://[^`\s)]+", combined)
+        self.assertTrue(urls, "no address was extracted, so nothing was checked")
         for url in urls:
-            host = url.split("/", 3)[2]
-            self.assertIn(host, allowed_hosts)
-            # Host granularity is enough for the provider links, and not enough
-            # for this one: `traigent.ai/register` is a page that does not exist
-            # and is the exact shape run-safety forbids handing to a user with
-            # no access code. The public site is only ever given bare.
-            if host == "traigent.ai":
-                self.assertEqual(
-                    url.rstrip(").,"),
-                    "https://traigent.ai",
-                    "the public site is handed over bare, never with a path",
+            with self.subTest(url=url):
+                self.assertIsNone(self._account_link_offence(url))
+
+        for planted in (
+            # A destination this guide may not name at all.
+            "https://evil.example.com/x",
+            # The portal's register page, which refuses a user holding no code.
+            "https://app.traigent.ai/register",
+            # The page that does not exist - the shape the bare-site rule
+            # exists for, and the one nothing in the tree ever exercised.
+            "https://traigent.ai/register",
+            "https://traigent.ai/pricing",
+        ):
+            with self.subTest(planted=planted):
+                self.assertIsNotNone(
+                    self._account_link_offence(planted),
+                    "an address this guide may not hand over, and the check "
+                    "cannot see it",
+                )
+        for legal in (
+            "https://traigent.ai",
+            "https://traigent.ai.",
+            "https://portal.traigent.ai/settings",
+            "https://console.anthropic.com/settings/keys",
+        ):
+            with self.subTest(legal=legal):
+                self.assertIsNone(
+                    self._account_link_offence(legal),
+                    "the check refuses an address the guidance is required to "
+                    "hand over",
                 )
 
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
@@ -1974,6 +2065,92 @@ class SkillPackageTests(unittest.TestCase):
             f"`traigent=={version}`. Every version this document names is the "
             "one `assets/requirements-first-run.txt` installs; a link to some "
             "other tag describes terms the reader is not agreeing to.",
+        )
+
+    # The one release this package names that is deliberately NOT the pinned
+    # one, and the sentence that earns it. `run-safety.md` warns that on an
+    # unsupported interpreter, resolution can select an unrelated obsolete
+    # release - naming it is the whole point of the warning, so the check below
+    # excuses this exact sentence rather than the bare number, and a second
+    # passage naming `0.0.1` for some other reason still fails.
+    NON_PINNED_RELEASE_ALLOWLIST = (
+        "package resolution can select the unrelated obsolete `0.0.1` release",
+    )
+
+    def _unpinned_releases(self, text: str, pinned: set[str]) -> list[str]:
+        """Release-shaped literals in `text` that no pinned requirement installs."""
+        body = " ".join(text.split())
+        for excused in self.NON_PINNED_RELEASE_ALLOWLIST:
+            body = body.replace(excused, "")
+        return sorted(set(re.findall(r"\d+\.\d+\.\d+", body)) - pinned)
+
+    def test_no_assistant_facing_document_names_an_unpinned_release(self) -> None:
+        """The README rule above, applied to the documents the assistant reads.
+
+        `test_readme_discloses_pinned_sdk_license_terms` already refuses a
+        release-shaped literal in README.md that is not the pinned one. The
+        same claim is made in four more places the reader is sent to -
+        `sdk-execution.md` names the pinned release three times (the local-log
+        note, the relative-path defect, the sync limitation) and
+        `run-safety.md` once - and none of them was covered by anything. So a
+        pin bump could update README and leave the references describing the
+        behaviour of a release nobody installs, with the suite green.
+
+        Derived twice over: the permitted set is every version
+        `assets/requirements-first-run.txt` actually pins, so naming the pinned
+        `litellm` is legal without this test being edited, and bumping any pin
+        fails here until the prose that describes it is re-read.
+        """
+        pinned = set()
+        for line in REQUIREMENTS.read_text().splitlines():
+            _, separator, version = line.strip().partition("==")
+            if separator and version:
+                pinned.add(version)
+        self.assertIn(
+            pinned_sdk_version(),
+            pinned,
+            "the permitted set must contain the pinned SDK release, or this "
+            "check is reading the wrong file",
+        )
+
+        stale: dict[str, list[str]] = {}
+        for document in assistant_facing_documents():
+            named = self._unpinned_releases(document.read_text(), pinned)
+            if named:
+                stale[document.relative_to(ROOT).as_posix()] = named
+        self.assertEqual(
+            stale,
+            {},
+            "an assistant-facing document names a release the pinned "
+            "requirements do not install. Every version statement in this "
+            "guidance describes the behaviour of what the reader installs; a "
+            "different one describes a release they will never run.",
+        )
+
+        # A clean tree proves the documents agree today, not that this check
+        # can SEE a disagreement - and the corpus it walks narrows silently, so
+        # the empty result above is also what a broken glob returns. Both
+        # directions are probed against invented text instead.
+        self.assertEqual(
+            self._unpinned_releases("installed 9.9.9 behaves this way", pinned),
+            ["9.9.9"],
+        )
+        self.assertEqual(
+            self._unpinned_releases(
+                f"installed {pinned_sdk_version()} behaves this way", pinned
+            ),
+            [],
+        )
+        self.assertEqual(
+            self._unpinned_releases(self.NON_PINNED_RELEASE_ALLOWLIST[0], pinned),
+            [],
+            "the obsolete-release warning is the one excused sentence",
+        )
+        self.assertEqual(
+            self._unpinned_releases("the obsolete `0.0.1` release", pinned),
+            ["0.0.1"],
+            "the exemption is the sentence, not the number: naming that "
+            "release for any other reason is still a release nobody installs",
         )
 
     def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
@@ -3750,13 +3927,11 @@ class SkillPackageTests(unittest.TestCase):
         for document in assistant_facing_documents():
             body = self._FENCED_BLOCK.sub("", document.read_text())
             for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split())):
-                if not self._GRID_TO_RANDOM.search(sentence):
-                    continue
-                ratio = self._A_RATIO.search(sentence)
-                if ratio:
+                ratio = self._threshold_in(sentence)
+                if ratio is not None:
                     offenders.append(
                         f"{document.relative_to(ROOT).as_posix()}: "
-                        f"{ratio.group(0)!r} in {sentence!r}"
+                        f"{ratio!r} in {sentence!r}"
                     )
         self.assertEqual(
             offenders,
@@ -3768,6 +3943,48 @@ class SkillPackageTests(unittest.TestCase):
         )
         owner = " ".join(SDK_EXECUTION.read_text().casefold().split())
         self.assertIn("could not reach most of it", owner)
+
+        # Measured before this probe existed: `_GRID_TO_RANDOM` reaches five
+        # sentences in the corpus and `_A_RATIO` fires on none of them. So the
+        # violation half of this guard had never once matched anything, and an
+        # empty `offenders` was equally the answer for "the prose is honest"
+        # and for "this regex can no longer see a threshold". The deleted
+        # sentence is the first probe; the other two are the spellings the
+        # docstring above says will come next, neither of which the original
+        # phrase-ban would have caught.
+        for planted in (
+            "Above roughly twenty configurations per allowed trial, move a "
+            "preserved baseline from `grid` to `random`.",
+            "Switch from grid to random above 40 configurations per trial.",
+            "Use grid, then random at ten times the trial cap.",
+            "Prefer grid below 20 configurations per trial and random above it.",
+        ):
+            with self.subTest(planted=planted):
+                self.assertIsNotNone(
+                    self._threshold_in(planted),
+                    "a numeric grid-to-random crossover this guard cannot see",
+                )
+        # And the qualitative rule the guidance is supposed to state, plus a
+        # ratio in a sentence about something else entirely - neither is an
+        # offence, or the guard is a false red that teaches authors to stop
+        # writing the rule at all.
+        for innocent in (
+            "The baseline pins `grid`; never pin `random` on the connected search.",
+            'Keep `algorithm="auto"` here, and never pin `grid` or `random`.',
+            "The knob-count sub-score is damped above 20 configurations per trial.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertIsNone(
+                    self._threshold_in(innocent),
+                    "the guard reads an honest sentence as a threshold",
+                )
+
+    def _threshold_in(self, sentence: str) -> str | None:
+        """The ratio stated in a grid-versus-random sentence, if it states one."""
+        if not self._GRID_TO_RANDOM.search(sentence):
+            return None
+        ratio = self._A_RATIO.search(sentence)
+        return None if ratio is None else ratio.group(0)
 
     # An authoring label: the artifact ordinal and template letter a drafter
     # uses to say which block this is, which is not a thing the reader knows
@@ -3809,6 +4026,37 @@ class SkillPackageTests(unittest.TestCase):
             "in prose the assistant reads out; nothing here defines that "
             "numbering, so it names a thing the reader cannot look up",
         )
+
+        # Measured before this probe existed: this pattern matches zero times
+        # across the whole corpus, so `labelled == []` was being asserted about
+        # text the regex has never once fired on. A guard that has never
+        # matched anything is indistinguishable from a guard that cannot. The
+        # first probe is the label that actually leaked; the rest are the
+        # family the docstring says comes next.
+        for planted in (
+            "Artifact-2 template A: show this after registration.",
+            "Artifact 3 - the closing summary.",
+            "artifact-11 goes here",
+            "Template B: paste this block.",
+        ):
+            with self.subTest(planted=planted):
+                self.assertTrue(
+                    self._AUTHORING_LABEL.search(planted),
+                    "a drafting label this guard cannot see",
+                )
+        # The words themselves are ordinary and the guidance uses both, so the
+        # shape has to be what fails. A false red here would be paid for in
+        # prose nobody is allowed to write.
+        for innocent in (
+            "the run-plan template and the artifact it writes",
+            "Use the template in `assets/run-plan.md`.",
+            "Stage 2 produces one artifact the user keeps.",
+        ):
+            with self.subTest(innocent=innocent):
+                self.assertIsNone(
+                    self._AUTHORING_LABEL.search(innocent),
+                    "the guard flags prose that carries no drafting label",
+                )
 
     def test_the_card_labels_the_readme_documents_are_the_ones_it_prints(
         self,
@@ -5712,6 +5960,86 @@ class SkillPackageTests(unittest.TestCase):
             "nothing under skills/ is in the corpus",
         )
 
+    def test_the_assistant_facing_corpus_is_what_the_skill_bundle_publishes(
+        self,
+    ) -> None:
+        """The third corpus, and the only one nothing anchored.
+
+        The two `git ls-files` corpora above each assert what they contain, so
+        a narrowing fails once and loudly. `assistant_facing_documents()` -
+        which more checks in this file walk than either of them - asserted
+        nothing. It is built from two `.glob("*.md")` calls, and a glob narrows
+        SILENTLY: rename a reference, add a document under an extension nobody
+        thought about, or break the path, and the list simply gets shorter.
+
+        That is the shape this whole family of checks exists to refuse. An
+        empty or narrowed corpus turns every `assertEqual(offenders, [])` built
+        on it into a green tick over a document it never opened - measured, ten
+        checks in this file go vacuous together, and none of them would say so.
+        So the corpus is compared against what git actually publishes, in the
+        four places the helper claims to read, and a document added beside them
+        fails here until someone decides whether the assistant reads it.
+        """
+        corpus = [
+            path.relative_to(ROOT).as_posix() for path in assistant_facing_documents()
+        ]
+        self.assertEqual(
+            len(corpus),
+            len(set(corpus)),
+            "the corpus lists a document twice, so every check that joins it "
+            "weighs that document twice",
+        )
+        listed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "ls-files",
+                "--",
+                "GUIDE.md",
+                f"{SKILL.relative_to(ROOT).as_posix()}",
+                f"{(SKILL_ROOT / 'references').relative_to(ROOT).as_posix()}/*.md",
+                f"{(SKILL_ROOT / 'assets').relative_to(ROOT).as_posix()}/*.md",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        self.assertEqual(
+            sorted(corpus),
+            sorted(listed),
+            "the assistant-facing corpus has drifted from what the skill "
+            "bundle publishes. Every check that sweeps it is silently scoped "
+            "to whatever this glob still finds.",
+        )
+        # Named individually as well, because the equality above is satisfied
+        # by both sides narrowing together - a reference deleted from the tree
+        # and from the corpus in one commit. Each of these is a document some
+        # check in this file has a rule about.
+        for expected in (
+            "GUIDE.md",
+            "skills/traigent-first-run/SKILL.md",
+            "skills/traigent-first-run/references/run-safety.md",
+            "skills/traigent-first-run/references/sdk-execution.md",
+            "skills/traigent-first-run/references/evaluation-and-dataset.md",
+            "skills/traigent-first-run/references/glossary.md",
+            "skills/traigent-first-run/references/component-creation.md",
+            "skills/traigent-first-run/assets/run-plan.md",
+        ):
+            with self.subTest(document=expected):
+                self.assertIn(expected, corpus)
+        # `conversation_contract_documents()` wraps this list, so it inherits
+        # both the hole and the fix; asserted rather than assumed.
+        contract = [
+            path.relative_to(ROOT).as_posix()
+            for path in conversation_contract_documents()
+        ]
+        self.assertTrue(
+            set(corpus) <= set(contract),
+            "the conversation-contract corpus no longer covers every "
+            "assistant-facing document",
+        )
+
     # Where the user is sent, and how they get there. Both belong to the
     # reference that performs the handoff; GUIDE.md's paragraph points at it and
     # states neither. Addresses are matched as a shape rather than by hostname,
@@ -5836,6 +6164,33 @@ class SkillPackageTests(unittest.TestCase):
         # GUIDE.md keeps the pointer that replaced it, so "no rule here" is not
         # satisfied by the entry point simply dropping the subject.
         self.assertIn("`references/run-safety.md`", documents["GUIDE.md"])
+
+        # The equality above proves the pattern fires on ONE real sentence. It
+        # does not prove the pattern can see a RESTATEMENT, which is the whole
+        # defect - a second home worded differently is exactly what "at least
+        # three ways" above predicts, and narrowing the regex would report the
+        # same clean single home. Measured against the spellings this rule has
+        # actually been written in, including the one deleted from GUIDE.md.
+        for restatement in (
+            "open it only for the missing key, never to duplicate one that is "
+            "already available.",
+            "open the key file only when the key is missing.",
+            "never reopen it for a key already available.",
+            "do not open the file to duplicate a key already held.",
+        ):
+            with self.subTest(restatement=restatement):
+                self.assertTrue(
+                    self._WHEN_THE_FILE_IS_OPENED.search(restatement),
+                    "a second home for this rule that the guard cannot see",
+                )
+        # A sentence about the same file that states no such rule is not a
+        # home, or every mention of the credential file would read as one.
+        self.assertIsNone(
+            self._WHEN_THE_FILE_IS_OPENED.search(
+                "read the credential file whenever a key is needed."
+            ),
+            "the guard counts an ordinary mention as a second home",
+        )
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
@@ -6628,19 +6983,22 @@ class SkillPackageTests(unittest.TestCase):
         green, because a number can be tested and a frame cannot unless it is
         pinned here.
         """
+        sizes = generated_space_sizes()
         sdk = SDK_EXECUTION.read_text()
         for phrase in (
             'State them exactly,\nnever as "roughly" or "about"',
-            "3 models × 2 prompt styles × 2 thinking shapes = 12 configurations",
-            "3 models × 4 binary behaviour knobs = 48 configurations",
+            "3 models × 2 prompt styles × 2 thinking shapes "
+            f"= {sizes['baseline']} configurations",
+            f"3 models × 4 binary behaviour knobs = {sizes['enhanced']} configurations",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, sdk)
 
         run_safety = " ".join(RUN_SAFETY.read_text().split())
         for phrase in (
-            "**The same 48 whatever the customer brings.**",
-            "gets a 48-configuration enhanced space too, not a larger one",
+            f"**The same {sizes['enhanced']} whatever the customer brings.**",
+            f"gets a {sizes['enhanced']}-configuration enhanced space too, "
+            "not a larger one",
             "the four slots are filled from what they brought",
             "baseline evidence decides which four",
             "Every knob replaced and every value narrowed is named on the "
@@ -6653,6 +7011,123 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, run_safety)
+
+    # "3 models x 2 prompt styles x 2 thinking shapes = 12 configurations", in
+    # either document's multiplication sign and with markdown emphasis already
+    # stripped. A knob counted as "N binary ..." contributes 2**N, which is how
+    # the enhanced space is written: 3 models x 4 binary knobs is 3 x 2**4.
+    _STATED_ARITHMETIC = re.compile(
+        r"((?:\d+ [a-z][a-z ]*?[x×] )+\d+ [a-z][a-z ]*?)= (\d+)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _stated_factors(cls, phrase: str) -> list[int]:
+        """One multiplicand per knob a stated space arithmetic claims.
+
+        "4 binary knobs" is four knobs of two values each, not one knob of
+        four, so it expands to `[2, 2, 2, 2]`. The product is the same either
+        way; the expansion is what lets the factors be compared against the
+        fence's per-knob widths, which is where a knob quietly leaving the
+        space shows up.
+        """
+        factors: list[int] = []
+        for count, noun in re.findall(r"(\d+) ([a-z][a-z ]*)", phrase, re.IGNORECASE):
+            if "binary" in noun.casefold():
+                factors.extend([2] * int(count))
+            else:
+                factors.append(int(count))
+        return factors
+
+    def test_every_stated_space_arithmetic_multiplies_out_to_the_real_space(
+        self,
+    ) -> None:
+        """The sizes are stated in more places than the check above looked.
+
+        `test_the_reduced_space_is_stated_exactly_and_framed_honestly` pins two
+        sentences in `sdk-execution.md` and two clauses in `run-safety.md`.
+        Measured, the arithmetic itself is written FIVE times across the two
+        documents - run-safety.md restates the whole baseline-and-enhanced
+        sentence at its "exact sizes" paragraph, and states it a third time at
+        "the space stays 3 models x 4 binary knobs = 48" - and three of those
+        five were pinned by nothing. A re-sizing that updated the owner and the
+        pinned clauses would leave the restatements contradicting them, with
+        the suite green.
+
+        So every statement of the form is found rather than listed, and each is
+        checked three ways against the fence: the factors multiply out to the
+        total it claims, the total is a size the fence actually builds, and the
+        factors are that space's own non-trivial widths. A knob dropped from
+        the space fails here even when the product is edited to agree.
+        """
+        sizes = generated_space_sizes()
+        widths = generated_space_widths()
+        swept = {
+            name: sorted((width for width in space.values() if width > 1), reverse=True)
+            for name, space in widths.items()
+        }
+
+        found: list[str] = []
+        for document in conversation_contract_documents():
+            body = " ".join(document.read_text().replace("*", " ").split())
+            for phrase, total in self._STATED_ARITHMETIC.findall(body):
+                where = f"{document.relative_to(ROOT).as_posix()}: {phrase}= {total}"
+                found.append(where)
+                factors = self._stated_factors(phrase)
+                with self.subTest(statement=where):
+                    self.assertEqual(
+                        math.prod(factors),
+                        int(total),
+                        f"{factors} multiplies to {math.prod(factors)}, not the "
+                        f"{total} this sentence states",
+                    )
+                    named = [name for name, size in sizes.items() if size == int(total)]
+                    self.assertEqual(
+                        len(named),
+                        1,
+                        f"no generated space has {total} configurations; the "
+                        f"fence builds {sizes}",
+                    )
+                    self.assertEqual(
+                        sorted(factors, reverse=True),
+                        swept[named[0]],
+                        f"the {named[0]} space sweeps {swept[named[0]]} values "
+                        f"per knob; this sentence claims {factors}",
+                    )
+        # Five statements, and the count is asserted because a regex that stops
+        # matching reports the same clean result as prose that stopped lying.
+        self.assertEqual(
+            len(found),
+            5,
+            "the number of stated space arithmetics has changed. Adding one is "
+            "a sixth home for a decision `sdk-execution.md` owns; losing one "
+            f"means this check no longer reads them. Found: {found}",
+        )
+
+        # Both directions, against invented sentences. The first is the shape a
+        # re-sizing leaves behind: a product nobody recomputed.
+        self.assertEqual(self._stated_factors("3 models x 2 prompt styles "), [3, 2])
+        self.assertEqual(
+            self._stated_factors("3 models x 4 binary knobs "), [3, 2, 2, 2, 2]
+        )
+        planted = "3 models x 2 prompt styles x 2 thinking shapes = 14 configurations"
+        self.assertEqual(
+            [
+                math.prod(self._stated_factors(phrase)) == int(total)
+                for phrase, total in self._STATED_ARITHMETIC.findall(planted)
+            ],
+            [False],
+            "a stated arithmetic that does not multiply out is what this guard "
+            "exists to catch, and it must be able to see one",
+        )
+        self.assertEqual(
+            self._STATED_ARITHMETIC.findall(
+                "The baseline runs 12 trials over 12 configurations."
+            ),
+            [],
+            "a sentence that states a count without stating an arithmetic is "
+            "not this check's business",
+        )
 
     def test_user_owned_baseline_is_not_padded_to_generated_row_target(self) -> None:
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
@@ -8058,10 +8533,17 @@ class SkillPackageTests(unittest.TestCase):
         there is no second bearer credential and no cold-start branch beside
         it. These phrases described the retired model; if one reappears the
         guide has drifted back to teaching a path that no longer exists.
+
+        The corpus is `conversation_contract_documents()`. It was a fourth
+        hand-rebuilt list - SKILL.md plus the references - which left out
+        GUIDE.md, `assets/run-plan.md`, and README.md: the entry point, the
+        record the user keeps, and the most-read file in a public repository.
+        A retired phrase reappearing in any of them was invisible here by
+        construction, which is the omission `assistant_facing_documents()`
+        exists to stop being made a fourth time.
         """
         combined = "\n".join(
-            path.read_text()
-            for path in [SKILL, *sorted((SKILL_ROOT / "references").glob("*.md"))]
+            path.read_text() for path in conversation_contract_documents()
         ).casefold()
         for phrase in (
             "self-register",
@@ -9422,11 +9904,20 @@ class SkillPackageTests(unittest.TestCase):
         # ever adopted the fix is to add its exact prefix, deliberately.
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
+        # The version is DERIVED, for the same reason
+        # `test_readme_discloses_pinned_sdk_license_terms` derives it: this is
+        # the telemetry half of the disclosure `pinned_sdk_version` names in
+        # its own docstring, and it was the half still typing the number. Two
+        # literals here meant a pin bump could leave the privacy contract
+        # pointing at the terms of a release nobody installs - the exact
+        # staleness the license half was fixed for, in the paragraph about what
+        # leaves the user's machine.
+        version = pinned_sdk_version()
         readme_source = (ROOT / "README.md").read_text()
         readme = " ".join(readme_source.casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
-            "pinned sdk 0.25.0 telemetry contract",
+            f"pinned sdk {version} telemetry contract",
             "tuned configuration keys and values",
             "observability content the project explicitly opts into recording",
             "short content-free labels",
@@ -9435,7 +9926,7 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertIn(
-            "https://github.com/Traigent/Traigent/blob/v0.25.0/"
+            f"https://github.com/Traigent/Traigent/blob/v{version}/"
             "docs/api-reference/telemetry.md",
             readme_source,
         )
@@ -12419,17 +12910,28 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         and the split labels a user's dataset may legitimately carry are the
         identifier vocabulary the decision explicitly kept. What is banned is
         prose - a script explaining a split to the reader in a third noun.
+
+        The extractor is named for what it RETURNS, not for what it is for.
+        #206 independently added a `script_prose` to this same class returning
+        a list of comments; git merged both cleanly, Python kept one, and the
+        `assertNotIn` below became a list-membership test that can never fire.
+        `tests/test_module_symbol_collisions.py` now watches class bodies for
+        exactly that.
         """
-        for path in sorted((SKILL_ROOT / "scripts").glob("*.py")):
-            literals = [
-                node.value
-                for node in ast.walk(ast.parse(path.read_text()))
-                if isinstance(node, ast.Constant) and isinstance(node.value, str)
-                # Prose has spaces; an identifier, a split label, and a check
-                # id do not.
-                and " " in node.value
-            ]
-            prose = " ".join(literals).casefold()
+        scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
+        self.assertEqual(
+            [path.name for path in scripts],
+            ["calibrate_evaluator.py", "preflight.py", "readiness.py"],
+            "the bundled scripts have changed; this ban covers whatever this "
+            "glob finds, so a script outside it is a script nobody checks",
+        )
+        for path in scripts:
+            prose = self.script_string_literals(path.read_text())
+            self.assertTrue(
+                prose,
+                f"no prose literal was extracted from {path.name}, so every "
+                "ban below passed over an empty string",
+            )
             for noun in self.THIRD_NOUNS:
                 with self.subTest(script=path.name, noun=noun):
                     self.assertNotIn(
@@ -12439,6 +12941,47 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         '"tuning set" and "held-out set"; a third noun sends '
                         "the reader looking for a third split.",
                     )
+
+        # The extractor is the whole guard, and it fails OPEN: anything that
+        # makes it return less - the `" " in` filter inverted, the glob
+        # narrowed, a parse it stops reaching - leaves every ban above
+        # asserting a noun is absent from a string that is empty. So it is run
+        # against invented sources instead of only against the clean tree.
+        # Both spellings below are the ones that actually shipped.
+        self.assertIn(
+            "validation split",
+            self.script_string_literals(
+                'MESSAGE = "no independent validation split was declared"'
+            ),
+        )
+        self.assertIn(
+            "held-back",
+            self.script_string_literals('def f():\n    return "held-back test set"\n'),
+        )
+        # And the identifier vocabulary the decision deliberately KEPT is still
+        # invisible to it, or the ban would be a false red against the names
+        # the scripts are required to use.
+        for kept in (
+            'HOLDOUT_DATASET = "holdout.jsonl"',
+            'CHECK = "dataset-tune-holdout-overlap"',
+            'LABELS = ("tuning", "holdout")',
+        ):
+            with self.subTest(kept=kept):
+                self.assertEqual(self.script_string_literals(kept), "")
+
+    @staticmethod
+    def script_string_literals(source: str) -> str:
+        """Every multi-word string literal in `source`, casefolded and joined.
+
+        Prose has spaces; an identifier, a split label, and a check id do not.
+        """
+        return " ".join(
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and " " in node.value
+        ).casefold()
 
     def test_the_card_and_preflight_name_the_two_splits_the_settled_way(self) -> None:
         """The other half: the replacements are pinned, not merely the absence.
@@ -12604,9 +13147,18 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # `stop target` is here for the same reason - it is the phrase
         # run-safety.md requires the user be given, so it is the phrase the
         # ceiling is most likely to be restated under.
+        # `estimate` joined the three anchors below after the coverage check
+        # in `test_every_stated_cost_figure_is_read_by_the_ceiling_entry` was
+        # written: SKILL.md states the ceiling as "if the estimate exceeds
+        # `$5.00`", which names none of the other three words, so the pattern
+        # read four of the five documents that carry the figure and SKILL.md
+        # could have drifted to `$8.00` with this entry green. That is the same
+        # miss as the `$5` one recorded above, found the same way - by asking
+        # what the pattern does NOT reach rather than whether it passes.
         (
             "the total walkthrough ceiling",
-            r"(?:ceiling|walkthrough|stop target)[^.]{0,40}?\$(\d+(?:\.\d{2})?)",
+            r"(?:ceiling|walkthrough|stop target|estimate)"
+            r"[^.]{0,40}?\$(\d+(?:\.\d{2})?)",
         ),
         # The enhanced run's ceiling, matched as the ceiling phrase the user
         # reads rather than as a range: the range shape it used to have is now
@@ -12663,6 +13215,78 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     "different numbers for one decision, and it will follow "
                     "whichever it read last.",
                 )
+
+    # Cost figures that are deliberately NOT the walkthrough ceiling: a free
+    # route genuinely costs nothing, and `$0.00` is the value sdk-execution.md
+    # forbids printing for an absent cost. Both are decisions of their own, so
+    # they are named here rather than being swept up by a check about a
+    # different number.
+    NON_CEILING_COST_FIGURES = frozenset({"0", "0.00"})
+
+    def test_every_stated_cost_figure_is_read_by_the_ceiling_entry(self) -> None:
+        """The shared-value table checks agreement; this checks it is looking.
+
+        Its own comment records how this fails: the ceiling pattern could not
+        match a bare `$5`, so the one shape the value actually drifted into was
+        the one shape the check could not see, and the entry stayed green
+        through it. That is a property of anchored patterns generally, not of
+        that one spelling - the entry reads whichever sentences happen to use
+        its words, and says nothing about the sentences that do not.
+
+        Measured before `estimate` was added to it: five documents carry the
+        ceiling figure and the pattern reached four. SKILL.md states it as "if
+        the estimate exceeds `$5.00`", so SKILL.md - the document that carries
+        the flow - could have drifted alone with the agreement check green.
+
+        So every cost figure in the corpus is now accounted for: either the
+        ceiling entry read it, or it is named above as a different decision. A
+        sixth restatement in a new phrasing fails here rather than silently
+        leaving the table's coverage one document smaller.
+
+        One case it does not flag, stated rather than left to be discovered: an
+        unreadable restatement of the SAME figure, in a document that already
+        states it readably, passes - the value is accounted for in that
+        document either way. It cannot drift while passing, which is the risk
+        this exists for; measured, moving that restatement to `$8.00` fails
+        here naming the document and the figure.
+        """
+        ceiling = dict(self.SHARED_VALUES)["the total walkthrough ceiling"]
+        unread: dict[str, list[str]] = {}
+        for name, text in self.conversation().items():
+            read = set(re.findall(ceiling, text, re.IGNORECASE))
+            missed = [
+                amount
+                for amount in re.findall(r"\$(\d+(?:\.\d{1,2})?)", text)
+                if amount not in read and amount not in self.NON_CEILING_COST_FIGURES
+            ]
+            if missed:
+                unread[name] = sorted(set(missed))
+        self.assertEqual(
+            unread,
+            {},
+            "a cost figure is stated in a phrasing the shared-value ceiling "
+            "entry does not read, and is not declared to be a different "
+            "number. It can drift alone, which is what that entry exists to "
+            "prevent.",
+        )
+        # The entry is asserted to actually reach the document whose phrasing
+        # it was widened for, so a later tightening cannot quietly undo it.
+        self.assertTrue(
+            re.search(ceiling, self.conversation()["SKILL.md"], re.IGNORECASE),
+            "the ceiling entry no longer reads SKILL.md, which states the "
+            "figure without using the word `ceiling`",
+        )
+        # Both directions against invented text: a new phrasing must be
+        # unreadable by the pattern (so the coverage check above has something
+        # to catch), and the declared exemptions must stay exempt.
+        self.assertIsNone(
+            re.search(ceiling, "A single trial may cost `$0.40` on this model."),
+            "the coverage check is meaningless if the pattern reads every "
+            "sentence that mentions money",
+        )
+        self.assertTrue(
+            re.search(ceiling, "Use one total walkthrough ceiling, `$5.00`."),
+        )
 
     # Every way a document states the size of one of the two generated spaces.
     # Each entry captures the QUANTITY and nothing else, so the check is
