@@ -424,8 +424,8 @@ are also not raised at all for a corpus where no row was observed: the 65 above 
 says strictly more.
 
 The last two share a ceiling and a remedy, and differ only in how much of the key it covers. Each
-bounds the run and never stops it: the run proceeds, the claim is bounded, and the review is what to
-do first rather than instead. When most of the expected answers are a model's, the review covers
+bounds the run and never stops it: the review is what to do first rather than instead, and neither
+waits for it. When most of the expected answers are a model's, the review covers
 those answers only; when *all* of them are, a sample of the whole key, because nothing left in it
 was written by anything but the kind of thing the run is scoring. The rung exists because with one
 rung the cap turned on the last row: a dataset with every answer generated was capped at 74 and the
