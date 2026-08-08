@@ -163,14 +163,22 @@ Perform safe, read-only discovery without asking for approval:
 - Record the chosen target project's absolute root and the selected agent's absolute path plus
   callable or command. When an old artifact names another target or agent, preserve it as
   historical context but exclude it from this run's score and report.
-- Find LLM/model call sites and the smallest scoreable agent function.
-- Find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
-  and outcome checks.
-- Infer the agent input/output contract and the product behavior being attempted.
+- Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
+  contract and the product behavior being attempted. Finish this before the search below; the order
+  is the point and not the layout of this list.
+- Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
+  and outcome checks, searching outward from that agent. What it does, the contract just inferred,
+  and the files its own call sites and tests reach are what tell its examples and its grading method
+  apart from the first plausible ones in the tree - and a project holding two agents usually holds
+  material belonging to each. Either of those two may be taken up first; what is load-bearing is
+  that both follow the agent.
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain.
+Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
+reached this way really grades the selected agent is settled later, by the compatibility contract in
+`references/component-creation.md`; searching from the agent is what makes that check a confirmation
+rather than a coin toss.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass

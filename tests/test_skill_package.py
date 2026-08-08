@@ -13792,5 +13792,173 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 self.assertDefect(entries, "more than once")
 
 
+class TheAskReportsTheSearchAndNotTheWorldTests(unittest.TestCase):
+    """What this run looked for and did not find - never what does not exist.
+
+    The inspection reads the project directory. A dataset can be real, in daily
+    use, and outside it: a shared mount, a path configured in an IDE rather than
+    in `.env`, a sibling repository, an environment variable this session never
+    inherited. So "what is not here" states a fact about the world that nothing
+    in the run established, to a user who may be looking straight at the file it
+    denies. Every such user reads the whole card as broken, and they are right.
+
+    It is also what the escape hatch needs. Under "I did not find it", `I have
+    it` is a pointer; under "it is not here", it is a correction, and the guide
+    has put the customer in the position of arguing with its inventory.
+    """
+
+    CREATION = SKILL_ROOT / "references" / "component-creation.md"
+    ASK = "## The one ask, and the path that answers it"
+    ASK_END = "## Dependency matrix"
+
+    def _ask(self) -> str:
+        text = self.CREATION.read_text()
+        self.assertIn(self.ASK, text)
+        return text.split(self.ASK, 1)[1].split(self.ASK_END, 1)[0]
+
+    def _spoken(self) -> str:
+        """The section with blockquote markers dropped.
+
+        The copy the customer hears is a blockquote, so a wrapped sentence
+        carries a `>` into the middle of itself. Matching against the raw text
+        pins where the line breaks fall, which is layout rather than meaning,
+        and a reflow would then read as a deleted rule.
+        """
+        lines = (line.lstrip("> ") for line in self._ask().splitlines())
+        return " ".join(" ".join(lines).casefold().split())
+
+    def test_the_copy_states_the_search_rather_than_the_project(self) -> None:
+        normalized = self._spoken()
+        # The finding is scoped to the looking, in the sentence the user hears.
+        self.assertIn("searching this project i did not find", normalized)
+        self.assertIn("they may well exist somewhere i did not look", normalized)
+        # And the shape this replaces cannot come back by paraphrase: it is the
+        # assertion of absence in the world that is refused, not one spelling.
+        self.assertNotIn("what is not here", normalized)
+
+    def test_the_prohibition_carries_the_reason_it_exists(self) -> None:
+        """A rule with no reason is re-litigated by the next editor.
+
+        The reason is the mechanism: the run searched one directory, and the
+        material it did not see may be one symlink away.
+        """
+        normalized = self._spoken()
+        self.assertIn("never say the material does not exist", normalized)
+        self.assertIn("this run reads the project directory", normalized)
+        for elsewhere in ("shared mount", "sibling repo", "did not inherit"):
+            with self.subTest(elsewhere=elsewhere):
+                self.assertIn(elsewhere, normalized)
+        self.assertIn("asserts what this run did not check", normalized)
+        # The hedge is budgeted like the cost sentence beside it, because three
+        # hedges in front of a choice is the compliance gate this ask refuses.
+        self.assertIn("the search to one clause", normalized)
+
+    def test_the_scripts_really_do_speak_this_way(self) -> None:
+        """Joint guidance-and-scorer, because a quotation can go stale.
+
+        The reference tells the editor that `readiness.py` already scopes its
+        absence findings to what reached the score. That is an argument only
+        while it stays true of `readiness.py`, so it is read off the module
+        rather than trusted - the same pairing the routing bullet needed when a
+        guidance-only assertion turned out to pin nothing.
+        """
+        self.assertIn("provided *to this score*", self._ask())
+        readiness = _READINESS.read_text()
+        self.assertIn("No dataset was provided to this score", readiness)
+        # The agent pillar's silent state says it too, and that is the one the
+        # sibling branch's ceiling hangs on.
+        self.assertIn("reached this score", readiness)
+        # And the distinction is not this test's invention: `DatasetFacts`
+        # already separates "you have no data" from "I could not read the data
+        # you gave me", for the reason the reference now gives - reporting the
+        # second as the first tells a customer holding a good dataset to go and
+        # get one. The guidance was the last place still saying the first.
+        self.assertIn('"you have no data" and "I could not read the', readiness)
+        self.assertIn("tells a customer holding a", readiness)
+
+
+class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
+    """Find the agent, then let it lead to its dataset and its ruler.
+
+    Stage 1 already listed the agent above the material, but a list is not an
+    instruction - nothing said the agent's shape should DECIDE which dataset and
+    which evaluator get picked, so an assistant satisfying every sentence could
+    still take the first plausible file in the tree. In a project holding two
+    agents that file usually belongs to the other one.
+
+    Between dataset and evaluation method the order carries no such argument,
+    and the guidance says so rather than inventing a preference.
+    """
+
+    def _stage_one(self) -> str:
+        text = SKILL.read_text()
+        self.assertIn("### 1. Inspect quietly", text)
+        return text.split("### 1. Inspect quietly", 1)[1].split(
+            "#### Opening readiness gate", 1
+        )[0]
+
+    def test_the_agent_leads_and_the_guidance_says_why(self) -> None:
+        normalized = " ".join(self._stage_one().casefold().split())
+        agent = normalized.index("smallest scoreable agent function")
+        material = normalized.index("then find datasets")
+        self.assertLess(
+            agent,
+            material,
+            "the material is searched for before the agent that would identify it",
+        )
+        self.assertIn("finish this before the search below", normalized)
+        self.assertIn(
+            "the order is the point and not the layout of this list", normalized
+        )
+        # The reason, which is the instruction: search FROM the agent.
+        self.assertIn("searching outward from that agent", normalized)
+        for lead in (
+            "the contract just inferred",
+            "its own call sites and tests reach",
+            "two agents usually holds material belonging to each",
+        ):
+            with self.subTest(lead=lead):
+                self.assertIn(lead, normalized)
+        # The contract is inferred with the agent rather than after the search,
+        # because it is one of the things the search is supposed to use.
+        self.assertLess(normalized.index("input/output contract"), material)
+
+    def test_the_last_two_are_not_ordered_against_each_other(self) -> None:
+        """Only the claim the evidence supports.
+
+        Dataset-then-evaluator and evaluator-then-dataset are equally good; what
+        is load-bearing is that both follow the agent. Saying more would be a
+        rule nobody measured.
+        """
+        normalized = " ".join(self._stage_one().casefold().split())
+        self.assertIn("either of those two may be taken up first", normalized)
+        self.assertIn("what is load-bearing is that both follow the agent", normalized)
+        # And it is phrased as a free choice rather than as an absence of
+        # effect: `claims_no_effect` refuses "does not matter" corpus-wide,
+        # because a run that cannot tell two orders apart has not shown they
+        # are the same. The rule caught this sentence on its first wording.
+        self.assertFalse(claims_no_effect("Either of those two may be taken up first."))
+
+    def test_compatibility_is_cited_where_it_lives_and_not_restated(self) -> None:
+        """Already covered, so this stage points instead of repeating.
+
+        A rule stated in two documents is a rule that can be changed in one, and
+        the compatibility contract is the home of "does this evaluator actually
+        grade this agent". Stage 1 cites it and states none of its clauses.
+        """
+        stage = " ".join(self._stage_one().casefold().split())
+        self.assertIn("`references/component-creation.md`", stage)
+        self.assertIn("compatibility contract", stage)
+        creation = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        self.assertIn("## Compatibility contract", creation)
+        for clause in (
+            "Dataset expected output matches the evaluator's gold contract",
+            "Agent output is parseable by the evaluator",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, creation)
+                self.assertNotIn(clause.casefold(), stage)
+
+
 if __name__ == "__main__":
     unittest.main()

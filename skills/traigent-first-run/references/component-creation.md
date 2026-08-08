@@ -44,23 +44,32 @@ The matrix below says what gets built. This is what the user was told before it 
 owns that it is one question, when it is asked, and what it has to carry. Here is what it sounds
 like and what happens to the answer.
 
-Say it in their words, naming only what is actually missing:
+Say it in their words, naming only what this run looked for and did not find:
 
-> Your agent is here and it runs. What is not here is any set of examples to score it on, or
-> anything that says what a right answer looks like. I can write both from the agent itself -
-> examples that exercise what it actually does, and a grading method to match. Examples I write are
-> weaker evidence than examples out of your product: the score carries the generated-data ceiling
-> because of it, so this run can show the workflow working and cannot tell you how your product
-> performs.
+> Your agent is here and it runs. Searching this project I did not find any set of examples to
+> score it on, or anything that says what a right answer looks like - they may well exist somewhere
+> I did not look. I can write both from the agent itself - examples that exercise what it actually
+> does, and a grading method to match. Examples I write are weaker evidence than examples out of
+> your product: the score carries the generated-data ceiling because of it, so this run can show the
+> workflow working and cannot tell you how your product performs.
 >
 > Shall I go ahead? Or reply `I have it` with a path - `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours.
 
-Keep the two answers on the last line and the cost to one sentence. Three hedges in front of a
-choice reads as a compliance gate; one reads as a colleague who has already done the work. Do not
-soften that sentence, and do not oversell the other exit either: what the user is choosing between
-is a real demonstration on generated material today and a delay of unknown length. Proceeding is
-one keystroke, and it is what a user with nothing to point at should do.
+Never say the material does not exist. This run reads the project directory, and a dataset can be
+real, in use, and outside it - a shared mount, a sibling repo, a path configured somewhere this
+shell never saw, an environment variable this session did not inherit. "There is none here" asserts
+what this run did not check, and a user looking straight at their dataset reads the whole card as
+wrong. It is also what makes `I have it` the natural next line rather than a correction: nobody is
+being told they were wrong, they are being asked to point. `readiness.py` already speaks this way -
+its caps say a dataset was not provided *to this score* - so this is the wording catching up with
+the script.
+
+Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
+hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already
+done the work. Do not soften that sentence, and do not oversell the other exit either: what the user
+is choosing between is a real demonstration on generated material today and a delay of unknown
+length. Proceeding is one keystroke, and it is what a user with nothing to point at should do.
 
 ### When a path arrives
 
