@@ -331,9 +331,8 @@ product policy, or broaden a rubric. For those judgment-dependent changes, propo
 and ask first.
 
 After any repair, re-run the same checks that produced the advisory, the applicable calibration,
-and the readiness score; record that gate result without overwriting the opening one. Do not
-clear `❗` because a file changed or because the score rose; clear it only when new evidence
-resolves the limitation.
+and the readiness score. Do not clear `❗` because a file changed or because the score rose; clear
+it only when new evidence resolves the limitation.
 
 Name what changed by row id. Whenever this run repairs rows into a working copy or generates rows
 to fill a gap, record both lists in `traigent-runs/run-plan.md` and say them to the user: these ids

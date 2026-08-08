@@ -29,8 +29,7 @@ Load each reference when its stage begins:
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any creation or repair,
-again as a required step of local validation, and again after each repair or creation, so nothing
-is ever paid for against a blocking condition believed fixed but never rechecked - and once more
+again as a required step of local validation, again after each repair or creation, and once more
 after the run, to rank the close. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
@@ -39,8 +38,7 @@ the score. A config-space file found before this run's enhanced search is histor
 current-run readiness evidence. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
-never overwrite the recorded opening score. Record each later run as a gate result: which caps
-cleared, and on what evidence.
+never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
@@ -203,8 +201,7 @@ by an earlier guided run: it is historical, unverified context, not current wiri
 its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
 `wired` list does not make it current. Every guided run does this, including a zero-anchor run.
 The opening score is not skippable, always reports all three pillars, and is the score this run
-reports for the project - the only one taken on material the run did not create. Show it before
-anything is created or repaired.
+reports for the project. Show it before anything is created or repaired.
 
 Say that the score reads the project and changes nothing in it. Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
@@ -732,9 +729,8 @@ interpreted.
 Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence to read
 which caps remain, passing the current run's `--config-space traigent-runs/config-space.json` only
 when its enhanced search emitted it; otherwise score the agent from absent evidence. Rank the close
-from those caps, and never show that score or set it beside the opening one - once this run has
-filled the gaps, a score mostly grades our own substitutes. Leave the user knowing which remaining
-gap to close first.
+from those caps, and never show that score or set it beside the opening one. Leave the user knowing
+which remaining gap to close first.
 
 Feature-detect local audit and connected insight capabilities. Report only fields actually
 returned, attribute each claim to its artifact, and otherwise say no verified local artifact was

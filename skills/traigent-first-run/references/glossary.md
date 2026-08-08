@@ -272,14 +272,15 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   It is computed at the start of every run - before anything is created or
   repaired - and again after each repair or creation, to check that what failed
   a gate now passes it before anything is paid for. Only the opening number is
-  reported as your project's score; a later one is read for which caps cleared,
-  because a score taken once substitutes exist largely grades those substitutes.
+  your project's score: a later one mostly grades the substitutes this run
+  wrote, so it is read for which caps cleared instead.
   It decides what the run does next: repair, create, or continue as a clearly
   labeled walkthrough. A low number alone does not stop a safe walkthrough, but
   a blocking cap does stop paid optimization when the current components or
-  evidence cannot support a trustworthy comparison. `agent-no-varying-knobs` is advisory whenever no
-  settings document was provided - see that entry above for why one never is at
-  the opening score - so it bounds the score at 45 and stops nothing.
+  evidence cannot support a trustworthy comparison. `agent-no-varying-knobs` is
+  advisory whenever no settings document was provided - see that entry above for
+  why one never is at the opening score - so it bounds the score at 45 and stops
+  nothing.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
