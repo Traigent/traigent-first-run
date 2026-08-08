@@ -202,10 +202,10 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # - the installed SDK is, and these numbers are only what this score measures a
 # knob's span against before one is there to ask.
 #
-# That used to be argued by deferring to a `verify-against-sdk` flag, which no
-# parser in this bundle has ever defined (traigent-first-run#179). It was not a
-# stale name for something real: it named a capability that does not exist, and
-# it was cited as the reason a vendored entry was safe to keep - so a false
+# That used to be argued by deferring to a `--verify-against-sdk` flag, which
+# no parser in this bundle has ever defined (traigent-first-run#179). It was not
+# a stale name for something real: it named a capability that does not exist,
+# and it was cited as the reason a vendored entry was safe to keep - so a false
 # statement was load-bearing for a scoring decision.
 #
 # The citation is deleted rather than built, and the reason is recorded here so
@@ -215,9 +215,9 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # table and the SDK is a real and separate want, but it fires when the SDK IS
 # importable - the exceptional case here, not the ordinary one - so it belongs
 # to its own trigger and its own issue, not to a footnote on a table that is
-# read before any install. Note the flag name is written WITHOUT its dashes
-# above, because spelling it as a flag is the shape
-# `test_the_guidance_names_no_flag_that_does_not_exist` now refuses.
+# read before any install. The flag is spelled normally here and registered in
+# `ABSENT_FLAGS`, because a sentence recording that a name does not exist has
+# to be able to say the name.
 #
 # One preset is deliberately NOT vendored. `max_tokens` has a canonical range
 # upstream and no entry here, because an entry here is what makes a knob

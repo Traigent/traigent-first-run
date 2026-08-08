@@ -12219,8 +12219,39 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # added to the DEFINED side rather than subtracted from the mentioned one.
     ARGPARSE_BUILTIN_FLAGS = frozenset({"--help"})
 
+    # Flags this package names on purpose while saying they do NOT exist.
+    # `EXTERNAL_FLAGS` cannot carry these: it means "another tool owns this
+    # name", and a phantom is owned by nobody. Without a third answer the only
+    # exits from the check below are to delete a true sentence or to invent an
+    # `.md` mention, and the first commit after #179 took a fourth: it spelled
+    # the flag without its dashes to get past the regex, which is the check
+    # being satisfied instead of its intent.
+    #
+    # An entry is not a blanket permission, or #179's own sentence would pass
+    # again. It permits the RECORD of a deletion, not a fresh claim, so the
+    # value is the issue that recorded it and every passage naming the flag has
+    # to cite that issue. The defect cited nothing - it said the flag "re-reads
+    # them when the SDK *is* importable", which is what a capability claim
+    # looks like - so the defect still fails, in the same file, restored
+    # verbatim.
+    #
+    # Nor is an entry permanent. Both liveness halves are asserted below: the
+    # flag must still be absent from every parser (build it and the entry must
+    # go), and it must still be named somewhere (stop naming it and the entry
+    # must go). Script comments and docstrings only - guidance addressed to the
+    # assistant is an instruction, and there is no honest reason for one to
+    # name a flag that does not exist.
+    ABSENT_FLAGS: dict[str, str] = {
+        "--verify-against-sdk": "#179",
+    }
+
+    # A backtick pair in a comment is a command line, and its first words say
+    # whose command it is.
+    CODE_SPAN = re.compile(r"`([^`]+)`")
+    FLAG_PATTERN = re.compile(r"--[a-z0-9][a-z0-9-]*")
+
     @staticmethod
-    def script_prose(source: str) -> list[str]:
+    def script_comments_and_docstrings(source: str) -> list[str]:
         """Every comment and docstring in one script, and nothing else.
 
         Deliberately not the raw text. A script's own `add_argument("--json")`
@@ -12228,11 +12259,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         file would compare the parser against itself and pass by construction.
         What is checked is only the part a human wrote ABOUT the tool, which is
         where a name can be wrong without anything failing.
+
+        Consecutive comment lines are returned as one passage rather than one
+        each, because a sentence in a comment block wraps wherever 88 columns
+        fall - so a backtick pair, and the command inside it, routinely spans
+        two lines. Reading them separately would leave the second half looking
+        like unquoted prose.
         """
-        prose: list[str] = []
+        passages: list[str] = []
+        block: list[str] = []
+        previous_line = -2
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type == tokenize.COMMENT:
-                prose.append(token.string)
+            if token.type != tokenize.COMMENT:
+                continue
+            if token.start[0] != previous_line + 1 and block:
+                passages.append("\n".join(block))
+                block = []
+            block.append(token.string)
+            previous_line = token.start[0]
+        if block:
+            passages.append("\n".join(block))
         for node in ast.walk(ast.parse(source)):
             if isinstance(
                 node,
@@ -12240,8 +12286,51 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ):
                 docstring = ast.get_docstring(node, clean=False)
                 if docstring:
-                    prose.append(docstring)
-        return prose
+                    passages.append(docstring)
+        return passages
+
+    @staticmethod
+    def prose_sentences(passage: str) -> list[str]:
+        """One comment block or docstring, as the sentences a reader reads.
+
+        The sentence is the unit a claim is made in, so it is the unit the
+        `ABSENT_FLAGS` record is checked against. A whole block is too coarse:
+        the block that records #179's deletion cites #179, and a claim planted
+        three sentences above it would inherit that citation and pass.
+        """
+        text = " ".join(
+            re.sub(r"^\s*#\s?", "", line).strip() for line in passage.splitlines()
+        )
+        return [part for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+
+    @classmethod
+    def flags_claimed_for_bundled_scripts(
+        cls, passage: str, script_names: frozenset[str]
+    ) -> set[str]:
+        """The `--flags` in one passage that this bundle is claiming to define.
+
+        A backtick pair holding a command line belongs to whichever program it
+        names. `pip install --upgrade --no-cache-dir -r reqs.txt` is a true
+        sentence about pip; no bundled script can define `--upgrade` and the
+        advice "delete the name, or build the flag" is nonsense addressed to
+        it. So a code span that names a program and names no bundled script is
+        another tool's, and its flags are not read as claims about this bundle.
+
+        Everything else is read: prose outside any backtick pair, and a code
+        span that is only a flag (`` `--verify-against-sdk` `` names no
+        program, so it is a bare mention that happens to be quoted). That is
+        deliberate - #179 arrived as an unquoted `--verify-against-sdk`
+        mid-sentence, and quoting it would not have made it truer.
+        """
+        remainder = passage
+        claimed: set[str] = set()
+        for span in cls.CODE_SPAN.findall(passage):
+            remainder = remainder.replace(f"`{span}`", " ")
+            programs = [token for token in span.split() if not token.startswith("-")]
+            if programs and not set(programs) & script_names:
+                continue
+            claimed |= set(cls.FLAG_PATTERN.findall(span))
+        return claimed | set(cls.FLAG_PATTERN.findall(remainder))
 
     def test_the_guidance_names_no_flag_that_does_not_exist(self) -> None:
         """#62's class: an instruction that cannot be followed as written.
@@ -12262,10 +12351,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         reason a scoring entry could stay. A name that does not exist argues
         just as convincingly as one that does, which is what makes it worth a
         check rather than a proofread.
+
+        The script half reads a flag as a claim about THIS bundle, which is
+        what makes "delete the name, or build the flag" the right advice. A
+        flag inside another tool's command line is neither, so the passage is
+        attributed to a program before its flags are collected - otherwise a
+        comment recording the real `pip install --upgrade` a contributor must
+        run fails a check about argparse, and the only exits are to delete a
+        true sentence or to misspell it.
         """
         defined: set[str] = set(self.ARGPARSE_BUILTIN_FLAGS)
         scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
         self.assertTrue(scripts, "found no bundled scripts to read flags from")
+        script_names = frozenset(script.name for script in scripts)
         sources = {script: script.read_text(encoding="utf-8") for script in scripts}
         for source in sources.values():
             tree = ast.parse(source)
@@ -12281,44 +12379,169 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                             defined.add(argument.value)
         self.assertTrue(defined, "found no flags to check against")
 
-        mentioned: set[str] = set()
+        in_documents: set[str] = set()
         for text in self.guidance().values():
-            mentioned |= set(re.findall(r"`(--[a-z0-9][a-z0-9-]*)`", text))
-        self.assertTrue(mentioned, "found no flag mentions to check")
+            in_documents |= set(re.findall(r"`(--[a-z0-9][a-z0-9-]*)`", text))
+        self.assertTrue(in_documents, "found no flag mentions to check")
 
         # The scripts are checked per file and reported per file, because the
         # answer "some comment somewhere names a flag that does not exist" is
         # the one that made this defect survive a search.
-        in_comments: dict[str, set[str]] = {}
+        in_scripts: dict[str, set[str]] = {}
+        unrecorded: dict[str, list[str]] = {}
         for script, source in sources.items():
             named: set[str] = set()
-            for passage in self.script_prose(source):
-                named |= set(re.findall(r"--[a-z0-9][a-z0-9-]*", passage))
-            in_comments[script.name] = named - defined - self.EXTERNAL_FLAGS
+            for passage in self.script_comments_and_docstrings(source):
+                for sentence in self.prose_sentences(passage):
+                    claimed = self.flags_claimed_for_bundled_scripts(
+                        sentence, script_names
+                    )
+                    named |= claimed
+                    for flag in sorted(claimed & set(self.ABSENT_FLAGS)):
+                        if self.ABSENT_FLAGS[flag] not in sentence:
+                            unrecorded.setdefault(script.name, []).append(flag)
+            in_scripts[script.name] = named
         self.assertEqual(
-            {name: sorted(missing) for name, missing in in_comments.items() if missing},
+            unrecorded,
+            {},
+            "a passage names a flag recorded as absent without citing the "
+            "issue that recorded it. That permission covers the record of a "
+            "deletion, not a fresh claim: #179 arrived as a bare "
+            "--verify-against-sdk mid-sentence saying what it does, and a "
+            "sentence like that cites nothing because it believes the flag "
+            "is real",
+        )
+        undefined_in_scripts = {
+            name: sorted(named - defined - self.EXTERNAL_FLAGS - set(self.ABSENT_FLAGS))
+            for name, named in in_scripts.items()
+        }
+        self.assertEqual(
+            {
+                name: missing
+                for name, missing in undefined_in_scripts.items()
+                if missing
+            },
             {},
             "a bundled script's own comments or docstrings name a flag no "
             "bundled script defines. The next author reads that comment as a "
             "statement about what this tool can do, and #179 is what happens "
-            "when one of them is cited as a reason: delete the name, or build "
-            "the flag",
+            "when one of them is cited as a reason: delete the name, build the "
+            "flag, or - if the sentence is about another tool this bundle does "
+            "not own, or is saying the flag does not exist - record that in "
+            "EXTERNAL_FLAGS or ABSENT_FLAGS with the reason",
         )
 
         self.assertEqual(
-            sorted(mentioned - defined - self.EXTERNAL_FLAGS),
+            sorted(in_documents - defined - self.EXTERNAL_FLAGS),
             [],
             "the guidance names a flag no bundled script defines; an assistant "
             "following that instruction has to guess what was meant",
         )
-        # The allowlist is the escape hatch, so it gets the same treatment as
+        # Both registries are escape hatches, so both get the same treatment as
         # the rule: an entry nothing mentions any more is removed, not left to
-        # quietly widen what the check permits.
+        # quietly widen what the check permits. A script-only mention counts -
+        # a flag named in a comment and nowhere else is exactly the case
+        # EXTERNAL_FLAGS has to serve now that comments are read, and reading
+        # only the documents here left that contributor no working exit.
+        mentioned = in_documents.union(*in_scripts.values())
         self.assertEqual(
             sorted(self.EXTERNAL_FLAGS - mentioned),
             [],
             "an allowlisted external flag is no longer mentioned anywhere",
         )
+        self.assertEqual(
+            sorted(set(self.ABSENT_FLAGS) - mentioned),
+            [],
+            "a flag recorded as absent is no longer named anywhere; delete the "
+            "ABSENT_FLAGS entry rather than leaving a standing permission",
+        )
+        self.assertEqual(
+            sorted(set(self.ABSENT_FLAGS) & defined),
+            [],
+            "a flag recorded as absent now EXISTS. The entry says this bundle "
+            "names it while saying it does not exist, which is no longer true: "
+            "delete the entry and fix the sentence it was excusing",
+        )
+        for flag, recorded_by in sorted(self.ABSENT_FLAGS.items()):
+            with self.subTest(absent=flag):
+                self.assertRegex(
+                    recorded_by,
+                    r"^#\d+$",
+                    f"{flag} is permitted without naming the issue that "
+                    "recorded it as absent, which is the allowlist entry "
+                    "nobody can review",
+                )
+
+    def test_the_flag_check_can_tell_whose_command_line_it_is_reading(self) -> None:
+        """The attribution is the whole guard, and it fails in both directions.
+
+        Widen it and #179 comes back: `--verify-against-sdk` stops being read
+        as a claim about this bundle. Narrow it and it false-reds on the true
+        sentences a comment has to be able to say - which is what sent the
+        first commit after #179 to spelling the flag without its dashes. So it
+        is run against invented passages, not only against the clean tree.
+        """
+        scripts = frozenset({"readiness.py", "preflight.py", "calibrate_evaluator.py"})
+        claimed = self.flags_claimed_for_bundled_scripts
+        for passage, expected in (
+            # #179's own shape: a bare flag mid-sentence, and the same flag
+            # quoted - quoting names no program, so it is still a claim.
+            (
+                "# it cannot import them; --verify-against-sdk re-reads them",
+                {"--verify-against-sdk"},
+            ),
+            ("# deferring to a `--verify-against-sdk` flag", {"--verify-against-sdk"}),
+            # Another tool's command line, named because a contributor has to
+            # run it. Nothing here is this bundle's to define or delete.
+            ("# Install with `pip install --upgrade --no-cache-dir -r r.txt`.", set()),
+            ("# CI runs `docker run --rm --network none --read-only`.", set()),
+            ("# Ignored files come from `git ls-files --error-unmatch`.", set()),
+            # A bundled script named inside the span puts it back in scope,
+            # including behind an interpreter.
+            (
+                "# `readiness.py --verify-against-sdk` would re-read them",
+                {"--verify-against-sdk"},
+            ),
+            (
+                "# run `python preflight.py --verify-against-sdk`",
+                {"--verify-against-sdk"},
+            ),
+            # Prose around another tool's command line is still prose: the
+            # span is subtracted, the sentence is not.
+            (
+                "# `pip install --upgrade` first, then --verify-against-sdk",
+                {"--verify-against-sdk"},
+            ),
+        ):
+            with self.subTest(passage=passage):
+                self.assertEqual(claimed(passage, scripts), expected, passage)
+        # A wrapped comment block is one passage, or the second line of every
+        # backtick pair reads as unquoted prose and false-reds.
+        wrapped = self.script_comments_and_docstrings(
+            "# Install the pinned stack with `pip install --upgrade\n"
+            "# --no-cache-dir -r reqs.txt`.\n"
+            "x = 1\n"
+        )
+        self.assertEqual(len(wrapped), 1, wrapped)
+        self.assertEqual(claimed(wrapped[0], scripts), set())
+
+        # And the ABSENT_FLAGS record is read per SENTENCE, not per block. The
+        # block below is #179 exactly as it merged: the claim, then - eleven
+        # lines later, in the same comment - the record that cites the issue.
+        # Reading the block whole would let the citation cover the claim.
+        block = self.script_comments_and_docstrings(
+            "# The scorer cannot import them; --verify-against-sdk re-reads\n"
+            "# them when the SDK is importable.\n"
+            "# That `--verify-against-sdk` citation was a phantom (#179).\n"
+            "x = 1\n"
+        )[0]
+        naming = [
+            sentence
+            for sentence in self.prose_sentences(block)
+            if "--verify-against-sdk" in claimed(sentence, scripts)
+        ]
+        self.assertEqual(len(naming), 2, naming)
+        self.assertEqual([s for s in naming if "#179" not in s], naming[:1], naming)
 
     def test_a_budget_raise_carries_its_reason(self) -> None:
         """The committed ledger obeys the rules the mechanism enforces.
