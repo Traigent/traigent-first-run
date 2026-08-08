@@ -208,14 +208,15 @@ flags, tool selection - and record each with the line that shows it. Never write
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
-agent's language or on how the card would look without it - and the flag is left off only where
-the inventory found no agent at all. Where an agent was found and its settings cannot be got
-out of it, that is a limit of this run's reach and not a finding about the project, so the
-unestablished-space ceiling is not the answer to it: name the agent you could not read, ask to be
-pointed at a config space for it, and carry that on the run's single discovery question rather than
-raising a second one; proceed with whatever can be varied if no path comes back. That ceiling
-settles the state only for a caller with nobody to ask - `readiness.py` invoked directly, in CI or
-over a fixture. `references/component-creation.md` owns the shape.
+agent's language or on how the card would look without it - and the flag is left off only where the
+inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
+name it and say what stopped the read, then offer to be pointed at source that can be read: that
+offer changes the opening score, which is what makes it worth asking, and it rides on whatever
+question this run already puts in the same turn rather than adding one. Proceed with what can be
+varied if nothing comes back. Never ask for a config-space file here - the paragraph above omits
+every one of those found before this run's search, so it cannot answer this. The ceiling left
+standing is read by stage 4's cap routing below, which is unchanged.
+`references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the baseline the
 closing report measures against. Show it before anything is created or repaired.
 

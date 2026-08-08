@@ -2,9 +2,9 @@
 
 follows: 0016
 resident-ceiling: 67_050
-resident-measured: 66_934
+resident-measured: 66_997
 total-ceiling: 306_350
-total-measured: 306_226
+total-measured: 306_289
 
 Entry 0016 bought the instruction to open the agent and write down what it can
 already vary, and closed with one conditional clause: skip that work when there
@@ -24,9 +24,17 @@ wherever an agent turned up costs a few lines and removes the state instead.
 
 The rest of the addition is the routing, and its length is the argument. Reach
 and evidence are different things: failing to open somebody's file says nothing
-whatever about their project, so the honest response names the file, requests a
-settings document for it, rides on the question this run already puts rather
-than adding another, and proceeds regardless if none returns. The ceiling is
-kept and narrowed to the only caller it still fits - a direct invocation with no
-human present to answer - and saying which caller that is takes a clause that
-would otherwise be guessed at.
+whatever about their project, so the honest response names it, says what stopped
+the reading, invites a pointer to source that can be read, rides on whatever
+question the turn already carries rather than adding another, and continues
+regardless when nothing arrives. One clause of that is a prohibition and earns
+its bytes twice over: asking for a settings file would contradict the sentence
+directly above, which throws away every such file predating this search, so the
+customer would answer a question whose answer must then be discarded.
+
+The ceiling is kept and its interpretation is not repeated. Stage 4 already
+rules on what an advisory reading of it means, and a draft of this entry both
+restated that ruling and shrank it to callers with nobody present - untrue,
+because a closing card following a halted or empty search lands on the identical
+advisory reading while the customer watches. Pointing costs a clause; owning it
+twice costs a disagreement nobody would notice.

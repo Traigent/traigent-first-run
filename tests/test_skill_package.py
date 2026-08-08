@@ -13062,10 +13062,9 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     never becomes a second one.
 
     The ceiling itself is deliberately NOT removed. It is what stops silence
-    outscoring a settings document that declares the same empty space, and it
-    remains the right answer for the caller this guidance does not govern: a
-    direct `readiness.py` invocation in CI or over a fixture, which has nobody
-    to ask.
+    outscoring a settings document that declares the same empty space, and its
+    reading already has a home in stage 4's cap routing. This gate points there
+    rather than giving it a second one.
     """
 
     def _gate(self) -> str:
@@ -13089,34 +13088,65 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         # an unreadable-but-present agent fall through to the ceiling.
         self.assertNotIn("omit it only when there is no agent to read", gate)
 
-    def test_a_read_that_cannot_be_done_asks_instead_of_capping(self) -> None:
-        """Our reach is not their project, and it gets a question."""
+    def test_a_read_that_cannot_be_done_offers_rather_than_settling(self) -> None:
+        """Say what stopped it, offer the one thing that would fix it, go on."""
         gate = self._gate()
-        self.assertIn("a limit of this run's reach", gate)
-        self.assertIn("not a finding about the project", gate)
-        self.assertIn("ceiling is not the answer to it", gate)
         # Named, so the user can disagree with a read of their own code.
-        self.assertIn("name the agent you could not read", gate)
-        self.assertIn("ask to be pointed at a config space", gate)
-        # One question, not two - the constraint the whole discovery ask exists
-        # to keep, applied to this state rather than restated for it.
-        self.assertIn("rather than raising a second one", gate)
-        # And it does not become a wait: no path back still runs.
-        self.assertIn("proceed with whatever can be varied", gate)
+        self.assertIn("name it and say what stopped the read", gate)
+        self.assertIn("offer to be pointed at source that can be read", gate)
+        # Permitted by the operating contract's own test for an ask: it changes
+        # the result. Stated, because "do not ask the user to solve missing
+        # setup pieces" sits two stages away and this is not that.
+        self.assertIn("changes the opening score", gate)
+        # And it never becomes a second question or a wait.
+        self.assertIn("rather than adding one", gate)
+        self.assertIn("proceed with what can be varied if nothing comes back", gate)
 
-    def test_the_ceiling_is_kept_and_scoped_to_the_caller_with_nobody_to_ask(
+    def test_the_offer_cannot_ask_for_the_file_this_gate_withholds(self) -> None:
+        """The contradiction this nearly shipped, pinned so it cannot return.
+
+        The obvious-looking remedy for an unread agent is "send me your config
+        space", and it is wrong here: the paragraph directly above omits every
+        config-space file found before this run's enhanced search, so a file the
+        user points at cannot reach the opening score at all. The user would be
+        handed a question whose answer this gate must throw away.
+
+        Both halves are asserted together - the prohibition is only meaningful
+        while the withholding rule it defers to is still in the same section.
+        """
+        gate = self._gate()
+        self.assertIn("never ask for a config-space file here", gate)
+        self.assertIn(
+            "explicitly omit every config-space file found before this run's "
+            "enhanced search",
+            gate,
+        )
+
+    def test_the_ceiling_is_kept_and_its_reading_is_not_restated_here(
         self,
     ) -> None:
         """Guidance and scorer together, because either alone pins nothing.
 
-        Guidance saying "advisory, and only for a machine caller" over a scorer
-        that blocks would be the contradiction; so would a scorer that stopped
-        capping while the guidance still explained the cap. Both halves are read
-        here.
+        The ceiling stays. What this gate must NOT do is give it a second
+        reading: stage 4's cap routing already says it is advisory where
+        neither a document nor a reading reached the score, and that nothing
+        there is a verdict on the project. A draft of this change restated that
+        AND narrowed it to "a caller with nobody to ask" - which is false, since
+        `run-safety.md` reaches the same advisory cap on a closing card after a
+        stopped, failed, or zero-trial search, with the user sitting right
+        there. So the gate points and the routing keeps its one home.
         """
         gate = self._gate()
-        self.assertIn("settles the state only for a caller with nobody to ask", gate)
-        self.assertIn("`readiness.py` invoked directly, in ci or over a fixture", gate)
+        self.assertIn("stage 4's cap routing below, which is unchanged", gate)
+        # The home it points at, still saying it, still once.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        routing = skill.split(
+            "`agent-no-varying-knobs` blocks where something was read", 1
+        )
+        self.assertEqual(len(routing), 2, "the cap-routing paragraph has moved")
+        self.assertIn("nothing there is a verdict on the project", routing[1])
+        # And the false narrowing cannot come back.
+        self.assertNotIn("only for a caller with nobody to ask", skill)
 
         # The scorer half. The silent state still caps, still does not block,
         # and still sits at the shared ceiling.
