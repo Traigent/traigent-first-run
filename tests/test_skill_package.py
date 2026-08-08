@@ -1653,10 +1653,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("non-technical", combined)
         self.assertNotIn("not for experienced", combined)
 
-    def test_active_run_guidance_contains_only_required_account_links(self) -> None:
-        combined = "\n".join(path.read_text() for path in assistant_facing_documents())
-        urls = re.findall(r"https?://[^`\s)]+", combined)
-        allowed_hosts = {
+    ACCOUNT_LINK_HOSTS = frozenset(
+        {
             "portal.traigent.ai",
             # The public site is the ONLY destination for a user who holds no
             # access code yet - the portal's register page refuses them, so
@@ -1667,18 +1665,75 @@ class SkillPackageTests(unittest.TestCase):
             "platform.openai.com",
             "console.anthropic.com",
         }
+    )
+
+    @classmethod
+    def _account_link_offence(cls, url: str) -> str | None:
+        """Why this address may not be handed to a user, or `None`.
+
+        Trailing sentence punctuation is stripped BEFORE the host is read, not
+        only before the path is compared. The bare-site rule below already did
+        that; the host check did not, so an address written at the end of a
+        sentence - `https://traigent.ai.` - was read as the host
+        `traigent.ai.` and reported as a destination the guide may not name.
+        A false red on the one address the guidance is required to hand over,
+        waiting for the first author who ends a sentence with it.
+        """
+        url = url.rstrip(").,")
+        host = url.split("/", 3)[2]
+        if host not in cls.ACCOUNT_LINK_HOSTS:
+            return f"{host} is not a destination this guide may name"
+        # Host granularity is enough for the provider links, and not enough for
+        # this one: `traigent.ai/register` is a page that does not exist and is
+        # the exact shape run-safety forbids handing to a user with no access
+        # code. The public site is only ever given bare.
+        if host == "traigent.ai" and url != "https://traigent.ai":
+            return "the public site is handed over bare, never with a path"
+        return None
+
+    def test_active_run_guidance_contains_only_required_account_links(self) -> None:
+        """Every address the guidance hands a user, and nothing else.
+
+        Both halves are probed. A clean corpus proves the documents are tidy
+        today, not that this check can see an address that is not - and it
+        never had, because no disallowed URL has ever been in the tree for it
+        to reject. The bare-site rule in particular had no failing case at all,
+        so it could have been deleted without anything going red.
+        """
+        combined = "\n".join(path.read_text() for path in assistant_facing_documents())
+        urls = re.findall(r"https?://[^`\s)]+", combined)
+        self.assertTrue(urls, "no address was extracted, so nothing was checked")
         for url in urls:
-            host = url.split("/", 3)[2]
-            self.assertIn(host, allowed_hosts)
-            # Host granularity is enough for the provider links, and not enough
-            # for this one: `traigent.ai/register` is a page that does not exist
-            # and is the exact shape run-safety forbids handing to a user with
-            # no access code. The public site is only ever given bare.
-            if host == "traigent.ai":
-                self.assertEqual(
-                    url.rstrip(").,"),
-                    "https://traigent.ai",
-                    "the public site is handed over bare, never with a path",
+            with self.subTest(url=url):
+                self.assertIsNone(self._account_link_offence(url))
+
+        for planted in (
+            # A destination this guide may not name at all.
+            "https://evil.example.com/x",
+            # The portal's register page, which refuses a user holding no code.
+            "https://app.traigent.ai/register",
+            # The page that does not exist - the shape the bare-site rule
+            # exists for, and the one nothing in the tree ever exercised.
+            "https://traigent.ai/register",
+            "https://traigent.ai/pricing",
+        ):
+            with self.subTest(planted=planted):
+                self.assertIsNotNone(
+                    self._account_link_offence(planted),
+                    "an address this guide may not hand over, and the check "
+                    "cannot see it",
+                )
+        for legal in (
+            "https://traigent.ai",
+            "https://traigent.ai.",
+            "https://portal.traigent.ai/settings",
+            "https://console.anthropic.com/settings/keys",
+        ):
+            with self.subTest(legal=legal):
+                self.assertIsNone(
+                    self._account_link_offence(legal),
+                    "the check refuses an address the guidance is required to "
+                    "hand over",
                 )
 
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
