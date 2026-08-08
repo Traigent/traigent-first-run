@@ -25,7 +25,10 @@ Every scenario here runs the import (and, for the "happy path", a mock
   ``TRAIGENT_OFFLINE_ISOLATED`` container job, whose own guard module notes
   it is telemetry-only there because Docker's ``--network none`` is the real
   enforcement; this test enforces at the socket layer itself so it also
-  catches a regression on a machine with real internet access.
+  catches a regression on a machine with real internet access. Name
+  resolution counts as outbound here: a lookup emits a DNS query carrying the
+  hostname, and until #152 a leak that only resolved - never connected -
+  passed this module unrecorded.
 - Reports whether both offline flags were already set at the moment before
   the first import, so this test also covers the "assert flags are set
   before import" acceptance criterion directly.
@@ -40,8 +43,11 @@ That file pins exact versions but not hashes, and does not pin the
 *transitive* graph (e.g. httpx/httpcore, which is what LiteLLM's import-time
 fetch actually calls through to reach the socket layer). An unpinned
 transitive bump could in principle change the request path enough to dodge
-this guard's two interception points (``socket.create_connection`` and
-``socket.socket.connect``/``connect_ex``) without changing top-level
+this guard's interception points - the connection ones
+(``socket.create_connection``, ``socket.socket.connect``/``connect_ex``), the
+name-resolution ones (``socket.getaddrinfo``, ``gethostbyname``,
+``gethostbyname_ex``, ``gethostbyaddr``, ``getnameinfo``) added for #152, and
+the connectionless sends (``sendto``/``sendmsg``) - without changing top-level
 versions. Hash-locking the full graph (e.g. ``pip-compile --generate-hashes``
 or ``uv pip compile --generate-hashes``) would close that gap; it is not done
 here because it is a repo-wide dependency-management decision beyond this
@@ -270,6 +276,142 @@ class OfflineSocketContractTests(unittest.TestCase):
             "importing traigent under the documented offline flags must "
             "also attempt zero outbound sockets",
         )
+
+
+class ResolutionGuardTests(unittest.TestCase):
+    """A lookup with no connection is still an outbound event (#152).
+
+    Deliberately not under ``OfflineSocketContractTests``: those scenarios need
+    the pinned LiteLLM stack and skip without it, and this coverage is about
+    the guard itself, which is stdlib-only. Nothing here should ever skip - the
+    interception these tests pin is what the whole module's "zero outbound
+    socket attempts" claim rests on, and it was over-claiming by exactly this
+    class of traffic until now.
+
+    Both fixtures are imported *through* the probe rather than exercised in
+    process, so what is tested is the guard as the real scenarios meet it.
+    """
+
+    def test_a_lookup_only_leak_is_recorded_and_blocked(self) -> None:
+        """The positive control: this passed silently before the fix.
+
+        `tests/fixtures/dns_only_leak.py` resolves a hostname and never
+        connects. Against the connect-only guard the probe recorded nothing,
+        so ``attempts == []`` held and a hermetic-run assertion certified a
+        run that had emitted DNS queries.
+        """
+        result = _run_probe({"PROBE_IMPORT_MODULES": "dns_only_leak"})
+        self.assertEqual(result["import_errors"], {})
+        self.assertEqual(result["imported"], ["dns_only_leak"])
+        operations = [attempt["operation"] for attempt in result["attempts"]]
+        self.assertEqual(
+            operations,
+            ["socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr"],
+            "a lookup-only leak must be recorded under its own operation names, "
+            "so a resolution leak is distinguishable from a connection in the "
+            f"failure output; got: {result['attempts']!r}",
+        )
+        self.assertTrue(
+            all(
+                "dns-only-leak.invalid" in attempt["address"]
+                for attempt in result["attempts"][:2]
+            ),
+            f"the recorded attempt must name the host looked up: "
+            f"{result['attempts']!r}",
+        )
+
+    def test_local_resolution_is_permitted_rather_than_failed(self) -> None:
+        """The false-red control: blocking every lookup would be wrong.
+
+        A numeric host performs no query, ``None`` is the wildcard/loopback
+        bind form, and a loopback name is answered from ``/etc/hosts``. A guard
+        that failed on those would produce red runs with no leak behind them,
+        and a test that fails for a reason nobody believes is a test people
+        learn to edit.
+        """
+        result = _run_probe({"PROBE_IMPORT_MODULES": "local_resolution"})
+        self.assertEqual(result["import_errors"], {})
+        self.assertEqual(
+            result["attempts"],
+            [],
+            "resolving a literal, the wildcard, or a loopback name emits no "
+            f"packet and must not be recorded as an attempt: {result!r}",
+        )
+        self.assertEqual(
+            [entry["reason"] for entry in result["permitted"]],
+            [
+                "ip-literal",
+                "ip-literal",
+                "ip-literal",
+                "no-host",
+                "loopback-name",
+            ],
+            f"every permitted call must say why it was permitted: {result!r}",
+        )
+
+
+class GuardPolicyTests(unittest.TestCase):
+    """The permit/block decision, as a table.
+
+    Driven in process against the probe's own predicates. The scenarios above
+    prove the guard is installed and fires; this proves the rule it applies,
+    including shapes no fixture reaches today - an ``AF_UNIX`` datagram, a
+    scoped IPv6 literal - which is where a blanket rule would have been wrong.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        specification = importlib.util.spec_from_file_location(
+            "offline_socket_probe_under_test", PROBE
+        )
+        module = importlib.util.module_from_spec(specification)
+        assert specification.loader is not None
+        # Safe to import: the probe installs nothing until `main()` runs.
+        specification.loader.exec_module(module)
+        cls.probe = module
+
+    def test_forward_lookups_permit_only_what_needs_no_resolver(self) -> None:
+        for host, expected in (
+            ("api.openai.com", None),
+            ("telemetry.dns-only-leak.invalid", None),
+            ("127.0.0.1", "ip-literal"),
+            ("93.184.216.34", "ip-literal"),
+            ("::1", "ip-literal"),
+            ("fe80::1%eth0", "ip-literal"),
+            (b"127.0.0.1", "ip-literal"),
+            (None, "no-host"),
+            ("localhost", "loopback-name"),
+            ("LocalHost.", "loopback-name"),
+        ):
+            with self.subTest(host=host):
+                self.assertEqual(self.probe._forward_local_target(host), expected)
+
+    def test_reverse_lookups_invert_the_literal_rule(self) -> None:
+        """A routable literal is the *question* a PTR query asks."""
+        for address, expected in (
+            ("93.184.216.34", None),
+            (("93.184.216.34", 443), None),
+            ("127.0.0.1", "loopback-address"),
+            ("::1", "loopback-address"),
+            ("localhost", "loopback-name"),
+        ):
+            with self.subTest(address=address):
+                self.assertEqual(self.probe._reverse_local_target(address), expected)
+
+    def test_datagram_targets_follow_the_connect_rule_not_the_lookup_rule(self) -> None:
+        """`sendto` reaches the network without ever calling connect, and its
+        target is already an address - so permitting literals here would permit
+        the leak itself."""
+        for address, expected in (
+            (("8.8.8.8", 53), None),
+            (("127.0.0.1", 53), "loopback-address"),
+            (("localhost", 53), "loopback-name"),
+            ("/run/some.sock", "non-inet"),
+            (b"/run/some.sock", "non-inet"),
+            (None, "connected-socket"),
+        ):
+            with self.subTest(address=address):
+                self.assertEqual(self.probe._datagram_local_target(address), expected)
 
 
 # Makes the two dependencies above look absent to this module without

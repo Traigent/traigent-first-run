@@ -36,13 +36,21 @@ Both locks are generated artifacts. After editing `GUIDE.md`, anything under
 `skills/traigent-first-run/`, or a scenario `seed/`/`generated/` tree, rewrite them:
 
 ```bash
-python tools/relock.py            # rewrite any stale lock
-python tools/relock.py --check    # report staleness, write nothing (exit 1)
+python tools/relock.py                   # rewrite any stale lock
+python tools/relock.py --check           # report staleness, write nothing (exit 1)
+python tools/relock.py --allow-unmerged  # write from a conflicted index anyway
 ```
 
 Never hand-edit a lock, and never resolve a lock merge conflict by taking a side - each side keeps
-stale hashes for the other's files and a digest matching neither. Take either version, then re-run
-`tools/relock.py`.
+stale hashes for the other's files and a digest matching neither. Take either version, **stage the
+resolution**, then re-run `tools/relock.py`.
+
+Staging is not a formality. `git ls-files` lists a conflicted path once per merge stage, so a lock
+written over an unresolved index hashes that path once per stage - 15 entries for 13 files, exit 0,
+`rewrote` (#198). The tool now refuses an index with unresolved paths and names them; that refusal
+is the common case here, because every merge of this repository conflicts on the lock itself, which
+is exactly when someone wants to relock. `--allow-unmerged` writes anyway and says in the output
+what it wrote over, for the deliberate case; it does not make the result a measurement.
 
 The locks record only the permission bits git can reproduce on checkout, i.e. the owner-execute bit.
 Every other bit comes from the checking-out user's umask, so storing the full mode made the locks

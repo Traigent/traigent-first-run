@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -46,6 +47,59 @@ class BehavioralContractUnitTests(unittest.TestCase):
     def test_current_behavior_package_matches_qualification_lock(self) -> None:
         lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
         self.assertEqual(harness.behavior_manifest(ROOT), lock)
+
+    def test_the_committed_lock_hashes_every_path_exactly_once(self) -> None:
+        """A malformed lock must be named as malformed, not as a behaviour change.
+
+        `tools/relock.py` run on an unresolved merge index wrote 15 entries for
+        13 files, hashing `glossary.md` once per merge stage (#198). Nothing in
+        this suite said so: the equality check above fails on such a lock, but
+        it fails as "the package does not match the lock", which is what a real
+        behaviour change looks like - so the reader goes looking at the guide
+        rather than at the lock. This assertion is cheap and says which it is.
+        """
+        lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
+        duplicates = harness.duplicate_lock_paths(lock["paths"])
+        self.assertEqual(
+            duplicates,
+            [],
+            "the behaviour lock hashes these paths more than once: "
+            f"{duplicates} ({len(lock['paths'])} entries, "
+            f"{len({entry['path'] for entry in lock['paths']})} unique). A lock "
+            "written over an unresolved merge index hashes a conflicted path "
+            "once per stage; regenerate it from a resolved index with "
+            "`python tools/relock.py`.",
+        )
+
+    def test_a_conflicted_index_cannot_hash_one_path_twice(self) -> None:
+        """The dedupe is structural, not a side effect of the tool's refusal.
+
+        `git ls-files --cached` lists index *rows*: a path with unresolved merge
+        stages appears three times. `tools/relock.py` now refuses that index
+        outright, but `behavior_files` is also called directly by the tests, and
+        a lock that hashes one path twice is malformed whatever produced it - so
+        the guarantee is pinned where the list is built. The stage rows here are
+        the exact bytes git printed for the reproduction in #198.
+        """
+        conflicted = (
+            "GUIDE.md\0"
+            "skills/traigent-first-run/references/glossary.md\0"
+            "skills/traigent-first-run/references/glossary.md\0"
+            "skills/traigent-first-run/references/glossary.md\0"
+        )
+        with unittest.mock.patch(
+            "behavioral.harness.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=conflicted, stderr=""
+            ),
+        ):
+            self.assertEqual(
+                harness.behavior_files(ROOT),
+                [
+                    Path("GUIDE.md"),
+                    Path("skills/traigent-first-run/references/glossary.md"),
+                ],
+            )
 
     def test_a_tool_cache_inside_the_skill_cannot_enter_the_lock(self) -> None:
         """A linter run must not be able to corrupt the behaviour lock.
