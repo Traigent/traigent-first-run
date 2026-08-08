@@ -19,15 +19,26 @@ permission bits git can actually reproduce on checkout. Without that, whoever
 regenerates bakes in their own umask (0664 under `umask 0002` against 0644 under
 `umask 022`) and the lock breaks for everyone else.
 
+A third error this tool now removes: writing a lock over an unresolved merge
+index. `git ls-files` lists a conflicted path once per merge stage, so the lock
+gained one entry per stage and still exited 0 printing `rewrote` - 15 entries
+for 13 files, with `glossary.md` hashed three times (#198). The moment anyone
+wants to relock is exactly the moment the index is dirty, because every merge of
+this repository conflicts on `behavior.lock.json` itself, and the corruption
+does not surface until the *next* honest run, where it reads as "someone changed
+a behaviour" rather than "the lock was written wrong".
+
 Usage:
-    python tools/relock.py            # rewrite any stale lock
-    python tools/relock.py --check    # report staleness, write nothing (exit 1)
+    python tools/relock.py                    # rewrite any stale lock
+    python tools/relock.py --check            # report staleness, write nothing (exit 1)
+    python tools/relock.py --allow-unmerged   # write anyway from a conflicted index
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -112,6 +123,84 @@ def targets() -> list[tuple[Path, str]]:
     return planned
 
 
+def unmerged_paths() -> list[str]:
+    """Paths git reports as carrying unresolved merge stages, deduplicated.
+
+    `git ls-files --unmerged` prints one row per stage - `<mode> <object>
+    <stage>\\t<path>` - so a single content conflict appears three times. The
+    paths are what a reader has to act on, so the stages are collapsed here.
+
+    Returns an empty list when git is absent, mirroring
+    `harness.behavior_files`: a checkout with no git has no index, so there is
+    no conflicted index to refuse. A git *error* is raised rather than read as
+    "clean", because a guard that answers "no conflicts" when it could not look
+    is worse than no guard.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--unmerged", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    if result.returncode != 0:
+        raise RuntimeError(
+            "could not list the unmerged paths from git "
+            f"(exit {result.returncode}): {result.stderr.strip()}"
+        )
+    paths = set()
+    for record in result.stdout.split("\0"):
+        if not record:
+            continue
+        _, _, path = record.partition("\t")
+        if path:
+            paths.add(path)
+    return sorted(paths)
+
+
+def unmerged_state(paths: list[str]) -> str:
+    """One line naming what is unresolved, or the empty string when nothing is."""
+    if not paths:
+        return ""
+    return (
+        f"unmerged: {len(paths)} path(s) with unresolved merge stages "
+        f"({', '.join(paths)})"
+    )
+
+
+def refuse_unmerged_index(allow: bool) -> str:
+    """Refuse to write a lock over an index with unresolved merge stages.
+
+    Warn-and-allow would not help: the write is the damaging act, and a warning
+    printed by a command that exits 0 goes unread - that is precisely how the
+    15-entry lock reached a branch. But relocking mid-merge is a legitimate
+    thing to want, so `--allow-unmerged` exists, named after the flag a sibling
+    snapshot tool already carries for the same reason (#198): one vocabulary
+    for one refusal, so what a reader learns here transfers.
+
+    Returns the state string when the write is permitted anyway (so the caller
+    can say what it wrote over) and raises `SystemExit` otherwise.
+    """
+    state = unmerged_state(unmerged_paths())
+    if not state:
+        return ""
+    if allow:
+        return state
+    print(
+        f"{state} -- refusing to write a lock over an index that does not "
+        f"give one resolved content per path. Git lists a conflicted path once "
+        f"per merge stage, so the lock would hash it once per stage and then "
+        f"fail on the next honest run as if a behaviour had changed. Resolve "
+        f"the conflict and stage it first. --allow-unmerged writes anyway for "
+        f"an explicit, deliberate regeneration; it never makes the result a "
+        f"measurement.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Regenerate the behavior and fixture locks."
@@ -121,7 +210,40 @@ def main() -> int:
         action="store_true",
         help="report stale locks without writing (exit 1 when stale)",
     )
+    parser.add_argument(
+        "--allow-unmerged",
+        action="store_true",
+        help="writing only: regenerate from a conflicted index anyway, and say so",
+    )
     args = parser.parse_args()
+
+    if args.allow_unmerged and args.check:
+        # Accepting it here would do nothing - --check never refuses an index -
+        # and a flag that is accepted and ignored reads as a suppression that
+        # worked.
+        print(
+            "--allow-unmerged applies to writing only. --check already accepts "
+            "any index; it just says in a NOTE what the index is.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.check:
+        # --check writes nothing, so any index is a legitimate thing to check
+        # against - but staleness reported from a conflicted index describes the
+        # conflict markers in the working tree, not a stale lock, and reads
+        # identically to the real thing. Say what the index is up front.
+        state = unmerged_state(unmerged_paths())
+        if state:
+            print(
+                f"NOTE: {state} -- any staleness below describes that, not the "
+                f"committed lock.",
+                file=sys.stderr,
+            )
+    else:
+        state = refuse_unmerged_index(args.allow_unmerged)
+        if state:
+            print(f"NOTE: {state} -- written under --allow-unmerged.", file=sys.stderr)
 
     stale: list[Path] = []
     for path, desired in targets():

@@ -210,6 +210,15 @@ def behavior_files(root: Path) -> list[Path]:
     Falls back to {@link _walk_behavior_files} only when git is genuinely absent
     - never on a git error, which would hide a real problem behind a quieter
     answer.
+
+    Deduplicated, because `ls-files` is a listing of index *rows*, not of paths:
+    a path with unresolved merge stages appears once per stage, and the plain
+    `sorted(...)` this used to return hashed it once per stage into the lock -
+    15 entries for 13 files (#198). `tools/relock.py` refuses a conflicted index
+    outright, and this is the second half of that fix rather than a duplicate of
+    it: the refusal is a policy about when a lock may be written, while a lock
+    that hashes one path twice is malformed whatever the index state, so the
+    guarantee belongs where the list is produced.
     """
     try:
         result = subprocess.run(
@@ -237,7 +246,21 @@ def behavior_files(root: Path) -> list[Path]:
             "could not list the behaviour files from git "
             f"(exit {result.returncode}): {result.stderr.strip()}"
         )
-    return sorted(Path(entry) for entry in result.stdout.split("\0") if entry)
+    return sorted({Path(entry) for entry in result.stdout.split("\0") if entry})
+
+
+def duplicate_lock_paths(entries: list[dict[str, Any]]) -> list[str]:
+    """The paths a lock's entry list holds more than once, sorted.
+
+    Empty for every well-formed lock. Split out from the assertion that uses it
+    so the failure can name what is duplicated: "15 entries, 13 unique" is the
+    symptom, and the path that was hashed once per merge stage is the finding.
+    """
+    seen: dict[str, int] = {}
+    for entry in entries:
+        path = entry["path"]
+        seen[path] = seen.get(path, 0) + 1
+    return sorted(path for path, count in seen.items() if count > 1)
 
 
 def behavior_manifest(root: Path = ROOT) -> dict[str, Any]:
