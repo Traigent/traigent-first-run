@@ -383,9 +383,12 @@ Route every active dataset cap to the branch this flow already defines, and pres
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
 internal. Three kinds, not two. A route asking for a creation or repair blocks the run, and so does
 one asking for a first look at material nothing has read - under either, nothing was measured. A
-route that only scopes what the result may claim never blocks, and divides again: where the scope
-leaves a person something to settle, put it to them at the pre-spend approval in stage 6; where it
-leaves nothing to do, the ceiling is advisory and there is no repair to route:
+route that only scopes what the result may claim lets the run proceed wherever there is a result to
+scope, and divides again: where the scope leaves a person something to settle, put it once in the
+home that owns that question and carry the answer to the pre-spend approval in stage 6; where it
+leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
+never by the kind - a scoping condition that finds nothing to compare at all blocks, and the bullets
+carrying both halves say so:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not

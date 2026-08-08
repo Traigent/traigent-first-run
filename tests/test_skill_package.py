@@ -7422,8 +7422,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("### the pre-spend approval card", safety)
         for phrase in (
             "it adds no pause of its own",
-            "**the gap, and how it was filled.**",
-            "**absolute paths.**",
+            "**the gap, and how it was filled**",
+            "**absolute paths**",
             "**two rows: the easiest and the hardest.**",
             "**what the evaluation method counts as correct.**",
             "**where we are.** `stage 3/5 · baseline`",
@@ -7434,6 +7434,45 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, safety)
+        # Each bullet states the condition it fires under. The card has two
+        # unlike triggers - this run wrote something, or a cap asks - and the
+        # bullets were written for the first one only, so the asking-cap path
+        # told the assistant to name a gap that did not exist and to print a
+        # path for a file the run never created.
+        for degradation in (
+            "where this run generated or repaired the dataset or the evaluation method",
+            "where this run created and repaired nothing, drop the bullet",
+            "one for each file this run actually wrote",
+            "a run that wrote neither lists neither",
+        ):
+            with self.subTest(condition=degradation):
+                self.assertIn(degradation, safety)
+        # One question, one home. The only cap that asks on this branch already
+        # owns a complete quoted question that stage 4 routes it to by name, and
+        # the two disagreed about when it is put, what it says and what the
+        # answers are called - so answering it once was not enough.
+        for reconciliation in (
+            "**what an asking cap asked, and what was answered**",
+            "do not put the question a second time in different words",
+            "where the cap's route owns no question of its own, this card is "
+            "that one home and asks it here",
+            "discharging it means the customer meets its remedy at the moment "
+            "they are asked to pay - not that its question is put here a "
+            "second time",
+        ):
+            with self.subTest(reconciliation=reconciliation):
+                self.assertIn(reconciliation, safety)
+        # And the route that owns the question still names it, so the card's
+        # pointer is not aimed at a section somebody deleted.
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("a `no` is never a silent edit", evaluation)
+        self.assertIn("a `no` is never a silent edit", safety)
+        self.assertIn("a `no` is never a silent edit", skill)
         # SKILL.md says when it fires and points at the owner; it does not
         # restate the card.
         for phrase in (
@@ -9969,10 +10008,10 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn(
-            "where the scope leaves a person something to settle, put it to "
-            "them at the pre-spend approval in stage 6; where it leaves "
-            "nothing to do, the ceiling is advisory and there is no repair to "
-            "route",
+            "where the scope leaves a person something to settle, put it once "
+            "in the home that owns that question and carry the answer to the "
+            "pre-spend approval in stage 6; where it leaves nothing to do, the "
+            "ceiling is advisory and there is no repair to route",
             normalized,
         )
         blocking = {
@@ -10020,6 +10059,31 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
         sites = cap_construction_blocks(
             source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
+        # The universal claim this paragraph used to make - "a route that only
+        # scopes what the result may claim never blocks" - was false the day it
+        # was written, and SKILL.md contradicted it twenty-five lines later in
+        # two separate bullets that both say "the same condition blocks".
+        # Derived from the module instead of restated: any CLAIM_SCOPING
+        # condition whose construction sites do not all read `blocks=False` is
+        # a scoping route that blocks, and while one exists the guidance may
+        # not promise a reader that none does.
+        scoping_that_blocks = {
+            condition
+            for condition, category in READINESS.ROUTE_CATEGORY.items()
+            if category == READINESS.CLAIM_SCOPING and sites[condition] != {"False"}
+        }
+        self.assertTrue(
+            scoping_that_blocks,
+            "no scoping route can block any more, so the guidance may state "
+            "the simple rule again - and this guard should be removed with it "
+            "rather than left asserting a distinction that stopped existing",
+        )
+        self.assertNotIn(
+            "only scopes what the result may claim never blocks",
+            normalized,
+            f"SKILL.md promises that scoping routes never block, and "
+            f"{sorted(scoping_that_blocks)} do",
         )
         for condition in sorted(conditions):
             with self.subTest(cap=condition):

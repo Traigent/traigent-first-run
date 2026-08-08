@@ -182,9 +182,12 @@ same line.
 Between those two there is a third, and it is the only one that needs anything from you. Some
 conditions do not hold the run up and still leave a person something to agree with before the
 number means what it looks like - an answer key a model wrote end to end, or rows whose expected
-answer does not appear to match their own input. Those are put to you once, inside the approval
-before the first paid call, with the material to judge them on and a straight proceed-or-fix
-choice. Stopping a paid run over the assistant's reading of your data would be wrong; showing you a
+answer does not appear to match their own input. Each of those is put to you once, with the material
+to judge it on and a straight pair of exits - at the point the finding is made where that is still
+free to act on, otherwise inside the approval before the first paid call - and the approval shows
+you what you answered either way. Once, not twice: being asked the same thing again in different
+words at the till is the thing this is built to avoid. Stopping a paid run over the assistant's
+reading of your data would be wrong; showing you a
 ceiling with no way to act on it was the older mistake, and this is the fix for it.
 
 Generated data and a small comparison set land on neither of those. A walkthrough dataset is what

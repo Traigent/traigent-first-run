@@ -294,8 +294,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   run is worth making, and there is something for a person to read and agree
   with before the number means what it looks like - a whole answer key a model
   wrote, or rows whose expected answer does not seem to fit their own input. You
-  are asked that once, in the approval before the first paid call, where
-  answering it costs nothing. And some only say that generated data, or a
+  are asked each of those once, where answering it still costs nothing - when
+  the finding is made if a fix is free then, otherwise in the approval before
+  the first paid call - and that approval shows you the answer you gave rather
+  than asking again. And some only say that generated data, or a
   comparison set too small to settle a close call, limits claim strength until
   real rows or completed paired outcomes support more. That last kind limits what
   the result may claim without saying anything is wrong with your setup and
