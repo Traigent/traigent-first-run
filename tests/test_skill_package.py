@@ -1889,6 +1889,92 @@ class SkillPackageTests(unittest.TestCase):
             "other tag describes terms the reader is not agreeing to.",
         )
 
+    # The one release this package names that is deliberately NOT the pinned
+    # one, and the sentence that earns it. `run-safety.md` warns that on an
+    # unsupported interpreter, resolution can select an unrelated obsolete
+    # release - naming it is the whole point of the warning, so the check below
+    # excuses this exact sentence rather than the bare number, and a second
+    # passage naming `0.0.1` for some other reason still fails.
+    NON_PINNED_RELEASE_ALLOWLIST = (
+        "package resolution can select the unrelated obsolete `0.0.1` release",
+    )
+
+    def _unpinned_releases(self, text: str, pinned: set[str]) -> list[str]:
+        """Release-shaped literals in `text` that no pinned requirement installs."""
+        body = " ".join(text.split())
+        for excused in self.NON_PINNED_RELEASE_ALLOWLIST:
+            body = body.replace(excused, "")
+        return sorted(set(re.findall(r"\d+\.\d+\.\d+", body)) - pinned)
+
+    def test_no_assistant_facing_document_names_an_unpinned_release(self) -> None:
+        """The README rule above, applied to the documents the assistant reads.
+
+        `test_readme_discloses_pinned_sdk_license_terms` already refuses a
+        release-shaped literal in README.md that is not the pinned one. The
+        same claim is made in four more places the reader is sent to -
+        `sdk-execution.md` names the pinned release three times (the local-log
+        note, the relative-path defect, the sync limitation) and
+        `run-safety.md` once - and none of them was covered by anything. So a
+        pin bump could update README and leave the references describing the
+        behaviour of a release nobody installs, with the suite green.
+
+        Derived twice over: the permitted set is every version
+        `assets/requirements-first-run.txt` actually pins, so naming the pinned
+        `litellm` is legal without this test being edited, and bumping any pin
+        fails here until the prose that describes it is re-read.
+        """
+        pinned = set()
+        for line in REQUIREMENTS.read_text().splitlines():
+            _, separator, version = line.strip().partition("==")
+            if separator and version:
+                pinned.add(version)
+        self.assertIn(
+            pinned_sdk_version(),
+            pinned,
+            "the permitted set must contain the pinned SDK release, or this "
+            "check is reading the wrong file",
+        )
+
+        stale: dict[str, list[str]] = {}
+        for document in assistant_facing_documents():
+            named = self._unpinned_releases(document.read_text(), pinned)
+            if named:
+                stale[document.relative_to(ROOT).as_posix()] = named
+        self.assertEqual(
+            stale,
+            {},
+            "an assistant-facing document names a release the pinned "
+            "requirements do not install. Every version statement in this "
+            "guidance describes the behaviour of what the reader installs; a "
+            "different one describes a release they will never run.",
+        )
+
+        # A clean tree proves the documents agree today, not that this check
+        # can SEE a disagreement - and the corpus it walks narrows silently, so
+        # the empty result above is also what a broken glob returns. Both
+        # directions are probed against invented text instead.
+        self.assertEqual(
+            self._unpinned_releases("installed 9.9.9 behaves this way", pinned),
+            ["9.9.9"],
+        )
+        self.assertEqual(
+            self._unpinned_releases(
+                f"installed {pinned_sdk_version()} behaves this way", pinned
+            ),
+            [],
+        )
+        self.assertEqual(
+            self._unpinned_releases(self.NON_PINNED_RELEASE_ALLOWLIST[0], pinned),
+            [],
+            "the obsolete-release warning is the one excused sentence",
+        )
+        self.assertEqual(
+            self._unpinned_releases("the obsolete `0.0.1` release", pinned),
+            ["0.0.1"],
+            "the exemption is the sentence, not the number: naming that "
+            "release for any other reason is still a release nobody installs",
+        )
+
     def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
         """This repository has no LICENSE, so it may not describe its own terms.
 
@@ -9006,11 +9092,20 @@ class SkillPackageTests(unittest.TestCase):
         # ever adopted the fix is to add its exact prefix, deliberately.
 
     def test_privacy_is_a_documented_contract_and_errors_are_sanitized(self) -> None:
+        # The version is DERIVED, for the same reason
+        # `test_readme_discloses_pinned_sdk_license_terms` derives it: this is
+        # the telemetry half of the disclosure `pinned_sdk_version` names in
+        # its own docstring, and it was the half still typing the number. Two
+        # literals here meant a pin bump could leave the privacy contract
+        # pointing at the terms of a release nobody installs - the exact
+        # staleness the license half was fixed for, in the paragraph about what
+        # leaves the user's machine.
+        version = pinned_sdk_version()
         readme_source = (ROOT / "README.md").read_text()
         readme = " ".join(readme_source.casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
-            "pinned sdk 0.25.0 telemetry contract",
+            f"pinned sdk {version} telemetry contract",
             "tuned configuration keys and values",
             "observability content the project explicitly opts into recording",
             "short content-free labels",
@@ -9019,7 +9114,7 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertIn(
-            "https://github.com/Traigent/Traigent/blob/v0.25.0/"
+            f"https://github.com/Traigent/Traigent/blob/v{version}/"
             "docs/api-reference/telemetry.md",
             readme_source,
         )
