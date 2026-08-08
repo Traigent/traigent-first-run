@@ -5385,6 +5385,86 @@ class SkillPackageTests(unittest.TestCase):
             "nothing under skills/ is in the corpus",
         )
 
+    def test_the_assistant_facing_corpus_is_what_the_skill_bundle_publishes(
+        self,
+    ) -> None:
+        """The third corpus, and the only one nothing anchored.
+
+        The two `git ls-files` corpora above each assert what they contain, so
+        a narrowing fails once and loudly. `assistant_facing_documents()` -
+        which more checks in this file walk than either of them - asserted
+        nothing. It is built from two `.glob("*.md")` calls, and a glob narrows
+        SILENTLY: rename a reference, add a document under an extension nobody
+        thought about, or break the path, and the list simply gets shorter.
+
+        That is the shape this whole family of checks exists to refuse. An
+        empty or narrowed corpus turns every `assertEqual(offenders, [])` built
+        on it into a green tick over a document it never opened - measured, ten
+        checks in this file go vacuous together, and none of them would say so.
+        So the corpus is compared against what git actually publishes, in the
+        four places the helper claims to read, and a document added beside them
+        fails here until someone decides whether the assistant reads it.
+        """
+        corpus = [
+            path.relative_to(ROOT).as_posix() for path in assistant_facing_documents()
+        ]
+        self.assertEqual(
+            len(corpus),
+            len(set(corpus)),
+            "the corpus lists a document twice, so every check that joins it "
+            "weighs that document twice",
+        )
+        listed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "ls-files",
+                "--",
+                "GUIDE.md",
+                f"{SKILL.relative_to(ROOT).as_posix()}",
+                f"{(SKILL_ROOT / 'references').relative_to(ROOT).as_posix()}/*.md",
+                f"{(SKILL_ROOT / 'assets').relative_to(ROOT).as_posix()}/*.md",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        self.assertEqual(
+            sorted(corpus),
+            sorted(listed),
+            "the assistant-facing corpus has drifted from what the skill "
+            "bundle publishes. Every check that sweeps it is silently scoped "
+            "to whatever this glob still finds.",
+        )
+        # Named individually as well, because the equality above is satisfied
+        # by both sides narrowing together - a reference deleted from the tree
+        # and from the corpus in one commit. Each of these is a document some
+        # check in this file has a rule about.
+        for expected in (
+            "GUIDE.md",
+            "skills/traigent-first-run/SKILL.md",
+            "skills/traigent-first-run/references/run-safety.md",
+            "skills/traigent-first-run/references/sdk-execution.md",
+            "skills/traigent-first-run/references/evaluation-and-dataset.md",
+            "skills/traigent-first-run/references/glossary.md",
+            "skills/traigent-first-run/references/component-creation.md",
+            "skills/traigent-first-run/assets/run-plan.md",
+        ):
+            with self.subTest(document=expected):
+                self.assertIn(expected, corpus)
+        # `conversation_contract_documents()` wraps this list, so it inherits
+        # both the hole and the fix; asserted rather than assumed.
+        contract = [
+            path.relative_to(ROOT).as_posix()
+            for path in conversation_contract_documents()
+        ]
+        self.assertTrue(
+            set(corpus) <= set(contract),
+            "the conversation-contract corpus no longer covers every "
+            "assistant-facing document",
+        )
+
     # Where the user is sent, and how they get there. Both belong to the
     # reference that performs the handoff; GUIDE.md's paragraph points at it and
     # states neither. Addresses are matched as a shape rather than by hostname,
