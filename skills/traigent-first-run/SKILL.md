@@ -161,14 +161,20 @@ Perform safe, read-only discovery without asking for approval:
 - Record the chosen target project's absolute root and the selected agent's absolute path plus
   callable or command. When an old artifact names another target or agent, preserve it as
   historical context but exclude it from this run's score and report.
-- Find LLM/model call sites and the smallest scoreable agent function.
-- Find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
-  and outcome checks.
-- Infer the agent input/output contract and the product behavior being attempted.
+- Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
+  contract and the product behavior being attempted. Finish this before the search below.
+- Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
+  and outcome checks, searching outward from that agent. What it does, the contract just inferred,
+  and the files its own call sites and tests reach are what tell its examples and its grading method
+  apart from the first plausible ones in the tree - and a project holding two agents usually holds
+  material belonging to each. Either of those two may be taken up first; what is load-bearing is
+  that both follow the agent.
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain.
+Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
+reached this way really grades the selected agent is settled by the compatibility contract in
+`references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
@@ -241,7 +247,8 @@ conversation; recording it is a write and waits for the answer.
    - ❗ **Evaluation** - no validated grading method is connected.
 2. State that the coding assistant will create coherent walkthrough substitutes after the user
    chooses the task, and that synthetic results demonstrate workflow rather than production
-   performance.
+   performance. Carry the four things "One ask for every gap" below requires - including the
+   `I have it` answer and its path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices and recommend a structured, deterministically scoreable task.
 4. **STOP and wait for the answer.** Do not continue setup in the same turn.
@@ -265,7 +272,8 @@ For a zero-anchor project, the intent gate already rendered the initial readines
 render it again before the user answers. For every other starting state, render the initial
 real-world readiness board after inspection. Show the rendered card beside that board, as printed.
 State what the coding assistant will create for the walkthrough.
-Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
+Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
+them and offers to use theirs, which is the opposite of delegating them. Refresh only
 changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
 instead of replacing the initial board with a green one.
 
@@ -282,6 +290,34 @@ If real material exists but appears too weak to support a meaningful comparison,
 Do not call a component weak merely from intuition. For judgment-based findings such as "all
 examples are easy," cite representative rows and the missing challenge/failure modes. For
 structural findings, report counts and percentages.
+
+#### One ask for every gap
+
+Whatever the inventory did not find - agent, dataset, evaluation method, one of them or all three -
+or found and could not read out of, which the opening gate above defers here for the same reason -
+the user hears it once, in one question, riding on the board above rather than arriving as its own
+turn, and before anything is built. Never one question per component: a project with no examples and no
+way to grade them has a single gap in it, and asking twice asks the same person to consent to the
+same substitution twice. When a quality advisory fires in the same turn, fold it in - a gap and a
+weakness are one decision about what this run will measure. That question carries four things:
+
+1. What the inventory did not find, named plainly and all of it at once - what was searched for and
+   not seen, never what the project does not have.
+2. That this run can build each missing piece, derived from whatever does exist.
+3. What that costs, in terms the score already uses: what this run writes stays `🛠️` and never
+   becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
+   present as strong however good the rest is, and no configuration from the result may be promoted.
+4. Two answers: proceed, or `I have it` and a path for each piece they have.
+
+Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
+approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
+given here names material that was in the project all along, so re-run the opening gate over it and
+read that as the opening score; the record waits for this answer in any gap run, for the reason the
+zero-anchor gate above already gives for its own.
+When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
+asks one and carries these four things on it. The answer covers absence and never a defect; broken
+material keeps every gate stage 4 already puts on it. `references/component-creation.md` owns the
+wording, what a supplied path is checked for, and where each way of not getting one lands.
 
 ### 3. Complete the system
 
@@ -400,8 +436,9 @@ carrying both halves say so:
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
-  scores when shown, offer declaring the real source rather than new data, and meanwhile apply the
-  rules above.
+  scores when shown, offer declaring the real source rather than new data, and put that offer at the
+  pre-spend approval; meanwhile apply the rules above. The rows may be real and only this run cannot
+  tell, so it bounds the claim exactly as a declared-generated corpus does and holds nothing up.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and

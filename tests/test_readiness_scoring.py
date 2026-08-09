@@ -7081,3 +7081,211 @@ class RowReviewInputTests(unittest.TestCase):
         with self.assertRaises(MODULE.RowReviewInputError) as raised:
             MODULE.row_review_from_document(self._rows(*entries), facts)
         self.assertIn("more rows in the run than the run has", str(raised.exception))
+
+
+class AbsentAndConsentedIsNotTheSameAsBrokenTests(unittest.TestCase):
+    """#211's decision, and the four states it is not allowed to touch.
+
+    The guide now asks once, at discovery, before anything is built: these
+    components are missing, generated material is weaker evidence, proceed or
+    point me at yours. That consent removes a stop and nothing else. It removes
+    it only where nothing is broken - a corpus whose rows parse and whose only
+    absence is a word saying who wrote them - and it may never remove one from a
+    condition that is a defect rather than a gap.
+    """
+
+    def _undeclared(self, rows: int = 200) -> MODULE.Cap:
+        _points, _evidence, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=rows,
+                labelled_rows=rows,
+                undeclared_rows=rows,
+            )
+        )
+        return next(
+            cap for cap in caps if cap.condition == "dataset-undeclared-provenance"
+        )
+
+    def _declared(self, rows: int = 200) -> MODULE.Cap:
+        _points, _evidence, caps = MODULE.score_provenance(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=rows,
+                labelled_rows=rows,
+                synthesised_rows=rows,
+            )
+        )
+        return next(cap for cap in caps if cap.condition == "dataset-fully-synthetic")
+
+    def test_the_undeclared_twin_agrees_with_the_declared_one_but_for_its_question(
+        self,
+    ) -> None:
+        """The invariant #165 wrote in prose, now derivable rather than quoted.
+
+        "Identical ceilings, because the assumption IS generated and only the
+        remedy differs." It stopped being true at a merge: the declared rungs
+        became advisory on one branch while the undeclared pair stayed
+        blocking on another, and both landed clean. Asserted here so the pair
+        cannot drift apart again silently, and asserted as a PAIR - the two
+        rungs, against their two twins - because the earlier version of this
+        claim lived in a comment that nothing read.
+        """
+        for undeclared, declared in (
+            ("dataset-undeclared-provenance", "dataset-fully-synthetic"),
+            ("dataset-mostly-undeclared", "dataset-mostly-synthetic"),
+        ):
+            with self.subTest(condition=undeclared):
+                self.assertEqual(
+                    MODULE.CAP_CEILING[undeclared], MODULE.CAP_CEILING[declared]
+                )
+                self.assertEqual(
+                    MODULE.ROUTE_CATEGORY[undeclared],
+                    MODULE.ROUTE_CATEGORY[declared],
+                    "the twins disagree about whether the run waits, which is "
+                    "the state #211 was filed about",
+                )
+                self.assertEqual(
+                    MODULE.ROUTE_CATEGORY[undeclared], MODULE.CLAIM_SCOPING
+                )
+                # And the remedies still differ, which is the half #165 was
+                # right about: telling a customer to connect real data is wrong
+                # when the data may already be real and merely unlabelled.
+                self.assertNotEqual(
+                    MODULE.ACTION_FOR_CONDITION[undeclared],
+                    MODULE.ACTION_FOR_CONDITION[declared],
+                )
+
+    def test_the_question_survives_the_stop_it_replaced(self) -> None:
+        """Dropping the block may not drop the remedy with it.
+
+        `blocks=False` on its own returns `proceed`, which is how a ceiling
+        with nothing a reader could act on gets printed. The asking tier is
+        what carries `declare-data-provenance` to the pre-spend approval
+        instead, and the declared twin stays silent there because it has
+        already answered the question.
+        """
+        undeclared = self._undeclared()
+        declared = self._declared()
+        self.assertFalse(undeclared.blocks)
+        self.assertTrue(undeclared.asks)
+        self.assertFalse(declared.asks)
+        self.assertEqual(
+            MODULE.recommended_action([undeclared]), "declare-data-provenance"
+        )
+        self.assertEqual(MODULE.recommended_action([declared]), MODULE.PROCEED)
+
+    def test_consenting_cannot_raise_a_number(self) -> None:
+        """The consent removes the stop, never the score.
+
+        Two ways it could have leaked into the number, and both are refused
+        here. The ceiling is unchanged from the blocking version, and the
+        undeclared rungs still sit at or below every ceiling their declared
+        twins carry - so nothing about being asked instead of stopped buys a
+        point. The scorer has no consent input at all, which is the structural
+        half: there is no flag a run could set to say "the user agreed", so no
+        answer at the ask can reach this arithmetic.
+        """
+        self.assertEqual(self._undeclared().ceiling, MODULE.FULLY_SYNTHETIC_CEILING)
+        self.assertLessEqual(self._undeclared().ceiling, self._declared().ceiling)
+        # An undeclared row still scores no better than a declared generated
+        # one; the ask changed the routing, not the arithmetic.
+        self.assertLessEqual(
+            MODULE.UNDECLARED_ROW_POINTS, MODULE.SYNTHESISED_ROW_POINTS
+        )
+        options = set(
+            re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', SCRIPT.read_text())
+        )
+        # The fixture reaches the branch: these are the real flags, not an
+        # empty set that would make the loop below vacuous.
+        self.assertIn("--preflight", options)
+        for option in sorted(options):
+            for word in ("consent", "approv", "agree", "ok"):
+                with self.subTest(option=option, word=word):
+                    self.assertNotIn(
+                        word,
+                        option,
+                        f"{option} could let an answer at the ask reach the "
+                        "score, and the ask is not allowed to move a number",
+                    )
+
+    def test_the_four_broken_states_still_wait(self) -> None:
+        """Absent-and-consented is not the same as broken, and these are broken.
+
+        Each is a defect rather than a gap: an evaluator proven unable to
+        separate a right answer from a wrong one, rows that could not be read
+        as data, a tuning set that shares examples with the set held back to
+        check it, and a file no row of which matched the shape it was read
+        with. None of them is something a user can consent to at discovery,
+        because in each case the run cannot produce a number worth consenting
+        about.
+        """
+        _pillar, evaluator_caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="exact",
+                calibration_present=True,
+                calibration_supplied=True,
+                checks=(
+                    {"non_constant": False, "bad_fails": False, "good_passes": True},
+                ),
+            )
+        )
+        _pillar, overlap_caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                collected_rows=200,
+                split_overlap=True,
+            )
+        )
+        _pillar, integrity_caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=200,
+                labelled_rows=200,
+                collected_rows=200,
+                integrity_failed=True,
+            )
+        )
+        _pillar, unreadable_caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=False,
+                dataset_supplied=True,
+                unreadable_rows=3,
+                unreadable_detail="3/3 rows (100.0%) are unusable",
+            )
+        )
+        found = {
+            cap.condition: cap
+            for caps in (
+                evaluator_caps,
+                overlap_caps,
+                integrity_caps,
+                unreadable_caps,
+            )
+            for cap in caps
+        }
+        for condition in (
+            "evaluator-invalid",
+            "dataset-tune-holdout-overlap",
+            "dataset-integrity-fail",
+            "dataset-shape-unrecognised",
+        ):
+            with self.subTest(condition=condition):
+                # The fixture actually reached the branch, rather than the
+                # assertion passing over a cap that never fired.
+                self.assertIn(condition, found)
+                self.assertTrue(
+                    found[condition].blocks,
+                    f"{condition} is a defect, and consent at discovery covers "
+                    "absence only",
+                )
+                self.assertNotEqual(
+                    MODULE.ROUTE_CATEGORY[condition], MODULE.CLAIM_SCOPING
+                )
+                self.assertEqual(
+                    MODULE.recommended_action([found[condition]]),
+                    found[condition].action_kind,
+                )

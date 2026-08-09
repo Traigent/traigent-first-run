@@ -738,15 +738,42 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
-    # ceilings as the declared pair above and a DIFFERENT category, which is
-    # #165's own point: the remedy is `declare-data-provenance`, and declaring
-    # is a change the user makes to their file. #149's rule reads that as a
-    # repair, so these stop the run where the declared pair does not - and
-    # #165's adapter tests assert exactly that (BLOCKED, `connect-real-data`
-    # once declaring can no longer lift the ceiling). Registered here because
-    # `Cap.__post_init__` fails closed and #144 wrote this table without them.
-    "dataset-undeclared-provenance": CREATION_OR_REPAIR,
-    "dataset-mostly-undeclared": CREATION_OR_REPAIR,
+    # ceilings as the declared pair above, and now the same category too.
+    #
+    # They were CREATION_OR_REPAIR, and #211 measured what that cost. One
+    # 12-row corpus, only the provenance token varying: `synthetic-walkthrough`
+    # scored 65 and proceeded, `crm-export` scored 65 and was told FIX BEFORE
+    # PAID RUN, and a plain JSONL with no provenance field at all was told the
+    # same. Identical points, identical ceiling, opposite verdict on whether the
+    # comparison may start - so a project that admits its data is generated was
+    # treated better than one whose real rows carry a word this vocabulary does
+    # not know. #165 wrote the invariant it wanted in words - "identical
+    # ceilings, because the assumption IS generated and only the remedy
+    # differs" - against a base where the declared twin blocked too. The change
+    # that made the declared rungs advisory landed on a parallel branch, both
+    # merged clean, and on the merged tree the invariant was false. Nobody chose
+    # that.
+    #
+    # The category is what decides it, not the flag, so the category is what
+    # moves. `declare-data-provenance` is an edit to a file, which is why #149's
+    # two-way rule read it as a repair - but a repair asserts the file is
+    # defective, and on the inputs that actually reach here it is not. The rows
+    # parse, the answers are there, and the only thing missing is a word saying
+    # who wrote them. That is a gap in what this script can VERIFY, not a defect
+    # in the customer's material, and the score already prices it: these rows
+    # are read as generated and capped as generated. Capping them as generated
+    # and then holding the run harder than a generated corpus is two readings of
+    # one assumption.
+    #
+    # `asks`, not silence, because there is genuinely something for a person to
+    # settle and it changes the answer: they are the only party who knows where
+    # the rows came from, and saying so lifts the ceiling on the spot. That is
+    # the middle kind exactly - the run proceeds, the ceiling stands, and the
+    # question rides on the approval that already halts before the first billed
+    # call. `dataset-fully-synthetic` stays silent beside it for the same
+    # reason it always was: a declared-generated corpus has already answered.
+    "dataset-undeclared-provenance": CLAIM_SCOPING,
+    "dataset-mostly-undeclared": CLAIM_SCOPING,
     "dataset-generated-answer-key": CLAIM_SCOPING,
     # #161's second rung. It scopes for the same reason the rung above
     # does - the questions are real and only part of the ruler is a
@@ -2385,6 +2412,10 @@ def score_provenance(
                 "dataset-undeclared-provenance",
                 FULLY_SYNTHETIC_CEILING,
                 UNDECLARED_ALL_REASON,
+                # Same flags as the declared twin below, plus the question the
+                # twin has already answered. See `ROUTE_CATEGORY`.
+                blocks=False,
+                asks=True,
             )
             if silent
             else Cap(
@@ -2403,6 +2434,9 @@ def score_provenance(
                 "dataset-mostly-undeclared",
                 MOSTLY_SYNTHETIC_CEILING,
                 UNDECLARED_MOST_REASON,
+                # As the rung above, and for the rung above's reason.
+                blocks=False,
+                asks=True,
             )
             if silent
             else Cap(
