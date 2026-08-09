@@ -7,10 +7,11 @@ operates under; it is published so a reviewer does not have to infer it.
 
 A **Project Artifact** is a file this guide creates in the project you point it at,
 or a change it makes to a file already there. In practice that is everything under
-`traigent-runs/` - the filled `run-plan.md`, `config-space.json`, tuning and holdout
-splits, calibration files, generated agent and evaluator wrappers, readiness reports
-and logs - plus the `/traigent-runs/` line it adds to your `.gitignore` and the
-provider key line it adds to your `.env`.
+`traigent-runs/` - the filled `traigent-runs/run-plan.md`,
+`traigent-runs/config-space.json`, the tuning and holdout splits, calibration files,
+generated agent and evaluator wrappers, readiness reports and logs - plus the
+`/traigent-runs/` line it adds to your `.gitignore` and the provider key line it adds
+to your `.env`.
 
 A Project Artifact is **not** the Traigent First Run skill, scripts, references, or
 assets as distributed here; it is not the Traigent SDK; and it is not any
