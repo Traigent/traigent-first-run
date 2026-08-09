@@ -14,7 +14,7 @@ four binary behaviour knobs. Each of those decisions needs its reason written
 where the assistant meets it: why two values is FULL breadth for a categorical
 knob rather than half, why a knob declared with exactly one value scores ten
 rather than zero, why `self_check` and `reflect` were one knob under two names,
-and why temperature is pinned in both spaces instead of swept in one.
+and why one task-selected temperature is fixed in both spaces instead of swept in one.
 
 The larger part of the rise is that #174 and #169 both landed on the same
 section from opposite ends and both survive. #169 owns WHICH of a customer's

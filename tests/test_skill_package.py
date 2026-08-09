@@ -7146,12 +7146,16 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(out=out):
                 self.assertNotIn(f"`{out}`", table)
         self.assertIn("`batch_size` and `max_tokens` are deliberately absent", catalog)
-        # `self_consistency` needs sampling diversity and this walkthrough pins
-        # temperature at 0, so it is offered only where it can do anything.
-        self.assertIn("only when the customer's own temperature is above 0", catalog)
-        # The waived detection: temperature's slot is decided by what the
-        # customer already has, never by guessing the task's type.
-        self.assertIn("do not build task-type detection", catalog)
+        # `self_consistency` needs sampling diversity, so zero-temperature
+        # configurations cannot pay for repeated identical calls.
+        self.assertIn(
+            "only when every sampled configuration uses temperature above 0",
+            catalog,
+        )
+        self.assertIn(
+            "one task-selected fixed value, not a search slot",
+            " ".join(catalog.split()),
+        )
 
     def test_the_retired_prompt_control_is_absent_from_the_tracked_tree(self) -> None:
         """Removal is repository-wide, not only from the worked example."""
@@ -7338,6 +7342,7 @@ class SkillPackageTests(unittest.TestCase):
         code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
         module = ast.parse(code)
         wanted_assignments = {
+            "WALKTHROUGH_TEMPERATURE",
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
@@ -7400,12 +7405,22 @@ class SkillPackageTests(unittest.TestCase):
         for knob in namespace["BEHAVIOUR_KNOBS"]:
             with self.subTest(knob=knob):
                 self.assertEqual(len(namespace["ENHANCED_SPACE"][knob]), 2)
-        # Temperature is pinned in BOTH, unconditionally. It used to be pinned
-        # only when the strong tier reasoned, and that branch produced a second
-        # pair of sizes (6 and 18) that no document ever stated.
+        # One task-selected value is fixed in BOTH. It used to be dropped only
+        # when the strong tier reasoned, and that branch produced a second pair
+        # of sizes (6 and 18) that no document ever stated.
         for space_name in ("BASELINE_SPACE", "ENHANCED_SPACE"):
             with self.subTest(space=space_name):
-                self.assertEqual(namespace[space_name]["temperature"], [0.0])
+                self.assertEqual(
+                    namespace[space_name]["temperature"],
+                    [namespace["WALKTHROUGH_TEMPERATURE"]],
+                )
+        self.assertIn('"temperature": WALKTHROUGH_TEMPERATURE', text)
+        for policy in (
+            "use `0` only when the task and evaluator demand one reproducible output",
+            "otherwise choose one supported nonzero value that permits normal wording or creative variation",
+            "not another question or a fourth paid knob",
+        ):
+            self.assertIn(policy, normalized)
         # The baseline is a strict subset, so it can rank only levers the
         # enhanced run actually carries.
         for knob, values in namespace["BASELINE_SPACE"].items():
@@ -7499,10 +7514,10 @@ class SkillPackageTests(unittest.TestCase):
         # The reasoning branch used to produce a SECOND pair of space sizes
         # that no document stated: temperature was dropped only when the strong
         # tier reasoned, so the enhanced space was 54 ordinarily and 18 there,
-        # and the assert here fired on the space the template shipped. Pinning
-        # temperature always removes the branch. The template now loads
+        # and the assert here fired on the space the template shipped. Fixing
+        # one task-selected value in both removes the branch. The template loads
         # unchanged under a reasoning strong tier, at the same 12 and 24 - which
-        # is the whole reason to pin it, so it is asserted rather than assumed.
+        # is asserted rather than assumed.
         reasoning_namespace = {
             "math": __import__("math"),
             "SELECTED_CURRENT_MODEL": "provider/current",
@@ -7749,7 +7764,7 @@ class SkillPackageTests(unittest.TestCase):
             "never gets a model the baseline did not measure",
             "cannot be explained by quietly upgrading the model",
             # The enhanced space is fully determined before either run now:
-            # binary knobs and a pinned temperature leave no swept range to
+            # binary knobs and one fixed temperature leave no swept range to
             # re-centre, so the between-runs refinement step is gone.
             "the enhanced space carries no pre-baseline placeholder to replace",
             "sweep only knobs that are real for every model in the space",
@@ -7787,7 +7802,7 @@ class SkillPackageTests(unittest.TestCase):
 
         Executes the fence's call path shape: the strong tier at a declared
         reasoning effort must send reasoning kwargs instead of temperature,
-        and no `max_tokens` at all, while ordinary tiers keep the swept
+        and no `max_tokens` at all, while ordinary tiers keep the selected
         temperature. Both tiers are bounded by the wall clock instead.
 
         The name said "and headroom" while the wrapper sent `max_tokens` 4096.
@@ -7836,7 +7851,7 @@ class SkillPackageTests(unittest.TestCase):
             "task",
             {
                 "model": "provider/strong",
-                "temperature": 0.0,
+                "temperature": 0.3,
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
                 "reflect": False,
@@ -7857,14 +7872,14 @@ class SkillPackageTests(unittest.TestCase):
             "task",
             {
                 "model": "provider/mid",
-                "temperature": 0.0,
+                "temperature": 0.3,
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
                 "reflect": False,
             },
         )
         ordinary_call = calls[-1]
-        self.assertEqual(ordinary_call["temperature"], 0.0)
+        self.assertEqual(ordinary_call["temperature"], 0.3)
         self.assertNotIn("reasoning_effort", ordinary_call)
         self.assertNotIn("max_tokens", ordinary_call)
         # The bound this request DOES carry is the wall clock, which is the
@@ -12751,6 +12766,7 @@ class SkillPackageTests(unittest.TestCase):
             r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
         )[0]
         wanted_assignments = {
+            "WALKTHROUGH_TEMPERATURE",
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
@@ -13122,7 +13138,12 @@ class SkillPackageTests(unittest.TestCase):
             r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
         )
         module = ast.parse(code[0])
-        wanted_assignments = {"BASELINE_CONFIG", "BASELINE_SPACE", "ENHANCED_SPACE"}
+        wanted_assignments = {
+            "WALKTHROUGH_TEMPERATURE",
+            "BASELINE_CONFIG",
+            "BASELINE_SPACE",
+            "ENHANCED_SPACE",
+        }
         selected = [
             node
             for node in module.body
@@ -13139,7 +13160,7 @@ class SkillPackageTests(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            len(selected), 6, "the template no longer defines the knobs it wires"
+            len(selected), 7, "the template no longer defines the knobs it wires"
         )
 
         requests: list[dict] = []
@@ -13227,6 +13248,7 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         module = ast.parse(code)
         wanted_assignments = {
+            "WALKTHROUGH_TEMPERATURE",
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",

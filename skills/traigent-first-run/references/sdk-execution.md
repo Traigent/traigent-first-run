@@ -136,11 +136,15 @@ to carry. State the baseline as a count, never as a change from whatever this gu
 first-run customer has no run of ours to compare against, and our release history is not a fact
 about their spend. The user approves the count itself before it is spent.
 
-Temperature is pinned at 0 in both, never swept. It mostly adds surface noise when the evaluator
-wants an exact match, and a reasoning strong tier ignores it entirely - which used to make the
-walkthrough conditional, dropping temperature in that branch alone and silently giving the enhanced
-space a second size nothing wrote down. Pinning it always makes both branches identical, 12 and 24
-whether the strong tier reasons or not.
+Temperature has one task-selected value in both spaces and is never swept. Use `0` only when the
+task and evaluator demand one reproducible output - exact mathematics, executable checks, strict
+schemas, or case-sensitive matching. Otherwise choose one supported nonzero value that permits
+normal wording or creative variation without violating the evaluator. Do that before either paid
+run, then record the value and reason on the baseline approval card. This is an assistant decision,
+not another question or a fourth paid knob.
+Keeping the selected value fixed across both phases preserves the 12- and 24-configuration sizes
+and keeps their comparison attributable. A user-owned baseline instead keeps its temperature
+behavior exactly, including an unset provider default.
 
 The three behaviour knobs are **prompt style**, **thinking shape** (direct or chain-of-thought),
 and **reflect**, two values each. They shape behaviour rather than sampling, and each intervenes at
@@ -181,25 +185,26 @@ card shows the selected three and why they fit.
 | `reflect` | off, on | default slot; answers are nearly right and need one revision |
 | `few_shot_count` | two counts within 0-10 | the task has a house format worked examples would teach |
 | `task_decomposition` | off, on | one request bundles several sub-tasks |
-| `self_consistency` | off, on | **only when the customer's own temperature is above 0** - see below |
+| `self_consistency` | off, on | only when every sampled configuration uses temperature above 0 - see below |
 | `retrieval_k` | two counts within 1-5 | RAG agents only; there is a retriever to widen |
 | `context_format` | two layouts | retrieved or structured context is pasted in raw |
 | `tool_policy` | two policies | the agent calls tools and over- or under-uses them |
-| `temperature` | the customer's own values | **only when the customer already sweeps it** - see below |
+| `temperature` | the customer's own values | only when preserving a customer-owned sweep - see below |
 
 Two entries carry a precondition, and both are load-bearing.
 
 `self_consistency` samples an answer several times and keeps the majority one. It earns its catalog
 place by being a quality lever that is visibly also a cost lever - it buys accuracy by spending more
 per question, which puts it on the accuracy-for-cost frontier this guide reports rather than only
-claiming to sit there. But it needs sampling diversity, and **this walkthrough pins temperature at
-0**, where every sample repeats and the majority vote costs three calls to reproduce one. Selectable
-only for a customer already running above 0; offering it beside a pinned temperature sells a
-multiplier on the bill for nothing on the answer.
+claiming to sit there. But it needs sampling diversity. Select it only when every sampled
+configuration uses a temperature above `0` and the agent and evaluator can benefit from diverse
+answers; at `0`, the majority vote can cost three calls to reproduce one. Its extra calls must fit
+the connected-stage approval and one of the existing three slots.
 
-`temperature` is pinned at 0 by default and its slot goes to another catalog knob. When the customer
-already sweeps it, use **their** values rather than a range invented here, and do not pin underneath
-them. Read which case applies off their existing configuration; do not build task-type detection.
+For an assistant-prepared walkthrough, temperature is one task-selected fixed value, not a search
+slot. When the customer already sweeps it, preserve **their** values rather than inventing a new
+range or pinning underneath them. Do not add a temperature sweep to generated material merely to
+manufacture breadth.
 
 `batch_size` and `max_tokens` are deliberately absent: both move throughput and cost without changing
 what the answer says, and a knob that cannot change the answer is not a quality lever.
@@ -259,9 +264,9 @@ the other models were never given on equal terms, and no report footnote untangl
 model faces exactly the same variations, the winner is clear and the enhanced run's insight is
 accurate. So when the strong tier is a reasoning model, pin its calling convention identically in
 both runs - a chosen reasoning effort, no `max_tokens` at all, and no sampling parameters such a
-model rejects. Nothing else changes: temperature is already pinned for every space, and the three
-paid behaviour knobs are real for a reasoning model and a sampling model alike, so both branches
-run the same 12 and 24.
+model rejects. Nothing else changes: temperature is fixed to the selected value in every space,
+and the three paid behaviour knobs are real for a reasoning model and a sampling model alike, so
+both branches run the same 12 and 24.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
@@ -386,6 +391,12 @@ PROVIDER_KEY_NAMES = {
     "cohere": "COHERE_API_KEY",
 }
 
+# Select this literal from the inspected task and evaluator before either paid
+# run. Zero belongs only to deterministic/exact work; otherwise use one
+# supported nonzero value that permits the expected variation. Keep it fixed across both phases so
+# it does not become a fourth paid knob or confound their comparison.
+WALKTHROUGH_TEMPERATURE = 0.0
+
 
 def positive_number(name: str, *, default: float | None = None) -> float:
     raw_value = os.environ.get(name)
@@ -465,10 +476,9 @@ def require_current_route_credential() -> None:
 
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
-    # Pinned, never swept, in both phases: it adds surface noise an exact
-    # match punishes, and pinning it always retires the branch that used to
-    # give the enhanced space a second, undocumented size.
-    "temperature": 0.0,
+    # One task-selected value in both phases. This worked exact-output example
+    # uses zero; replace WALKTHROUGH_TEMPERATURE before a non-deterministic run.
+    "temperature": WALKTHROUGH_TEMPERATURE,
     # `prompt_style`'s first value was "direct" until `thinking_shape` arrived
     # and took that word for the thing it actually describes.
     "prompt_style": "plain",
@@ -555,7 +565,7 @@ assert all(
 # second size is gone with it.
 assert (
     len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
-), "temperature is pinned, never swept - behaviour knobs carry the search"
+), "temperature is fixed once, never swept - behaviour knobs carry the search"
 assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
 # 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
 # behaviour knobs - both holding whether or not the strong tier reasons.
@@ -945,7 +955,7 @@ variable must affect the actual agent call for every model in the space. A prese
 dimension may affect only the models that support it, but the request probe must report that
 partial coverage and the run record must name those models. When the strong tier runs as a
 reasoning model, temperature is inert for it - which costs the comparison nothing, because
-temperature is pinned in both spaces and every swept knob is uniform across the ladder.
+temperature is fixed in both spaces and every swept knob is uniform across the ladder.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
 template to force onto every real agent. Its baseline is a credible twelve-point sweep: the three
@@ -1105,7 +1115,7 @@ may have come from another.
 ## Broader optimization
 
 The enhanced space carries no pre-baseline placeholder to replace. Every value in it is fixed
-before either run, because the three behaviour knobs are binary and temperature is pinned - there is
+before either run, because the three behaviour knobs are binary and temperature was selected once - there is
 no swept range to re-centre on the baseline's winner, and so no between-runs edit for anything to
 get wrong. What the baseline result decides is which knobs a customer's own space keeps, not which
 values this one sweeps.

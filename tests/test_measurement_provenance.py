@@ -793,7 +793,7 @@ class OnlyAReportedMeasurementIsAskedTests(unittest.TestCase):
             "A pillar measured thinly cannot carry a strong verdict, so 89 "
             "falls inside the Strong range without contradicting it.",
             "That is why 2 of 4 measured is not 100.",
-            "Temperature is pinned at 0 in both, never swept.",
+            "Temperature uses one task-selected value in both, never swept.",
             "Report an uncalibrated evaluator as not yet measured, never as "
             "absent, in all 7 of these states.",
             "One standard error on an accuracy measured from ten items is "
