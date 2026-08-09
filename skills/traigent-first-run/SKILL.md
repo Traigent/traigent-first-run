@@ -30,7 +30,7 @@ Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any creation or repair,
 again as a required step of local validation, again after each repair or creation, and once more
-after the run, to rank the close. Use
+after the run, to measure the space it searched. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
@@ -161,14 +161,20 @@ Perform safe, read-only discovery without asking for approval:
 - Record the chosen target project's absolute root and the selected agent's absolute path plus
   callable or command. When an old artifact names another target or agent, preserve it as
   historical context but exclude it from this run's score and report.
-- Find LLM/model call sites and the smallest scoreable agent function.
-- Find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
-  and outcome checks.
-- Infer the agent input/output contract and the product behavior being attempted.
+- Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
+  contract and the product behavior being attempted. Finish this before the search below.
+- Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
+  and outcome checks, searching outward from that agent. What it does, the contract just inferred,
+  and the files its own call sites and tests reach are what tell its examples and its grading method
+  apart from the first plausible ones in the tree - and a project holding two agents usually holds
+  material belonging to each. Either of those two may be taken up first; what is load-bearing is
+  that both follow the agent.
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain.
+Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
+reached this way really grades the selected agent is settled by the compatibility contract in
+`references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
@@ -198,8 +204,30 @@ spends nothing, and no generated row competes with it yet. Apply the run-scoped 
 scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
-its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
-`wired` list does not make it current. Every guided run does this, including a zero-anchor run.
+its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
+run does this, including a zero-anchor run.
+
+Then measure the search space from the agent itself and pass it as `--agent-knobs`, so the opening
+card grades what this project can search instead of reporting nothing. Read the agent's own source
+for parameters it can already vary - model, temperature, top_p, prompt strategy, retry/reflection
+flags, tool selection - and record each with the line that shows it. Never write a range or an
+option you did not read: an omitted parameter costs a few points, an invented one makes the card
+wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+Every guided run that found an agent does this read - not conditionally, not depending on the
+agent's language or on how the card would look without it - and the flag is left off only where the
+inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
+name it and say what stopped the read, then offer to be pointed at source that can be read: that
+offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
+stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
+read found, and no read completed, so passing an empty one reports a finding about the customer's
+agent that nothing established. Proceed with what can be varied if nothing comes back. Never ask
+for a config-space file here - the paragraph above omits
+every one of those found before this run's search, so it cannot answer this. The ceiling left
+standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
+later re-score in this run, re-reading the agent only where this run created or repaired it: a
+re-score that quietly drops the flag reports the agent pillar falling from what the opening read
+established to nothing, and that fall reaches the customer as an honest change in their project.
+`references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the score this run
 reports for the project. Show it before anything is created or repaired.
 
@@ -241,7 +269,8 @@ conversation; recording it is a write and waits for the answer.
    - ❗ **Evaluation** - no validated grading method is connected.
 2. State that the coding assistant will create coherent walkthrough substitutes after the user
    chooses the task, and that synthetic results demonstrate workflow rather than production
-   performance.
+   performance. Carry the four things "One ask for every gap" below requires - including the
+   `I have it` answer and its path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices and recommend a structured, deterministically scoreable task.
 4. **STOP and wait for the answer.** Do not continue setup in the same turn.
@@ -265,7 +294,8 @@ For a zero-anchor project, the intent gate already rendered the initial readines
 render it again before the user answers. For every other starting state, render the initial
 real-world readiness board after inspection. Show the rendered card beside that board, as printed.
 State what the coding assistant will create for the walkthrough.
-Do not show external links. Do not ask the user to solve missing setup pieces. Refresh only
+Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
+them and offers to use theirs, which is the opposite of delegating them. Refresh only
 changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
 instead of replacing the initial board with a green one.
 
@@ -282,6 +312,34 @@ If real material exists but appears too weak to support a meaningful comparison,
 Do not call a component weak merely from intuition. For judgment-based findings such as "all
 examples are easy," cite representative rows and the missing challenge/failure modes. For
 structural findings, report counts and percentages.
+
+#### One ask for every gap
+
+Whatever the inventory did not find - agent, dataset, evaluation method, one of them or all three -
+or found and could not read out of, which the opening gate above defers here for the same reason -
+the user hears it once, in one question, riding on the board above rather than arriving as its own
+turn, and before anything is built. Never one question per component: a project with no examples and no
+way to grade them has a single gap in it, and asking twice asks the same person to consent to the
+same substitution twice. When a quality advisory fires in the same turn, fold it in - a gap and a
+weakness are one decision about what this run will measure. That question carries four things:
+
+1. What the inventory did not find, named plainly and all of it at once - what was searched for and
+   not seen, never what the project does not have.
+2. That this run can build each missing piece, derived from whatever does exist.
+3. What that costs, in terms the score already uses: what this run writes stays `🛠️` and never
+   becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
+   present as strong however good the rest is, and no configuration from the result may be promoted.
+4. Two answers: proceed, or `I have it` and a path for each piece they have.
+
+Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
+approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
+given here names material that was in the project all along, so re-run the opening gate over it and
+read that as the opening score; the record waits for this answer in any gap run, for the reason the
+zero-anchor gate above already gives for its own.
+When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
+asks one and carries these four things on it. The answer covers absence and never a defect; broken
+material keeps every gate stage 4 already puts on it. `references/component-creation.md` owns the
+wording, what a supplied path is checked for, and where each way of not getting one lands.
 
 ### 3. Complete the system
 
@@ -373,13 +431,19 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 "continue as is" as permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
-`recommended_action`: the lowest-ceiling blocking remedy, else the remedy of a cap that only asks,
-else `proceed`.
+`recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
+lowest-ceiling asking one, otherwise `proceed`.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
-internal. A route asking for a creation or repair blocks the run; one that only
-scopes what the result may claim is an advisory ceiling, never a repair to route:
+internal. Three kinds, not two. A route asking for a creation or repair blocks the run, and so does
+one asking for a first look at material nothing has read - under either, nothing was measured. A
+route that only scopes what the result may claim lets the run proceed wherever there is a result to
+scope, and divides again: where the scope leaves a person something to settle, put it once in the
+home that owns that question and carry the answer to the pre-spend approval in stage 6; where it
+leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
+never by the kind - a scoping condition that finds nothing to compare at all blocks, and the bullets
+carrying both halves say so:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
@@ -394,8 +458,9 @@ scopes what the result may claim is an advisory ceiling, never a repair to route
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
-  scores when shown, offer declaring the real source rather than new data, and meanwhile apply the
-  rules above.
+  scores when shown, offer declaring the real source rather than new data, and put that offer at the
+  pre-spend approval; meanwhile apply the rules above. The rows may be real and only this run cannot
+  tell, so it bounds the claim exactly as a declared-generated corpus does and holds nothing up.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
@@ -428,13 +493,13 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
-`agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
-provided to the score: before the enhanced run there is no document to score, and afterwards a
-missing one is that run's own outcome to report, not a defect in the project. Where a document
-exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
-excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
-that by its reason, and mark the settings the agent actually uses or give one of them a second
-value.
+`agent-no-varying-knobs` blocks where something was read and found empty - a settings document with
+no knobs, none marked as wired, one value each, or only knobs excluded from scoring; or a reading
+of the agent that established nothing it can vary. The card prints `FIX BEFORE PAID RUN`; route by
+its reason - mark the settings the agent uses, give one a second value, or expose a parameter it
+has none of. It is an advisory ceiling only where its reason says neither a document nor a reading
+reached the score: nothing there is a verdict on the project, and after a stopped, failed, or
+zero-trial enhanced run it is that run's own outcome to report.
 
 ### 5. Prepare the environment and finish free checks
 
@@ -495,6 +560,12 @@ Use the baseline checklist in `references/run-safety.md` for one concise baselin
 approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
 preserved baseline or generated twelve-row sweep. Say only that a separately previewed managed run may
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
+
+When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
+approval also carries the pre-spend card in `references/run-safety.md`: what the gap was and how it
+was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
+method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
+stops, never a second pause, and approving the spend is not approving the material.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
 its explicit values, one plain-language note per knob, and the total combination count. The
@@ -671,7 +742,7 @@ auditable:
    persisted runs.
 3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
    phases, and any small-sample held-out gap.
-4. **Next action** - one action selected from the latest closing evidence.
+4. **Next action** - one action the recorded opening state earns.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
 
@@ -726,11 +797,23 @@ different claim from one quoted on 30, and the reader cannot reproduce either wi
 which rows they were. State it even when nothing was excluded, so silence never has to be
 interpreted.
 
-Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence to read
-which caps remain, passing the current run's `--config-space traigent-runs/config-space.json` only
-when its enhanced search emitted it; otherwise score the agent from absent evidence. Rank the close
-from those caps, and never show that score or set it beside the opening one. Leave the user knowing
-which remaining gap to close first.
+Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
+reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
+actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
+when that search emitted it; otherwise score the agent from absent evidence. The opening and stage-4
+scores withhold every config-space document by construction, so this is the run's only measurement
+of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
+nothing about what is still open: a gap this run filled with a substitute reads exactly like one the
+customer closed themselves, because on disk the evidence is the same either way. Never show that
+score or set it beside the opening one.
+
+Two things read that call. Its agent cap is a finding about the search that just ran: a document
+that varies nothing means the paid run compared one configuration, so the card blocks and the close
+reports it beside the search's own outcome. And this is the only place anything reads
+`traigent-runs/config-space.json`, so a file this run wrote and cannot itself parse is refused here
+by name rather than left in the customer's project for them to find. `references/run-safety.md`
+owns how that card reads after a stopped, failed, or zero-trial search. Leave the user knowing which
+remaining gap to close first.
 
 Feature-detect local audit and connected insight capabilities. Report only fields actually
 returned, attribute each claim to its artifact, and otherwise say no verified local artifact was
@@ -741,12 +824,21 @@ over substitutes, every insight describes only the walkthrough.
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close. Then give the one next action the **latest validated state** earns: re-rank the
-remaining closing caps and run limits, ignore cleared gaps, and name its value:
+cannot close. Then give the one next action the **recorded opening state** earns: rank the opening
+score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
+substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
+what closing it properly takes:
 
-- Generated or mostly generated data - collect or export a real sample of the same task and re-run.
-  This is the gap that ceilings the score no matter how good everything else is, so it is first
-  whenever it applies.
+- Generated or mostly generated data, or an evaluation method this run wrote - one move that closes
+  it and one worth making anyway, in this order. **Best:** collect or export real examples of the
+  same task, and build the evaluation method from them and from what their expected results actually
+  are. This is the only one of the two that lifts the ceiling. **Otherwise:** keep what this run
+  generated and have a person read and approve it - the rows and their expected
+  answers, and the generated method too, whose grading logic has to match what the agent is really
+  scored on and what its expected result is. Say plainly that this one does not lift the ceiling:
+  the score reads where the rows came from, and a person approving generated rows leaves them
+  generated. It is still worth doing, and it is not the way out. This is the gap that ceilings the
+  score no matter how good everything else is, so it is first whenever it applies.
 - Real inputs with model-written answers - have a person review a sample of the answer key. Until
   then the accuracy number measures agreement with a model, not correctness.
 - Rows without expected outputs when the evaluator requires references - label a representative
@@ -758,6 +850,13 @@ remaining closing caps and run limits, ignore cleared gaps, and name its value:
   evaluator it replaced, and say which of the reported numbers would change.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
+
+Then the forward half, which is not a gap in anything. The run-scope statement already recorded the
+three bounds this walkthrough chose - rows scored, configurations tested, controls varied - so name
+whichever bound this run hardest and what lifting it would let the user do: more of the agent's
+controls, the whole dataset instead of the slice, a space wider than a first look needs. It is a
+clause on the recommendation above, not a second one, and it names an action they can take, never a
+result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 

@@ -174,6 +174,15 @@ def render_text(plan: ReadinessPlan) -> str:
 # different handling: the first is a stale script, the second is a healthy
 # project. Left at 1, a consumer seeing no `recommended_action` could not tell
 # which it was looking at.
+#
+# Still 2 after #201, and that is a measured decision rather than an oversight.
+# An earlier revision of this branch bumped it to 3 because `weighted_average`
+# had stopped being an average over all three pillars: a pillar nothing could be
+# measured for was left out of the denominator, so a consumer dividing the
+# average back out over three declared weights got a different number than this
+# script computed. That renormalization is gone (see `aggregate`), the average
+# is once again over every declared weight, and no key changed meaning - so
+# there is nothing for a consumer to find out and nothing to bump.
 SCHEMA_VERSION = 2
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
@@ -738,15 +747,42 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
-    # ceilings as the declared pair above and a DIFFERENT category, which is
-    # #165's own point: the remedy is `declare-data-provenance`, and declaring
-    # is a change the user makes to their file. #149's rule reads that as a
-    # repair, so these stop the run where the declared pair does not - and
-    # #165's adapter tests assert exactly that (BLOCKED, `connect-real-data`
-    # once declaring can no longer lift the ceiling). Registered here because
-    # `Cap.__post_init__` fails closed and #144 wrote this table without them.
-    "dataset-undeclared-provenance": CREATION_OR_REPAIR,
-    "dataset-mostly-undeclared": CREATION_OR_REPAIR,
+    # ceilings as the declared pair above, and now the same category too.
+    #
+    # They were CREATION_OR_REPAIR, and #211 measured what that cost. One
+    # 12-row corpus, only the provenance token varying: `synthetic-walkthrough`
+    # scored 65 and proceeded, `crm-export` scored 65 and was told FIX BEFORE
+    # PAID RUN, and a plain JSONL with no provenance field at all was told the
+    # same. Identical points, identical ceiling, opposite verdict on whether the
+    # comparison may start - so a project that admits its data is generated was
+    # treated better than one whose real rows carry a word this vocabulary does
+    # not know. #165 wrote the invariant it wanted in words - "identical
+    # ceilings, because the assumption IS generated and only the remedy
+    # differs" - against a base where the declared twin blocked too. The change
+    # that made the declared rungs advisory landed on a parallel branch, both
+    # merged clean, and on the merged tree the invariant was false. Nobody chose
+    # that.
+    #
+    # The category is what decides it, not the flag, so the category is what
+    # moves. `declare-data-provenance` is an edit to a file, which is why #149's
+    # two-way rule read it as a repair - but a repair asserts the file is
+    # defective, and on the inputs that actually reach here it is not. The rows
+    # parse, the answers are there, and the only thing missing is a word saying
+    # who wrote them. That is a gap in what this script can VERIFY, not a defect
+    # in the customer's material, and the score already prices it: these rows
+    # are read as generated and capped as generated. Capping them as generated
+    # and then holding the run harder than a generated corpus is two readings of
+    # one assumption.
+    #
+    # `asks`, not silence, because there is genuinely something for a person to
+    # settle and it changes the answer: they are the only party who knows where
+    # the rows came from, and saying so lifts the ceiling on the spot. That is
+    # the middle kind exactly - the run proceeds, the ceiling stands, and the
+    # question rides on the approval that already halts before the first billed
+    # call. `dataset-fully-synthetic` stays silent beside it for the same
+    # reason it always was: a declared-generated corpus has already answered.
+    "dataset-undeclared-provenance": CLAIM_SCOPING,
+    "dataset-mostly-undeclared": CLAIM_SCOPING,
     "dataset-generated-answer-key": CLAIM_SCOPING,
     # #161's second rung. It scopes for the same reason the rung above
     # does - the questions are real and only part of the ruler is a
@@ -786,16 +822,22 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
-    # Three caps carry this condition. Two of them - nothing wired, and knobs
-    # listed with none attested - are repairs and declare `blocks=True`. The
-    # third (`NOT_YET_MEASURED_CAP`, from #144) fires when no config-space
-    # document reached this score at all: nothing in the user's project is
-    # broken, the enhanced run is simply what writes that document, and it
-    # declares `blocks=False`. #149 wrote CREATION_OR_REPAIR here before that
-    # third branch existed, and its own agent-routing test already asserts this
-    # condition must have BOTH a blocking and an advisory branch - so
-    # CREATION_OR_REPAIR contradicted #149's own expectation the moment #144
-    # landed, and the two compose only under the category that admits both.
+    # Four caps carry this condition and they do not agree about waiting, which
+    # is why this is the only category that fits.
+    #
+    # Three of them are findings about the project and block: a settings
+    # document listing nothing, one listing settings while marking none as ones
+    # the agent uses, and a read of the agent's own source that found nothing it
+    # can vary. All three say the same thing about the run - it would compare
+    # one configuration - and all three name a repair.
+    #
+    # The fourth (`NO_SEARCH_SPACE_ESTABLISHED_CAP`) fires when neither a
+    # document nor a read reached this score. Nothing is known to be broken;
+    # what is bounded is what the card may CLAIM while a third of the picture is
+    # unestablished, and it declares `blocks=False`. #149's own agent-routing
+    # test already asserts this condition must have both a blocking and an
+    # advisory branch, and the two compose only under the category that admits
+    # both.
     "agent-no-varying-knobs": CLAIM_SCOPING,
 }
 
@@ -1634,6 +1676,49 @@ class EvaluationFacts:
 
 
 @dataclass(frozen=True)
+class DiscoveredKnob:
+    """One parameter the agent's own code exposes, and whether it can be searched.
+
+    Read out of the agent by the assistant, not out of a Traigent document -
+    which is why every field that decides credit is a fact about the code, and
+    why `evidence` is required rather than nice to have. The rule this class
+    exists to enforce is the owner's: score the space that is genuinely
+    reachable, never one we invented. A parameter with no citation is not a
+    parameter this score has seen.
+
+    `reachable_values` is deliberately a FLOOR, not an estimate, and the two
+    kinds get it for different reasons.
+
+    A categorical parameter is counted at the number of values actually
+    available - the model ids configured, the prompt strategies the code
+    branches on - because those are countable things that exist. Two is the
+    minimum that means anything: one option is not a choice, which is exactly
+    the rule `categorical_breadth` already applies to a declared knob.
+
+    A numeric parameter is counted at 2 and never more, however wide its range,
+    because how many points a search would take inside that range is a decision
+    nobody has made yet. Two is what the range itself establishes: a span wider
+    than this scorer's own noise floor contains at least two values a run could
+    tell apart. Counting a continuous range as "many" would be the invention the
+    owner's rule refuses, and it is also how a space grows by declaring values
+    nothing can distinguish - the defect `noise_floor` exists to refuse.
+    """
+
+    name: str
+    kind: str
+    reachable_values: int
+    evidence: str
+    # Empty when the parameter earns credit. Otherwise the reason it does not,
+    # said to the reader rather than dropped: an author who wrote down a
+    # parameter and saw it silently ignored learns nothing about why.
+    uncredited_reason: str = ""
+
+    @property
+    def credited(self) -> bool:
+        return not self.uncredited_reason
+
+
+@dataclass(frozen=True)
 class AgentFacts:
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
@@ -1651,6 +1736,25 @@ class AgentFacts:
     # supplied" - and the card was reporting that as "no knobs declared", which
     # is a claim about the user's project rather than about this score's input.
     config_space_supplied: bool = False
+    # What the assistant read out of the agent's own source: the parameters it
+    # can already vary, each with the line that shows it can.
+    #
+    # A SECOND input, never a substitute for the first, and the separation is
+    # the safety property. A config-space document carries a `wired` list, which
+    # is an attestation that the agent consumes those knobs; the guide refuses a
+    # historical one as current wiring (SKILL.md, run-safety.md) and that refusal
+    # is untouched here. This input attests nothing about wiring and is never
+    # read as though it did: `wired` stays `None`, `knobs` stays empty, and a
+    # supplied config-space document wins outright. What it answers is the
+    # different question the opening card had no answer to at all - how much
+    # there is to search - and it answers it from the code rather than from a
+    # document nobody has written yet.
+    discovered: tuple[DiscoveredKnob, ...] = ()
+    # Whether that read happened, as distinct from what it found. Same line
+    # `config_space_supplied` draws one field up: "nothing was looked at" and
+    # "the look found nothing" are different findings and get different
+    # sentences.
+    discovery_supplied: bool = False
 
 
 def round_half_up(value: float) -> int:
@@ -1663,7 +1767,9 @@ def round_half_up(value: float) -> int:
 
 
 def band_for(
-    score: int, confidence: float, weakest_pillar_confidence: float | None = None
+    score: int,
+    confidence: float,
+    weakest_pillar_confidence: float | None = None,
 ) -> tuple[str, bool]:
     """Return the band, demoted when too little of the score was measured.
 
@@ -2385,6 +2491,10 @@ def score_provenance(
                 "dataset-undeclared-provenance",
                 FULLY_SYNTHETIC_CEILING,
                 UNDECLARED_ALL_REASON,
+                # Same flags as the declared twin below, plus the question the
+                # twin has already answered. See `ROUTE_CATEGORY`.
+                blocks=False,
+                asks=True,
             )
             if silent
             else Cap(
@@ -2403,6 +2513,9 @@ def score_provenance(
                 "dataset-mostly-undeclared",
                 MOSTLY_SYNTHETIC_CEILING,
                 UNDECLARED_MOST_REASON,
+                # As the rung above, and for the rung above's reason.
+                blocks=False,
+                asks=True,
             )
             if silent
             else Cap(
@@ -3727,26 +3840,66 @@ NOTHING_WIRED_CAP = Cap(
     "nothing to search.",
 )
 
-# Deliberately tense-neutral, and it took two drafts to get there. The first
-# said "has reached this score YET" and "the enhanced search WRITES that
-# document" - a claim that the search has not happened. This scorer cannot know
-# that: it reads a preflight file, a calibration file and a config-space file,
-# and those look identical at the opening gate and at the close. The guide
-# passes `--config-space` at the close only when the search emitted one, so a
-# stopped, failed, or zero-trial search lands here too - and there the future
-# tense is simply false. What IS true in both places is the mechanism: no
-# document was provided, and the enhanced run is what produces one. The reader
-# who has just watched their search fail is told that by the run's own outcome
-# report, not by this line.
+# The read of the agent established no setting it can vary. That is a finding
+# ABOUT THE PROJECT and not about this score's inputs, which is exactly what
+# separates it from the cap below: somebody opened the agent's source and there
+# was nothing in it to search. A run over one configuration compares nothing, so
+# this waits, and its remedy is the same `vary-knobs` the document branches
+# carry - expose something the agent can be told to do differently.
 #
-# "provided", to match the pillar evidence beside it - two spellings of one
-# fact, fourteen lines apart, read as two findings.
-NOT_YET_MEASURED_CAP = Cap(
+# It is a MEASURED zero rather than an absent one, and #201 is where that
+# distinction was got wrong. An earlier revision of this branch reported this
+# state as unmeasured and had `aggregate` renormalize the pillar out of the
+# average entirely, which scored it 99 against 92 for a read that found four
+# settings. This module already had the right answer for the shape one line
+# above: a config-space document that lists nothing IS a measurement of the
+# search space - one configuration, read off the file - and a read of the source
+# that finds nothing is the same measurement taken from the other document.
+NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
     "agent-no-varying-knobs",
     AGENT_NO_VARYING_KNOBS_CEILING,
-    "No settings document was provided to this score, so the settings a search "
-    "would vary cannot be counted. The enhanced run writes that document when "
-    "it completes; nothing in your project needs repairing for this.",
+    "The agent was read and no setting it can vary was found, so every "
+    "configuration a search compared would be identical.",
+)
+
+# And the third reading, which is neither of the two above: no settings document
+# and no read of the agent reached this score at all.
+#
+# A cap stood here before #201 and its reason was the defect - "nothing in your
+# project needs repairing for this", printed while holding every card in the
+# product at 45. It said the customer was fine and capped them anyway, and it
+# fired on every guided run by construction, because the guide withholds every
+# config-space file found before this run's search. Measured on the strongest
+# realistic opening project (200 production rows, difficulty-tagged, 180/20
+# split, evaluator calibrated and passing all seven probes): dataset 94,
+# evaluation 100, agent 0 at confidence 0.00, weighted average 73, overall 45
+# PARTIAL, with that cap the only one firing.
+#
+# What changed is not the ceiling. It is that there is now something a run can
+# DO about this state at the gate where it is reported: read the agent
+# (`--agent-knobs`) and the space is measured instead of missing. So the reason
+# names the two ways to establish it, claims nothing about the customer's
+# project either way, and the ceiling says only what it can support - that a
+# card cannot present as ready on a third of the picture nobody supplied.
+#
+# Advisory, where the two findings above block, and that is the whole difference
+# between them. Those two say something is wrong; this one says something is
+# unknown, and a low score has never stopped this walkthrough.
+#
+# Deliberately NOT deleted, which the revision of this branch that produced the
+# 99 did try. With no ceiling here, saying nothing about the agent scored 75
+# while handing over a settings document that declares the same empty space
+# scored 45 - omission outscoring declaration by 30 points, the class this
+# repository has now shipped in six places. Every other pillar in this module
+# already caps its own absence for the same reason: `dataset-absent` at 20 and
+# `evaluator-absent` at 40. The agent pillar was the only one where saying
+# nothing was free.
+NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "No settings document and no reading of the agent reached this score, so "
+    "the settings a search would vary cannot be counted. Reading the agent is "
+    "what counts them.",
     blocks=False,
 )
 
@@ -3758,7 +3911,9 @@ UNATTESTED_WIRING_CAP = Cap(
 )
 
 
-def nothing_to_search_pillar(evidence: str, *, supplied: bool) -> Pillar:
+def nothing_to_search_pillar(
+    evidence: str, *, supplied: bool, withheld: bool = False
+) -> Pillar:
     """The agent pillar every "no knob is attested as wired" state reports.
 
     Three inputs land here: no knobs declared at all, knobs declared with no
@@ -3779,16 +3934,166 @@ def nothing_to_search_pillar(evidence: str, *, supplied: bool) -> Pillar:
     broke: handing the scorer a config space can never *lower* this pillar's
     confidence. Supplying nothing gives 0.00; supplying a document that lists
     nothing gives 1.00; supplying a real one gives 1.00.
+
+    #201 adds a FOURTH input that lands here - a read of the agent's own source
+    that found nothing it can vary - and it is `supplied=True`, because it is a
+    measurement by the same argument the paragraph above makes about a file. The
+    source is the document in that case.
+
+    So `supplied` now separates two states rather than three, and both of the
+    unsupplied ones are the same state: nothing about the agent reached this
+    score at all. `withheld` records it. The check keeps its full weight and
+    earns nothing, exactly as `--task-kind` and the probe scores do, and the
+    caller pairs it with an advisory ceiling rather than a blocking one.
+
+    What must NOT happen to that zero is that it stops counting. An earlier
+    revision of #201 marked the read-found-nothing state unmeasured and had
+    `aggregate` drop the whole pillar out of the weighted average; measured on
+    one 200-row project, that scored 99 for a run that read the agent and found
+    nothing against 92 for a run that read it and found four settings. A zero
+    that leaves the denominator is worth more than a low score, which is
+    `SubScore.withheld`'s own defect one level up.
     """
     return combine(
         "agent",
-        [SubScore("search-space", 0.0, SEARCH_SPACE_WEIGHT, supplied, evidence)],
+        [
+            SubScore(
+                "search-space",
+                0.0,
+                SEARCH_SPACE_WEIGHT,
+                supplied,
+                evidence,
+                withheld=withheld,
+            )
+        ],
+    )
+
+
+def discovered_space_evidence(
+    credited: Sequence[DiscoveredKnob], reachable: int
+) -> str:
+    """What the read of the agent found, as a floor the reader can check.
+
+    Says "at least", every time, and means it. `reachable` multiplies a floor
+    per parameter (see `DiscoveredKnob`), so the true space is this number or
+    larger and never smaller - and a sentence that dropped the qualifier would
+    be asserting a count nobody has chosen the values for.
+
+    Names the parameters rather than counting them. "3 settings" is a number the
+    reader cannot check against their own file; `model, temperature, top_p` is a
+    list they can, and disagreeing with it is the point - this is a read of
+    their code, and a read they can see is a read they can correct.
+    """
+    named = ", ".join(knob.name for knob in credited)
+    unit = "configuration" if reachable == 1 else "configurations"
+    return (
+        f"read from your agent: {named} can vary, reaching at least {reachable} "
+        f"distinct {unit}; no trial budget is declared yet, so this counts what "
+        "the agent makes reachable rather than what a run would compare"
+    )
+
+
+def score_discovered_agent(
+    facts: AgentFacts,
+) -> tuple[Pillar, list[Cap], list[KnobScore]]:
+    """Score the search space from the agent's own code (#201).
+
+    The opening gate's answer to "what is there to search", when no config-space
+    document exists yet and by the guide's own design never will at this point.
+
+    Two properties hold here that do not hold for a config-space document, and
+    both are why this is a separate path rather than a looser reading of that
+    one. It attests nothing about wiring, so it clears no wiring cap and cannot
+    be mistaken for the `wired` list the guide refuses to inherit. And it has no
+    trial budget - the run that would spend one has not been planned - so
+    `search_space_points` is asked with `budget=None`, which its own rule
+    already damps one rung below complete. A space measured before anyone has
+    said how much of it will be compared may not present as fully searched.
+
+    Returns no `KnobScore` rows. Those grade a DECLARED knob against its range
+    and its value list, and neither exists here; emitting rows built from a
+    floor would put invented per-knob detail on the card beside real detail.
+    """
+    credited = [knob for knob in facts.discovered if knob.credited]
+    if not credited:
+        # The look happened and credited nothing. That is a MEASUREMENT of the
+        # search space, and reporting it as anything else is what produced the
+        # defect this branch was rewritten for.
+        #
+        # The state is the same one `score_agent` already answers one function
+        # down for a config-space document that lists nothing: the space is one
+        # configuration, read off a file. Here the file is the agent's own
+        # source. So it is scored the same way - `supplied=True`, a measured
+        # zero at confidence 1.00 - and it raises the same condition.
+        #
+        # The alternative was tried and measured. Reporting this as unmeasured
+        # let `aggregate` renormalize the pillar out of the average, and on one
+        # 200-row project that scored 99 for a run that read the agent and found
+        # nothing against 92 for a run that read it and found four settings.
+        # Removing a pillar from a weighted average raises the result, so the
+        # weaker finding won.
+        #
+        # The epistemic caveat that argued for "unmeasured" is real and belongs
+        # in the sentence rather than in the arithmetic: a parameter this read
+        # did not establish may exist anyway, because reading source is how you
+        # find what is there and not proof of what is not. That is why the
+        # evidence line below names what was refused and why, so the customer
+        # can disagree with a read of their own code - and it is the same
+        # qualification a settings document that lists nothing already carries,
+        # where nobody proposed dropping the pillar over it.
+        refused = [knob for knob in facts.discovered if not knob.credited]
+        detail = (
+            "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
+            if refused
+            else "the read found no parameter the agent can vary"
+        )
+        return (
+            nothing_to_search_pillar(
+                f"the agent was read and no varying setting was established - "
+                f"{detail}",
+                supplied=True,
+            ),
+            [NOTHING_IN_THE_AGENT_TO_VARY_CAP],
+            [],
+        )
+    reachable = 1
+    for knob in credited:
+        reachable *= knob.reachable_values
+    return (
+        combine(
+            "agent",
+            [
+                SubScore(
+                    "search-space",
+                    search_space_points(reachable, None),
+                    SEARCH_SPACE_WEIGHT,
+                    True,
+                    discovered_space_evidence(credited, reachable),
+                )
+            ],
+        ),
+        # No cap. Every credited parameter reaches two or more values it can be
+        # told apart on, so `agent-no-varying-knobs` would be false here in all
+        # three of its readings - there IS something to search, and this is the
+        # evidence for it.
+        [],
+        [],
     )
 
 
 def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
+
+    # A config-space document wins outright, and this order is the safety
+    # property rather than a preference. A customer who BRINGS a settings
+    # document is already handled correctly - it is read, its `wired` list is
+    # what earns credit, and `NOTHING_WIRED_CAP`/`UNATTESTED_WIRING_CAP` are
+    # real findings about it. A read of the agent must not be able to talk over
+    # any of that, or it becomes a way to score around a document that says
+    # nothing is wired.
+    if facts.discovery_supplied and not facts.config_space_supplied:
+        return score_discovered_agent(facts)
 
     # Order is deliberate: an empty `knobs` map is answered here, ahead of the
     # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
@@ -3816,42 +4121,47 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
             # was made true at both gates.
             else "no settings document was provided to this score"
         )
+        # A cap in both states, and a DIFFERENT one, which is what #201 got
+        # wrong in each direction before it settled here.
+        #
         # `blocks` answers "does this stop the run", not "is this true" - the
         # comment on the field says so, and says every cap used to imply BLOCKED
-        # back when every cap meant something was broken. Both states here are
-        # true; only one of them stops anything.
+        # back when every cap meant something was broken.
         #
         # A supplied document that lists nothing IS a defect: the user handed
-        # over their wiring and there is nothing in it. No document at all is
-        # not - the guide withholds one found before this run's search, so the
-        # ordinary opening state is that none reached the score, and the very
-        # next step is the baseline, which runs regardless. Reporting that as
-        # BLOCKED told every project, including a perfect one, that its paid run
-        # was stopped, and set `recommended_action` to `vary-knobs` - a repair
-        # for a defect the user does not have - on the last card shown before
-        # they are asked to pay.
+        # over their wiring and there is nothing in it. That caps and blocks. No
+        # document and no read is not a defect, so it caps and does NOT block:
+        # the run proceeds, and what the card may claim is bounded because a
+        # third of the picture is unestablished.
         #
-        # The ceiling is unchanged and still applies: `aggregate` takes the
-        # minimum over all caps whatever their `blocks`, so the score stays
-        # capped at 45 until wiring evidence exists. Only the claim that the run
-        # is stopped goes away.
+        # Dropping the second ceiling entirely was tried on this branch and is
+        # the reason the pair is written out here. It made saying nothing worth
+        # 75 where handing over a document that declares the same empty space
+        # was worth 45, so the customer who told the truth about their agent
+        # scored 30 points below the one who said nothing at all.
         #
-        # The condition is "no document was supplied", which is WIDER than the
-        # argument above - that argument is about the opening gate, and this
-        # branch is also reached at the close by a stopped, failed, or zero-trial
-        # search, which emits no document either (`references/run-safety.md`,
-        # config-space document). Narrowing it would need a fact naming the
-        # phase, and this module has none: preflight, calibration and
-        # config-space are the whole input and all three look the same at both
-        # gates. Rather than infer one, the two artifacts that CAN tell the
-        # difference carry it - the cap's reason says nothing that is false
-        # after a failed search, and run-safety.md tells the assistant that at
-        # the close this cap's silence is not a verdict on the search, whose
-        # outcome is reported from the run itself.
-        cap = NOTHING_WIRED_CAP if facts.config_space_supplied else NOT_YET_MEASURED_CAP
+        # This branch is also reached at the CLOSE by a stopped, failed, or
+        # zero-trial search, which emits no document either
+        # (`references/run-safety.md`, config-space document). That reading is
+        # unchanged and is the reason the evidence sentence carries no tense:
+        # this module cannot tell the two gates apart, so it says the one thing
+        # true at both - no settings document reached this score.
         return (
-            nothing_to_search_pillar(evidence, supplied=facts.config_space_supplied),
-            [cap],
+            nothing_to_search_pillar(
+                evidence,
+                supplied=facts.config_space_supplied,
+                # Nothing about the agent reached this score - not a document,
+                # not a read of its source. The guide asks for one of the two at
+                # every gate, so this is silence, and silence keeps its weight.
+                withheld=not facts.config_space_supplied,
+            ),
+            [
+                (
+                    NOTHING_WIRED_CAP
+                    if facts.config_space_supplied
+                    else NO_SEARCH_SPACE_ESTABLISHED_CAP
+                )
+            ],
             [],
         )
 
@@ -4109,6 +4419,27 @@ def aggregate(
     knobs: Sequence[KnobScore],
     weights: dict[str, float],
 ) -> ReadinessScore:
+    # Every declared weight stays in the denominator, and #201 is the reason
+    # that sentence is worth writing down rather than assuming.
+    #
+    # An earlier revision of this branch renormalized a whole pillar out of the
+    # average when nothing in it was measured and nothing in it was withheld -
+    # README.md's "a check that cannot be computed is marked unmeasured and
+    # excluded rather than scored zero", applied one level up. Removing a pillar
+    # from a weighted average RAISES the result, so on the same 200-row project
+    # a run that read the agent and found nothing scored 99 against 92 for a run
+    # that read it and found four settings. Looking and finding nothing paid 7
+    # points over looking and finding something, which is the defect
+    # `SubScore.withheld` exists to refuse, one level up from where it refuses
+    # it.
+    #
+    # Measured before it was removed: across 743 combinations of dataset,
+    # evaluation and agent facts, exactly two reached that exclusion, and both
+    # were the state that scored 99. It was not a general rule about unmeasured
+    # pillars - there is no other pillar this scorer can fail to look at - so it
+    # is gone rather than bounded, and "nothing establishes a search space" is
+    # answered where every other absence in this module is answered: by a zero
+    # that keeps its weight, and a ceiling that names what would lift it.
     total_weight = sum(weights.values())
     weighted = sum(
         weights.get(pillar.name, 0.0) * pillar.score for pillar in pillars
@@ -5864,8 +6195,11 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # A misspelled name is a *string*, so the field's own type check lets it
     # through, and `score_agent` then intersects `wired` with the space and
     # drops it - a silent narrowing that raises the score and makes the card
-    # assert "1 of 1 wired knobs actually vary" about a document that declared
-    # two. A `bounds` name addresses knobs the same way and fails the same way:
+    # count a space one knob smaller than the document declares. It used to
+    # assert that in so many words, "1 of 1 wired knobs actually vary" against a
+    # document naming two; the evidence line now states the space rather than
+    # the knob count, so the miscount is quieter and no less wrong.
+    # A `bounds` name addresses knobs the same way and fails the same way:
     # the declared range never reaches the knob it was meant for, so the knob
     # is scored against the canonical range or on breadth alone, which can flip
     # it from "collapsed" to "varying" and clear the cap on a range the author
@@ -5885,6 +6219,175 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
         _reject_phantom_names("wired", wired, facts.knobs, knobs_key)
     _reject_phantom_names("bounds", bounds, facts.knobs, knobs_key)
     return facts
+
+
+class AgentDiscoveryInputError(ValueError):
+    """An agent-knobs document the scorer cannot read.
+
+    The sibling of `ConfigSpaceInputError` and `RowReviewInputError`, and
+    hand-authored like both: the assistant writes it from what it read in the
+    user's agent, so a typo in it is a reachable path rather than a bug.
+
+    It refuses rather than degrades for the reason `RowReviewInputError` gives
+    and one more of its own. This input is allowed to RAISE a score - it is the
+    only one that can turn an unmeasured pillar into a measured one - so a
+    document that arrives malformed is exactly the document that must not be
+    quietly repaired into a usable one. A structurally unreadable file is
+    refused here; a parameter that simply does not qualify is not an error at
+    all, it is a finding, and it is reported as one with its reason.
+    """
+
+
+# The keys an agent-knobs document may carry, per parameter. Closed, and
+# checked, for the reason the config-space fields are: a misspelled `values` is
+# a parameter that silently earns nothing, and silence is how an author
+# concludes the tool ignored them rather than that they typed it wrong.
+DISCOVERED_KNOB_FIELDS = frozenset({"values", "low", "high", "evidence"})
+
+
+def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
+    """Read one discovered parameter, saying plainly why it earns nothing.
+
+    Every refusal below is the owner's rule, which is a rule about EVIDENCE
+    rather than about plausibility: "according to what his agent can see - if
+    numeric, and if not, have more than 1 option". So a numeric parameter needs
+    a range this scorer can measure, a categorical needs at least two options
+    that actually exist, and both need the line of the agent that shows it.
+
+    Nothing here is inferred from the name. `temperature` is in
+    `CANONICAL_RANGES`, and it would have been easy to let that table supply a
+    range the author did not write - which is precisely the invention the
+    owner's rule refuses, and would credit a project for a parameter its agent
+    may hard-code. The canonical table answers "how wide is this knob's span
+    relative to the usual one" for a knob somebody DECLARED; it does not answer
+    "does this agent expose it".
+    """
+    if not isinstance(spec, dict):
+        raise AgentDiscoveryInputError(
+            f"knob {name!r} must be an object with the evidence for it, not "
+            f"{type(spec).__name__}; say where in the agent you saw it"
+        )
+    unknown = sorted(set(spec) - DISCOVERED_KNOB_FIELDS)
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"knob {name!r} carries unknown field(s) {', '.join(unknown)}; the "
+            f"fields read here are {', '.join(sorted(DISCOVERED_KNOB_FIELDS))}"
+        )
+    evidence = spec.get("evidence")
+    if not isinstance(evidence, str) or not evidence.strip():
+        raise AgentDiscoveryInputError(
+            f"knob {name!r} carries no evidence; this score credits a search "
+            "space it can see in the agent, so name the file and line where "
+            "the parameter is passed rather than asserting that it exists"
+        )
+    evidence = evidence.strip()
+
+    if name in EXCLUDED_KNOBS:
+        # Refused for exactly the reason a declared one is, and with the same
+        # sentence, so an author who wired `seed` reads one explanation rather
+        # than two that have to be reconciled.
+        return DiscoveredKnob(
+            name, "excluded", 0, evidence, EXCLUDED_KNOB_REASONS[name]
+        )
+
+    values = spec.get("values")
+    if values is not None:
+        if not isinstance(values, list):
+            raise AgentDiscoveryInputError(
+                f"knob {name!r} declares 'values' as {type(values).__name__}; "
+                "it is the list of options the agent can actually take"
+            )
+        distinct = len({repr(value) for value in values})
+        if distinct < 2:
+            return DiscoveredKnob(
+                name,
+                "categorical",
+                distinct,
+                evidence,
+                f"{distinct} option(s) available - one option is not a choice, "
+                "so there is nothing here for a search to compare",
+            )
+        return DiscoveredKnob(name, "categorical", distinct, evidence)
+
+    low, high = spec.get("low"), spec.get("high")
+    if low is None or high is None:
+        return DiscoveredKnob(
+            name,
+            "unknown",
+            0,
+            evidence,
+            "neither a list of options nor a low/high range was established, "
+            "so how much this parameter could vary is not something this score "
+            "has seen",
+        )
+    if not all(
+        isinstance(bound, (int, float)) and not isinstance(bound, bool)
+        for bound in (low, high)
+    ):
+        raise AgentDiscoveryInputError(
+            f"knob {name!r} declares a non-numeric range ({low!r}, {high!r}); "
+            "a range is two numbers the parameter can take"
+        )
+    if high <= low:
+        raise AgentDiscoveryInputError(
+            f"knob {name!r} declares low {low!r} and high {high!r}; the high "
+            "bound has to be above the low one for the range to hold anything"
+        )
+    # The same floor a declared numeric knob is measured against, so a range
+    # too narrow for this scorer to tell two values apart is refused here
+    # rather than counted as a dimension and collapsed later.
+    if float(high) - float(low) <= noise_floor(name, float(low), float(high)):
+        return DiscoveredKnob(
+            name,
+            "numeric",
+            0,
+            evidence,
+            f"the range {low} to {high} is inside this score's noise floor for "
+            f"{name}, so two values drawn from it would not be told apart",
+        )
+    return DiscoveredKnob(name, "numeric", 2, evidence)
+
+
+def agent_facts_from_discovery(document: Any) -> AgentFacts:
+    """Read the assistant's read of the agent, and nothing about wiring.
+
+    Returns `AgentFacts` with `knobs` and `wired` untouched on purpose. This
+    document is not a config space and must never be promoted into one: the
+    `wired` attestation is what the guide refuses to take from a historical
+    file, and building one here out of parameters read from source would
+    re-create exactly that, one input over.
+    """
+    if not isinstance(document, dict):
+        raise AgentDiscoveryInputError(
+            f"the agent-knobs document must be an object, not "
+            f"{type(document).__name__}"
+        )
+    unknown = sorted(set(document) - {"knobs", "source"})
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"the agent-knobs document carries unknown field(s) "
+            f"{', '.join(unknown)}; it reads 'knobs' and 'source'"
+        )
+    knobs = document.get("knobs")
+    if knobs is None:
+        raise AgentDiscoveryInputError(
+            "the agent-knobs document declares no 'knobs'; an empty object is "
+            "the way to say the agent exposes nothing, and it is a different "
+            "statement from omitting the field"
+        )
+    if not isinstance(knobs, dict):
+        raise AgentDiscoveryInputError(
+            f"'knobs' must be an object keyed by parameter name, not "
+            f"{type(knobs).__name__}"
+        )
+    return AgentFacts(
+        discovered=tuple(
+            discovered_knob_from_entry(name, spec)
+            for name, spec in sorted(knobs.items())
+        ),
+        # Reaching this line is the proof: the agent was read.
+        discovery_supplied=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -5937,6 +6440,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--agent-knobs",
+        help=(
+            "the coding assistant's own read of the agent's source (path or -): "
+            "which parameters it can already vary, each with the line that "
+            "shows it. Measures the search space at the opening gate, where no "
+            "config-space document exists; attests nothing about wiring, and is "
+            "ignored when --config-space is given"
+        ),
+    )
+    parser.add_argument(
         "--row-review",
         help=(
             "the coding assistant's own read of each provided row (path or -): "
@@ -5982,7 +6495,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def scoring_requested(args: argparse.Namespace) -> bool:
-    return any((args.preflight, args.calibration, args.config_space))
+    # `--agent-knobs` counts. It is evidence about the project, so a run that
+    # supplies only it is asking for a score and not for a plan - and leaving it
+    # out would send that run down the planner branch, which then refuses it for
+    # missing `--agent/--dataset/--evaluation` and never mentions the flag the
+    # caller actually passed.
+    return any((args.preflight, args.calibration, args.config_space, args.agent_knobs))
 
 
 # The one place an unexpected failure is allowed to end.
@@ -6091,11 +6609,16 @@ def run(argv: Sequence[str] | None = None) -> int:
             evaluator_present=evaluator_present,
             evaluator_parses=evaluator_parses,
         )
-        agent_facts = (
-            agent_facts_from_config_space(load_json(args.config_space))
-            if args.config_space
-            else AgentFacts()
-        )
+        # `--config-space` first, and the `elif` is the safety property, not a
+        # style choice: a brought document decides the agent pillar outright,
+        # and a read of the agent may not talk over one that says nothing is
+        # wired. See `score_agent`.
+        if args.config_space:
+            agent_facts = agent_facts_from_config_space(load_json(args.config_space))
+        elif args.agent_knobs:
+            agent_facts = agent_facts_from_discovery(load_json(args.agent_knobs))
+        else:
+            agent_facts = AgentFacts()
         row_review = (
             row_review_from_document(load_json(args.row_review), dataset_facts)
             if args.row_review
@@ -6106,6 +6629,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         json.JSONDecodeError,
         PreflightInputError,
         ConfigSpaceInputError,
+        AgentDiscoveryInputError,
         RowReviewInputError,
     ) as error:
         print(f"cannot read scoring input: {error}", file=sys.stderr)

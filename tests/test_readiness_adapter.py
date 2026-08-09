@@ -2360,27 +2360,31 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             declared_score = _score(declared, extra)
             silent_score = _score(silent, extra)
 
-            # OWNER DECISION RECORDED HERE. #165 wrote this as three
-            # assertions: equal overall, equal status, and both BLOCKED. #149
-            # then decided that a generated dataset may not stop the run at
+            # OWNER DECISION RECORDED HERE, and revised twice. #165 wrote it as
+            # three assertions: equal overall, equal status, and both BLOCKED.
+            # #149 then decided that a generated dataset may not stop the run at
             # all - the guide WRITES the walkthrough dataset for a user who has
-            # none, and blocking it made the guide demand real data from the
-            # one user who by construction has none. The two cannot both hold
-            # literally.
+            # none, and blocking it made the guide demand real data from the one
+            # user who by construction has none. That left silence BLOCKED and
+            # declared-generated OK.
             #
-            # What is kept is #165's purpose - silence may never be cheaper
-            # than declaring - and #149's rule - a route that only scopes the
-            # claim does not stop the run. So the SCORE is still identical,
-            # which is the number the defect was about, and the two differ in
-            # the one place #149's rule makes them differ: declaring routes to
-            # `connect-real-data`, which only scopes what may be claimed, while
-            # silence routes to `declare-data-provenance`, which asks the user
-            # to change the file and therefore waits. Silence is now strictly
-            # more expensive than declaring, never less, which is the incentive
-            # #165 set out to fix.
+            # #211 measured what that cost and the owner settled it: the two
+            # agree on the run/wait axis as well. Silence is not a defect - the
+            # rows parse, the answers are there, and the only thing absent is a
+            # word saying who wrote them - so it bounds the claim exactly as its
+            # declared twin does. Blocking it punished a project whose real rows
+            # carry a vocabulary this script does not know more harshly than a
+            # project that declared its whole corpus generated.
+            #
+            # #165's purpose survives intact, and this is where it is asserted:
+            # silence may never be cheaper than declaring. The SCORE is
+            # identical, which is the number the defect was about, and silence
+            # still costs strictly more - it carries a question its declared
+            # twin has already answered, so `recommended_action` names a remedy
+            # where declaring names none.
             self.assertEqual(declared_score["overall"], silent_score["overall"])
             self.assertEqual(declared_score["status"], "OK")
-            self.assertEqual(silent_score["status"], "BLOCKED")
+            self.assertEqual(silent_score["status"], "OK")
             # Same ceiling, different instruction. Telling a customer to connect
             # real data is wrong when the data may already be real and merely
             # unlabelled, so the remedies deliberately do not match.
@@ -2388,6 +2392,22 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             self.assertEqual(
                 silent_score["recommended_action"], "declare-data-provenance"
             )
+            # And that remedy reaches the reader through the asking tier rather
+            # than through a stop, which is the whole of what #211 changed.
+            silent_cap = next(
+                cap
+                for cap in silent_score["caps"]
+                if cap["condition"] == "dataset-undeclared-provenance"
+            )
+            declared_cap = next(
+                cap
+                for cap in declared_score["caps"]
+                if cap["condition"] == "dataset-fully-synthetic"
+            )
+            self.assertEqual(silent_cap["ceiling"], declared_cap["ceiling"])
+            self.assertFalse(silent_cap["blocks"])
+            self.assertTrue(silent_cap["asks"])
+            self.assertFalse(declared_cap["asks"])
 
     def test_the_card_states_the_assumption_and_both_grades(self) -> None:
         """The disclosure is on the card, and its second number is computed."""
@@ -2686,7 +2706,12 @@ class UndeclaredProvenanceIsScoredAsGeneratedTests(unittest.TestCase):
             ]
             score = _score_records(records, extra)
             self.assertEqual(score["recommended_action"], "declare-data-provenance")
-            self.assertEqual(score["status"], "BLOCKED")
+            # OK, not BLOCKED, since #211: the remedy reaches the reader through
+            # the asking tier. The assertion this test is actually about is the
+            # line above - a payload that states no source still routes to
+            # `declare-data-provenance` rather than to silence - and that is the
+            # half `asks` preserves where `blocks` used to carry it.
+            self.assertEqual(score["status"], "OK")
 
             assumption = score["provenance_assumption"]
             self.assertIsNotNone(assumption)

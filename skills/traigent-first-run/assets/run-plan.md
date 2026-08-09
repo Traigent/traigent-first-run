@@ -19,7 +19,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
 - Row ids repaired into the working copy, and row ids generated to fill a gap:
-- Opening readiness score before any creation or repair - overall, band, binding caps:
+- Opening readiness score before any creation or repair - overall, band, binding caps, and the one ask's gaps, answer, and any path given or missed:
 - Revalidation gate results - which caps cleared, and on what evidence:
 
 ## Shared comparison
@@ -32,7 +32,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 - Current configuration/space and provider recipients:
 - Calls, runtime, and spend:
-- Baseline approval - status/scope/ceiling:
+- Baseline approval - status/scope/ceiling, and the pre-spend material card's proceed/fix answer:
 
 ## Running state
 

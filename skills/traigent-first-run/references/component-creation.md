@@ -6,10 +6,12 @@ before creating any of them.
 ## Contents
 
 1. Evidence and provenance
-2. Dependency matrix
-3. Agent creation
-4. Compatibility contract
-5. Readiness transitions
+2. The one ask, and the path that answers it
+3. Dependency matrix
+4. Agent creation
+5. Reading the agent's search space for the opening score
+6. Compatibility contract
+7. Readiness transitions
 
 ## Evidence and provenance
 
@@ -36,6 +38,60 @@ repairing a working copy and revalidating it; if the user explicitly continues u
 it as the real anchor in the matching `real` row but keep its readiness state `❗`. For `invalid`,
 repair it successfully or treat it as missing and create a clearly labeled `🛠️` substitute. A
 broken evaluator or incompatible dataset is not safe to continue unchanged.
+
+## The one ask, and the path that answers it
+
+The matrix below says what gets built. This is what the user was told before it was, and SKILL.md
+owns that it is one question, when it is asked, and what it has to carry. Here is what it sounds
+like and what happens to the answer.
+
+Say it in their words, naming only what this run looked for and did not find:
+
+> Your agent is here and it runs. Searching this project I did not find any set of examples to
+> score it on, or anything that says what a right answer looks like - they may well exist somewhere
+> I did not look. I can write both from the agent itself - examples that exercise what it actually
+> does, and a grading method to match. Examples I write are weaker evidence than examples out of
+> your product: the score carries the generated-data ceiling because of it, so this run can show the
+> workflow working and cannot tell you how your product performs.
+>
+> Shall I go ahead? Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`,
+> `evaluation: <path>` - and I will use yours.
+
+Never say the material does not exist. This run reads the project directory, and a dataset can be
+real, in use, and outside it - a shared mount, a sibling repo, a path configured somewhere this
+shell never saw, an environment variable this session did not inherit. "There is none here" asserts
+what this run did not check, and a user looking straight at their dataset reads the whole card as
+wrong. It is also what makes `I have it` the natural next line rather than a correction: nobody is
+being told they were wrong, they are being asked to point. `readiness.py` already speaks this way -
+its caps say a dataset was not provided *to this score* - so this is the wording catching up with
+the script.
+
+Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
+hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already
+done the work. Do not soften that sentence, and do not oversell the other exit either: what the user
+is choosing between is a real demonstration on generated material today and a delay of unknown
+length. Proceeding is one keystroke, and it is what a user with nothing to point at should do.
+
+### When a path arrives
+
+Read it before anything is built. Material the user points at is material this run did not create,
+so it is scored rather than trusted, and it enters the matrix below as `real`, `limited`, or
+`invalid` on that evidence like any other candidate.
+
+Three ways it does not resolve. Each lands somewhere, and none of them is a retry loop:
+
+- **The path does not exist.** Say so, quoting the path exactly as given - a mistyped path is the
+  common case and it is invisible when the message paraphrases it. Ask once more and name the other
+  exit in the same breath. A second miss takes that exit: build the substitute, record the path that
+  was offered and missed in `traigent-runs/run-plan.md`, and do not ask a third time.
+- **The path exists and does not parse.** Not a verdict on their file. Read and re-map it per
+  `references/evaluation-and-dataset.md` first, because a fully correct file in an unexpected shape
+  produces this exact state. Only when mapping genuinely fails is it a defect rather than a gap:
+  classify it `invalid` under "Resolve `limited` and `invalid` candidates" above, which is what keeps
+  the later gates on it - nobody consented to being graded by something broken.
+- **A path for one of two gaps.** Take it and build the other. The question has already been
+  answered: a user who hands over a dataset and says nothing about a grading method has said to
+  write the grading method, and asking again is the second question the one ask exists to prevent.
 
 ## Dependency matrix
 
@@ -78,6 +134,33 @@ If the real agent is not Python, keep Agent `❗` unless a thin Python adapter c
 real behavior and can be evaluated safely. A generated Python walkthrough agent is `🛠️`; it does
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
+
+## Reading the agent's search space for the opening score
+
+SKILL.md's opening gate asks for this; the shape is here. Write it to a scratch path outside the
+user's project and pass it as `scripts/readiness.py --agent-knobs`.
+
+```json
+{"source": "agent.py",
+ "knobs": {
+   "model":       {"values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
+                   "evidence": "agent.py:8 model=model reaches chat.completions.create; agent.py:4 MODELS lists the three ids"},
+   "temperature": {"low": 0.0, "high": 1.0,
+                   "evidence": "agent.py:9 temperature=temperature reaches the provider call"},
+   "style":       {"values": ["direct", "structured"],
+                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 declares both keys"}}}
+```
+
+A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
+it genuinely accepts, a categorical one needs two or more options that exist. Anything else is
+reported with the reason it earned nothing, which is a line the user can read and correct - so a
+parameter you are unsure of is worth recording rather than dropping. `seed` and `max_tokens` earn
+nothing here, for the reasons the scorer already gives on the card.
+
+A range counts as at least two distinct values and no more; a value list counts as its own length.
+The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
+what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
+the config-space document the enhanced search emits.
 
 ## Compatibility contract
 

@@ -413,10 +413,12 @@ ceiling on the entire run:
 An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
 declaration rather than new data unless over half the corpus is declared generated - a ceiling no
 declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
-capped by neither. The two do differ in one further way: declaring is a change to the file, so the
-undeclared rungs are routed as a repair and hold the paid run until cleared, where the declared
-twins only bound the claim. That is this ladder's one exception to the rule closing this section: a
-dataset with no `provenance` field at all reads `FIX BEFORE PAID RUN` at 65.
+capped by neither. The two differ only in the remedy: declaring is a change to the file rather than
+data anyone has to go and collect, so the undeclared rungs put that word to the customer where the
+declared twins ask for nothing. Neither holds the paid run. The question rides on the approval that
+already halts before the first billed call. Its two answers are not the same size: saying where the
+rows came from lifts the ceiling, and agreeing to run without saying leaves the number and the band
+exactly where they were.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an

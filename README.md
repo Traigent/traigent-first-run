@@ -34,9 +34,12 @@ The assistant performs the technical work and asks only when it needs:
   directory is about to change - and a repeat run does not re-ask about the environment the last
   one made.
 
-No existing agent, dataset, or evaluator is required to see the walkthrough. When one is missing,
-the assistant prepares a coherent substitute around everything that already exists, then Traigent
-runs the managed optimization.
+No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
+missing you are told before anything is written, in one question however many pieces are absent:
+what it did not find, that material it writes is weaker evidence than examples out of your product
+and what that costs the result, and two ways to answer - go ahead, or point it at yours. Only then
+does it prepare a coherent substitute around everything that already exists, and Traigent runs the
+managed optimization.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
@@ -75,7 +78,10 @@ changing out of your project.
    external calibration remains inside the paid/data-egress approval.
 5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
    spend, a total execution stop target (`$5.00` by default), and data egress. That target is a
-   conservative control, not a guaranteed provider-billing cap.
+   conservative control, not a guaranteed provider-billing cap. When this run had to write the
+   dataset or the grading method, the same preview shows what it wrote - full paths, the easiest and
+   the hardest example, and what the method counts as correct - and asks you to proceed or fix
+   before anything is charged.
 6. Shows the baseline result, then explains and separately approves the broader managed
    optimization with additional meaningful knobs when the evaluator can distinguish configurations.
 7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and
@@ -145,13 +151,18 @@ That is also why the band can sit below the number. A pillar measured thinly can
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
 pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating the evaluator is
-what fills that one in. Calibrating can only lift the band as far as the lowest ceiling allows: on
-the opening card the missing settings document holds the whole score to at most 45, inside Partial,
-so calibrating there fills in the two lines and cannot carry the band past Partial - and where 45 is
-already the number, it leaves `45/100 PARTIAL` exactly where it was. Strong and Excellent are
-therefore out of reach of an opening card: they need a settings document, and one exists only after
-a search has run. That is a bound on what a pre-run check can see rather than a verdict on your
-project, and the card gives the reason on its own line.
+what fills that one in.
+
+No settings document exists before the search, so the agent pillar is read from the agent's own
+code instead - which parameters it can already vary, each against the line that shows it - and that
+is what the opening score grades the search space from. Where the read finds settings, no agent
+ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
+inside Partial, and they are different findings. A reading that found nothing your agent can vary
+says a search here would compare one configuration - a measurement of your project - so it blocks
+the paid run until something can vary. No reading and no document says only that this score was
+given nothing to count: it claims nothing about your project either way, and it stops nothing. What
+the opening card no longer does is hold every project at 45 for a document nobody was supposed to
+bring.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
@@ -170,7 +181,7 @@ walkthrough dataset scoring `65/100 WORKABLE` while blocked is therefore the ord
 a self-contradiction: the score stands, and the line says how many things have to clear first,
 where each of them is marked, and what happens once they are cleared.
 
-The card labels the two kinds differently, and the label is the whole message.
+The card labels the kinds differently, and the label is the whole message.
 `FIX BEFORE PAID RUN` means the current components cannot yet support a trustworthy paid
 comparison and something has to be created or repaired first - no dataset, no expected answers, an
 evaluator that scores a wrong answer as well as a right one, a tuning set that shares examples with
@@ -179,10 +190,22 @@ evidence-gathering action first. `LIMITED TO 89` means the paid comparison can p
 bounds what the result may claim; it names the number so "why is this 89" has an answer on the
 same line.
 
-Generated data and a small comparison set land on the second side, not the first. A walkthrough
-dataset is what this guide writes for a user who has none, and a handful of rows is a wiring check -
-both are runs worth making, and both are things the result may not claim too much from. So they
-lower the ceiling and say why; they do not stop the run or ask you to fix anything.
+Between those two there is a third, and it is the only one that needs anything from you. Some
+conditions do not hold the run up and still leave a person something to agree with before the
+number means what it looks like - an answer key a model wrote end to end, rows whose expected
+answer does not appear to match their own input, or a dataset that never says where its rows came
+from, which is read as generated precisely because nothing here can check it. Each of those is put
+to you once, with the material to judge it on and a straight pair of exits - at the point the
+finding is made where that is still free to act on, otherwise inside the approval before the first
+paid call - and the approval shows you what you answered either way. Once, not twice: being asked
+the same thing again in different words at the till is the thing this is built to avoid. Stopping a
+paid run over the assistant's reading of your data would be wrong; showing you a
+ceiling with no way to act on it was the older mistake, and this is the fix for it.
+
+Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
+this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
+worth making, and both are things the result may not claim too much from. So they lower the ceiling
+and say why; they do not stop the run and they ask nothing of you.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - at or below every other ceiling, and at or below your average. Two conditions can carry the
