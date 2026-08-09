@@ -16638,9 +16638,10 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     The scorer cannot tell those two apart and is not asked to: `AgentFacts`
     records whether a document or a read was SUPPLIED and has no field for
     whether an agent exists, so both states arrive as the same silence. That is
-    why the fix is at the gate. The read is unconditional wherever an agent was
-    found, and where it cannot be completed the run asks to be pointed at a
-    config space instead of letting the ceiling stand as its answer - the same
+    why the fix is at the gate. The read is unconditional wherever a
+    task-performing agent was found, and where it cannot be completed the run
+    asks to be pointed at a config space instead of letting the ceiling stand
+    as its answer - the same
     shape as the one ask at discovery, and folded onto that same question so it
     never becomes a second one.
 
@@ -16658,17 +16659,32 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         )[0]
         return " ".join(gate.casefold().split())
 
-    def test_the_read_is_not_conditional_where_an_agent_was_found(self) -> None:
+    def test_the_read_is_not_conditional_where_a_task_performing_agent_was_found(
+        self,
+    ) -> None:
         gate = self._gate()
-        self.assertIn("every guided run that found an agent does this read", gate)
-        self.assertIn("not conditionally", gate)
         self.assertIn(
-            "the flag is left off only where the inventory found no agent at all",
+            "every guided run that found a task-performing agent does this read",
             gate,
         )
-        # The wording this replaces made the read contingent on a judgement
-        # about the agent rather than on whether one exists, which is what let
-        # an unreadable-but-present agent fall through to the ceiling.
+        self.assertIn("not conditionally", gate)
+        self.assertIn(
+            "the flag is left off only where the inventory found no "
+            "task-performing agent at all",
+            gate,
+        )
+        self.assertIn(
+            "a constant, echo, fixture, or placeholder is a missing agent",
+            gate,
+        )
+        self.assertIn("omit `--agent-knobs`", gate)
+        self.assertIn("carry its gap into stage 2", gate)
+        self.assertIn(
+            "if another component anchors task intent, continue from it", gate
+        )
+        self.assertIn("otherwise follow the zero-anchor gate below", gate)
+        # Invalid candidates must not receive an agent-source read, while an
+        # unreadable real agent still receives the documented recovery ask.
         self.assertNotIn("omit it only when there is no agent to read", gate)
 
     def test_a_read_that_cannot_be_done_offers_rather_than_settling(self) -> None:

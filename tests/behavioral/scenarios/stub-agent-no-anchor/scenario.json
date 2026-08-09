@@ -2,7 +2,7 @@
   "id": "stub-agent-no-anchor",
   "user_request": "Help me try Traigent in this project.",
   "starting_state": {
-    "agent": "invalid",
+    "agent": "missing",
     "dataset": "missing",
     "evaluation": "missing"
   },
@@ -28,6 +28,8 @@
     ],
     "opening_score": 0,
     "opening_band": "NOT READY",
+    "opening_agent_pillar": 0,
+    "opening_knobs": [],
     "opening_caps": [
       "dataset-absent"
     ]

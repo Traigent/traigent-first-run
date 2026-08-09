@@ -944,16 +944,28 @@ def stub_agent_no_anchor(
         raise ContractError("stub-agent opening score violated its declaration")
     if not set(expected["opening_caps"]) <= set(cap_conditions(score)):
         raise ContractError("stub-agent opening score lost its required caps")
+    agent_pillar = next(
+        pillar for pillar in score["pillars"] if pillar["name"] == "agent"
+    )
+    if agent_pillar["score"] != expected["opening_agent_pillar"]:
+        raise ContractError("stub agent received opening agent-pillar credit")
+    if score["knobs"] != expected["opening_knobs"]:
+        raise ContractError("stub agent supplied opening knobs")
+    if any(
+        argument == flag or argument.startswith(f"{flag}=")
+        for flag in ("--agent-knobs", "--task-kind")
+        for argument in opening["argv"]
+    ):
+        raise ContractError("stub agent added an opening source-derived argument")
     append_event(events, "opening_readiness_score", **score_event_fields(score))
     append_event(events, "record_deferred", reason="task intent not anchored")
 
-    # The stub is reported as an INVALID agent, not a real one: it exists, so it
-    # is not "missing" to the user, and it anchors nothing, so it cannot be an
-    # anchor. Both facts have to survive into the board.
+    # The stub is reported as missing, not merely invalid: it is no production
+    # agent for opening purposes and anchors no task intent.
     append_event(
         events,
         "readiness",
-        real={"agent": "invalid", "dataset": "missing", "evaluation": "missing"},
+        real=contract["starting_state"],
         markers={"agent": "❗", "dataset": "❗", "evaluation": "❗"},
     )
     append_event(events, "walkthrough_scope", synthetic_is_production_evidence=False)
