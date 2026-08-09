@@ -343,27 +343,33 @@ free-tier run as mocked.
 `scripts/readiness.py --config-space` scores the agent pillar from the space this run actually
 built. A file found before the current enhanced search - including one left by an earlier guided
 run - is historical context only. Its existence, timestamp, hash, or non-empty `wired` list cannot
-prove current wiring. Record its provenance, omit it from opening and stage-4 readiness, and report
-the pillar as not yet measured.
+prove current wiring. Record its provenance and omit it from opening and stage-4 readiness. What
+those scores report the agent pillar from instead is the read of the agent's own source they are
+passed as `--agent-knobs`, never this file.
 
 A scoreable file means one thing: *this is the space the search that just completed received*.
 The generated wrapper serializes the finalized space, removes any earlier file before the call, and
 writes `traigent-runs/config-space.json` only after the search returns nonzero trials. Only that
 current-run file enters closing readiness. A stopped, failed, or zero-trial search emits none, so
-the agent pillar remains honestly scored from absent evidence and its 45 ceiling stays in force -
-the closing score cannot exceed it.
+the agent pillar is scored from absent evidence and its 45 ceiling stays in force - the closing
+score cannot exceed it.
 
-The ceiling is what stays binding there; `agent-no-varying-knobs` itself is advisory whenever no
-document reached the scorer, because the scorer cannot tell a document withheld before the search
-from one the search failed to produce - both are the same absent input. So on a closing card after
-a stopped, failed, or zero-trial search, `status: OK` describes only the evidence this cap was
-given, and is not a verdict that the search succeeded. `recommended_action` reads `proceed` there
-only when nothing else blocks and nothing else is asking: an asking cap carries its own remedy into
-that field, so `proceed` on this card is the absence of every other finding rather than a statement
-about this one. Report that search's outcome from the run itself - trials executed, spend, the
-error it stopped on - and never let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried
-or paid for again is the approval question it always was, decided on that outcome, not on this
-score.
+`--agent-knobs` is deliberately not passed at the close, and it is the only score in the run that
+leaves it off. The opening read says what the agent makes reachable; this score says what the search
+actually received, and they are different quantities. Letting a read of the source stand in for a
+document the search never emitted would lift this ceiling on exactly the runs it exists for - the
+ones that stopped, failed, or bought no trial.
+
+`agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
+because the scorer cannot tell a document withheld before the search from one the search failed to
+produce - both are the same absent input. So on a closing card after a stopped, failed, or
+zero-trial search, `status: OK` describes only the evidence this cap was given, and is not a verdict
+that the search succeeded. `recommended_action` reads `proceed` there only when nothing else blocks
+and nothing else is asking: an asking cap carries its own remedy into that field, so `proceed` on
+this card is the absence of every other finding rather than a statement about this one. Report that
+search's outcome from the run itself - trials executed, spend, the error it stopped on - and never
+let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried or
+paid for again is the approval question it always was, decided on that outcome, not on this score.
 
 These are the only fields the scorer reads and the only keys it accepts: any other key is refused
 by name (exit 2), listing the fields it may declare and naming the closest when there is one,

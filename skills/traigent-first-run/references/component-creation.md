@@ -9,8 +9,9 @@ before creating any of them.
 2. The one ask, and the path that answers it
 3. Dependency matrix
 4. Agent creation
-5. Compatibility contract
-6. Readiness transitions
+5. Reading the agent's search space for the opening score
+6. Compatibility contract
+7. Readiness transitions
 
 ## Evidence and provenance
 
@@ -133,6 +134,33 @@ If the real agent is not Python, keep Agent `❗` unless a thin Python adapter c
 real behavior and can be evaluated safely. A generated Python walkthrough agent is `🛠️`; it does
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
+
+## Reading the agent's search space for the opening score
+
+SKILL.md's opening gate asks for this; the shape is here. Write it to a scratch path outside the
+user's project and pass it as `scripts/readiness.py --agent-knobs`.
+
+```json
+{"source": "agent.py",
+ "knobs": {
+   "model":       {"values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
+                   "evidence": "agent.py:8 model=model reaches chat.completions.create; agent.py:4 MODELS lists the three ids"},
+   "temperature": {"low": 0.0, "high": 1.0,
+                   "evidence": "agent.py:9 temperature=temperature reaches the provider call"},
+   "style":       {"values": ["direct", "structured"],
+                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 declares both keys"}}}
+```
+
+A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
+it genuinely accepts, a categorical one needs two or more options that exist. Anything else is
+reported with the reason it earned nothing, which is a line the user can read and correct - so a
+parameter you are unsure of is worth recording rather than dropping. `seed` and `max_tokens` earn
+nothing here, for the reasons the scorer already gives on the card.
+
+A range counts as at least two distinct values and no more; a value list counts as its own length.
+The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
+what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
+the config-space document the enhanced search emits.
 
 ## Compatibility contract
 

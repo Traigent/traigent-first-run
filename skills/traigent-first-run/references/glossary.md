@@ -208,7 +208,9 @@ The lines under each pillar on the card
                                  a search completes; a file left by an earlier
                                  run is deliberately not counted, so an opening
                                  score always reports that none was provided
-                                 yet rather than that your agent has none.
+                                 yet rather than that your agent has none - and
+                                 grades the space from your agent's code
+                                 instead, which needs no such file to exist.
     tuning set / held-out set  - two parts of your examples, not equal halves:
                                  18 to tune on and 10 kept back, by default. The
                                  search is allowed to see the first part while it
@@ -253,17 +255,26 @@ The lines under each pillar on the card
                                  first, so the card omits it rather than
                                  spending a line to say nothing changes.
 
-  Why three lines are blank at the start, every time: two of them are
-  "checked on known-good and known-bad" and "separates good answers from bad",
-  which both come from calibrating the evaluator - that happens later in the
-  run, so at the opening score they have not been done yet. The third is the
-  whole Agent pillar. Every config-space file found before this run's search is
-  omitted on every guided run, so no settings document ever reaches an opening
-  score, and the pillar reports `1 of 3 checks measured` behind one shared line
-  rather than naming "settings that vary", "how widely each setting varies" and
-  "the settings that matter most" separately - one absent input is one finding,
-  not three. All three blanks are reported as not measured rather than as zero,
-  and none of them is something you were supposed to bring.
+  Why two lines are blank at the start: they are "checked on known-good and
+  known-bad" and "separates good answers from bad", which both come from
+  calibrating the evaluator - that happens later in the run, so at the opening
+  score they have not been done yet. Both are named as not measured, and neither is
+  something you were supposed to bring. Unmeasured is not free, though: a
+  check the run will do later keeps its weight, so the pillar reads under 100
+  until calibration. That is why 2 of 4 measured is not 100.
+
+  The Agent pillar used to be the third blank and no longer is. Every
+  config-space file found before this run's search is omitted, so no settings
+  document ever reaches an opening score - but your agent is still there to
+  read, and the assistant reads it: which parameters it can already vary, and
+  the line of your code showing each. That is what the opening pillar is
+  scored from, and it says "at least N configurations" because nobody has
+  chosen the sweep yet. Two different states hold the card at 45 and they are
+  not the same finding about you. A reading that found nothing your agent can
+  vary is a measurement of your project - a search here would compare one
+  configuration - so it blocks the paid run until something can vary. Nothing
+  read and nothing supplied is a statement about what this score was given; it
+  claims nothing about your project either way, and it stops nothing.
 
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
@@ -280,10 +291,12 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   It decides what the run does next: repair, create, or continue as a clearly
   labeled walkthrough. A low number alone does not stop a safe walkthrough, but
   a blocking cap does stop paid optimization when the current components or
-  evidence cannot support a trustworthy comparison. `agent-no-varying-knobs` is
-  advisory whenever no settings document was provided - see that entry above for
-  why one never is at the opening score - so it bounds the score at 45 and stops
-  nothing.
+  evidence cannot support a trustworthy comparison. `agent-no-varying-knobs`
+  fires wherever nothing your agent can vary is established. It blocks where
+  something was read and found empty - a settings document, or your agent's own
+  code - and is advisory where neither reached the score, bounding it at 45 and
+  stopping nothing; see that entry above for why one never is provided at the
+  opening score.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

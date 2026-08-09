@@ -204,8 +204,30 @@ spends nothing, and no generated row competes with it yet. Apply the run-scoped 
 scripts, and apply the run-scoped task-kind rule to readiness only.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
-its provenance and describe the agent pillar as not yet measured; a timestamp, hash, or non-empty
-`wired` list does not make it current. Every guided run does this, including a zero-anchor run.
+its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
+run does this, including a zero-anchor run.
+
+Then measure the search space from the agent itself and pass it as `--agent-knobs`, so the opening
+card grades what this project can search instead of reporting nothing. Read the agent's own source
+for parameters it can already vary - model, temperature, top_p, prompt strategy, retry/reflection
+flags, tool selection - and record each with the line that shows it. Never write a range or an
+option you did not read: an omitted parameter costs a few points, an invented one makes the card
+wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+Every guided run that found an agent does this read - not conditionally, not depending on the
+agent's language or on how the card would look without it - and the flag is left off only where the
+inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
+name it and say what stopped the read, then offer to be pointed at source that can be read: that
+offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
+stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
+read found, and no read completed, so passing an empty one reports a finding about the customer's
+agent that nothing established. Proceed with what can be varied if nothing comes back. Never ask
+for a config-space file here - the paragraph above omits
+every one of those found before this run's search, so it cannot answer this. The ceiling left
+standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
+later re-score in this run, re-reading the agent only where this run created or repaired it: a
+re-score that quietly drops the flag reports the agent pillar falling from what the opening read
+established to nothing, and that fall reaches the customer as an honest change in their project.
+`references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the score this run
 reports for the project. Show it before anything is created or repaired.
 
@@ -471,13 +493,13 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
-`agent-no-varying-knobs` is an advisory ceiling only where its reason says no settings document was
-provided to the score: before the enhanced run there is no document to score, and afterwards a
-missing one is that run's own outcome to report, not a defect in the project. Where a document
-exists and nothing in it varies - no knobs, none marked as wired, one value each, or only knobs
-excluded from scoring - the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route
-that by its reason, and mark the settings the agent actually uses or give one of them a second
-value.
+`agent-no-varying-knobs` blocks where something was read and found empty - a settings document with
+no knobs, none marked as wired, one value each, or only knobs excluded from scoring; or a reading
+of the agent that established nothing it can vary. The card prints `FIX BEFORE PAID RUN`; route by
+its reason - mark the settings the agent uses, give one a second value, or expose a parameter it
+has none of. It is an advisory ceiling only where its reason says neither a document nor a reading
+reached the score: nothing there is a verdict on the project, and after a stopped, failed, or
+zero-trial enhanced run it is that run's own outcome to report.
 
 ### 5. Prepare the environment and finish free checks
 

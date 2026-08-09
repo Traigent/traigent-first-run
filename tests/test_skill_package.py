@@ -4157,10 +4157,17 @@ class SkillPackageTests(unittest.TestCase):
         evaluator: `45/100 PARTIAL`, agent `1 of 3`, evaluation `2 of 4`.
 
         The glossary called that "usually", and counted two blank lines where
-        the card prints three - the third being the whole Agent pillar, which
-        never names its own three checks because they collapse into that one
-        line. A reader who is told "usually" goes looking for what they did
-        wrong; there is nothing to find.
+        the card printed three - the third being the whole Agent pillar. A
+        reader who is told "usually" goes looking for what they did wrong; there
+        is nothing to find.
+
+        Two blank lines again since #201, and for the opposite reason to the
+        original one: the Agent pillar is no longer blank at the opening,
+        because the agent itself is read for what it can vary. The mandate that
+        made it blank is unchanged and still asserted below - no settings
+        document reaches an opening score - so what this test now pins is that
+        the glossary counts the blanks the card actually prints, whichever
+        direction the count moves.
         """
         glossary = " ".join(
             (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
@@ -4168,20 +4175,20 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             # Unconditional, because the mandate is.
             "an opening score always reports that none was provided yet",
-            "why three lines are blank at the start, every time",
-            # The third blank named, and named as a pillar rather than a check.
-            "the third is the whole agent pillar",
+            "why two lines are blank at the start",
             "no settings document ever reaches an opening score",
-            # Why its three named lines never print by name.
-            "one absent input is one finding, not three",
-            # And the point of the paragraph, which survives the correction.
-            "none of them is something you were supposed to bring",
+            # The Agent pillar's own sentence, which is now about what IS read.
+            "your agent is still there to read, and the assistant reads it",
+            # And the point of the paragraph, which survives both corrections.
+            "neither is something you were supposed to bring",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)
         for hedge in (
             "an opening score usually reports",
             "why two of them are usually blank",
+            # And the count that is no longer true of the card.
+            "why three lines are blank at the start",
         ):
             with self.subTest(hedge=hedge):
                 self.assertNotIn(hedge, glossary)
@@ -4268,14 +4275,50 @@ class SkillPackageTests(unittest.TestCase):
         type(self)._EVALUATION_SWEEP = swept
         return swept
 
-    def _opening_card(self, evaluation: int, dataset: int) -> tuple[int, str]:
-        """Score one modelled opening card: no settings document, so 45 caps it.
+    # What the assistant is now mandated to bring to the opening gate: its own
+    # read of the agent's source. Two settings with two values each, cited, is
+    # the smallest document that establishes a space at all.
+    OPENING_READ = {
+        "knobs": {
+            "model": {
+                "values": ["gpt-4o-mini", "gpt-4o"],
+                "evidence": "agent.py:8 model= reaches chat.completions.create",
+            },
+            "temperature": {
+                "low": 0.0,
+                "high": 1.0,
+                "evidence": "agent.py:9 temperature= reaches the provider call",
+            },
+        }
+    }
+
+    def _opening_card(
+        self, evaluation: int, dataset: int, agent_facts: object = None
+    ) -> tuple[int, str]:
+        """Score one modelled opening card.
 
         The opening card is defined by what it lacks - SKILL.md mandates that no
-        config space is supplied on the first pass - so `agent-no-varying-knobs`
-        is always among its caps and the agent pillar always scores 0. The other
-        two pillars are what a real project varies, so they are the sweep.
+        config space is supplied on the first pass - so the agent pillar is
+        built by `score_agent` rather than hand-written here. That is the point
+        of building it this way: whatever that branch produces (a cap, a
+        ceiling, a withheld check, nothing) is what the sweep sees, so a change
+        to the branch shows up as a change to the modelled card instead of
+        being masked by a fixture that restates the old behaviour.
+
+        `agent_facts` defaults to the state where nothing about the agent
+        reached the score. Since #201 that is no longer the ordinary opening
+        card - the assistant reads the agent instead - so callers pass
+        `OPENING_READ` for the conformant one and the default for the run that
+        supplied nothing.
+
+        The other two pillars are what a real project varies, so they are the
+        sweep.
         """
+        agent, caps, knobs = READINESS.score_agent(
+            READINESS.agent_facts_from_discovery(agent_facts)
+            if agent_facts is not None
+            else READINESS.AgentFacts()
+        )
         pillars = [
             READINESS.Pillar(
                 name="dataset", score=dataset, confidence=1.0, subscores=()
@@ -4283,12 +4326,12 @@ class SkillPackageTests(unittest.TestCase):
             READINESS.Pillar(
                 name="evaluation", score=evaluation, confidence=1.0, subscores=()
             ),
-            READINESS.Pillar(name="agent", score=0, confidence=1.0, subscores=()),
+            agent,
         ]
         scored = READINESS.aggregate(
             pillars,
-            caps=[READINESS.NOTHING_WIRED_CAP],
-            knobs=(),
+            caps=caps,
+            knobs=knobs,
             weights=dict(READINESS.DEFAULT_WEIGHTS),
         )
         return scored.overall, scored.band
@@ -4298,77 +4341,112 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """README told a first-time reader to calibrate and watch the band move.
 
-        The band does not move past Partial there, and the code says why before
-        any run: the opening card has no settings document by mandate, so
-        `agent-no-varying-knobs` caps the whole score at 45, and 45 is Partial.
+        For two revisions the answer was "it cannot": the opening card had no
+        settings document by mandate, `agent-no-varying-knobs` capped the whole
+        score at 45, and 45 is Partial. The paragraph was corrected twice
+        against a sweep of 121 modelled opening shapes (dataset and evaluation
+        pillars over 0..100 by 10) - first because 45 was an upper bound rather
+        than the score, then because calibrating did move the number and the
+        band well below that bound.
 
-        Two later corrections, both measured on this sweep of 121 modelled
-        opening shapes (dataset and evaluation pillars over 0..100 by 10):
+        #201 does not remove that ceiling. It removes the reason the ceiling
+        applied to everybody: the assistant now READS the agent at the opening
+        gate, so the card that used to be defined by a missing document is
+        defined by what the read found. Measured on the same 121 shapes with
+        the same helper, now swept twice - once with the read the guide
+        mandates and once with the state where nothing about the agent reached
+        the score at all. The first tops out at 93 EXCELLENT with no cap. The
+        second is held at 45, which is the same number a settings document
+        declaring an empty space gets, because it is the same evidence about
+        the same search space.
 
-        * 45 is an UPPER BOUND, not the score. No shape lands above it and 79
-          of the 121 land below - 0, 4, 12, 35 and so on - held there by the
-          weighted average rather than by the cap. "Holds the whole score at
-          45" was true of 42 shapes and false of the other 79.
-        * "It moves the band only once the score is clear of every ceiling" was
-          false in the same sweep: calibrating moves the number in 76 of the 79
-          below-ceiling shapes and the BAND in 39 of them, all NOT READY ->
-          PARTIAL, while the 45 ceiling is still the binding limit. Measured
-          end to end as well: 12 rows, undeclared provenance, `llm-judge-rubric`
-          and no config space score 35/100 PARTIAL at the opening and 45/100
-          PARTIAL after calibration - the number moved 10 points.
+        An earlier revision of this branch deleted the second ceiling too, and
+        the sweep is why that is not what shipped: it put the state where
+        nothing was supplied at 75, thirty points above the state where a
+        customer handed over a document saying the same thing.
 
-        What survives both is the ceiling: nothing calibration does can carry
-        the card past 45, so Partial is the best the opening can report, and at
-        the ceiling itself the card is genuinely unchanged (0 of the 42 shapes
-        already at 45 move at all). That is the property asserted here, rather
-        than the sentence's spelling - and the README requirement is derived
-        from the sweep, so retuning the cap into an exact score, or widening it,
-        fails this test instead of quietly outdating the paragraph.
+        The property asserted is still derived from the sweep rather than
+        restated from the paragraph, so a ceiling landing on the conformant
+        opening card fails here instead of quietly outdating the README.
         """
         self.assertEqual(READINESS.CONFIDENCE_BAND_CEILING, "WORKABLE")
         order = READINESS.BAND_ORDER
         self.assertLess(order.index("PARTIAL"), order.index("WORKABLE"))
-        # 45 really is PARTIAL, so the sentence's arithmetic is the code's.
-        self.assertEqual(READINESS.band_for(45, 1.0)[0], "PARTIAL")
-        # And a band at or below the ceiling is never lifted by more
-        # evidence, nor demoted for the lack of it: thin or full, 45 is
-        # PARTIAL, which is why the ceiling is what bounds the opening card.
-        self.assertEqual(READINESS.band_for(45, 0.35, 0.35), ("PARTIAL", False))
+        # Thin evidence still holds a band down; that mechanism is untouched.
+        self.assertEqual(READINESS.band_for(90, 0.35, 0.35), ("WORKABLE", True))
 
         shapes = [
             (evaluation, dataset)
             for evaluation in range(0, 101, 10)
             for dataset in range(0, 101, 10)
         ]
-        landings = {self._opening_card(*shape)[0] for shape in shapes}
-        # A ceiling, so nothing reaches past it, and the band it allows is the
-        # best the opening card can print.
-        self.assertEqual(max(landings), READINESS.NOTHING_WIRED_CAP.ceiling)
-        self.assertEqual(READINESS.band_for(max(landings), 1.0)[0], "PARTIAL")
+        read = {self._opening_card(*shape, self.OPENING_READ)[0] for shape in shapes}
+        silent = {self._opening_card(*shape)[0] for shape in shapes}
+        # The conformant opening card - the one where the assistant read the
+        # agent, which SKILL.md now mandates - reaches Excellent. That is #201's
+        # whole result and the README paragraph rests on it.
+        self.assertGreaterEqual(max(read), 90)
+        _agent, read_caps, _knobs = READINESS.score_agent(
+            READINESS.agent_facts_from_discovery(self.OPENING_READ)
+        )
+        self.assertEqual(
+            read_caps,
+            [],
+            "reading the agent and finding settings raises a cap again; README "
+            "describes a card that no ceiling limits, so update both or neither",
+        )
+        # And the card that established nothing is held where the README says
+        # it is. Not a blanket ceiling: it is the same 45 a settings document
+        # declaring an empty space gets, on the same evidence about the space.
+        self.assertEqual(max(silent), READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
+        _agent, silent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
+        self.assertEqual(
+            [cap.condition for cap in silent_caps], ["agent-no-varying-knobs"]
+        )
+        self.assertFalse(silent_caps[0].blocks)
 
-        at_ceiling = [s for s in shapes if self._opening_card(*s)[0] == max(landings)]
-        below = [s for s in shapes if self._opening_card(*s)[0] < max(landings)]
-        # Calibrating the evaluator is modelled as that pillar reaching 100.
-        moved_at_ceiling = [
+        # Calibrating the evaluator is modelled as that pillar reaching 100, and
+        # it has to move a card that is not already pinned to a ceiling - which
+        # is exactly what the read buys.
+        moved = [
             s
-            for s in at_ceiling
-            if self._opening_card(100, s[1]) != self._opening_card(*s)
+            for s in shapes
+            if self._opening_card(100, s[1], self.OPENING_READ)
+            != self._opening_card(*s, self.OPENING_READ)
         ]
-        moved_below = [
-            s for s in below if self._opening_card(100, s[1]) != self._opening_card(*s)
-        ]
-        self.assertEqual(moved_at_ceiling, [])
+        self.assertTrue(
+            moved,
+            "calibrating moves no modelled opening card at all, so the README "
+            "may not tell a reader it fills anything in",
+        )
 
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
             "the card names which pillar is thin",
             "calibrating the evaluator is what fills that one in",
-            "cannot carry the band past partial",
-            "leaves `45/100 partial` exactly where it was",
+            # The pillar-level half of the same promise, which is what #201
+            # made the opening card actually keep.
+            "where the read finds settings, no agent ceiling applies",
+            # Both states that land on 45, and the fact that there are two of
+            # them. They share a ceiling and they do not share a verdict; the
+            # shared number is what made one sentence look able to carry both.
+            "two states hold the score at 45",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+        # Every spelling of the ceiling that no longer exists. Each of these was
+        # a sentence in this paragraph at some point, and each would now be
+        # false rather than merely stale.
+        for retired in (
+            "holds the whole score to at most 45",
+            "holds the whole score at 45",
+            "cannot carry the band past partial",
+            "leaves `45/100 partial` exactly where it was",
+            "only once the score is clear of every ceiling",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, readme)
 
         # The card line the README teaches, derived from `score_evaluation`
         # instead of pinned as a literal. It was pinned, at
@@ -4439,22 +4517,69 @@ class SkillPackageTests(unittest.TestCase):
         self.assertGreater(supplied.score, pillar.score)
         self.assertIn("keeps its weight and earns nothing", readme)
 
-        # The two claims this test now derives rather than restates. Each
-        # branch is reachable: a cap that pinned the score would make `below`
-        # empty, and one that never bound anything would make `at_ceiling`
-        # empty, and either would demand the other sentence here.
-        if below:
-            self.assertIn("holds the whole score to at most 45", readme)
-            self.assertNotIn("holds the whole score at 45", readme)
-        else:
-            self.assertIn("holds the whole score at 45", readme)
-        if moved_below:
-            # Something below the ceiling does move, so the README may not
-            # claim the opening card is frozen until every ceiling is cleared.
-            self.assertNotIn("only once the score is clear of every ceiling", readme)
-            self.assertIn("where 45 is already the number", readme)
-        else:
-            self.assertIn("only once the score is clear of every ceiling", readme)
+    def test_the_two_states_that_share_45_are_not_told_as_one(self) -> None:
+        """One ceiling, two findings - and only one of them is about the customer.
+
+        `agent-no-varying-knobs` reaches 45 from two places on the opening
+        card. A read of the agent that established nothing it can vary is a
+        MEASUREMENT of the project - a search here would compare one
+        configuration - so it blocks the paid run. No document and no read is a
+        statement about what this score was given, and the module's own comment
+        beside that cap says it "claims nothing about the customer's project
+        either way", so it is advisory and stops nothing.
+
+        Fused into one clause, the justification that belongs to the first
+        state is asserted about a customer whose agent nobody opened, and the
+        difference that decides whether they may pay for a run goes unmentioned
+        in both documents. The glossary states the split correctly fourteen
+        lines further down, which is what makes the fused version a
+        contradiction inside one document rather than merely a thin sentence.
+
+        Derived from the module rather than restated from either paragraph, so
+        the day the two caps stop disagreeing about blocking, this fails here
+        instead of leaving two documents describing a distinction that no
+        longer exists.
+        """
+        measured = READINESS.NOTHING_IN_THE_AGENT_TO_VARY_CAP
+        unsupplied = READINESS.NO_SEARCH_SPACE_ESTABLISHED_CAP
+        self.assertEqual(measured.condition, unsupplied.condition)
+        self.assertEqual(
+            measured.ceiling,
+            unsupplied.ceiling,
+            "the two states no longer share a ceiling, so the paragraphs below "
+            "may not present 45 as the number both arrive at",
+        )
+        self.assertNotEqual(
+            measured.blocks,
+            unsupplied.blocks,
+            "the two states that share this ceiling now agree about stopping "
+            "the paid run; if that is deliberate, these documents must stop "
+            "telling a reader the two answers differ",
+        )
+        self.assertTrue(measured.blocks)
+        self.assertFalse(unsupplied.blocks)
+
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        for document, text in (("README.md", readme), ("glossary.md", glossary)):
+            with self.subTest(document=document):
+                # Both states named, the blocking one named as a finding about
+                # the project, and the advisory one named as a finding about
+                # this score's inputs.
+                self.assertIn("a reading that found nothing your agent can vary", text)
+                self.assertIn("blocks the paid run", text)
+                self.assertIn("claims nothing about your project either way", text)
+                self.assertIn("stops nothing", text)
+                # The fusion itself, in both spellings that shipped: one clause
+                # covering the two states, justified by the claim only the
+                # measured one supports.
+                for fused in (
+                    "nothing read or supplied, or a reading that found nothing",
+                    "no reading and no document, or a reading that found nothing",
+                ):
+                    self.assertNotIn(fused, text)
 
     def test_local_example_retention_is_stated_the_same_way_in_both_homes(
         self,
@@ -5149,10 +5274,12 @@ class SkillPackageTests(unittest.TestCase):
         # entry for why no document was provided, and that entry's answer is
         # unconditional, not usual: SKILL.md mandates omitting every
         # config-space file found before this run's enhanced search on every
-        # guided run, so `score_agent` takes the no-document branch at every
-        # opening score there is. Measured on a 60-row production-sourced
-        # dataset with a passing deterministic evaluator, the opening card
-        # still reads `1 of 3 checks measured`. "Usually" sends a reader who
+        # guided run, so `score_agent` never takes a supplied-document branch at
+        # an opening score. Measured on a 200-row production-sourced dataset
+        # with a calibrated deterministic evaluator, the opening card reads
+        # `92/100 EXCELLENT` with the agent pillar scored from the agent's own
+        # source, and `45/100 PARTIAL` with `0 of 1 checks measured` where no
+        # agent evidence was supplied at all. "Usually" sends a reader who
         # cannot find their document looking for a mistake they did not make.
         self.assertIn("see that entry above for why one never is", glossary)
         self.assertNotIn("for why one usually is", glossary)
@@ -10626,13 +10753,26 @@ class SkillPackageTests(unittest.TestCase):
 
         `agent-no-varying-knobs` was described as "an advisory ceiling, never a
         repair to route", justified by the branch where no settings document
-        was provided - which is genuinely advisory (`blocks=False`). But the
-        condition has five other construction sites and every one of them
-        blocks, printing `FIX BEFORE PAID RUN` on the card while the routing
-        bullet an assistant reads by id says the opposite.
+        was provided - which was genuinely advisory (`blocks=False`). The
+        condition's other construction sites all block, printing `FIX BEFORE
+        PAID RUN` on the card while the routing bullet an assistant reads by id
+        said the opposite. The first fix scoped the claim to that one branch.
 
-        Read off the module rather than pinned: a sixth branch must be
-        classified too.
+        #201 keeps both readings and changes which states produce them. Three
+        construction sites block - a document listing nothing, one listing
+        settings while attesting none, and a read of the agent that established
+        nothing it can vary - and one is advisory, for the state where neither a
+        document nor a read reached the score at all.
+
+        So the claim has to be scoped, and scoped by the RIGHT line: what
+        separates the blocking branches from the advisory one is whether
+        anything was looked at, not whether a document exists. A read that found
+        nothing blocks, and it has no document.
+
+        Still read off the module rather than pinned, and the direction is what
+        the reading buys: a branch moving across that line fails here, because
+        SKILL.md would then be routing an assistant to a card state it does not
+        have words for.
         """
         both = {True: [], False: []}
         for name, value in vars(READINESS).items():
@@ -10640,19 +10780,27 @@ class SkillPackageTests(unittest.TestCase):
                 value.condition == "agent-no-varying-knobs"
             ):
                 both[value.blocks].append(name)
-        self.assertTrue(both[False], "no advisory branch left to justify the claim")
         self.assertTrue(both[True], "no blocking branch left; rewrite this check")
+        self.assertEqual(
+            len(both[False]),
+            1,
+            "agent-no-varying-knobs has more than one advisory branch, or none; "
+            "SKILL.md scopes the advisory reading to exactly one state - "
+            f"neither a document nor a read reached the score. Found {both}",
+        )
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("evaluator and agent caps route through", 1)[1]
-        # The claim must be scoped, not stated of the condition as a whole.
+        # Neither the unscoped claim nor the always-blocks one survives.
         self.assertNotIn(
             "`agent-no-varying-knobs` is an advisory ceiling, never a repair to route",
             routing,
         )
-        self.assertIn("is an advisory ceiling only where", routing)
-        # And the blocking half must be stated, since that is what the card
-        # prints for five of the six branches.
-        self.assertIn("the same condition blocks", routing)
+        self.assertNotIn("`agent-no-varying-knobs` always blocks now", routing)
+        self.assertNotIn("an absent settings document raises no cap at all", routing)
+        # The scoped claim, and it has to name the read as a blocking branch or
+        # an assistant meeting that card routes it as advisory.
+        self.assertIn("advisory ceiling only where its reason says", routing)
+        self.assertIn("or a reading of the agent that established nothing", routing)
 
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
@@ -15436,6 +15584,216 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, creation)
                 self.assertNotIn(clause.casefold(), stage)
+
+
+class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
+    """A ceiling is for a fact about the project, not about our reach.
+
+    `--agent-knobs` is what turns the agent pillar from unestablished into
+    measured, and the gate used to make it conditional: "omit it only when
+    there is no agent to read". Under a literal reading that covers an agent
+    that exists and cannot be read out of - not Python, compiled, behind an
+    HTTP call - so a customer with a real agent could land on the advisory
+    ceiling because this run could not open their file, and be told nothing
+    they could act on.
+
+    The scorer cannot tell those two apart and is not asked to: `AgentFacts`
+    records whether a document or a read was SUPPLIED and has no field for
+    whether an agent exists, so both states arrive as the same silence. That is
+    why the fix is at the gate. The read is unconditional wherever an agent was
+    found, and where it cannot be completed the run asks to be pointed at a
+    config space instead of letting the ceiling stand as its answer - the same
+    shape as the one ask at discovery, and folded onto that same question so it
+    never becomes a second one.
+
+    The ceiling itself is deliberately NOT removed. It is what stops silence
+    outscoring a settings document that declares the same empty space, and its
+    reading already has a home in stage 4's cap routing. This gate points there
+    rather than giving it a second one.
+    """
+
+    def _gate(self) -> str:
+        text = SKILL.read_text()
+        self.assertIn("#### Opening readiness gate", text)
+        gate = text.split("#### Opening readiness gate", 1)[1].split(
+            "#### Zero-anchor intent gate", 1
+        )[0]
+        return " ".join(gate.casefold().split())
+
+    def test_the_read_is_not_conditional_where_an_agent_was_found(self) -> None:
+        gate = self._gate()
+        self.assertIn("every guided run that found an agent does this read", gate)
+        self.assertIn("not conditionally", gate)
+        self.assertIn(
+            "the flag is left off only where the inventory found no agent at all",
+            gate,
+        )
+        # The wording this replaces made the read contingent on a judgement
+        # about the agent rather than on whether one exists, which is what let
+        # an unreadable-but-present agent fall through to the ceiling.
+        self.assertNotIn("omit it only when there is no agent to read", gate)
+
+    def test_a_read_that_cannot_be_done_offers_rather_than_settling(self) -> None:
+        """Say what stopped it, offer the one thing that would fix it, go on."""
+        gate = self._gate()
+        # Named, so the user can disagree with a read of their own code.
+        self.assertIn("name it and say what stopped the read", gate)
+        self.assertIn("offer to be pointed at source that can be read", gate)
+        # Permitted by the operating contract's own test for an ask: it changes
+        # the result. Stated, because "do not ask the user to solve missing
+        # setup pieces" sits two stages away and this is not that.
+        self.assertIn("changes the opening score", gate)
+        # And it never becomes a second question or a wait. The carrier is
+        # named rather than left as "whatever question this run already puts in
+        # the same turn": the offer sits in stage 1 and the ask it rides on is
+        # in stage 2, so an unnamed carrier let an unreadable agent reach the
+        # ceiling with nobody asked at all.
+        self.assertIn("the one ask in stage 2 below rather than adding one", gate)
+        self.assertIn("proceed with what can be varied if nothing comes back", gate)
+        # The flag is withheld while the read is unfinished. Passing an empty
+        # one makes `discovery_supplied` true with nothing credited, which is
+        # the state that prints "the agent was read and no varying setting was
+        # established" - a statement about the customer's agent that no read
+        # supports - and blocks their run on it.
+        self.assertIn("leave `--agent-knobs` off in that case", gate)
+        self.assertIn(
+            "passing an empty one reports a finding about the customer's agent "
+            "that nothing established",
+            gate,
+        )
+        empty_read = READINESS.AgentFacts(discovery_supplied=True, discovered=())
+        _pillar, caps, _knobs = READINESS.score_agent(empty_read)
+        self.assertEqual([cap.blocks for cap in caps], [True])
+        self.assertIn("the agent was read", _pillar.subscores[0].evidence)
+
+    def test_every_later_re_score_is_passed_the_reading_the_opening_took(
+        self,
+    ) -> None:
+        """One gate mandated the flag; the rest of the run silently dropped it.
+
+        `--agent-knobs` appeared only at the opening gate, so the stage-4 and
+        post-repair re-scores scored the agent from absent evidence again. On
+        the project this branch is written for that is 92 at the opening and 45
+        afterwards, and the guide tells the assistant to show the later number
+        beside the earlier one as an honest change - so the customer is shown
+        their project losing something it never had.
+
+        The closing score is the one deliberate exception and it is stated as
+        one, in the reference that owns the config-space document rather than
+        here: that score weighs the space the search actually received, and a
+        read of the source standing in for a document the search never emitted
+        would lift the 45 ceiling on exactly the runs it exists for.
+        """
+        gate = self._gate()
+        self.assertIn("pass this same reading to every later re-score", gate)
+        self.assertIn(
+            "re-reading the agent only where this run created or repaired it", gate
+        )
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("`--agent-knobs` is deliberately not passed at the close", safety)
+        self.assertIn(
+            "letting a read of the source stand in for a document the search "
+            "never emitted would lift this ceiling",
+            safety,
+        )
+        # And the stale sentence the opening read replaced. run-safety.md still
+        # told the opening and stage-4 scores to report the pillar as not yet
+        # measured, which is the behaviour this branch removed.
+        self.assertNotIn(
+            "omit it from opening and stage-4 readiness, and report the pillar "
+            "as not yet measured",
+            safety,
+        )
+
+    def test_the_offer_cannot_ask_for_the_file_this_gate_withholds(self) -> None:
+        """The contradiction this nearly shipped, pinned so it cannot return.
+
+        The obvious-looking remedy for an unread agent is "send me your config
+        space", and it is wrong here: the paragraph directly above omits every
+        config-space file found before this run's enhanced search, so a file the
+        user points at cannot reach the opening score at all. The user would be
+        handed a question whose answer this gate must throw away.
+
+        Both halves are asserted together - the prohibition is only meaningful
+        while the withholding rule it defers to is still in the same section.
+        """
+        gate = self._gate()
+        self.assertIn("never ask for a config-space file here", gate)
+        self.assertIn(
+            "explicitly omit every config-space file found before this run's "
+            "enhanced search",
+            gate,
+        )
+
+    def test_the_ceiling_is_kept_and_its_reading_is_not_restated_here(
+        self,
+    ) -> None:
+        """Guidance and scorer together, because either alone pins nothing.
+
+        The ceiling stays. What this gate must NOT do is give it a second
+        reading: stage 4's cap routing already says it is advisory where
+        neither a document nor a reading reached the score, and that nothing
+        there is a verdict on the project. A draft of this change restated that
+        AND narrowed it to "a caller with nobody to ask" - which is false, since
+        `run-safety.md` reaches the same advisory cap on a closing card after a
+        stopped, failed, or zero-trial search, with the user sitting right
+        there. So the gate points and the routing keeps its one home.
+        """
+        gate = self._gate()
+        self.assertIn("stage 4's cap routing below, which is unchanged", gate)
+        # The home it points at, still saying it, still once.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        routing = skill.split(
+            "`agent-no-varying-knobs` blocks where something was read", 1
+        )
+        self.assertEqual(len(routing), 2, "the cap-routing paragraph has moved")
+        self.assertIn("nothing there is a verdict on the project", routing[1])
+        # And the false narrowing cannot come back.
+        self.assertNotIn("only for a caller with nobody to ask", skill)
+
+        # The scorer half. The silent state still caps, still does not block,
+        # and still sits at the shared ceiling.
+        silent = READINESS.AgentFacts()
+        _pillar, caps, _knobs = READINESS.score_agent(silent)
+        self.assertEqual(len(caps), 1)
+        self.assertEqual(caps[0].condition, "agent-no-varying-knobs")
+        self.assertEqual(caps[0].ceiling, READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
+        self.assertFalse(
+            caps[0].blocks,
+            "the unestablished-space reading bounds the claim; it does not stop "
+            "a customer whose agent this run could not open",
+        )
+
+        # And the two findings ABOUT the project still block, which is the whole
+        # difference between them.
+        read_found_nothing = READINESS.AgentFacts(discovery_supplied=True)
+        document_lists_nothing = READINESS.AgentFacts(config_space_supplied=True)
+        for label, facts in (
+            ("the agent was read and had nothing", read_found_nothing),
+            ("a document was handed over and had nothing", document_lists_nothing),
+        ):
+            with self.subTest(state=label):
+                _p, blocking, _k = READINESS.score_agent(facts)
+                self.assertTrue(blocking[0].blocks)
+
+    def test_the_two_silences_really_are_indistinguishable_to_the_scorer(
+        self,
+    ) -> None:
+        """Why the fix is at the gate and not in `score_agent`.
+
+        `AgentFacts` carries no fact about whether an agent exists, so "no agent
+        in this project" and "an agent this run could not read" reach the scorer
+        as one state and one cap. Nothing downstream can separate them, which is
+        exactly why the guidance above must stop producing the second one.
+        """
+        fields = set(READINESS.AgentFacts.__dataclass_fields__)
+        self.assertIn("discovery_supplied", fields)
+        self.assertIn("config_space_supplied", fields)
+        # Both are facts about what reached this score. If a fact about the
+        # agent's EXISTENCE is ever added, this state can be split in the
+        # scorer and the gate's routing should be revisited with it.
+        self.assertNotIn("agent_present", fields)
+        self.assertNotIn("agent_exists", fields)
 
 
 if __name__ == "__main__":
