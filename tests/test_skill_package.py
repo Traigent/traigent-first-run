@@ -2017,7 +2017,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.25.0",
+                "traigent==0.26.0",
                 "litellm==1.93.0",
                 "python-dotenv==1.2.2",
             ],
@@ -9199,14 +9199,20 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.25.0.
+        """Verified against installed traigent 0.26.0.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
-        Separately, the SDK exposes no supported id
-        for the run just completed, and the fix for that belongs upstream: this
-        repo must not work around it by reading the SDK's private storage
-        layout.
+
+        The second half of this used to say the SDK exposed no supported id for
+        the run just completed. The pinned 0.26.0 does: `sync_session_id` is a
+        public field on the result, verified absent on 0.25.0 and present on
+        0.26.0. So the upload path is reachable now, and what stays pinned is
+        the decision that outlived the limitation - feature-detect the public
+        attribute, and when it is empty leave the baseline local rather than
+        reading the SDK's private storage layout or reaching for `--all`. An
+        empty value is the documented answer for a run the backend already
+        tracked, not a defect to route around.
         """
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for phrase in (

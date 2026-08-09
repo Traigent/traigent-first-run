@@ -103,7 +103,7 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   contents and expected outputs, model responses, source code, and credentials from that backend
   transmission. This guide does not independently inspect network packets; stop if observed
   runtime behavior contradicts that contract.
-- Treat backend transmission and local persistence as separate boundaries. SDK 0.25.0 writes
+- Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
   Traigent; this retains example ids and metrics while writing those content fields as `null`.

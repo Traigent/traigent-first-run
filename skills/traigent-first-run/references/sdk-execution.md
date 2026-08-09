@@ -312,7 +312,7 @@ if FIRST_RUN_PHASE == "baseline":
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.25.0 otherwise stores query/response/expected text in local per-example
+# SDK 0.26.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
@@ -945,11 +945,12 @@ Do not include `expected` in the agent signature. Dataset inputs call the agent;
 belongs only to evaluation.
 
 Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
-(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
-contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
-onto its own resolved parent by dataset validation and doubles into
-`.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
-time. Never shorten these to a relative path. It is an SDK defect, tracked upstream.
+(`str(RUN_DIR / "...")`). Never shorten these to a relative path: the SDK resolves a relative one
+against the working directory of whichever process opens it, and this run's dataset lives under
+`RUN_DIR` while the assistant works from the project root. An absolute path is the same file from
+any directory, which is the property that matters when the run, a re-run, and `traigent sync` are
+three different processes. Nothing announces a breach of this rule: a relative path that resolves
+against the wrong directory reads one file or misses one, and neither is a crash.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
@@ -1041,9 +1042,14 @@ A baseline that ran without a Traigent key is logged locally. Upload it without 
 call only when the installed public result exposes an exact sync id:
 
 ```bash
-traigent sync "$SESSION_ID" --dry-run --json
-traigent sync "$SESSION_ID" --json
+TRAIGENT_RESULTS_FOLDER="$RUN_DIR/sdk-results" traigent sync "$SESSION_ID" --dry-run --json
+TRAIGENT_RESULTS_FOLDER="$RUN_DIR/sdk-results" traigent sync "$SESSION_ID" --json
 ```
+
+`TRAIGENT_RESULTS_FOLDER` is not optional here. The id is relative to the store that holds the
+record, `traigent sync` is a separate process that resolves its store from its own environment, and
+the run above set that variable inside the Python process only. Without it the CLI looks in its
+default root and rejects an id that is on disk.
 
 Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
 baseline. Always inspect the dry-run before anything leaves the machine. Parse the real command's
@@ -1052,9 +1058,15 @@ JSON and use its `cloud_url` as the baseline portal link; syncing does not mutat
 
 Use `baseline_results.sync_session_id` only after feature-detecting that public attribute and a
 non-empty value. If unavailable, leave the baseline local and report it from the saved local
-results - do not inspect private storage or substitute `--all`. The pinned 0.25.0 release does not
-expose this id; support is capability-gated for a later release. It is tracked upstream and the fix
-belongs there.
+results - do not inspect private storage or substitute `--all`, whatever the reason: any gap here is
+tracked upstream and the fix belongs there.
+
+An empty value is a normal answer, not a failure. The field carries a live id when the local store
+holds the authoritative copy of the run - this walkthrough's baseline, run with no Traigent key -
+and is empty when the backend tracked the run end to end, because then there is nothing to upload
+and `cloud_url` already names it. Read the field itself, never a `metadata` mirror of it, and do not
+carry it across a reload: it names a record in one machine's store, and a result loaded from disk
+may have come from another.
 
 ## Broader optimization
 

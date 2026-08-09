@@ -29,7 +29,7 @@ from typing import Any, Sequence
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
-SUPPORTED_TRAIGENT_VERSION = "0.25.0"
+SUPPORTED_TRAIGENT_VERSION = "0.26.0"
 # Jaccard similarity over normalized word sets. This is the only number the
 # repetition deduction now rests on (traigent-first-run#158), and nothing
 # derives it: it is order-blind, so a reordered sentence scores 1.0, and it is

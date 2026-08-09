@@ -36,7 +36,7 @@ Every scenario here runs the import (and, for the "happy path", a mock
 Dependency reproducibility (acceptance criterion 5): the repo already pins
 top-level versions for this exact path in
 ``skills/traigent-first-run/assets/requirements-first-run.txt``
-(``traigent==0.25.0``, ``litellm==1.93.0``, ``python-dotenv==1.2.2``), and
+(``traigent==0.26.0``, ``litellm==1.93.0``, ``python-dotenv==1.2.2``), and
 this test imports whatever ``litellm``/``traigent`` happen to be installed
 from that file - so a version bump there is exercised here automatically.
 That file pins exact versions but not hashes, and does not pin the
