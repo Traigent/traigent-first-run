@@ -306,9 +306,48 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
 if FIRST_RUN_PHASE not in {"baseline", "connected"}:
     raise ValueError("TRAIGENT_FIRST_RUN_PHASE must be 'baseline' or 'connected'")
+def inherited(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Both phases are paid, and a canned response costs nothing and proves nothing.
+# The SDK honours an inherited mock flag outside production, so neither phase
+# may start under one.
+if inherited("TRAIGENT_MOCK_LLM"):
+    raise RuntimeError(
+        "TRAIGENT_MOCK_LLM is set. Both measurements would run on canned "
+        "responses, so every score would describe the mock and not the agent. "
+        "Unset it before a paid phase; this run will not unset it for you."
+    )
 if FIRST_RUN_PHASE == "baseline":
     # Remove before import so no client can capture a portal key locally.
     os.environ.pop("TRAIGENT_API_KEY", None)
+    # This phase creates no backend session by design, and TRAIGENT_REQUIRE_CLOUD
+    # fails any run that creates none. Removed for this process only, and named
+    # on the baseline approval card, so an inherited policy is not overridden in
+    # silence.
+    BASELINE_DROPPED_REQUIRE_CLOUD = (
+        os.environ.pop("TRAIGENT_REQUIRE_CLOUD", None) is not None
+    )
+else:
+    # Both spellings: the SDK reads either as offline, and either resolves this
+    # run to local-only BEFORE a session is attempted - so the flag below is
+    # never consulted and the run completes locally with the guard apparently on.
+    for offline_name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+        if inherited(offline_name):
+            raise RuntimeError(
+                f"{offline_name} is set, which resolves this run to local-only "
+                "before a backend session is attempted and so silently defeats "
+                "TRAIGENT_REQUIRE_CLOUD: this phase would spend on a local "
+                "search and report it as the managed one. Unset it deliberately "
+                "to run connected, or stop at the local baseline. This run will "
+                "not unset it for you - where data may go is a choice to make."
+            )
+    # Managed search or nothing. Without this the SDK degrades a connected run
+    # whose backend session cannot be created - absent, wrong, or unscoped key,
+    # backend unreachable - to a local sweep, and returns a result that reads
+    # like the managed one the user approved paying for.
+    os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
@@ -1135,6 +1174,43 @@ The pinning rule is therefore per phase, not global: pin the baseline so it is r
 the enhanced run on `auto` so it is actually optimized. If a connected search reports a local
 fallback reason, treat that as a failure to investigate rather than a result to present - the run
 did not do what the report will claim it did.
+
+`TRAIGENT_REQUIRE_CLOUD=1`, set for this phase in the wrapper above, is why that check is a
+backstop rather than the only defence. Without it `auto` does not fail when the managed brain is
+unreachable: it falls back to a local sweep, returns a result, and leaves the fallback reason for
+someone to notice afterwards - after twelve paid trials the user approved as a managed search. With
+it, session-creation failure raises before any trial. The flag is set only here: it fails any run
+that creates no backend session, which is what the baseline phase is, so the wrapper removes an
+inherited one there rather than letting it kill a phase that is local by design. Removing it is a
+process-local exception to something the user's environment asked for, so when it was present the
+baseline approval card says the baseline runs locally despite it.
+
+Setting it is necessary and not sufficient, and it has to be both spellings. `TRAIGENT_OFFLINE` and
+`TRAIGENT_OFFLINE_MODE` each resolve the run to local-only before a session is ever attempted, so
+the enforcement site never runs, and either one produces exactly the run this guards against while
+the guard reads as on - worse than not setting it. The wrapper refuses to start the connected phase
+under either instead of clearing it: no-egress is a deliberate choice about where the user's data
+may go, and unsetting it to satisfy this run would send data out on their behalf.
+
+Because the phase now fails instead of degrading, own the failure. Wrap the connected
+`optimize_sync` and route a raised session or connectivity error through the ordinary honest-report
+path rather than letting a traceback be the user's answer:
+
+```python
+try:
+    optimized_results = agent.optimize_sync(...)
+except Exception as exc:  # narrow to the installed SDK's public error types
+    Path(RUN_DIR / "optimization-error.txt").write_text(f"{type(exc).__name__}: {exc}")
+    raise
+```
+
+Two shapes reach that handler and they cost differently. A session that cannot be created fails
+before any provider trial, so nothing was spent and the honest report is "the managed run did not
+start", with the sanitized reason and the baseline still standing as the result. A managed run that
+loses the brain mid-flight raises after some trials are already paid for: recover what the SDK
+persisted, report the trials that completed and the spend they carried, and say plainly that the
+search stopped early rather than presenting a partial frontier as the answer. Neither shape is a
+reason to re-run the phase without the flag - that would buy back the exact result this prevents.
 
 Do not enable mock mode in this process. The optimization space must include the current
 configuration and every baseline value, plus meaningful added knobs that the function consumes.

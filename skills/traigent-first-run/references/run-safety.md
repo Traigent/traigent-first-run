@@ -706,6 +706,22 @@ point in the connected run - a missing `cloud_url`, a `rejected` persistence sta
 403/400 - halt further paid work at once and report the degradation in the consolidated result. Never
 let a connected run finish spending and only then reveal that nothing reached the portal.
 
+The probe answers whether tracking attaches, at the moment it runs. It cannot answer whether the
+managed brain is still reachable when the paid search starts a moment later, and the two failures
+are not the same: a run can keep tracking trials to the portal while the search choosing those
+trials has quietly become local. `references/sdk-execution.md` owns the setting that closes it -
+the connected phase runs with local fallback disabled, so a session that cannot be created raises
+instead of degrading - along with the environment settings that defeat it and how a raised run is
+reported. Neither replaces the probe: the flag governs the SDK's own fallback, while the probe is
+what proves the key is scoped and the session reaches the portal at all.
+
+That setting turns one class of silent degradation into a stop, so decide the stop with the user
+before it costs anything. If the inventory finds a no-egress setting in the environment or `.env`,
+the connected phase cannot honestly run: ask once, at the point the second run is explained, which
+they want - keep no egress and finish on the local baseline, which is a complete and reportable
+result, or lift it deliberately for this run. Never clear it for them, and never carry the question
+past the approval card into the middle of a paid phase.
+
 ## Baseline and optimization
 
 Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoint, and exact-sync

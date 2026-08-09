@@ -341,11 +341,21 @@ def check_cost_settings(
             "TRAIGENT_COST_APPROVED is active in the process; confirm this is the approved paid process",
         )
 
-    if key_present(env.get("TRAIGENT_BACKEND_URL")):
+    # Both names, because the SDK resolves its backend origin from either and
+    # prefers them over the stored/default route. Naming one left the other as
+    # an unreported way to point a paid, portal-tracked run somewhere the user
+    # did not approve - and a connected run that reaches an unexpected backend
+    # still looks connected.
+    overridden = [
+        name
+        for name in ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
+        if key_present(env.get(name))
+    ]
+    if overridden:
         emit(
             "backend-url",
             WARN,
-            "TRAIGENT_BACKEND_URL is overridden; verify that a non-default backend is intentional",
+            f"{' and '.join(overridden)} overridden; verify that a non-default backend is intentional",
         )
 
 

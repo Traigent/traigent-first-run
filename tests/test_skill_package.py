@@ -10606,6 +10606,159 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never a raw traceback", safety)
         self.assertIn("sanitized provider message", safety)
 
+    def test_the_connected_phase_disables_local_fallback(self) -> None:
+        """`auto` without this completes locally instead of failing.
+
+        Measured on installed traigent, identically on 0.25.0 and 0.26.0, with
+        a stub agent that makes no provider call. `algorithm="auto"` and no
+        reachable backend: with `TRAIGENT_REQUIRE_CLOUD` unset the run
+        COMPLETES - two trials, `cloud_url` None - and with it set to `1` the
+        run raises `Cloud execution is required, but backend session creation
+        failed`. The completing case is the one that costs money: twelve paid
+        trials the user approved as a managed search, returned as a result that
+        reads like one.
+
+        The guide already told the assistant to treat a reported local fallback
+        as a failure rather than a result. That check runs after the spend. This
+        one runs before it, which is why both exist.
+
+        Scoped to the connected phase because the flag is not conditional on
+        wanting a session - it fails any run that creates none, and the
+        baseline phase deliberately creates none. Measured: `algorithm="grid"`
+        with the flag inherited raises the same error, so the baseline must
+        remove it rather than assume nobody set it.
+        """
+        wrapper = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"', wrapper)
+        self.assertIn('os.environ.pop("TRAIGENT_REQUIRE_CLOUD", None)', wrapper)
+        self.assertIn('os.environ.pop("TRAIGENT_API_KEY", None)', wrapper)
+
+        block = SDK_EXECUTION.read_text()
+        setting = block.index('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"')
+        # The wrapper's own import section, not the capability-discovery snippet
+        # at the top of this document, which also imports traigent.
+        importing = block.index("import litellm")
+        self.assertLess(
+            setting,
+            importing,
+            "the execution policy is resolved from the environment at import; "
+            "setting the variable after it leaves the fallback enabled for the "
+            "run that reads it",
+        )
+        self.assertLess(
+            block.index('os.environ.pop("TRAIGENT_REQUIRE_CLOUD", None)'),
+            importing,
+            "the baseline's removal has to beat the same import",
+        )
+
+    def test_the_connected_phase_refuses_an_inherited_offline_setting(self) -> None:
+        """`TRAIGENT_OFFLINE` defeats the flag above without saying so.
+
+        Measured on both releases: `algorithm="auto"` with
+        `TRAIGENT_REQUIRE_CLOUD=1` AND `TRAIGENT_OFFLINE=1` COMPLETES locally.
+        Offline resolves the policy to local-only before a session is ever
+        attempted, so the enforcement site that raises for the flag never runs.
+        The result is the exact run this guards against, produced while the
+        guard is on - which is worse than not setting it, because the wrapper
+        would otherwise look protected.
+
+        It has to be refused rather than cleared. `load_dotenv` runs in this
+        same block, so the value can arrive from the customer's own `.env`, and
+        no-egress is a decision about where their data may go. Unsetting it to
+        satisfy this run would send data out on their behalf, which no
+        convenience justifies.
+        """
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertIn(
+            'for offline_name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):',
+            wrapper,
+            "the SDK reads either spelling as offline, so checking one leaves "
+            "the other as an open path to the run this guards against",
+        )
+        for name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+            with self.subTest(name=name):
+                self.assertNotIn(f'os.environ.pop("{name}"', wrapper)
+        # Phrases are checked inside one source line each. The wrapper is a
+        # Python snippet inside a fenced block, so its string-concatenation
+        # quotes survive normalization and a phrase spanning two literals is
+        # never present however the document is read.
+        normalized = " ".join(wrapper.casefold().split())
+        for phrase in (
+            "is set, which resolves this run to local-only",
+            "before a backend session is attempted and so silently defeats",
+            "traigent_require_cloud: this phase would spend on a local",
+            "not unset it for you - where data may go is a choice to make",
+            "each resolve the run to local-only before a session is ever",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_neither_paid_phase_starts_under_an_inherited_mock_flag(self) -> None:
+        """Mock mode is free, and that is the problem, not the reassurance.
+
+        The guide already says not to enable mock mode in the connected
+        process. Nothing enforced it against a value the process inherited, and
+        the SDK honours `TRAIGENT_MOCK_LLM` outside production - so a connected
+        run could complete on canned responses, consume platform quota, and
+        return scores describing the mock. The banner the SDK prints is easy to
+        lose in a long transcript, and the wrapper's own token guard does not
+        catch it because mock responses report synthetic token counts.
+
+        Checked before the phase split because both phases are paid: a baseline
+        of canned responses is the same worthless measurement, and it is the one
+        the whole comparison is anchored on.
+        """
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertIn('if inherited("TRAIGENT_MOCK_LLM"):', wrapper)
+        self.assertNotIn('os.environ.pop("TRAIGENT_MOCK_LLM"', wrapper)
+        guard = wrapper.index('if inherited("TRAIGENT_MOCK_LLM"):')
+        self.assertLess(
+            guard,
+            wrapper.index('if FIRST_RUN_PHASE == "baseline":'),
+            "the mock check is not phase-specific; placing it inside a branch "
+            "would exempt the other phase from it",
+        )
+
+    def test_dropping_an_inherited_require_cloud_is_disclosed(self) -> None:
+        """The baseline needs it gone; the user's environment asked for it.
+
+        Removing it is process-local and necessary - the phase creates no
+        backend session and the flag fails any run that creates none - but an
+        inherited value can be an organizational policy rather than debris.
+        Neutralizing a policy in silence is the shape of thing this guide
+        refuses everywhere else, so the wrapper records that it happened and
+        the approval card that already tells the user this phase is local says
+        it ran locally despite the setting.
+        """
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertIn("BASELINE_DROPPED_REQUIRE_CLOUD", wrapper)
+        normalized = " ".join(wrapper.casefold().split())
+        self.assertIn("baseline approval card", normalized)
+        self.assertIn(
+            "so an inherited policy is not overridden in",
+            normalized,
+        )
+
+    def test_the_probe_and_the_fallback_flag_are_named_as_different_checks(
+        self,
+    ) -> None:
+        """They fail in different windows and neither covers the other.
+
+        The zero-LLM probe proves a key is scoped and a session reaches the
+        portal, at the moment it runs. The flag governs what the SDK does when
+        a session cannot be created later. A run can keep tracking trials while
+        the search selecting them has become local, so `run-safety.md` must
+        point at the setting instead of implying its probe already covers it.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "cannot answer whether the managed brain is still reachable",
+            "the connected phase runs with local fallback disabled",
+            "neither replaces the probe",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+
     def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
         """Pinning the connected search to a local algorithm would gut it.
 

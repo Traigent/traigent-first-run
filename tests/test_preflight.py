@@ -174,6 +174,44 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("does not select or change", result.detail)
         self.assertNotIn("select one", result.detail)
 
+    def test_both_backend_origin_overrides_are_reported(self) -> None:
+        """The SDK resolves its backend from either name, so one is not enough.
+
+        `TRAIGENT_BACKEND_URL` was the only one named here, while the SDK falls
+        back to `TRAIGENT_API_URL` and prefers either over the stored or default
+        route. An unreported override sends a paid, portal-tracked run to a
+        backend nobody approved - and it still looks connected, so the
+        require-cloud guard in the wrapper does not catch it either.
+        """
+        for present, expected in (
+            ({"TRAIGENT_BACKEND_URL": "https://example.invalid"}, ["TRAIGENT_BACKEND_URL"]),
+            ({"TRAIGENT_API_URL": "https://example.invalid/api"}, ["TRAIGENT_API_URL"]),
+            (
+                {
+                    "TRAIGENT_BACKEND_URL": "https://example.invalid",
+                    "TRAIGENT_API_URL": "https://example.invalid/api",
+                },
+                ["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
+            ),
+        ):
+            with self.subTest(present=sorted(present)):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings(dict(present), {})
+                result = next(
+                    item for item in MODULE.RESULTS if item.check == "backend-url"
+                )
+                self.assertEqual(result.status, MODULE.WARN)
+                for name in expected:
+                    self.assertIn(name, result.detail)
+
+        MODULE.RESULTS.clear()
+        MODULE.check_cost_settings({}, {})
+        self.assertEqual(
+            [item for item in MODULE.RESULTS if item.check == "backend-url"],
+            [],
+            "a clean environment must not warn, or the warning means nothing",
+        )
+
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
