@@ -102,7 +102,7 @@ MAX_NEAR_DUPLICATE_WORK = 60_000_000
 # still catches it, so the reach past today's behaviour is the smallest the
 # decision requires. It IS a reach: the old rule was silent on that dataset and
 # this one is not. The false-red direction does not constrain the choice.
-# Measured over 32 real onboarding datasets, the largest excess any of them
+# Measured over 32 real datasets, the largest excess any of them
 # reaches is 0.071 (a 28-row binary set split 53.6/46.4), so the line sits
 # about 4.7x above the noisiest healthy data available to measure against.
 #
