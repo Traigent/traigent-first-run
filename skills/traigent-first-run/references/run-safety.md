@@ -511,8 +511,9 @@ Three honesty rules govern the file:
   survive the next one failing, the wrapper deletes it before each search rather than relying on
   the next write to replace it - staleness is removed by the run, not by the reader noticing.
 
-The walkthrough's document - 3 models x 4 binary behaviour knobs, with temperature declared at its
-one pinned value because the agent does consume it. A pinned knob scores 10 of 100 on breadth
+The walkthrough's document uses the exact generated space owned by
+`references/sdk-execution.md`, with temperature declared at its one pinned value because the agent
+does consume it. A pinned knob scores 10 of 100 on breadth
 rather than 0: declaring it says the author considered the knob and decided, which is worth a
 little, and worth only a little because the search still gets one value:
 
@@ -521,14 +522,13 @@ little, and worth only a little because the search still gets one value:
   "knobs": {
     "model": ["provider/current", "provider/alternative", "provider/strong"],
     "prompt_style": ["plain", "structured"],
-    "pre_action_reflect": [false, true],
     "thinking_shape": ["direct", "chain_of_thought"],
     "reflect": [false, true],
     "temperature": [0.0]
   },
   "max_trials": 12,
   "wired": [
-    "model", "temperature", "prompt_style", "pre_action_reflect", "thinking_shape", "reflect"
+    "model", "temperature", "prompt_style", "thinking_shape", "reflect"
   ]
 }
 ```
@@ -736,18 +736,17 @@ Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoin
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
-space unchanged, even when it contains one row. The generated walkthrough's two spaces have exact
-sizes, stated as exact numbers and never as "roughly": the baseline is **3 models x 2 prompt
-styles x 2 thinking shapes = 12 configurations** and the enhanced space is **3 models x 4 binary
-behaviour knobs = 48 configurations**, both holding whether or not the strong rung reasons. The
-baseline's 12 trials are one per configuration, and the approval card names that count - as a
-count, never as a change from whatever this guide did before, which the customer has never run.
-`references/sdk-execution.md` owns the spaces, the derivation, and the asserts.
+space unchanged, even when it contains one row. The generated walkthrough's two exact sizes and
+their derivation live in `references/sdk-execution.md`; use those values rather than restating the
+arithmetic here. The baseline trials are one per configuration, and the approval card names that
+count - as a count, never as a change from whatever this guide did before, which the customer has
+never run.
 
-The four behaviour knobs are prompt style, pre-action reflect, thinking shape (direct or
-chain-of-thought), and reflect; temperature is pinned at 0, so every swept knob is real for every
-model. They are four of a twelve-knob catalog `references/sdk-execution.md` owns; the customer sees
-the catalog and pays for four. `self_check` is not among them - it and `reflect` were one knob
+The three default behaviour knobs are prompt style, thinking shape (direct or chain-of-thought),
+and reflect; temperature is pinned at 0, so every swept knob is real for every model. They are
+selected from the eleven-knob catalog `references/sdk-execution.md` owns. The approval card shows
+the selected three and why they fit; the customer does not have to design a space from the whole
+catalog. `self_check` is not among them - it and `reflect` were one knob
 under two names, and `reflect` is the one that stayed. The
 models are the fast, mid, and strong rungs of the walkthrough model
 ladder from the selected route - the strong rung one step below the vendor's newest flagship, at a
@@ -798,31 +797,18 @@ Twelve trials split across a knob's two values is at most six observations a sid
 knob does nothing. Where the evidence ties, the customer's own knob wins over one of this guide's
 suggestions.
 
-**The baseline result chooses the enhanced space's values, not only its knobs.** Which knobs fill
-the four slots is decided by the baseline-evidence selection above. Which *two values* each slot
-carries is decided here, from the same 12 rows, by reading the combination that scored **lowest**:
-the values distinguishing it are the ones the baseline showed least for, and re-testing them spends
-trials on territory already measured as poor. The gap between that lowest score and the best one
-picks between two moves, measured with the **0.05 normalized separation margin** that calibration
-already uses for "meaningfully different" - shared deliberately, not by coincidence, because a
-second threshold invented here would drift from the first.
+The baseline can decide which customer-owned knobs fill the three slots; it does not narrow their
+values between runs. The generated walkthrough is simpler still: all three controls and all their
+values are fixed before either run, exactly as `references/sdk-execution.md` shows. A baseline
+observation that suggests a different value is a hypothesis for a later run, not an undisclosed
+edit to the approved comparison.
 
-- **Gap within the margin** - the loser scored about as well as the winner, so the knob that
-  distinguished them evidently did not decide the run. **Replace that knob** with one whose
-  evidence is better, or with a lever aimed at an observed failure mode.
-- **Gap beyond the margin** - that knob clearly mattered. **Keep it and narrow its values**, moving
-  them toward the winning configuration's rather than re-testing the value that lost.
-
-Neither move changes the size. The space stays 3 models x 4 binary knobs = 48; this decides which
-knobs and which two values each, never how many. Neither is a search either: the managed run does
-the searching, and this only decides what space it is handed.
-
-**The same 48 whatever the customer brings.** A customer who arrives with twenty of their own
-knobs gets a 48-configuration enhanced space too, not a larger one. The reduction is not a
-judgement about their knobs, and their knobs are not replaced by this guide's: the four slots are
-filled from what they brought, and baseline evidence decides which four. Every knob replaced and
-every value narrowed is named on the enhanced run's approval card with what the baseline showed -
-the one moment the customer can object before paying for a space that excluded it.
+**The same small generated-space size whatever the customer brings.** A customer who arrives with
+twenty of their own knobs gets the same three-slot enhanced space, not a larger one. The reduction
+is not a judgement about their knobs, and their knobs are not replaced by this guide's: the three
+slots are filled from what they brought, and baseline evidence decides which three. The resulting
+three-control choice reaches the enhanced run's approval card with that evidence - the one moment
+the customer can object before paying for the selected space.
 
 Say plainly what that is and is not. The knobs are reduced to demonstrate the principle cheaply -
 a first run has to finish, cost little, and be readable - and Traigent knows tens of knobs it can
