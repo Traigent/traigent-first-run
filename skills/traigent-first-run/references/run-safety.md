@@ -512,10 +512,12 @@ Three honesty rules govern the file:
   the next write to replace it - staleness is removed by the run, not by the reader noticing.
 
 The walkthrough's document uses the exact generated space owned by
-`references/sdk-execution.md`, with temperature declared at its one pinned value because the agent
-does consume it. A pinned knob scores 10 of 100 on breadth
+`references/sdk-execution.md`, with temperature declared at its one task-selected fixed value
+because the agent does consume it. A fixed knob scores 10 of 100 on breadth
 rather than 0: declaring it says the author considered the knob and decided, which is worth a
 little, and worth only a little because the search still gets one value:
+
+The JSON below is the exact-output worked example, so its selected value is `0.0`.
 
 ```json
 {
@@ -743,7 +745,8 @@ count - as a count, never as a change from whatever this guide did before, which
 never run.
 
 The three default behaviour knobs are prompt style, thinking shape (direct or chain-of-thought),
-and reflect; temperature is pinned at 0, so every swept knob is real for every model. They are
+and reflect; temperature stays fixed at the task-selected value owned by `sdk-execution.md`, so
+every swept knob is real for every model. They are
 selected from the eleven-knob catalog `references/sdk-execution.md` owns. The approval card shows
 the selected three and why they fit; the customer does not have to design a space from the whole
 catalog. `self_check` is not among them - it and `reflect` were one knob
@@ -817,18 +820,14 @@ can do, and no result here should be read as the best the system could reach. Ne
 smaller space as though the improvement were bought by shrinking the search.
 
 A knob that does not influence the agent code is not a real optimization variable.
-Native boolean knobs use `[True, False]`, never string encodings. A generated walkthrough pins
-temperature at 0
-unconditionally and carries the search on behaviour knobs instead - a frail exact or case-sensitive
-metric punishes the surface variation a temperature sweep buys, and a reasoning rung ignores the
-knob entirely, so pinning it always is both safer and simpler than pinning it sometimes. Preserve a user-owned
-baseline's temperature behavior exactly, including an unset provider default; record resulting
-nondeterminism as a limitation rather than silently changing the baseline. Multi-call composite
-controls multiply
-cost and require a concrete failure-mode justification; every knob in the generated default stays
-within one provider call. `self_consistency` is the catalog's one deliberate exception, and it is
-selectable only for a customer already running above temperature 0 - at a pinned 0 every sample
-repeats, so it would multiply the bill and change no answer.
+Native boolean knobs use `[True, False]`, never string encodings. A generated walkthrough fixes the
+one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search
+on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
+including an unset provider default; record resulting nondeterminism as a limitation rather than
+silently changing the baseline. Multi-call composite controls multiply cost and require a concrete
+failure-mode justification; every knob in the generated default stays within one provider call.
+`self_consistency` is the catalog's one deliberate exception, under the precondition and approval
+rule `sdk-execution.md` owns.
 
 Match each knob to how the agent actually fails: repair (re-prompt once on a malformed or erroring
 output), self-consistency (sample N and vote, for unstable answers), similarity-selected retrieval

@@ -1409,7 +1409,7 @@ class EvaluationScoringTests(unittest.TestCase):
 # with the template's placeholder model ids. Kept here so the consumer contract
 # is pinned to the shape the producer actually emits. There is no longer a
 # placeholder value to substitute first - the three behaviour knobs are binary
-# and temperature is pinned, so the space is fixed before either run.
+# and temperature has one task-selected value, so the space is fixed before either run.
 WALKTHROUGH_CONFIG_SPACE = {
     "knobs": {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
