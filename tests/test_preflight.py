@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -157,7 +160,7 @@ class StaticPreflightTests(unittest.TestCase):
                     item for item in MODULE.RESULTS if item.check == "sdk-version"
                 )
                 self.assertEqual(result.status, MODULE.FAIL)
-                self.assertIn("install traigent==0.25.0", result.detail)
+                self.assertIn("install traigent==0.26.0", result.detail)
 
     def test_provider_credentials_are_inventory_not_route_selection(self) -> None:
         MODULE.check_keys(
@@ -173,6 +176,47 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("OpenAI, Anthropic", result.detail)
         self.assertIn("does not select or change", result.detail)
         self.assertNotIn("select one", result.detail)
+
+    def test_both_backend_origin_overrides_are_reported(self) -> None:
+        """The SDK resolves its backend from either name, so one is not enough.
+
+        `TRAIGENT_BACKEND_URL` was the only one named here, while the SDK falls
+        back to `TRAIGENT_API_URL` and prefers either over the stored or default
+        route. An unreported override sends a paid, portal-tracked run to a
+        backend nobody approved - and it still looks connected, so the
+        require-cloud guard in the wrapper does not catch it either.
+        """
+        for present, expected in (
+            (
+                {"TRAIGENT_BACKEND_URL": "https://example.invalid"},
+                ["TRAIGENT_BACKEND_URL"],
+            ),
+            ({"TRAIGENT_API_URL": "https://example.invalid/api"}, ["TRAIGENT_API_URL"]),
+            (
+                {
+                    "TRAIGENT_BACKEND_URL": "https://example.invalid",
+                    "TRAIGENT_API_URL": "https://example.invalid/api",
+                },
+                ["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
+            ),
+        ):
+            with self.subTest(present=sorted(present)):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings(dict(present), {})
+                result = next(
+                    item for item in MODULE.RESULTS if item.check == "backend-url"
+                )
+                self.assertEqual(result.status, MODULE.WARN)
+                for name in expected:
+                    self.assertIn(name, result.detail)
+
+        MODULE.RESULTS.clear()
+        MODULE.check_cost_settings({}, {})
+        self.assertEqual(
+            [item for item in MODULE.RESULTS if item.check == "backend-url"],
+            [],
+            "a clean environment must not warn, or the warning means nothing",
+        )
 
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -726,7 +770,8 @@ class StaticPreflightTests(unittest.TestCase):
 
     @staticmethod
     def _pairwise_near_duplicates(
-        token_sets: list[set[str]], threshold: float = 0.9
+        token_sets: list[set[str]],
+        threshold: float = MODULE.NEAR_DUPLICATE_THRESHOLD,
     ) -> list[tuple[int, int]]:
         """The full O(n^2) scan, kept here as the oracle for the indexed join.
 
@@ -766,6 +811,226 @@ class StaticPreflightTests(unittest.TestCase):
                 sorted(self._pairwise_near_duplicates(token_sets)),
                 f"indexed join disagrees with the pairwise scan on {token_sets}",
             )
+
+    @staticmethod
+    def _similarity(left: str, right: str) -> float:
+        """The number this check actually decides on, for two raw inputs."""
+        first, second = MODULE.shingle_set(left), MODULE.shingle_set(right)
+        union = first | second
+        return len(first & second) / len(union) if union else 1.0
+
+    @staticmethod
+    def _word_set_similarity(left: str, right: str) -> float:
+        """What the check used to decide on. Kept to state the defect as a number."""
+        first = set(MODULE.normalized_text(left).split())
+        second = set(MODULE.normalized_text(right).split())
+        union = first | second
+        return len(first & second) / len(union) if union else 1.0
+
+    def test_a_reordered_sentence_is_not_a_repeat(self) -> None:
+        """The defect in traigent-first-run#170, asserted as both numbers.
+
+        "the cat sat on the mat" and "the mat sat on the cat" are the same six
+        words in a different order. To a word-set comparison they are the same
+        row - similarity exactly 1.0 - so a dataset that varies word order on
+        purpose read as duplicated. Comparing runs of consecutive words instead
+        scores them 0.143.
+
+        Both numbers are computed here rather than quoted, so this states the
+        change rather than restating a constant, and it fails if either metric
+        stops behaving the way the guidance says it does.
+        """
+        left, right = "the cat sat on the mat", "the mat sat on the cat"
+        self.assertEqual(self._word_set_similarity(left, right), 1.0)
+        self.assertLess(self._similarity(left, right), 0.2)
+        # And through the whole path, because a similarity function that is
+        # right on its own proves nothing about what the customer is told.
+        rows = [
+            {"id": "r1", "input": left, "output": "a", "source": "production"},
+            {"id": "r2", "input": right, "output": "b", "source": "production"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "reordered.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.PASS, near.detail)
+
+    def test_a_genuine_repeat_in_a_long_row_is_still_caught(self) -> None:
+        """The false-red direction: removing order-blindness must not go further.
+
+        One word changed in a long row is the case the check most has to keep.
+        Asserted through `check_dataset` on rows long enough to be past the
+        crossing length the glossary quotes, so this fails if the switch to
+        sequences quietly made the check inert instead of order-sensitive.
+        """
+        base = [f"word{index}" for index in range(30)]
+        changed = list(base)
+        changed[15] = "different"
+        rows = [
+            {
+                "id": "r1",
+                "input": " ".join(base),
+                "output": "a",
+                "source": "production",
+            },
+            {
+                "id": "r2",
+                "input": " ".join(changed),
+                "output": "b",
+                "source": "production",
+            },
+        ]
+        self.assertGreaterEqual(
+            self._similarity(rows[0]["input"], rows[1]["input"]),
+            MODULE.NEAR_DUPLICATE_THRESHOLD,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "near.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.WARN, near.detail)
+        self.assertIn("(1, 2)", near.detail)
+
+    def test_rows_too_short_for_one_sequence_compare_whole(self) -> None:
+        """A row shorter than the sequence length still has to mean something.
+
+        There are no 3-word runs in a 2-word row, and both silent answers are
+        wrong: scoring 0 hides a two-word row repeated forty times, and scoring
+        1 makes every short row a duplicate of every other. Such a row
+        contributes itself as one whole sequence, so identical short rows score
+        1.0 and everything else scores 0.0 - which is the binary answer the
+        glossary tells the reader to expect below this length.
+        """
+        self.assertEqual(self._similarity("reset password", "reset password"), 1.0)
+        self.assertEqual(self._similarity("reset password", "change password"), 0.0)
+        # Order still counts below the sequence length, which is the same rule
+        # as above rather than an exception to it.
+        self.assertEqual(self._similarity("reset password", "password reset"), 0.0)
+        # And a short row is not silently a duplicate of a long one.
+        self.assertEqual(self._similarity("reset password", "how do i reset"), 0.0)
+        # Rows with no word characters at all keep their own handling: the join
+        # pairs them directly, because they have no sequence to be indexed under.
+        self.assertEqual(MODULE.shingle_set("???"), set())
+
+    def test_the_indexed_join_is_exact_over_sequence_sets(self) -> None:
+        """Exactness has to be re-proved on the sets the check now feeds it.
+
+        The join was already checked against a brute-force scan, but over
+        randomly sampled WORD sets. Sequence sets have a different shape - far
+        more members per row, far rarer members, and members that overlap each
+        other by construction - and the prefix filter's soundness is what the
+        whole switch rests on. So the same oracle runs again on real rows turned
+        into real sequence sets.
+        """
+        import random
+
+        random.seed(20260808)
+        vocabulary = [f"word{index}" for index in range(12)]
+        for _ in range(120):
+            rows = [
+                " ".join(random.choice(vocabulary) for _ in range(random.randint(0, 9)))
+                for _ in range(random.randint(0, 25))
+            ]
+            sets = [MODULE.shingle_set(row) for row in rows]
+            pairs, complete = MODULE.near_duplicate_pairs(sets)
+            self.assertTrue(complete)
+            self.assertEqual(
+                pairs,
+                sorted(self._pairwise_near_duplicates(sets)),
+                f"indexed join disagrees with the pairwise scan on {rows}",
+            )
+
+    def test_sequences_finish_the_scan_word_sets_ran_out_of_budget_on(self) -> None:
+        """The performance half of #170, asserted as an outcome and not a clock.
+
+        #158 bounded this loop in token operations because 2,000 rows of 300
+        words spent 1.03 billion of them. That shape did not merely run slowly -
+        it exhausted the budget and reported SKIP, which readiness reads as
+        UNCHECKED, so the dataset most likely to contain duplicates was the one
+        that got no answer.
+
+        Sequences are far rarer across rows than words are, so the index admits
+        far fewer candidates and the same rows finish. Measured at full size:
+        964M operations as word sets against 0 as sequences. Asserted here on a
+        smaller corpus of the same shape, so the suite pays about a second for
+        it, and on `complete` rather than on elapsed time, which would be flaky.
+        """
+        import random
+
+        random.seed(20260808)
+        vocabulary = [f"word{index}" for index in range(4000)]
+        rows = [
+            " ".join(random.choice(vocabulary) for _ in range(300)) for _ in range(400)
+        ]
+        _pairs, word_complete = MODULE.near_duplicate_pairs(
+            [set(MODULE.normalized_text(row).split()) for row in rows]
+        )
+        self.assertFalse(
+            word_complete,
+            "the word-set comparison is expected to exhaust the budget on this "
+            "shape; if it no longer does, this test has stopped covering the "
+            "regression it was written for",
+        )
+        pairs, complete = MODULE.near_duplicate_pairs(
+            [MODULE.shingle_set(row) for row in rows]
+        )
+        self.assertTrue(
+            complete,
+            "sequences must finish the scan that word sets could not, or the "
+            "check still answers UNCHECKED on the datasets that need it most",
+        )
+        self.assertEqual(pairs, [])
+
+    def test_reused_answers_with_distinct_inputs_are_not_repetition(self) -> None:
+        """Repeating an ANSWER is not the defect; repeating a QUESTION is.
+
+        A closed-label task is supposed to reuse its labels - a yes/no set has
+        two of them and a balanced one uses each half the time. Pointing this
+        check at the output field would read 60 rows as 60 duplicates and charge
+        a correct dataset 7 of its 20 diversity points, while missing the actual
+        defect entirely. So the near-duplicate scan reads the input and only the
+        input, and this holds it there.
+
+        Answer spread is a real question, and a different one: it has its own
+        record (`dataset-ceiling-risk`), which fires on DOMINANCE rather than on
+        reuse and correctly stays silent on a balanced set.
+        """
+        rows = [
+            {
+                "id": f"r{index}",
+                "input": (
+                    f"is order {index} from warehouse {index} eligible for a "
+                    "refund today"
+                ),
+                "output": "yes" if index % 2 else "no",
+                "source": "production",
+            }
+            for index in range(60)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "closed_label.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertEqual(
+            checks["dataset-near-duplicates"].status,
+            MODULE.PASS,
+            checks["dataset-near-duplicates"].detail,
+        )
+        self.assertEqual(checks["dataset-duplicates"].status, MODULE.PASS)
+        # Two labels used evenly is the best a binary task can do, so nothing
+        # here may read as an answer having taken the dataset over.
+        self.assertNotIn("dataset-ceiling-risk", checks)
 
     def test_near_duplicates_are_still_checked_above_five_hundred_rows(self) -> None:
         """The check must not stop running as the dataset gets big.
@@ -869,8 +1134,9 @@ class StaticPreflightTests(unittest.TestCase):
             )
             MODULE.check_dataset(dataset)
         checks = {result.check: result for result in MODULE.RESULTS}
-        self.assertNotIn("dataset-ceiling-risk", checks)
-        self.assertEqual(checks["dataset-outputs"].status, MODULE.PASS)
+        self.assertIn("dataset-ceiling-risk", checks)
+        self.assertEqual(checks["dataset-ceiling-risk"].status, MODULE.SKIP)
+        self.assertEqual(checks["dataset-outputs"].status, MODULE.SKIP)
         self.assertIn("too few", checks["dataset-outputs"].detail)
         # And the size itself is still reported as the problem it is.
         self.assertEqual(checks["dataset-size"].status, MODULE.WARN)
@@ -893,13 +1159,18 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("dataset-ceiling-risk", checks)
 
     def test_an_exhausted_budget_emits_skip_rather_than_a_clean_result(self) -> None:
-        """The one remaining way this check can fail to run must say so.
+        """One of the two ways this check can fail to run must say so.
 
         Driven through `check_dataset` and not just the join, because the
         defect being guarded lived in the emit: the old ceiling produced a SKIP
         that nothing downstream distinguished from a pass. The budget is
         patched down rather than a pathological dataset built, so the test
         states the contract instead of the size at which it triggers.
+
+        The other way is the memory ceiling below. Both are SKIPs and they are
+        not interchangeable, so each of these tests also asserts the absence of
+        the other's wording - a reader told the wrong limit fixes the wrong
+        thing.
         """
         rows = [
             {
@@ -930,11 +1201,265 @@ class StaticPreflightTests(unittest.TestCase):
         # And it must account for the wait, in terms of the dataset the reader
         # is holding. This is the one slow path in the script, so they have just
         # waited and are then told the check did not run; the detail has to name
-        # what causes it or the pause reads as a hang. It must name BOTH causes:
-        # the text used to name only a small vocabulary, and the slower way in
-        # is long rows with an entirely ordinary one.
-        self.assertIn("length of each one", near.detail)
-        self.assertIn("vocabulary", near.detail)
+        # what causes it or the pause reads as a hang.
+        #
+        # What it must name changed with the metric. Under word sets the causes
+        # were long rows and a small vocabulary; under sequences both measure 0
+        # operations, and the remaining cause is many rows phrased alike. A
+        # sentence that still sent the reader to split long inputs would be
+        # advice about a cost their file does not have.
+        self.assertIn("phrased alike", near.detail)
+        self.assertNotIn("small vocabulary", near.detail)
+        # ...and not the memory ceiling's, which is a different limit with a
+        # different remedy. This scan ran and ran out of comparisons.
+        self.assertNotIn("MEMORY ceiling", near.detail)
+
+    def _rows_of(self, count: int, words: int) -> list[dict]:
+        """Rows whose runs are all distinct, so the count is the whole story."""
+        return [
+            {
+                "id": f"real-{index}",
+                "input": " ".join(f"w{index}x{position}" for position in range(words)),
+                "output": f"answer {index % 4}",
+                "source": "production",
+            }
+            for index in range(count)
+        ]
+
+    def _near_duplicate_result(self, rows: list[dict], **patches: object):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with contextlib.ExitStack() as stack:
+                for name, value in patches.items():
+                    stack.enter_context(mock.patch.object(MODULE, name, value))
+                MODULE.check_dataset(dataset)
+        return next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+
+    def test_a_dataset_too_large_to_index_skips_and_names_the_memory_ceiling(
+        self,
+    ) -> None:
+        """The bound the work budget cannot see, and the reason it had to exist.
+
+        `MAX_NEAR_DUPLICATE_WORK` counts operations, and on high-diversity rows
+        it counts ZERO at every size: the index admits no candidates, so the
+        counter never moves while the sets it is built from grow with the file.
+        Measured on the shipped scan before this ceiling existed, 16,000 rows of
+        300 words spent 0 operations, returned `complete`, and peaked at about
+        36x the file - 1,538 MB. A dataset twice that size does not run slowly,
+        it is killed, and a killed preflight prints nothing at all.
+
+        So the SKIP has to name the MEMORY limit specifically. The work SKIP
+        tells a reader to de-duplicate; that advice is actively wrong here,
+        because this dataset is refused for being large and de-duplicating a
+        corpus of distinct rows removes nothing.
+        """
+        rows = self._rows_of(12, 6)
+        near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=10)
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertIn("UNCHECKED", near.detail)
+        self.assertIn("MEMORY ceiling", near.detail)
+        # The measured size and the ceiling it failed, both of them, so the
+        # reader can tell how far over they are rather than only that they are.
+        self.assertIn(
+            f"{12 * (6 - MODULE.NEAR_DUPLICATE_SHINGLE + 1):,} runs", near.detail
+        )
+        self.assertIn("10 run MEMORY ceiling", near.detail)
+        # And never the work budget's wording or its remedy.
+        self.assertNotIn("work budget", near.detail)
+        self.assertNotIn("De-duplicate", near.detail)
+
+    def test_the_memory_ceiling_is_consulted_before_the_index_is_built(self) -> None:
+        """A ceiling checked after the allocation has bounded nothing.
+
+        This is the whole mechanism, so it is measured rather than inferred from
+        the SKIP. Asserting only that `near_duplicate_pairs` is never called is
+        NOT enough, and that gap was found by writing the mutation instead of
+        assuming it: an implementation that builds the list of one set per row,
+        sums it, and then refuses passes that assertion while allocating the
+        larger half of what it claims to be avoiding. The sets are two thirds of
+        the peak on high-diversity rows and nearly all of it on repetitive ones.
+
+        So the bound is compared against the thing it must stay under: the cost
+        of the sets alone, measured here rather than written down as a constant
+        that could quietly stop describing the code. Over the ceiling, the whole
+        of `check_dataset` must peak BELOW what one list of shingle sets costs.
+        """
+        rows = self._rows_of(400, 60)
+        values = [row["input"] for row in rows]
+
+        tracemalloc.start()
+        try:
+            start = tracemalloc.get_traced_memory()[0]
+            sets = [MODULE.shingle_set(value) for value in values]
+            sets_cost = tracemalloc.get_traced_memory()[0] - start
+            del sets
+        finally:
+            tracemalloc.stop()
+
+        tracemalloc.start()
+        try:
+            with mock.patch.object(MODULE, "near_duplicate_pairs") as join:
+                near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=10)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+        join.assert_not_called()
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertLess(
+            peak,
+            sets_cost,
+            f"refusing this dataset peaked at {peak:,} bytes, which is at least "
+            f"what its {len(rows)} shingle sets cost to build ({sets_cost:,}). "
+            "The ceiling is being applied after the index exists, so it bounds "
+            "the report and not the memory - which is the defect it was added "
+            "for, one step later in the same function.",
+        )
+
+    def test_a_dataset_inside_the_memory_ceiling_is_still_scanned(self) -> None:
+        """The false-red direction, and the win this must not take back.
+
+        A memory bound that refuses everything is trivially safe and useless -
+        the point of #170's work bound was to stop a 500-row ceiling silently
+        withdrawing this check from every dataset big enough to need it, and a
+        ceiling set too low would reintroduce exactly that. Same rows as the
+        test above, one ceiling above their real size instead of one below: the
+        scan runs and answers.
+        """
+        rows = self._rows_of(12, 6)
+        runs = 12 * (6 - MODULE.NEAR_DUPLICATE_SHINGLE + 1)
+        near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=runs)
+        self.assertEqual(near.status, MODULE.PASS, near.detail)
+        self.assertNotIn("UNCHECKED", near.detail)
+
+    def test_the_index_size_is_a_conservative_upper_bound(self) -> None:
+        """The pre-check may refuse early, but may never undercount allocation."""
+        values = [
+            "alpha beta gamma delta",  # 4 words -> 2 runs
+            "one two",  # under n -> 1 run, not -1 and not 0
+            "solo",  # under n -> 1 run
+            "",  # no word characters -> no runs at all
+            "repeat repeat repeat repeat",  # collapses to 1 distinct run
+        ]
+        built = [MODULE.shingle_set(value) for value in values]
+        self.assertGreaterEqual(
+            MODULE.near_duplicate_index_size(values),
+            sum(len(tokens) for tokens in built),
+        )
+        self.assertEqual(MODULE.near_duplicate_index_size(values), 6)
+        self.assertEqual([len(tokens) for tokens in built], [2, 1, 1, 0, 1])
+
+    def test_one_oversized_row_is_counted_without_building_its_shingle_set(
+        self,
+    ) -> None:
+        words = MODULE.MAX_NEAR_DUPLICATE_SHINGLES + MODULE.NEAR_DUPLICATE_SHINGLE
+        value = "word " * words
+        with mock.patch.object(
+            MODULE, "shingle_set", side_effect=AssertionError("allocated the set")
+        ):
+            counted = MODULE.near_duplicate_index_size([value])
+        self.assertGreater(counted, MODULE.MAX_NEAR_DUPLICATE_SHINGLES)
+
+    def test_the_memory_ceiling_is_the_arithmetic_its_own_comment_states(
+        self,
+    ) -> None:
+        """The ceiling is derived, so the derivation is what is checked.
+
+        Every other guard here patches `MAX_NEAR_DUPLICATE_SHINGLES` to state a
+        contract independent of its value, which is right - and leaves the
+        shipped value itself guarded by nothing. Raising it to a number no
+        measurement supports would pass all of them, and that is the failure
+        this repository keeps finding: a constant whose justification sits
+        beside it as prose and stops describing it.
+
+        So the number is recomputed from the two figures its comment gives - the
+        memory target, and the worst bytes-per-run of the shapes measured - and
+        the comment's own division is checked against Python's. The table is
+        read too: its worst row must BE the divisor, so adding a costlier shape
+        without re-deriving fails here rather than being absorbed into prose.
+        """
+        source = SCRIPT.read_text()
+        block = source.split("MAX_NEAR_DUPLICATE_WORK = ", 1)[1].split(
+            "MAX_NEAR_DUPLICATE_SHINGLES = ", 1
+        )[0]
+        prose = " ".join(
+            line.lstrip("#").strip() for line in block.splitlines()
+        ).replace("  ", " ")
+
+        target = re.search(r"add at most ([\d,]+) MB to peak RSS", prose)
+        self.assertIsNotNone(target, "the comment no longer states a memory target")
+        target_bytes = int(target.group(1).replace(",", "")) * 1_000_000
+
+        derivation = re.search(
+            r"([\d,]+) / ([\d,]+) = ([\d,]+) runs, rounded DOWN to ([\d,]+)", prose
+        )
+        self.assertIsNotNone(
+            derivation, "the comment no longer shows how the ceiling was derived"
+        )
+        dividend, divisor, quotient, rounded = (
+            int(group.replace(",", "")) for group in derivation.groups()
+        )
+
+        self.assertEqual(dividend, target_bytes, "the division is not of the target")
+        self.assertEqual(
+            quotient, dividend // divisor, "the comment's division is wrong"
+        )
+        self.assertEqual(rounded, MODULE.MAX_NEAR_DUPLICATE_SHINGLES)
+        self.assertLessEqual(
+            MODULE.MAX_NEAR_DUPLICATE_SHINGLES * divisor,
+            target_bytes,
+            "the shipped ceiling does not buy the memory target its comment "
+            "claims. Re-measure and re-derive, or state a different target.",
+        )
+
+        measured = [
+            int(row.group(1).replace(",", ""))
+            for row in re.finditer(
+                r"^#\s+[\d,]+ x [\d,]+ words\s+[\d,]+\s+[\d,]+ MB\s+(\d+)",
+                block,
+                re.MULTILINE,
+            )
+        ]
+        self.assertGreaterEqual(len(measured), 5, "the measured table is gone")
+        self.assertEqual(
+            max(measured),
+            divisor,
+            "the ceiling is divided by a bytes-per-run figure that is not the "
+            f"worst one measured ({max(measured)} appears in the table). The "
+            "worst shape is the one the ceiling has to hold for.",
+        )
+
+    def test_the_first_run_sized_dataset_sits_well_inside_the_memory_ceiling(
+        self,
+    ) -> None:
+        """The regression this fix could most easily cause, stated as a ratio.
+
+        2,000 rows of 300 words is the shape the metric change was argued on:
+        it SKIPs on trunk and COMPLETES on this branch, and the memory ceiling
+        must not quietly take that back. Its index is 596,000 runs, and it is
+        pinned here as a fraction of the ceiling rather than as a passing run,
+        so moving either number - the ceiling down, or `NEAR_DUPLICATE_SHINGLE`
+        up - fails here with both figures named instead of somewhere slower.
+
+        Measured through `check_dataset` at that size, after this ceiling: PASS,
+        208 MB peak, against 769 MB and 1,538 MB for the 8,000 and 16,000-row
+        datasets the ceiling now refuses.
+        """
+        runs = 2_000 * (300 - MODULE.NEAR_DUPLICATE_SHINGLE + 1)
+        self.assertEqual(runs, 596_000)
+        self.assertLess(
+            runs,
+            MODULE.MAX_NEAR_DUPLICATE_SHINGLES * 0.6,
+            f"a first-run-sized dataset indexes {runs:,} runs against a "
+            f"{MODULE.MAX_NEAR_DUPLICATE_SHINGLES:,} ceiling, which is no "
+            "longer comfortable. The ceiling exists to refuse datasets that "
+            "would be killed, not the size this check was reinstated for.",
+        )
 
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [
@@ -1077,6 +1602,329 @@ class StaticPreflightTests(unittest.TestCase):
                 for result in MODULE.RESULTS
             )
         )
+
+    # ---------------------------------------------------------------- #216
+    # Answer dominance is measured against chance, not against a fixed share
+    # of the rows. Every case below is a dataset shape whose verdict the fixed
+    # share got wrong, or one it got right that the new rule must not lose.
+
+    @staticmethod
+    def _dominance_verdict(counts: dict[str, int]) -> tuple[str, str] | None:
+        """Run the shipped check over a dataset with this answer distribution.
+
+        Inputs are deliberately all distinct. Repeated ANSWERS with distinct
+        INPUTS are a correct dataset - `a`/`b`/`c`/`d` labels, a bibliography
+        that cites the same author twice - and the repetition checks scan the
+        input, so nothing here may charge them for the answers repeating.
+
+        `RESULTS` is cleared here and not only in `setUp`. It is a module-level
+        accumulator, so a second call in one test method used to read back the
+        FIRST call's record - which passes silently whenever the first dataset
+        is clean, and turns the second assertion into a statement about the
+        wrong dataset the moment it is not.
+        """
+        MODULE.RESULTS.clear()
+        rows = []
+        for answer, count in counts.items():
+            for _ in range(count):
+                index = len(rows)
+                rows.append(
+                    {
+                        "id": f"real-{index}",
+                        "input": f"question {index} about topic {index}",
+                        "output": answer,
+                    }
+                )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        for result in MODULE.RESULTS:
+            if result.check == "dataset-ceiling-risk":
+                return result.status, result.detail
+        return None
+
+    def test_balanced_binary_dataset_is_not_a_ceiling_risk(self) -> None:
+        """The false red this change must not create - not one it removes.
+
+        Deliberately stated that way round, because the opposite is easy to
+        write and wrong: the shipped 0.9-of-rows rule was already silent here,
+        so this test PASSES on the old code and demonstrates no bug. #216 is an
+        under-reach, not a false red - nothing was broken, and the defect was a
+        false GREEN on the skewed four-way set below.
+
+        What it does guard is the direction a chance-relative rule could go
+        wrong. 50% of the rows is the BEST a yes/no dataset can do, and it is
+        also twice chance on an a/b/c/d set; both are 50%, only one is a
+        finding. A rule that reached the second by charging the first would have
+        traded an under-reach for a false red on the most ordinary dataset
+        there is. Balanced scores zero excess at every label count, which is
+        what makes one rule right for both.
+        """
+        self.assertIsNone(self._dominance_verdict({"yes": 100, "no": 100}))
+
+    def test_balanced_four_way_dataset_is_not_a_ceiling_risk(self) -> None:
+        self.assertIsNone(self._dominance_verdict({"a": 50, "b": 50, "c": 50, "d": 50}))
+
+    def test_skewed_binary_dataset_is_a_ceiling_risk(self) -> None:
+        """95/5, which the shipped rule also flags - and by the same arm.
+
+        95% clears the absolute share, so this dataset never reaches the
+        chance-relative rule at all and the test would pass unchanged on the old
+        code. It is here as a non-regression guard and is labelled as one; the
+        case below is the one that exercises the new arm on a binary set.
+        """
+        verdict = self._dominance_verdict({"yes": 190, "no": 10})
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("190/200", detail)
+        self.assertIn("needs no chance baseline", detail)
+
+    def test_a_binary_set_below_the_absolute_share_is_reached_by_chance(self) -> None:
+        """80/20: silent under the shipped rule, flagged by the new one.
+
+        The binary case that actually enters the chance-relative arm. 80% is
+        under the 90% absolute share, so the floor cannot answer it; against a
+        50% baseline it is 60% of the way from chance to a perfect score, well
+        past the line. Asserting the chance wording is what proves which arm
+        ran - without it this test passes on an implementation that only ever
+        compares shares.
+        """
+        verdict = self._dominance_verdict({"yes": 160, "no": 40})
+        self.assertIsNotNone(verdict, "an 80/20 binary set was not reached")
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("50.0% chance baseline", detail)
+        self.assertIn("60% of the", detail)
+
+    def test_skewed_four_way_dataset_is_a_ceiling_risk(self) -> None:
+        """The dataset the fixed share could not reach, and the shape that
+        pins the line.
+
+        Chance is 25% and the top answer takes 50% - double chance, and a third
+        of the way from chance to a perfect score. The shipped 0.9 rule is
+        silent here. It sits EXACTLY on the line, which is why the comparison
+        is made in exact rationals: in float the same shape at k=2 lands at
+        0.33333333333333326 and falls the wrong side.
+        """
+        verdict = self._dominance_verdict({"a": 100, "b": 50, "c": 30, "d": 20})
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("25.0% chance baseline", detail)
+        self.assertIn("4 distinct answers", detail)
+
+    def test_binary_set_exactly_on_the_line_is_flagged_not_rounded_away(self) -> None:
+        """A 2:1 binary split is one of the 200 shapes where float disagrees."""
+        verdict = self._dominance_verdict({"yes": 200, "no": 100})
+        self.assertIsNotNone(verdict, "a 2:1 binary split was rounded off the line")
+        self.assertEqual(verdict[0], MODULE.WARN)
+
+    def test_repeated_answers_with_distinct_inputs_are_not_a_fault(self) -> None:
+        """Two datasets that are CORRECT and must stay uncharged.
+
+        A closed-label task is supposed to reuse its labels, and a
+        bibliographic set is supposed to cite the same author more than once.
+        Near-duplicate detection is on the input; this check is about
+        concentration. Neither may imply that a repeated answer is a defect.
+        """
+        self.assertIsNone(self._dominance_verdict({"a": 15, "b": 15, "c": 15, "d": 15}))
+        self.assertIsNone(
+            self._dominance_verdict({f"author {name}": 5 for name in range(12)})
+        )
+
+    def test_free_text_answers_report_unchecked_and_never_clean(self) -> None:
+        """`1/k` is chance only when the answers repeat enough to have a share.
+
+        On free text they do not: every row is its own answer, so `k` climbs
+        with the row count and `1/k` is a fact about how many rows were read.
+        The check declines - and a check that declines must say so. Reported as
+        SKIP, which readiness.py scores as unasked; reporting it as PASS is the
+        defect #158 was filed for.
+
+        The message is asserted NOT to classify the task. An earlier revision
+        told this customer their answers were "a sample of an open-ended answer
+        space rather than a closed set of labels", which is a claim about their
+        data rather than about this run's evidence - and one it got wrong on
+        real label sets carrying rare labels.
+        """
+        counts = {"a shared sentence answer": 2}
+        counts.update({f"a distinct sentence answer number {i}": 1 for i in range(64)})
+        verdict = self._dominance_verdict(counts)
+        self.assertIsNotNone(verdict, "free text produced no dominance record at all")
+        status, detail = verdict
+        self.assertEqual(status, MODULE.SKIP)
+        self.assertIn("UNCHECKED", detail)
+        self.assertNotIn("chance baseline for", detail)
+        self.assertNotIn("open-ended", detail)
+        self.assertNotIn("closed set of labels", detail)
+
+    def test_a_long_tailed_label_set_is_measured_not_declined(self) -> None:
+        """The false red the first regime gate shipped, kept as a guard.
+
+        101 rows over 18 labels with 8 rare ones is an ordinary classification
+        dataset. The first gate here compared the Good-Turing estimate of unseen
+        answer mass against one label's fair share `1/k` - a test that tightens
+        as `k` grows, which is exactly where a real label set carries rare
+        labels - and declined on it, telling the customer their labels were an
+        open-ended answer space. It must be measured, and found clean: the top
+        label is on 30 of 101 rows against a 1-in-18 baseline.
+        """
+        counts = {"top": 30}
+        counts.update({f"middle {index}": 7 for index in range(9)})
+        counts.update({f"rare {index}": 1 for index in range(8)})
+        self.assertIsNone(
+            self._dominance_verdict(counts),
+            "a long-tailed label set was declined or flagged",
+        )
+
+    def test_declining_never_withdraws_a_finding_the_old_rule_made(self) -> None:
+        """The regression an earlier revision of this branch actually had.
+
+        100 rows: 90 identical answers and 10 one-off ones. The shipped
+        0.9-of-rows rule flags it. Under this branch's FIRST regime gate the
+        chance-relative rule could not run on it - 10 singletons over 11
+        answers - so it reported UNCHECKED, and an unmeasured diversity
+        sub-score outscores a flagged one on 449 of 512 scored dataset shapes,
+        by up to 6 points.
+
+        The gate that produced that has since been replaced, and the current one
+        measures this dataset rather than declining on it. The case is kept
+        because the property is not "the current gate happens to be safe" but
+        "declining can never withdraw an answer already given" - which is held
+        by testing the absolute share ahead of the gate, so it survives the next
+        time the gate moves.
+        """
+        counts = {"yes": 90}
+        counts.update({f"a distinct one-off answer number {i}": 1 for i in range(10)})
+        verdict = self._dominance_verdict(counts)
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN, "the gate silenced a shipped finding")
+        self.assertIn("90/100", detail)
+        self.assertIn("needs no chance baseline", detail)
+
+    def test_no_shipped_finding_is_withdrawn_at_any_dataset_shape(self) -> None:
+        """The case above, generalized: swept rather than sampled.
+
+        Every answer-count multiset up to 40 rows with two or more distinct
+        answers - 215,267 of them. Not one dataset that the 0.9-of-rows rule
+        flags loses its finding. The reach in the other direction is real and
+        deliberate: 23,032 shapes are newly flagged.
+        """
+
+        def partitions(total: int, largest: int) -> list[tuple[int, ...]]:
+            if total == 0:
+                return [()]
+            out = []
+            for first in range(min(total, largest), 0, -1):
+                for rest in partitions(total - first, first):
+                    out.append((first,) + rest)
+            return out
+
+        withdrawn = []
+        newly_flagged = 0
+        for rows in range(2, 41):
+            for shape in partitions(rows, rows):
+                if len(shape) < 2:
+                    continue
+                counts = MODULE.Counter(
+                    {f"a{index}": count for index, count in enumerate(shape)}
+                )
+                finding = MODULE.answer_dominance_finding(
+                    counts, subject="expected output"
+                )
+                status = finding[0] if finding else None
+                if max(shape) / rows >= 0.9:
+                    if status != MODULE.WARN:
+                        withdrawn.append((rows, shape, status))
+                elif status == MODULE.WARN:
+                    newly_flagged += 1
+        self.assertEqual(withdrawn[:5], [], f"{len(withdrawn)} findings withdrawn")
+        self.assertGreater(newly_flagged, 0, "the chance-relative rule reaches nothing")
+
+    def test_a_declined_subject_cannot_delete_another_subject_s_finding(self) -> None:
+        """One `dataset-ceiling-risk` record, chosen by severity, not by order.
+
+        Two subjects can produce a dominance verdict - the expected answers and
+        a structured outcome field - and readiness reads preflight's records
+        into a dict keyed by check name, so two records collapse to whichever
+        was emitted last. Harmless while the only record was a finding; not
+        harmless once one outcome is "did not run", because the loser of the
+        collapse is a whole verdict.
+
+        This dataset reaches both: the outputs are dicts carrying a distinct
+        `reason` per row, so as whole answers they are free text and decline,
+        while the `label` inside them is on 19 of 20 rows. The WARN must
+        survive, and it must be the only ceiling-risk record on the run.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"question {index} about topic {index}",
+                "output": {
+                    "label": "same" if index < 19 else "other",
+                    "reason": f"distinct reason {index}",
+                },
+            }
+            for index in range(20)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        risks = [
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-ceiling-risk"
+        ]
+        self.assertEqual(len(risks), 1, f"dominance spoke {len(risks)} times: {risks}")
+        self.assertEqual(
+            risks[0].status,
+            MODULE.WARN,
+            "the declining subject overwrote the subject that found something",
+        )
+        self.assertIn("output field 'label'", risks[0].detail)
+
+    def test_dominance_excess_is_total_and_never_divides_by_zero(self) -> None:
+        """`1/k` at k=1 is 100%, so the general expression divides by zero.
+
+        Nothing reaches it today - every caller tests the absolute share first,
+        which catches a one-answer dataset at 100% - but that is protection by
+        call order rather than by the function, and it would become a crash the
+        moment a caller reordered. One answer on every row is total dominance,
+        so the maximum is the answer the formula is reaching for anyway.
+        """
+        self.assertEqual(MODULE.dominance_excess(MODULE.Counter({"a": 40})), 1)
+        self.assertEqual(MODULE.dominance_excess(MODULE.Counter({"a": 1})), 1)
+        # And the shape that made it unreachable still resolves the same way.
+        verdict = self._dominance_verdict({"same": 10})
+        self.assertIsNotNone(verdict)
+        self.assertEqual(verdict[0], MODULE.WARN)
+
+    def test_the_line_is_stated_in_shares_a_reader_can_check(self) -> None:
+        """What one third of the way from chance to perfect IS, per label count.
+
+        The number in the source is an excess, which nobody can check against
+        their own file. These are the majority shares it corresponds to, and
+        they are the reason one constant is right at every label count: 50% is
+        clean for yes/no and a finding for a/b/c/d.
+        """
+        total = 90_000
+        for labels, share in ((2, 0.667), (3, 0.556), (4, 0.500), (10, 0.400)):
+            majority = round(share * total)
+            counts = MODULE.Counter({"a0": majority})
+            spread = total - majority
+            for index in range(1, labels):
+                counts[f"a{index}"] = spread // (labels - 1)
+            excess = MODULE.dominance_excess(counts)
+            self.assertAlmostEqual(
+                float(excess),
+                float(MODULE.DOMINANCE_EXCESS_THRESHOLD),
+                places=2,
+                msg=f"at {labels} labels the line is not {share:.1%} of the rows",
+            )
 
     def test_explicit_nested_outcome_field_detects_nonstandard_schema(self) -> None:
         rows = [
@@ -1311,6 +2159,157 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertIn(code, (0, 1))
         self.assertNotIn("internal error", err.getvalue())
         self.assertTrue(out.getvalue().strip())
+
+
+class EveryRowCountIsAccountedForTests(unittest.TestCase):
+    """A number over rows nothing scored is the failure that costs a decision.
+
+    A dangling reference halts the run loudly and a maintainer fixes it in
+    minutes. A row count is the other kind: the run finishes, the card prints a
+    figure, and the customer acts on a number drawn over a set that is not the
+    one they think it is. Nothing failed, so nothing said so.
+
+    What this run can honestly check is bounded, and the bound is stated rather
+    than papered over. `preflight.py` never executes the evaluator - it
+    `ast.parse`s it, and its own PASS detail says the scoring behavior "is not
+    executed here" - and no code in this package loops over dataset rows
+    scoring them; the SDK does that. So "every row was scored" is NOT
+    checkable here for any row, and this does not pretend otherwise. What is
+    checkable is the arithmetic this run states about the rows it read, and
+    that is what is checked.
+    """
+
+    def scan(self, rows: list[dict]) -> dict[str, dict[str, int]]:
+        """Every row count one run publishes, by check."""
+        del MODULE.RESULTS[:]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        return {
+            result.check: MODULE.row_counts(result.metrics)
+            for result in MODULE.RESULTS
+            if MODULE.row_counts(result.metrics)
+        }
+
+    def test_a_count_over_a_subset_names_the_file_it_was_drawn_from(self) -> None:
+        """The bounded-subset promise, kept in data and not only in prose.
+
+        The guidance rule for a bounded run is to report the subset size BESIDE
+        the full row count, so a bounded run never reads as though the whole
+        dataset was evaluated. The same claim was being made in the run's own
+        numbers with nothing beside them: on this file the difficulty line says
+        "12 of 12 rows carry a difficulty tag" over a 20-row file, because the
+        eight rows it left out are the eight this method cannot score. Those
+        eight are excluded BY DESIGN, which is exactly why the exclusion has to
+        be visible - a row excluded by design is not a row silently dropped,
+        and published alone the two are the same number.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(12)
+        ] + [{"input": f"u{index}", "difficulty": "hard"} for index in range(8)]
+        published = self.scan(rows)
+        coverage = published["dataset-difficulty-coverage"]
+        self.assertEqual(coverage["total_rows"], 12)
+        self.assertEqual(
+            coverage[MODULE.FULL_ROW_COUNT],
+            20,
+            "the difficulty line counts the rows this method can score and "
+            "published that count alone, so 12 of a 20-row file read as 12 of "
+            "12 - the whole file, scored",
+        )
+
+    def test_the_headline_row_count_the_card_prints_is_also_published(self) -> None:
+        """The first number a customer reads had no machine twin at all.
+
+        `dataset-shape` prints "N valid JSONL rows" and emitted no metrics, so
+        the one count the card leads with was the one count nothing downstream
+        could compare against anything.
+        """
+        rows = [{"input": f"q{index}", "output": f"a{index}"} for index in range(24)]
+        shape = self.scan(rows)["dataset-shape"]
+        self.assertEqual(shape, {"scoreable_rows": 24, MODULE.FULL_ROW_COUNT: 24})
+
+    def test_a_count_larger_than_the_file_is_refused(self) -> None:
+        """And refused as OUR defect, in our name, printing nothing."""
+        del MODULE.RESULTS[:]
+        MODULE.emit("dataset-shape", MODULE.PASS, "x", {"candidate_rows": 24})
+        MODULE.emit(
+            "dataset-difficulty-coverage", MODULE.PASS, "y", {"tagged_rows": 72}
+        )
+        with self.assertRaises(MODULE.RowCountMismatch) as raised:
+            MODULE.validate_row_count_bounds(MODULE.RESULTS)
+        self.assertIn("the file held 24 rows", str(raised.exception))
+        self.assertIn(
+            "dataset-difficulty-coverage.tagged_rows=72", str(raised.exception)
+        )
+
+    def test_the_mismatch_reaches_the_user_as_our_defect_and_no_card(self) -> None:
+        """Read the message, not the exit code: the wording is the contract.
+
+        A discrepancy between what this run claims and what it counted is a
+        defect in the check. It must not arrive looking like a finding about
+        the customer's dataset, and no partial card may print beside it.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(24)
+        ]
+        real_emit = MODULE.emit
+
+        def triple(check, status, detail, metrics=None):
+            if check == "dataset-difficulty-coverage" and metrics:
+                metrics = dict(metrics, tagged_rows=metrics["tagged_rows"] * 3)
+            real_emit(check, status, detail, metrics)
+
+        del MODULE.RESULTS[:]
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with mock.patch.object(MODULE, "emit", triple):
+                with mock.patch.object(
+                    sys, "argv", ["preflight.py", "--dataset", str(dataset)]
+                ):
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = MODULE.main()
+        self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+        self.assertIn("defect in the check rather than in your project", err.getvalue())
+        self.assertIn("a count over rows the file did not contain", err.getvalue())
+        self.assertEqual(
+            out.getvalue(),
+            "",
+            "a card printed beside an unaccountable count, so the customer "
+            "read numbers this run had already failed to stand behind",
+        )
+
+    def test_a_legitimately_bounded_run_is_clean(self) -> None:
+        """The false-red direction, and the one that decides whether this ships.
+
+        Rows excluded by design are the ORDINARY case, not the defect. A run
+        that reconciles must stay silent on one, or the check teaches people to
+        route around it.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(12)
+        ] + [{"input": f"u{index}", "difficulty": "hard"} for index in range(8)]
+        published = self.scan(rows)
+        self.assertIsNone(MODULE.validate_row_count_bounds(MODULE.RESULTS))
+        for check, counts in published.items():
+            for key, value in counts.items():
+                self.assertLessEqual(
+                    value, 20, f"{check}.{key} counts more rows than the file holds"
+                )
+
+    def test_the_reconciliation_is_not_vacuous(self) -> None:
+        """Neuter the rule and the probe above must stop being caught."""
+        blind = [MODULE.Result("dataset-shape", MODULE.PASS, "x", {"rows": 999})]
+        with self.assertRaises(MODULE.RowCountMismatch):
+            MODULE.validate_row_count_bounds(blind)
+        self.assertEqual(MODULE.row_counts({"bands": ["easy"], "rows": 3}), {"rows": 3})
+        self.assertEqual(MODULE.row_counts(None), {})
 
 
 if __name__ == "__main__":

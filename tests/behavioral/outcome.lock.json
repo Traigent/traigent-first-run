@@ -1,0 +1,55 @@
+{
+  "cases": {
+    "advisory-bounded-claim": {
+      "state": "advisory",
+      "outcome": {
+        "band": "PARTIAL",
+        "status": "OK",
+        "recommended_action": "proceed",
+        "overall": 45,
+        "caps": [
+          {"asks": false, "blocks": false, "ceiling": 45, "condition": "agent-no-varying-knobs"},
+          {"asks": false, "blocks": false, "ceiling": 65, "condition": "dataset-fully-synthetic"},
+          {"asks": false, "blocks": false, "ceiling": 89, "condition": "dataset-coarse-resolution"}
+        ]
+      }
+    },
+    "asking-answer-key": {
+      "state": "asking",
+      "outcome": {
+        "band": "WORKABLE",
+        "status": "OK",
+        "recommended_action": "review-answer-key",
+        "overall": 74,
+        "caps": [
+          {"asks": true, "blocks": false, "ceiling": 74, "condition": "dataset-generated-answer-key"}
+        ]
+      }
+    },
+    "blocked-no-dataset": {
+      "state": "blocked",
+      "outcome": {
+        "band": "NOT READY",
+        "status": "BLOCKED",
+        "recommended_action": "get-data",
+        "overall": 0,
+        "caps": [
+          {"asks": false, "blocks": true, "ceiling": 20, "condition": "dataset-absent"},
+          {"asks": false, "blocks": true, "ceiling": 40, "condition": "evaluator-absent"},
+          {"asks": false, "blocks": false, "ceiling": 45, "condition": "agent-no-varying-knobs"}
+        ]
+      }
+    },
+    "clean-proceed": {
+      "state": "clean",
+      "outcome": {
+        "band": "WORKABLE",
+        "status": "OK",
+        "recommended_action": "proceed",
+        "overall": 81,
+        "caps": []
+      }
+    }
+  },
+  "schema_version": 1
+}

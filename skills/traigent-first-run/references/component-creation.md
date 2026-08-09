@@ -9,7 +9,7 @@ before creating any of them.
 2. The one ask, and the path that answers it
 3. Dependency matrix
 4. Agent creation
-5. Reading the agent's search space for the opening score
+5. Reading the agent for the opening score
 6. Compatibility contract
 7. Readiness transitions
 
@@ -71,6 +71,30 @@ hedges in front of a choice reads as a compliance gate; one reads as a colleague
 done the work. Do not soften that sentence, and do not oversell the other exit either: what the user
 is choosing between is a real demonstration on generated material today and a delay of unknown
 length. Proceeding is one keystroke, and it is what a user with nothing to point at should do.
+
+### When the gap is a shortfall
+
+Same question, same message, different sentence. What is short here is rows to compare on rather
+than a component, so name the count the score actually used, say where the offer stops, and say what
+accepting it costs:
+
+> Your dataset is here and I can run on it - 9 rows scored, so a difference between configurations
+> can come down to one lucky row. I can add generated examples up to 28 rows in total, the size this
+> walkthrough builds. That gives the search more to separate on, and it also makes most of the set
+> model-written, which lowers the ceiling on what the result may claim. Continue on the nine, add the
+> rest, or reply `I have it` with a path if there are rows I did not find.
+
+Three answers, not two, and the cost sits between the offer and them: a customer who is not told that
+a mostly-generated set claims less is being asked to agree to something they cannot weigh. Say it
+plainly and once - the dataset reference owns the arithmetic behind it.
+
+Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
+The wiring-check ceiling is the harder finding, and its sentence is the one above; the
+small-comparison-set ceiling is the softer, and its offer is put as a closer fit to real-world
+variety rather than a must-have, with continuing as is named first. The total goes in the sentence
+either way, as it does above. When the card stops asking there is nothing to offer, and a ceiling
+left standing over it is not a request. None of this applies while the card is blocked on an empty
+tuning split: the rows are there, the split is what is wrong, and more rows answer nothing.
 
 ### When a path arrives
 
@@ -135,9 +159,10 @@ real behavior and can be evaluated safely. A generated Python walkthrough agent 
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
 
-## Reading the agent's search space for the opening score
+## Reading the agent for the opening score
 
-SKILL.md's opening gate asks for this; the shape is here. Write it to a scratch path outside the
+SKILL.md's opening gate asks for this; the shape is here. One document, two halves: `knobs` is what
+the agent can be told to do differently, and `build` is how it is put together. Write it to a scratch path outside the
 user's project and pass it as `scripts/readiness.py --agent-knobs`.
 
 ```json
@@ -148,7 +173,15 @@ user's project and pass it as `scripts/readiness.py --agent-knobs`.
    "temperature": {"low": 0.0, "high": 1.0,
                    "evidence": "agent.py:9 temperature=temperature reaches the provider call"},
    "style":       {"values": ["direct", "structured"],
-                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 declares both keys"}}}
+                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 declares both keys"}},
+ "build": {
+   "prompt": {"present": true, "few_shot": 2,
+              "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
+   "output-contract": {"present": true, "evidence": "agent.py:24 json.loads(reply) parses it"},
+   "control-flow": {"loop": true, "bounded": true,
+                    "evidence": "agent.py:31 for _ in range(MAX_STEPS)"},
+   "tools": {"used": true, "declared": ["search", "fetch"], "unreachable": [],
+             "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
 ```
 
 A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
@@ -161,6 +194,37 @@ A range counts as at least two distinct values and no more; a value list counts 
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
 what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
 the config-space document the enhanced search emits.
+
+### The build half
+
+The `build` member in that same JSON object answers all four checks, each with
+the line you read. Do not split it into a second document: the consumer reads
+one object and requires `knobs` at its root.
+
+What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
+the call, and how many worked examples ride with it; two is where examples start showing a pattern
+rather than illustrating one. **Output contract** is whether the answer's shape is pinned down
+anywhere - a parser, a schema, a response format, an instruction naming the format - because an
+answer of any shape is one an evaluator has to accept whole. **Control flow** is whether the agent
+ends and on what: no loop ends trivially and earns the check, a loop with a bound you can point at
+earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
+is whether each tool the agent declares can be found behind its name; `"used": false` takes the
+check out of the score rather than earning it, because an agent that calls no tools has nothing here
+to be right or wrong about.
+
+None of the four is a judgment about how good the agent is, and none may become one. Whether a
+prompt is well written, whether a tool is the right tool, whether the objective is a sensible
+objective - those are opinions, and an opinion may lower a score and never raise one, so they are
+outside this document. Answer `{"determined": false, "reason": "...", "evidence": "..."}` where the
+read genuinely could not settle a check - a prompt assembled at runtime from somewhere this read
+cannot reach is the common case - and the check leaves the pillar rather than scoring zero against
+the agent.
+
+Two of the criteria this pillar is asked about are not here, and the card says so rather than
+letting four checks imply that six were looked at: whether the dataset and the evaluation method are
+wired into the agent. That integration is what the matrix above builds and stage 5 verifies against
+the installed SDK, so at the opening gate there is nothing in the agent's source to read, and a
+score for it would be grading this run's own later work.
 
 ## Compatibility contract
 

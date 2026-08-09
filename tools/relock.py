@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
 from behavioral import harness  # noqa: E402  (needs the path insert above)
+from behavioral import outcomes  # noqa: E402  (needs the path insert above)
 
 BEHAVIOR_LOCK = ROOT / "tests" / "behavioral" / "behavior.lock.json"
 SCENARIOS = ROOT / "tests" / "behavioral" / "scenarios"
@@ -110,6 +111,41 @@ def fixture_payload(scenario_dir: Path) -> dict[str, Any]:
     }
 
 
+def format_outcome_lock(manifest: dict[str, Any]) -> str:
+    """One line per recorded field, so a changed band is a one-line diff.
+
+    `json.dumps(indent=2)` would put every cap flag on its own line and turn a
+    band change into a diff hunk the reviewer has to reassemble. The point of
+    this lock is that the change is readable, so the rendering is part of it.
+    """
+    lines = ["{", '  "cases": {']
+    identifiers = sorted(manifest["cases"])
+    for index, identifier in enumerate(identifiers):
+        entry = manifest["cases"][identifier]
+        lines.append(f'    "{identifier}": {{')
+        lines.append(f'      "state": {json.dumps(entry["state"])},')
+        lines.append('      "outcome": {')
+        outcome = entry["outcome"]
+        for field in outcomes.RECORDED_FIELDS:
+            lines.append(f'        "{field}": {json.dumps(outcome[field])},')
+        caps = outcome["caps"]
+        if not caps:
+            lines.append('        "caps": []')
+        else:
+            lines.append('        "caps": [')
+            for position, cap in enumerate(caps):
+                rendered = json.dumps(cap, sort_keys=True, separators=(", ", ": "))
+                comma = "" if position == len(caps) - 1 else ","
+                lines.append(f"          {rendered}{comma}")
+            lines.append("        ]")
+        lines.append("      }")
+        lines.append("    }" + ("" if index == len(identifiers) - 1 else ","))
+    lines.append("  },")
+    lines.append(f'  "schema_version": {manifest["schema_version"]}')
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def targets() -> list[tuple[Path, str]]:
     """Return every (lock path, desired content) pair, sorted by path."""
     planned = [(BEHAVIOR_LOCK, format_behavior_lock(harness.behavior_manifest(ROOT)))]
@@ -120,6 +156,13 @@ def targets() -> list[tuple[Path, str]]:
                 format_fixture_lock(fixture_payload(scenario_dir)),
             )
         )
+    # Written here so there is one command that refreshes every lock, and so
+    # `--check` covers this one too. What it must NOT write is any case's
+    # declared expectation: that is the half a regeneration cannot move, and it
+    # is why regenerating this lock does not re-green a real change (#153).
+    planned.append(
+        (outcomes.OUTCOME_LOCK, format_outcome_lock(outcomes.outcome_manifest()))
+    )
     return planned
 
 

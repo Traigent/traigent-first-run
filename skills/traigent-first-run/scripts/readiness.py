@@ -279,7 +279,9 @@ CANONICAL_RANGES: dict[str, dict[str, float]] = {
 # low cap is dangerous and requires the generated wrapper to refuse a truncated
 # trial as a non-measurement rather than let it be scored.
 #
-# Measured before and after, on the space that made the case: `model:
+# Measured before and after. Source:
+# tests/test_readiness_scoring.py#test_a_max_tokens_sweep_earns_no_variety_credit_and_is_never_refused.
+# On the space that made the case: `model:
 # [o3-mini, gpt-4o-mini]`, `temperature: [0.0, 0.7]`, `prompt_style: [direct,
 # structured]` scored the agent pillar 77, and the same space with `max_tokens:
 # [256, 512]` added scored 83. Sweeping the one knob that can silently zero the
@@ -398,7 +400,8 @@ SEARCH_SPACE_WEIGHT = 100.0
 # settings that matter most". It was not a redundant measure of the right
 # thing; it was a confident measure of the wrong thing.
 #
-# And it punished better knobs. Measured on the scorer this branch replaces,
+# And it punished better knobs. Measured on the scorer this branch replaces.
+# Source: tests/test_readiness_scoring.py#AgentScoringTests.
 # with the shapes stated so both sides can be re-derived - the previous figures
 # here were 90 and 78, and named no shape, which is how they survived being
 # unreachable:
@@ -412,7 +415,8 @@ SEARCH_SPACE_WEIGHT = 100.0
 # Eight points for bringing four levers instead of three, and an evidence line
 # telling the customer to sweep the knob this guide now pins at 0 and calls
 # surface noise. The gap is smaller than 78 claimed and the direction is the
-# whole argument; 78 was not merely imprecise, it is unreachable - swept
+# whole argument; 78 was not merely imprecise, it is unreachable. Source:
+# tests/test_readiness_scoring.py#AgentScoringTests. Swept
 # exhaustively over one to four values on each of those four knobs, that shape
 # scores one of {12, 29, 33, 52, 56, 61, 65, 79, 83} and never 78. Narrow the
 # temperature sweep to the `[0.0, 0.2]` of this guide's own worked example and
@@ -618,6 +622,9 @@ class SubScore:
     # False`, so confidence still reports it as unchecked and the card still
     # marks it - what changes is only that it stops being free.
     withheld: bool = False
+    # False means the question does not apply to this agent, rather than that
+    # the read failed. It belongs in neither confidence nor remediation.
+    applicable: bool = True
 
 
 # What the user should DO about each cap, as a closed vocabulary.
@@ -660,11 +667,32 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # Zero matched rows is the absence of that evidence, and the two conditions
     # already sit exactly on that line.
     "dataset-shape-unrecognised": "read-dataset",
-    "dataset-below-measurable-size": "get-data",
-    "dataset-coarse-resolution": "get-data",
+    # Not `get-data`, and the split is the whole of traigent-first-run#197.
+    # These two shared that slug with `dataset-absent`, and one remedy then
+    # meant "stop, there is nothing here" on one card and "carry on, this is
+    # narrow" on the next - measured on trunk `6de98918`, `get-data` blocked at
+    # `dataset-absent` and at zero comparable rows and proceeded at one through
+    # twenty-nine, so a consumer branching on `recommended_action` could not
+    # tell a project with no dataset from a project with a small one.
+    #
+    # They are not one instruction to a person either. "Go and collect
+    # examples" is a data-collection project; what these two want is a top-up,
+    # bounded at the walkthrough's own size, and this run can do it itself from
+    # material the project already has. `add-examples` is that instruction, and
+    # it never blocks, because every dataset that reaches it is one a real
+    # comparison can be made on.
+    "dataset-below-measurable-size": "add-examples",
+    "dataset-coarse-resolution": "add-examples",
     "dataset-no-expected-outputs": "label-data",
     "dataset-integrity-fail": "repair-dataset",
     "dataset-tune-holdout-overlap": "resplit-dataset",
+    # The other half of the #197 split, and the reason `add-examples` can be
+    # unconditional. Zero comparable rows was a second reading of
+    # `dataset-below-measurable-size`, distinguished only by a runtime flag; it
+    # is a different finding with a different remedy, so it is a different
+    # condition. `resplit-dataset` is the remedy because a declared split is
+    # the only way this state is reachable - see `power_ceiling`.
+    "dataset-tuning-split-empty": "resplit-dataset",
     "dataset-fully-synthetic": "connect-real-data",
     "dataset-mostly-synthetic": "connect-real-data",
     # Not `connect-real-data`. The dataset is *assumed* generated because no row
@@ -733,17 +761,24 @@ ROUTE_CATEGORY: dict[str, str] = {
     # remedy in the vocabulary that asks for an inspection rather than a
     # change.
     "dataset-shape-unrecognised": DIAGNOSTIC,
-    # Both route to `get-data` and they disagree about whether the run waits -
-    # `below-measurable-size` blocks and `coarse-resolution` does not. Both are
-    # classified by what the result IS (a real comparison, narrowly bounded)
-    # rather than by that disagreement, which is tracked separately: forcing
-    # the two into agreement breaks one side either way, and it is not this
-    # branch's call.
+    # Both scope a claim, and now both are advisory in every state they can be
+    # in, which they were not before #197. They used to share `get-data` with
+    # `dataset-absent` and `below-measurable-size` carried a second, blocking
+    # branch at zero comparable rows - so the category admitted both answers
+    # and the flag decided, which is the arrangement that let one remedy mean
+    # two things. The blocking branch is `dataset-tuning-split-empty` below
+    # now, and what is left here is one statement: a real comparison, narrowly
+    # bounded, whose ceiling is the whole of what it costs.
     "dataset-below-measurable-size": CLAIM_SCOPING,
     "dataset-coarse-resolution": CLAIM_SCOPING,
     "dataset-no-expected-outputs": CREATION_OR_REPAIR,
     "dataset-integrity-fail": CREATION_OR_REPAIR,
     "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
+    # A repair, and the same one its `resplit-dataset` sibling above names: the
+    # rows are fine and the line drawn through them is not, so the split is
+    # what is remade. Nothing was measured on the side the search compares on,
+    # which is why it may not scope a claim - there is no claim.
+    "dataset-tuning-split-empty": CREATION_OR_REPAIR,
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
@@ -896,11 +931,14 @@ ROUTE_CATEGORY: dict[str, str] = {
 # rise; #149 owns whether the run may proceed at all.
 #
 # Note for whoever revisits the values: `ACTION_FOR_CONDITION` does NOT give
-# this grouping for free, and it was checked. `get-data` is the remedy for
-# `dataset-absent` (20), `dataset-below-measurable-size` (74) and
-# `dataset-coarse-resolution` (89), which span the whole range - the remedy
-# vocabulary answers "what should the user do", not "how much of the result
-# survives", and those are different questions about the same condition.
+# this grouping for free, and it was checked. `add-examples` is the remedy for
+# `dataset-below-measurable-size` (74) and `dataset-coarse-resolution` (89),
+# and `resplit-dataset` for `dataset-tune-holdout-overlap` (50) and
+# `dataset-tuning-split-empty` (50) - the remedy vocabulary answers "what
+# should the user do", not "how much of the result survives", and those are
+# different questions about the same condition. #197 made every remedy agree
+# about whether the run WAITS; it did not make any of them predict a ceiling,
+# and the spread inside `add-examples` is why it never will.
 DATASET_ABSENT_CEILING = 20
 # Nothing was measured at all, so this is the floor of the scale: the lowest
 # ceiling any condition carries, and NOT READY however good the rest looks.
@@ -944,6 +982,20 @@ SPLIT_OVERLAP_CEILING = 50
 # Top of that band. Worse than the two above it because the result is not
 # merely absent or uninformative - it is flattered, and a believable wrong
 # number is the most expensive failure on this list.
+TUNING_SPLIT_EMPTY_CEILING = 50
+# Equal to the overlap it sits beside, and ranked after it, because the two are
+# the same defect read from opposite ends: a split that puts the same rows on
+# both sides, and a split that puts every scoreable row on one. Neither breaks
+# the material - the rows parse, they are labelled, and a disjoint line drawn
+# somewhere else through the same file is a run worth making.
+#
+# It belongs in this band and not the one below it, which is the placement
+# worth stating: nothing is missing and nothing is wrong. It clears
+# `evaluator-absent` (40) for that reason, and it does not reach
+# `fully-synthetic` (65) because a run that compares nothing is worse than one
+# that compares invented material. Before #197 this state was reported as
+# `dataset-below-measurable-size` at 74, in the "bounded claim" band, for a run
+# with no claim in it to bound.
 FULLY_SYNTHETIC_CEILING = 65
 # First of the "bounded claim" band. Nothing here was observed, so the run
 # measures the walkthrough; it clears 50 because the comparison it performs is
@@ -1045,6 +1097,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
+            ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
         ),
     ),
     (
@@ -1147,6 +1200,13 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-undeclared-provenance", "dataset-mostly-undeclared"),
     # Under ten comparable examples is also under thirty.
     ("dataset-below-measurable-size", "dataset-coarse-resolution"),
+    # Nothing scoreable on the tuning side is under ten and under thirty too,
+    # and it is what an absent, unreadable or unlabelled dataset leaves behind.
+    ("dataset-absent", "dataset-tuning-split-empty"),
+    ("dataset-shape-unrecognised", "dataset-tuning-split-empty"),
+    ("dataset-no-expected-outputs", "dataset-tuning-split-empty"),
+    ("dataset-tuning-split-empty", "dataset-below-measurable-size"),
+    ("dataset-tuning-split-empty", "dataset-coarse-resolution"),
 )
 
 # The other half of that declaration, and the half that was doing nothing.
@@ -1229,6 +1289,23 @@ class Cap:
     # "apply the walkthrough labeling rules", "scope the claim", "before a
     # correctness claim", and "call rankings exploratory". Those are sentences
     # about the claim, and a ceiling is how this module says them.
+    #
+    # THE RULE IS ONLY WORTH ANYTHING IF THE REMEDY PREDICTS IT, and until #197
+    # one did not. `get-data` was the route for three conditions and blocked in
+    # two of them, so the sentence above was a description of the table rather
+    # than a rule that generated it, and a consumer reading `recommended_action`
+    # was told to go and get data whether the run had stopped or not. What fixed
+    # it was splitting the remedy, not restating the rule: "there is no dataset"
+    # and "your dataset is small" are two instructions, and they are now two
+    # slugs. Every dataset remedy answers the waiting question the same way
+    # under all of its conditions, and a test reads this module to say so.
+    #
+    # One remedy is still both, and it is named rather than argued away:
+    # `vary-knobs`, where three caps report that the agent was looked at and
+    # holds nothing to search and a fourth reports that nothing about the agent
+    # reached this score at all. The reasoning for that pair is beside
+    # `NO_SEARCH_SPACE_ESTABLISHED_CAP`, and it is the agent pillar's question
+    # rather than this one's.
     blocks: bool = True
     # Whether the run proceeds AND the user is still asked something first.
     #
@@ -1246,11 +1323,25 @@ class Cap:
     # IS something to do first and doing it changes the answer key the run is
     # graded against.
     #
-    # Deliberately not set on every advisory ceiling. `dataset-coarse-
-    # resolution` bounds a claim and asks nothing: telling a customer with 25
-    # rows to `get-data` before their first run is the conflation `blocks` was
-    # added to end. This flag says the cap is a QUESTION, which is a property
-    # of `review-answer-key` and not of a size.
+    # Deliberately not set on every advisory ceiling: `dataset-fully-synthetic`
+    # bounds a claim and asks nothing, because a corpus that declares itself
+    # generated has already answered.
+    #
+    # A SIZE DOES ASK NOW, and this comment used to say the opposite - "this
+    # flag says the cap is a QUESTION, which is a property of `review-answer-
+    # key` and not of a size". That was true while the only thing to say about a
+    # small dataset was `get-data`, which is a data-collection project and not
+    # something a first run can offer to do. It is no longer what these caps
+    # say. `add-examples` is an offer this run can carry out itself, from
+    # material the project already has, bounded at `WALKTHROUGH_DATASET_ROWS` -
+    # and an offer with nobody asked is a substitution made on the customer's
+    # behalf, which is the thing the one ask at discovery exists to prevent.
+    #
+    # It is still a property of the remedy and not a preference per cap: both
+    # `add-examples` conditions declare the same expression, so the ask arrives
+    # exactly while the top-up has somewhere to go. Consent removes the stop and
+    # never the score - answering it changes what the dataset IS, and the rows
+    # it writes are scored as the generated rows they are.
     asks: bool = False
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -1406,6 +1497,12 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     "probe-spread": "separates good answers from bad",
     # agent
     "search-space": "how many settings-combinations there are to try",
+    # #184's four, phrased as the question each answers so the line reads as a
+    # finding about the agent rather than as a category the reader must decode.
+    "prompt": "what the model is told, and shown",
+    "output-contract": "whether the answer's shape is pinned down",
+    "control-flow": "whether it ends, and on what",
+    "tools": "tools it declares, and can reach",
 }
 
 
@@ -1719,6 +1816,85 @@ class DiscoveredKnob:
 
 
 @dataclass(frozen=True)
+class BuildSignal:
+    """One checkable fact about how the agent is put together (#184).
+
+    The AGENT pillar used to answer one question - how many settings vary, and
+    how widely - and print `AGENT` over it. A customer reads that as a verdict
+    on their agent, and it was a verdict on their config space. The owner's
+    decision was to keep the name by making it true rather than to rename the
+    pillar `SEARCH SPACE`, so the pillar gains the facts about an agent that a
+    read of its source can actually establish.
+
+    Same discipline as `DiscoveredKnob`, and for the same reason: `evidence` is
+    required, so a signal with no citation is a signal this score has not seen.
+    The rule is #210's - score what is genuinely reachable, never invent one -
+    and it applies harder here, because these signals are about the customer's
+    craft and a wrong one is an accusation rather than a missed point.
+
+    `measured=False` is the honest answer for a signal a read could not settle,
+    and it is not the same as zero. Zero says the agent does not have this;
+    unmeasured says this read could not tell. README.md promises the second is
+    reported rather than scored, and `combine` keeps the promise by leaving an
+    unmeasured check out of the pillar and out of its confidence.
+    """
+
+    name: str
+    points: float
+    evidence: str
+    measured: bool = True
+    applicable: bool = True
+
+
+# What the read of the agent's build is asked, and what each answer is worth.
+#
+# FOUR CHECKS OUT OF THE OWNER'S SIX, and the two that are missing are missing
+# for a reason that is written down rather than left to be inferred. "Is the
+# dataset wired into the agent" and "is the evaluation method wired in" are not
+# facts about the agent's source at the gate where `AGENT_BUILD_CHECKS` reads
+# them: the
+# integration that wires them is built in stage 3 and verified against the
+# installed SDK in stage 5, so at the opening card there is nothing to read and
+# a score for it would be grading this run's own future work. They are said on
+# the card instead, as what this pillar does not cover.
+#
+# "Is the objective defined" is here in the one form a read can settle. Whether
+# a prompt states the task well is an opinion, and an opinion may lower a score
+# and never raise one; whether the agent constrains the shape of its answer is a
+# line of code - a parser, a schema, a response format, an instruction naming
+# the format - and #184 names exactly that case: "a customer whose prompt states
+# no output format has a real, findable weakness that no knob count reveals".
+#
+# The weights are a judgment and are not dressed up as anything else. The two
+# that decide whether a search has anything to improve - what the model is told,
+# and what shape its answer must take - carry more than the two that only apply
+# to agents shaped a particular way. What IS derived is the total: 30 against
+# the search space's 100, so a run that supplies the knob half of the read and
+# not this half keeps a pillar confidence of 100/130, above the 0.75 gate that
+# would otherwise demote every such card to WORKABLE on a fact about our own
+# input rather than about the customer's project.
+AGENT_BUILD_CHECKS: tuple[tuple[str, float], ...] = (
+    ("prompt", 8.0),
+    ("output-contract", 8.0),
+    ("control-flow", 7.0),
+    ("tools", 7.0),
+)
+AGENT_BUILD_WEIGHT = {name: weight for name, weight in AGENT_BUILD_CHECKS}
+AGENT_BUILD_TOTAL = sum(AGENT_BUILD_WEIGHT.values())
+
+# What the card says about the two the pillar does not score, so that "not
+# measured" is a sentence a customer reads rather than an absence they have to
+# notice. Printed with the pillar, never as a check, because a check that can
+# never be measured would hold this pillar's confidence under the band gate for
+# every project forever.
+AGENT_NOT_COVERED = (
+    "not covered by this pillar: whether your dataset and evaluation method are "
+    "wired into the agent - this run builds that integration and verifies it "
+    "against the installed SDK, so the opening read has nothing to measure"
+)
+
+
+@dataclass(frozen=True)
 class AgentFacts:
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
@@ -1755,6 +1931,25 @@ class AgentFacts:
     # "the look found nothing" are different findings and get different
     # sentences.
     discovery_supplied: bool = False
+    # The other half of the same read (#184): not how much there is to search,
+    # but how the agent is put together. `None` means no such read reached this
+    # score, which is distinct from a read that answered - and the distinction
+    # costs, because a check the run was asked for and did not supply keeps its
+    # weight and earns nothing rather than leaving the denominator.
+    #
+    # Deliberately NOT part of `discovered`. Those are parameters and multiply
+    # into a space; these are facts about one agent and do not. Sharing a field
+    # would mean one of the two readings deciding the shape of the other, which
+    # is how the wiring attestation got confused with a source read once
+    # already.
+    #
+    # It survives a supplied config-space document, where `discovered` does
+    # not. That order exists so a read of the source cannot talk over a
+    # document saying nothing is wired, which is a claim about the SEARCH
+    # SPACE; how the agent is built is a different question that no config
+    # space answers, so there is nothing here for the document to be talked
+    # over about.
+    build: tuple[BuildSignal, ...] | None = None
 
 
 def round_half_up(value: float) -> int:
@@ -2076,8 +2271,90 @@ def knob_variation(
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
 
+# The walkthrough's own dataset, as a number this module can compare against.
+#
+# NOT A THIRD THRESHOLD ON THE SAME LADDER. The two above decide what a result
+# may CLAIM, and they keep the planning bands `size_points` draws. This one
+# decides what this run may OFFER TO BUILD, and it is the one size the guide
+# already knows how to build: `references/evaluation-and-dataset.md` creates a
+# fully generated walkthrough at 18 tuning rows and 10 held back, and
+# `references/component-creation.md` reports it as prepared at that size. A
+# top-up that stopped anywhere else would be a number invented here for a
+# dataset the rest of the package builds to a different one.
+#
+# It is small on purpose and it is said out loud on the card for that reason. A
+# customer reading "this run can add examples" has to be able to see where the
+# adding stops, and the ceiling is 28 rows in total - not 28 more, not as many
+# as it takes, and nothing about the offer scales with the size of their
+# project. Above this count there is nothing to offer and the caps below stop
+# asking.
+#
+# The composition behind the two halves lives in the dataset reference, which
+# owns it; a test reads the numbers out of that document and asserts these
+# constants equal them, so the guide cannot restate the split and leave the
+# scorer offering a size nothing builds.
+WALKTHROUGH_TUNING_ROWS = 18
+WALKTHROUGH_HOLDOUT_ROWS = 10
+WALKTHROUGH_DATASET_ROWS = WALKTHROUGH_TUNING_ROWS + WALKTHROUGH_HOLDOUT_ROWS
 
-def power_ceiling(effective_n: int | None) -> Cap | None:
+
+def top_up_offer(
+    effective_n: int,
+    available_rows: int | None = None,
+    *,
+    preserve_existing_split: bool = False,
+) -> str:
+    """The one sentence both size caps end on, written once.
+
+    Two caps and one offer, so the wording cannot drift between the card a
+    customer with nine rows reads and the card a customer with twenty-five
+    reads. It names the total, both halves of it, and the fact that the total is
+    where it stops - the owner's constraint that this may not be read as an
+    open-ended offer to generate data.
+
+    Empty above the walkthrough's own size, because there is nothing left to
+    offer: a project with 28 comparable rows already has the split this guide
+    would build, and a card telling it that examples can be added to reach 28
+    is offering it what it is holding.
+    """
+    available = effective_n if available_rows is None else available_rows
+    if available >= WALKTHROUGH_DATASET_ROWS:
+        if effective_n < WIRING_CHECK_EXAMPLES and available > effective_n:
+            return (
+                f" Review or label the {available - effective_n} existing row(s) "
+                "that are not comparable before generating anything; the file "
+                "already sits at this walkthrough's bounded size."
+            )
+        return ""
+    if effective_n + (WALKTHROUGH_DATASET_ROWS - available) < WIRING_CHECK_EXAMPLES:
+        return (
+            f" Review or label the {available - effective_n} existing row(s) "
+            "that are not comparable first; the remaining bounded generation "
+            "room cannot make this comparison measurable."
+        )
+    if preserve_existing_split:
+        return (
+            f" This run can write generated examples up to {WALKTHROUGH_DATASET_ROWS} "
+            "rows in total while preserving your project's existing tuning/held-out "
+            "split, and stops there. It asks first, and rows it writes are scored "
+            "as generated."
+        )
+    return (
+        f" This run can write generated examples up to {WALKTHROUGH_DATASET_ROWS} "
+        f"rows in total - {WALKTHROUGH_TUNING_ROWS} to tune on and "
+        f"{WALKTHROUGH_HOLDOUT_ROWS} held back, the size it builds for a project "
+        "with none - and stops there. It asks first, and rows it writes are "
+        "scored as generated."
+    )
+
+
+def power_ceiling(
+    effective_n: int | None,
+    comparable_rows: int | None = None,
+    *,
+    available_rows: int | None = None,
+    preserve_existing_split: bool = False,
+) -> Cap | None:
     """Bound claim strength using a pre-run sample-size planning band.
 
     Returns None outside the two small-set planning bands; that is not a claim
@@ -2085,42 +2362,86 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
     one, which is why #88 was blocked on #67: capping a number that under-states
     power for a reference-free judge would convert a soft under-claim into a
     hard, band-changing false verdict.
+
+    THE LADDER IS THE OWNER'S, and #197 is where it was written down: nothing to
+    compare stops the run, anything to compare does not, and below the size this
+    guide builds for itself the card offers to make up the difference. Three
+    conditions, three sentences, and each one is now the only thing its remedy
+    means.
+
+    TWO COUNTS, because the ceiling and the offer are about different things and
+    a single count got one of them wrong. `effective_n` is the tuning side - how
+    finely this comparison can resolve, which is what a ceiling bounds.
+    `comparable_rows` is the whole dataset, which is what an offer to write more
+    rows would add to, and the two differ exactly where a split is declared.
+    Asked of `effective_n`, the offer fired on the guide's own walkthrough
+    dataset: 28 rows split 18 to tune on and 10 held back has 18 on the tuning
+    side, so a project holding precisely what this run builds was offered rows
+    to reach a total it already had.
+
+    `comparable_rows` defaults to `effective_n` for a caller that has no wider
+    count to give, which is the honest reading of a dataset with no split: the
+    rows the comparison sees are the rows there are.
     """
     if effective_n is None:
         return None
+    comparable = effective_n if comparable_rows is None else comparable_rows
+    available = comparable if available_rows is None else available_rows
+    offer = top_up_offer(
+        comparable,
+        available,
+        preserve_existing_split=preserve_existing_split,
+    )
+    asks_for_generation = offer.startswith(" This run can write")
+    if effective_n == 0:
+        # Its own condition since #197, and not a second reading of the one
+        # below. Nothing can be compared at all, so there is no result to bound
+        # and no number a top-up would improve - the offer the other two carry
+        # would be answering a question this customer does not have.
+        #
+        # `resplit-dataset`, because a declared split is the only way to get
+        # here. Every other route to a zero is already named and routed
+        # elsewhere: no dataset is `dataset-absent`, no row matching the shape
+        # is `dataset-shape-unrecognised`, and no expected outputs anywhere is
+        # `dataset-no-expected-outputs`, which `score_dataset` suppresses this
+        # ceiling behind. What is left is a file whose rows parse and are
+        # labelled, cut so that the side the search compares on holds none of
+        # them.
+        return Cap(
+            "dataset-tuning-split-empty",
+            TUNING_SPLIT_EMPTY_CEILING,
+            "No row on the side of the split this run would compare on can be "
+            "scored, so there is nothing for the search to tell configurations "
+            "apart with. The rows are there; the line drawn through them is "
+            "what has to move.",
+        )
     if effective_n < WIRING_CHECK_EXAMPLES:
         return Cap(
             "dataset-below-measurable-size",
             WIRING_CHECK_CEILING,
             # The arithmetic IS the context. "Wiring check" told a reader
             # nothing; "one example is worth 17 points" tells them why a winner
-            # here may just have caught a lucky row. Guarded because a dataset
-            # can have rows and nothing scoreable, and 100/0 would take the
-            # scorer down on the one card that most needs to render.
-            (
-                f"only {effective_n} comparable example(s) - one example moves "
-                f"the score by about {100 / effective_n:.0f} points, so a "
-                "configuration can look better by winning a single row. Treat "
-                "any difference as a hint, not a result."
-                if effective_n
-                else "no example can be scored, so nothing can be compared."
-            ),
-            # The two reasons above are two different findings, and only one of
-            # them stops anything. With examples to compare on, this is the
-            # wiring check the guide itself sanctions - preflight WARNs rather
-            # than FAILs at this size, `size_points` calls it "a wiring check,
-            # not a score", and SKILL.md routes it to "call rankings
-            # exploratory, not stable comparisons". Blocking contradicted the
-            # cap's own last sentence on the same card: "treat any difference
-            # as a hint, not a result" is advice for a run that happens.
-            # Its 89-ceiling twin below already had this right.
-            #
-            # Zero scoreable examples is the other finding, and it keeps
-            # blocking: nothing can be compared at all, so there is no result
-            # to bound. That state is reachable with the aggregate label count
-            # non-zero - every label on one side of a declared split - where no
-            # other cap fires to stop it.
-            blocks=effective_n == 0,
+            # here may just have caught a lucky row.
+            f"only {effective_n} comparable example(s) - one example moves "
+            f"the score by about {100 / effective_n:.0f} points, so a "
+            "configuration can look better by winning a single row. Treat "
+            "any difference as a hint, not a result." + offer,
+            # Advisory in every state this condition can be in now. With
+            # examples to compare on, this is the wiring check the guide itself
+            # sanctions - preflight WARNs rather than FAILs at this size,
+            # `size_points` calls it "a wiring check, not a score", and SKILL.md
+            # routes it to "call rankings exploratory, not stable comparisons".
+            # Blocking contradicted the cap's own last sentence on the same
+            # card: "treat any difference as a hint, not a result" is advice for
+            # a run that happens. The zero it used to also cover is the branch
+            # above.
+            blocks=False,
+            # Nine rows is a run worth making and a long way from what the
+            # customer's traffic looks like, and both are true at once. The
+            # offer is what makes the second one actionable inside a first run,
+            # and it is put as a question because writing rows into someone's
+            # evaluation set without asking is a substitution.
+            asks=asks_for_generation,
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
@@ -2132,9 +2453,15 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
             # assistant reads - a card is glanced at, not studied.
             f"{effective_n} comparable examples is a small comparison set, so "
             "a small difference between configurations may be chance rather "
-            "than a real improvement.",
+            "than a real improvement." + offer,
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
+            # The same expression as its sibling above, deliberately: one
+            # remedy, one question, asked exactly while the top-up has room to
+            # go. Between the walkthrough's own size and thirty comparable rows
+            # this cap still bounds the claim and stops offering, because there
+            # is nothing left to add.
+            asks=asks_for_generation,
         )
     return None
 
@@ -2181,10 +2508,11 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # the synthesised credit rather than repeating 3.0, because the two are one
 # decision: silence is an assumption, and the assumption is the pessimistic one.
 #
-# It used to score 6.0 and carry no ceiling, which paid for silence. Measured on
-# 200 identical rows differing only in whether `provenance` was present: declared
-# synthetic scored 65 and BLOCKED the paid run, the same rows with the field
-# removed scored 91 and OK. Twenty-six points and a block, for telling the truth.
+# It used to score 6.0 and carry no ceiling, which paid for silence. Measured
+# through `score_dataset` on 200 identical rows differing only in whether the
+# `provenance` field was present: declared synthetic scored 65 and BLOCKED the
+# paid run, the same rows with the field removed scored 91 and OK. Twenty-six
+# points and a block, for telling the truth.
 #
 # The assumption is never silent in return - `main` re-scores the same evidence
 # with these rows counted as collected and prints both numbers, so a customer
@@ -2467,7 +2795,8 @@ def score_provenance(
     # that were collected" to any corpus with one silent row in it, including a
     # corpus that is overwhelmingly DECLARED generated - which is the wrong
     # remedy this pair of conditions exists to prevent, in mirror image.
-    # Measured on 50 collected / 260 declared-generated / 90 silent: the reader
+    # Measured on 50 collected / 260 declared-generated / 90 silent. Source:
+    # tests/test_readiness_scoring.py#ProvenanceScoringTests. The reader
     # was told to declare, declared all 90, scored the same 70, stayed BLOCKED,
     # and was only then handed `connect-real-data` - the instruction they needed
     # first.
@@ -2831,7 +3160,8 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         # content of this condition is a question for the user, and with the
         # block removed `recommended_action` returned `proceed` - a payload
         # saying there is nothing to do about a finding whose only purpose is
-        # to be acted on before the run. Measured: 89 STRONG / OK / proceed
+        # to be acted on before the run. Measured. Source:
+        # tests/test_readiness_scoring.py#AnswerKeyReviewTests. 89 STRONG / OK / proceed
         # under the default `blocks=True` became 70 WORKABLE / BLOCKED /
         # review-answer-key, and `blocks=False` on its own returned it to
         # proceed with the remedy gone. The run proceeds, the ceiling stands,
@@ -2851,7 +3181,15 @@ def scores_without_a_reference(method: str | None) -> bool:
     return method in REFERENCE_FREE_METHODS
 
 
-NEAR_DUPLICATE_PERCENT = 90
+# The similarity line this card PRINTS. It has to equal the line
+# `preflight.NEAR_DUPLICATE_THRESHOLD` actually DECIDES on, and this module
+# cannot import that one - the two scripts are separately runnable and neither
+# depends on the other - so the equality is held by a test rather than by an
+# expression (`test_skill_package.py`, one home for what decides, what prints,
+# and what the customer reads). 70 and not 90 since #170 moved the check from
+# word sets to three-word sequences; the two numbers are not comparable as
+# numbers, and the reason 70 is the right one is recorded where it is derived.
+NEAR_DUPLICATE_PERCENT = 70
 
 
 @dataclass(frozen=True)
@@ -2890,12 +3228,13 @@ class DiversityCheck:
 # them being handled by a test the others did not get.
 #
 # ONE deduction for repetition, not two. `dataset-duplicates` (byte-identical
-# after normalization) and `dataset-near-duplicates` (Jaccard >= 0.9) both fire
-# on the same duplicated row, because two identical token sets have similarity
-# exactly 1.0 - so a single copied row used to cost 7 + 7 of the 20 diversity
-# points for one defect described twice. The owner's decision is that the
-# near-duplicate check subsumes the exact one for scoring: >= 90% similar is
-# already the finding, and 100% needs no second one (traigent-first-run#158).
+# after normalization) and `dataset-near-duplicates` (sequence similarity at or
+# above the near line) both fire on the same duplicated row, because two
+# identical rows have similarity exactly 1.0 under any of these metrics - so a
+# single copied row used to cost 7 + 7 of the 20 diversity points for one defect
+# described twice. The owner's decision is that the near-duplicate check
+# subsumes the exact one for scoring: at or above the near line is already the
+# finding, and 100% needs no second one (traigent-first-run#158).
 #
 # The exact check is kept as a DETECTOR rather than deleted, because it can
 # answer where the near scan cannot. It is a hash bucket - O(n), always
@@ -2903,7 +3242,7 @@ class DiversityCheck:
 # passes its comparison budget. On that dataset the exact check is the only
 # thing still able to raise repetition at all, so it feeds the same single
 # deduction. What it may never do is CLEAR the question: "no byte-identical
-# rows" is not "no rows 90% alike", so `certifier` is the near check alone.
+# rows" is not "nothing near the line", so `certifier` is the near check alone.
 DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
     DiversityCheck(
         detectors=("near_duplicate_status", "duplicate_status"),
@@ -2923,7 +3262,13 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
         certifier="answer_dominance_status",
         found_label="one expected output dominates",
         looking_for_label="whether one expected output dominates",
-        clean_label="no single answer used by most rows",
+        # Not "no single answer used by most rows" any more. Since #216 the
+        # question is dominance against CHANCE, not a share of the rows, so a
+        # four-way set can be flagged at exactly half the rows and a ten-way one
+        # at 40% - neither of which is "most rows" - while a balanced yes/no set
+        # at 50% is clean. The old sentence would have been a clean bill of
+        # health phrased in the units of the rule it replaced.
+        clean_label="no answer that guessing alone would already score well on",
         points=6.0,
         # Under a reference-free judge there are no expected outputs, so this
         # question has no subject - it is not a check that did not run, it is a
@@ -2966,7 +3311,7 @@ def diversity_subscore(
     lets the exact-duplicate check keep earning its place after the
     near-duplicate check took over the scoring: on a dataset where the near
     scan ran out of budget, an exact duplicate is still a found problem, while
-    an exact PASS leaves the 90%-similarity question genuinely unasked.
+    an exact PASS leaves the near-similarity question genuinely unasked.
 
     So there are three outcomes, not two:
 
@@ -3291,26 +3636,38 @@ def score_dataset(
             f"measured on the same rows the search used; {evidence}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
+    # The whole dataset, on the same scoreable footing the branches above use
+    # for their own side of a split. This is what a top-up would add to, and it
+    # is deliberately not the number the ceiling reads - see `power_ceiling`.
+    comparable_rows = scoreable(rows, labelled)
     # Deducting alone let the card say "a wiring check, not a score" and return
     # STRONG in the same breath (#88). The ceiling is what stops a result
     # presenting as trustworthy when nothing measurable was measured.
-    ceiling = power_ceiling(effective)
+    ceiling = power_ceiling(
+        effective,
+        comparable_rows,
+        available_rows=rows,
+        preserve_existing_split=(
+            facts.tuning_rows is not None and facts.holdout_rows is not None
+        ),
+    )
     # A zero that the labels cap already owns is not a second finding.
     #
     # When rows exist and none carries an expected output, `effective` is zero
     # BECAUSE of that, and `dataset-no-expected-outputs` has already said so
     # and routed it to `label-data` - repair the rows the customer is holding.
-    # Appending the power ceiling here restated the same zero as
-    # `dataset-below-measurable-size`, whose remedy is `get-data`: the card
-    # carried two FIX lines for one fact, and the second told a customer with
-    # 50 perfectly good inputs to go and collect examples. That is the defect
-    # this file already fixed for `dataset-shape-unrecognised`, one condition
-    # over.
+    # Appending the power ceiling here restated the same zero as a second
+    # condition: the card carried two FIX lines for one fact, and the second
+    # told a customer with 50 perfectly good inputs to go and collect examples.
+    # That is the defect this file already fixed for
+    # `dataset-shape-unrecognised`, one condition over.
     #
-    # Suppressing it moves no number: 30 is below the 74 ceiling, so the labels
-    # cap is the operative one either way and the run stays blocked. When the
-    # zero has any other source - an empty side of a declared split - nothing
-    # else has named it, so the ceiling still fires.
+    # Suppressing it moves no number: 30 is below the 50 ceiling
+    # `dataset-tuning-split-empty` carries, so the labels cap is the operative
+    # one either way and the run stays blocked. When the zero has any other
+    # source - an empty side of a declared split, which since #197 is the only
+    # one left - nothing else has named it, so the ceiling still fires, and its
+    # remedy is the split rather than the rows.
     if ceiling is not None and not (effective == 0 and unlabelled_capped):
         caps.append(ceiling)
 
@@ -3729,7 +4086,8 @@ def search_space_shortfall(configurations: int, budget: int | None) -> str:
     """Name the step this run sits under, because the ladder is a step function.
 
     `search_space_points` takes four values and no others - measured across
-    seventeen space sizes against a declared budget, only 0, 35, 70 and 100
+    seventeen space sizes against a declared budget. Source:
+    tests/test_readiness_scoring.py#AgentScoringTests. Only 0, 35, 70 and 100
     were ever produced. That shape is deliberate and stays: every threshold in
     it is a number this guide already uses (2 to compare anything at all, 4 for
     the smallest space two settings can interact in, `SEARCH_SPACE_FULL` for
@@ -3860,11 +4218,11 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # project needs repairing for this", printed while holding every card in the
 # product at 45. It said the customer was fine and capped them anyway, and it
 # fired on every guided run by construction, because the guide withholds every
-# config-space file found before this run's search. Measured on the strongest
-# realistic opening project (200 production rows, difficulty-tagged, 180/20
-# split, evaluator calibrated and passing all seven probes): dataset 94,
-# evaluation 100, agent 0 at confidence 0.00, weighted average 73, overall 45
-# PARTIAL, with that cap the only one firing.
+# config-space file found before this run's search. Measured through
+# `build_plan` on the strongest realistic opening project (200 production rows,
+# difficulty-tagged, 180/20 split, evaluator calibrated and passing all seven
+# probes): dataset 94, evaluation 100, agent 0 at confidence 0.00, weighted
+# average 73, overall 45 PARTIAL, with that cap the only one firing.
 #
 # What changed is not the ceiling. It is that there is now something a run can
 # DO about this state at the gate where it is reported: read the agent
@@ -3918,7 +4276,9 @@ def nothing_to_search_pillar(
     configuration, read off the file. No document at all is not a measurement
     of anything, and the previous shape claimed it was: `knob-count` was marked
     measured at the opening gate, where this guide deliberately withholds any
-    config-space document, so the pillar reported 55% evidence coverage for a
+    config-space document. Source:
+    tests/test_readiness_scoring.py#test_looking_at_the_agent_beats_saying_nothing_about_it.
+    The pillar reported 55% evidence coverage for a
     space nobody had looked at.
 
     Confidence stays monotonic, which was the constraint an earlier draft
@@ -3939,7 +4299,9 @@ def nothing_to_search_pillar(
 
     What must NOT happen to that zero is that it stops counting. An earlier
     revision of #201 marked the read-found-nothing state unmeasured and had
-    `aggregate` drop the whole pillar out of the weighted average; measured on
+    `aggregate` drop the whole pillar out of the weighted average. Source:
+    tests/test_readiness_scoring.py#test_looking_at_the_agent_beats_saying_nothing_about_it.
+    Measured on
     one 200-row project, that scored 99 for a run that read the agent and found
     nothing against 92 for a run that read it and found four settings. A zero
     that leaves the denominator is worth more than a low score, which is
@@ -4072,6 +4434,70 @@ def score_discovered_agent(
     )
 
 
+def build_subscores(facts: AgentFacts) -> list[SubScore]:
+    """The four build checks, in every state the read can be in.
+
+    Always four, whichever path established the search space, because the
+    pillar's shape may not depend on which document arrived - a pillar that
+    declares three checks on one card and four on the next is a pillar whose
+    confidence means something different each time.
+
+    No read at all is WITHHELD: the guide asks for this at every gate where an
+    agent was found, so its absence is this run's silence rather than something
+    the tool could not compute. A withheld check keeps its weight and earns
+    nothing, which is what stops omitting the read from outscoring doing it -
+    the defect this module has now shipped in six places and refuses in
+    `SubScore.withheld`.
+
+    A check the read could not settle is UNMEASURED and not withheld. That is
+    the other half of the same rule and the one #184 insists on: a signal you
+    cannot determine is reported as undetermined, never scored zero, because
+    zero says the agent lacks the thing and the read only says it could not
+    tell.
+    """
+    if facts.build is None:
+        return [
+            SubScore(
+                name,
+                0.0,
+                weight,
+                False,
+                "no reading of how the agent is built reached this score; "
+                "reading the agent is what answers this",
+                withheld=True,
+            )
+            for name, weight in AGENT_BUILD_CHECKS
+        ]
+    found = {signal.name: signal for signal in facts.build}
+    return [
+        SubScore(
+            name,
+            found[name].points if found[name].measured else 0.0,
+            weight,
+            found[name].measured,
+            found[name].evidence,
+            applicable=found[name].applicable,
+        )
+        for name, weight in AGENT_BUILD_CHECKS
+    ]
+
+
+def with_build(pillar: Pillar, facts: AgentFacts) -> Pillar:
+    """Re-combine a search-space pillar with the build checks beside it.
+
+    Applied at every `return` in `score_agent` rather than inside one branch,
+    which is the whole point: the four paths that establish a search space -
+    a read of the source, a document, a document that lists nothing, and
+    nothing at all - are four answers to a question this half does not ask, so
+    none of them may decide whether the agent's build is graded.
+
+    Re-running `combine` rather than adjusting the score by hand, so the
+    renormalization, the withheld denominator and the confidence are computed
+    once, in the one place that knows the rules for them.
+    """
+    return combine(pillar.name, [*pillar.subscores, *build_subscores(facts)])
+
+
 def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -4084,7 +4510,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     # any of that, or it becomes a way to score around a document that says
     # nothing is wired.
     if facts.discovery_supplied and not facts.config_space_supplied:
-        return score_discovered_agent(facts)
+        space, discovered_caps, discovered_knobs = score_discovered_agent(facts)
+        return with_build(space, facts), discovered_caps, discovered_knobs
 
     # Order is deliberate: an empty `knobs` map is answered here, ahead of the
     # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
@@ -4138,13 +4565,17 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # this module cannot tell the two gates apart, so it says the one thing
         # true at both - no settings document reached this score.
         return (
-            nothing_to_search_pillar(
-                evidence,
-                supplied=facts.config_space_supplied,
-                # Nothing about the agent reached this score - not a document,
-                # not a read of its source. The guide asks for one of the two at
-                # every gate, so this is silence, and silence keeps its weight.
-                withheld=not facts.config_space_supplied,
+            with_build(
+                nothing_to_search_pillar(
+                    evidence,
+                    supplied=facts.config_space_supplied,
+                    # Nothing about the agent reached this score - not a
+                    # document, not a read of its source. The guide asks for one
+                    # of the two at every gate, so this is silence, and silence
+                    # keeps its weight.
+                    withheld=not facts.config_space_supplied,
+                ),
+                facts,
             ),
             [
                 (
@@ -4167,10 +4598,13 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # `demonstrably_wired()` probe, and until that lands the `wired` list
         # is an unenforced claim.
         return (
-            nothing_to_search_pillar(
-                f"{len(facts.knobs)} setting(s) listed, none marked as one the "
-                "agent uses - list those in the document's 'wired' field",
-                supplied=True,
+            with_build(
+                nothing_to_search_pillar(
+                    f"{len(facts.knobs)} setting(s) listed, none marked as one "
+                    "the agent uses - list those in the document's 'wired' field",
+                    supplied=True,
+                ),
+                facts,
             ),
             [UNATTESTED_WIRING_CAP],
             [],
@@ -4290,7 +4724,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         )
     )
 
-    return combine("agent", subs), caps, knobs
+    return combine("agent", [*subs, *build_subscores(facts)]), caps, knobs
 
 
 # Caps outrank every sub-score gap - a broken ruler is not a few points - but
@@ -4348,13 +4782,35 @@ def collect_gaps(
             )
         )
     for pillar in pillars:
+        # Several checks in a pillar can rest on ONE fact, and listing it once
+        # per check reads as several findings a customer must each act on. The
+        # card already collapses that case; this list did not, so a run that
+        # supplied no reading of the agent produced four remediation lines all
+        # saying the same sentence. Collapsed on the evidence itself, which is
+        # what the card keys on too - and only for unmeasured checks, because a
+        # partial credit line carries its own number and is genuinely distinct.
+        shared: set[str] = set()
         for sub in pillar.subscores:
+            if not sub.applicable:
+                continue
             if not sub.measured:
+                if sub.evidence in shared:
+                    continue
+                shared.add(sub.evidence)
+                named = ", ".join(
+                    sorted(
+                        other.name
+                        for other in pillar.subscores
+                        if other.applicable
+                        and not other.measured
+                        and other.evidence == sub.evidence
+                    )
+                )
                 gaps.append(
                     (
                         sub.maximum * 0.5,
                         unranked,
-                        f"{pillar.name}/{sub.name} could not be measured - "
+                        f"{pillar.name}/{named} could not be measured - "
                         f"{sub.evidence}",
                     )
                 )
@@ -4391,9 +4847,9 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     `status` stays OK, the run is worth making, and the question is what to do
     before it rather than instead of it.
 
-    An advisory ceiling that asks nothing still recommends nothing. Bounding a
-    claim is not a defect, and telling a customer with 25 rows to go and get
-    more before their first run is the conflation `blocks` was added to end.
+    An advisory ceiling that asks nothing still recommends nothing. A bounded
+    top-up may ask before a run without blocking it; a ceiling at or beyond the
+    offer limit names no remedy.
     """
     for cap in ordered_caps:
         if cap.blocks:
@@ -4424,7 +4880,8 @@ def aggregate(
     # `SubScore.withheld` exists to refuse, one level up from where it refuses
     # it.
     #
-    # Measured before it was removed: across 743 combinations of dataset,
+    # Measured before it was removed. Source:
+    # tests/test_readiness_scoring.py#LessEvidenceMayNotOutscoreMoreTests. Across 743 combinations of dataset,
     # evaluation and agent facts, exactly two reached that exclusion, and both
     # were the state that scored 99. It was not a general rule about unmeasured
     # pillars - there is no other pillar this scorer can fail to look at - so it
@@ -4823,6 +5280,18 @@ def render_card(
                 lines.append(
                     f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
                 )
+        if pillar.name == "agent":
+            # The half of #184's answer that is not a number. The pillar widened
+            # to cover what a read of the agent's source can establish, and two
+            # of the owner's six criteria are not that - so the card says so
+            # where the pillar is read, rather than letting a customer conclude
+            # from four checks that all six were looked at.
+            #
+            # Deliberately NOT a check. A check that can never be measured would
+            # hold this pillar's confidence under the band gate on every card
+            # forever, which would report a permanent gap in our reach as a
+            # permanent gap in the customer's project.
+            lines.append(f"    {palette.dim}{AGENT_NOT_COVERED}{palette.reset}")
         lines.append("")
     if score.caps:
         for cap in score.caps:
@@ -4961,6 +5430,16 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
                 "unmeasured" if not sub.measured else f"{sub.value:g} / {sub.maximum:g}"
             )
             lines.append(f"| {sub.name} | {points} | {sub.evidence} |")
+        if pillar.name == "agent":
+            # The same sentence the card carries, in the artifact that outlives
+            # the terminal the card printed to. A reader who keeps the report
+            # and not the session would otherwise see four agent checks and
+            # nothing saying which of the pillar's questions were never asked -
+            # and this list is exactly where "four checks" reads as "all of
+            # them". Not a row in the table above, for the reason the card
+            # gives: a check that can never be measured would hold this
+            # pillar's confidence under the band gate forever.
+            lines.extend(["", f"_{AGENT_NOT_COVERED}_"])
         lines.append("")
     if score.knobs:
         lines.extend(
@@ -5019,7 +5498,8 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # But `blocks` alone read that rule as two states rather than three, so
         # it suppressed the remedy for a cap that asks as well as for one that
         # asks nothing - and an asking cap is the one whose entire content IS a
-        # remedy. Measured end to end through the CLI on 28 collected rows whose
+        # remedy. Measured end to end through the CLI. Source:
+        # tests/test_readiness_scoring.py#OneRemedyOneQuestionTests. On 28 collected rows whose
         # every expected answer is model-written, against a calibrated exact
         # evaluator and a 9-configuration wired space: `--json` returned
         # `recommended_action: "review-answer-key"` while the durable report
@@ -5028,9 +5508,9 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # a reader keeps.
         #
         # `asks` is the flag that makes the third state expressible, and it is
-        # deliberately not `not cap.blocks`: `dataset-coarse-resolution` bounds
-        # a claim and asks nothing, so it still prints no remedy, which is the
-        # false-red direction this line is guarded in both ways against.
+        # deliberately not `not cap.blocks`: `dataset-coarse-resolution` asks
+        # only while its bounded top-up is actionable; at the offer limit it
+        # still prints no remedy, the false-red direction guarded here.
         # `--json` still carries `action_kind` on every cap for consumers that
         # want it; what goes away is the word "fix" over a state that is not
         # broken.
@@ -5078,11 +5558,20 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
     """Say whether preflight actually examined the spread of expected answers.
 
     Preflight has no `dataset-answer-dominance` record: it emits
-    `dataset-ceiling-risk` only when one answer dominates, and stays silent
-    otherwise. So absence had to be read as "checked, nothing found" - which is
-    wrong whenever the check never ran at all, and it does not run under a
-    reference-free evaluator, where the whole expected-output branch is skipped
-    and `dataset-outputs` is SKIP.
+    `dataset-ceiling-risk` when one answer dominates and when it could not ask
+    the question at all, and stays silent when it asked and found nothing. So
+    absence had to be read as "checked, nothing found" - which is wrong whenever
+    the check never ran, and it does not run under a reference-free evaluator,
+    where the whole expected-output branch is skipped and `dataset-outputs` is
+    SKIP.
+
+    A second way it does not run arrived with #216: dominance is measured
+    against a chance baseline of `1/k`, which is only a baseline when the `k`
+    answers seen are a closed set of labels. On a free-text task they are not,
+    and preflight emits `dataset-ceiling-risk` as SKIP. That status is returned
+    here unchanged and lands outside `MEASURED_STATUSES`, so the sub-score
+    reports the question as unasked instead of clean - which is the whole point
+    of routing it through this record rather than through silence.
 
     The witness for "it ran" is therefore the PASS on the check that computes
     the distribution: `dataset-outputs` counts distinct expected answers and
@@ -6081,7 +6570,8 @@ def _reject_undeclared_fields(document: dict[str, Any]) -> None:
     defect the declaration exists to stop. `max_trial` for `max_trials` is one
     character, and it does not fail: the budget that dampens the knob-count
     points simply is not there, so a 512-configuration space against a 3-trial
-    cap scored as though it had no cap at all - measured on the trunk this
+    cap scored as though it had no cap at all. Source:
+    tests/test_readiness_scoring.py#ConfigSpaceInputContractTests. On the trunk this
     replaces, 89 STRONG became 92 EXCELLENT under a byte-identical evidence
     line ("6 of 6 wired knobs actually vary; 512 combinations"), exit 0, no
     warning. `bound` for `bounds` drops the author's declared range the same
@@ -6339,6 +6829,223 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
     return DiscoveredKnob(name, "numeric", 2, evidence)
 
 
+# The keys each build check may carry. Closed and checked for the reason the
+# knob fields are: a misspelled key is a check that silently answers something
+# nobody wrote.
+BUILD_CHECK_FIELDS: dict[str, frozenset[str]] = {
+    "prompt": frozenset({"present", "few_shot", "evidence", "determined", "reason"}),
+    "output-contract": frozenset({"present", "evidence", "determined", "reason"}),
+    "control-flow": frozenset({"loop", "bounded", "evidence", "determined", "reason"}),
+    "tools": frozenset(
+        {"used", "declared", "unreachable", "evidence", "determined", "reason"}
+    ),
+}
+# A prompt earns most of its check for existing and the rest for carrying
+# worked examples. Two is where "examples" starts meaning a pattern rather than
+# an illustration, which is the same threshold `DiscoveredKnob` applies to a
+# categorical option list: one is not a choice, and one example is not a shape.
+PROMPT_PRESENT_POINTS = 6.0
+FEW_SHOT_POINTS = 2.0
+FEW_SHOT_PATTERN = 2
+
+
+def _build_flag(check: str, spec: dict[str, Any], field: str) -> bool:
+    value = spec.get(field)
+    if not isinstance(value, bool):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} declares {field!r} as {value!r}; it is a "
+            "yes or no about what the read of the agent actually found"
+        )
+    return value
+
+
+def _build_names(check: str, spec: dict[str, Any], field: str) -> list[str]:
+    value = spec.get(field, [])
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) and name.strip() for name in value
+    ):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} declares {field!r} as {value!r}; it is the "
+            "list of tool names you read out of the agent"
+        )
+    return [name.strip() for name in value]
+
+
+def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
+    """Read one build check, and refuse a guess rather than scoring it.
+
+    Every branch here is #210's rule applied to a second kind of evidence:
+    credit only what the citation establishes. So `evidence` is required on
+    every check including the ones that answer "no", because "this agent has no
+    prompt" is a finding about somebody's code and has to be pointed at.
+
+    `determined: false` is a first-class answer and the reason this reader is
+    not just a schema. A read that could not settle a check says so and the
+    check leaves the pillar - it is not scored zero, which would say the agent
+    lacks the thing rather than that we could not tell.
+    """
+    if not isinstance(spec, dict):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} must be an object with the evidence for it, "
+            f"not {type(spec).__name__}"
+        )
+    unknown = sorted(set(spec) - BUILD_CHECK_FIELDS[check])
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} carries unknown field(s) "
+            f"{', '.join(unknown)}; the fields read here are "
+            f"{', '.join(sorted(BUILD_CHECK_FIELDS[check]))}"
+        )
+    evidence = spec.get("evidence")
+    if not isinstance(evidence, str) or not evidence.strip():
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} carries no evidence; this score reports what "
+            "it can see in the agent, so name the file and line you read - "
+            "including when the answer is that the agent does not do this"
+        )
+    evidence = evidence.strip()
+    if "determined" in spec and not isinstance(spec["determined"], bool):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} declares 'determined' as "
+            f"{spec['determined']!r}; it must be true or false"
+        )
+    if spec.get("determined") is False:
+        reason = spec.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} is undetermined and gives no reason; a "
+                "check that leaves the pillar has to say what stopped the read"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            f"not established by this read - {reason.strip()} ({evidence})",
+            measured=False,
+        )
+
+    weight = AGENT_BUILD_WEIGHT[check]
+    if check == "prompt":
+        if not _build_flag(check, spec, "present"):
+            return BuildSignal(
+                check, 0.0, f"no prompt reached the model call ({evidence})"
+            )
+        shots = spec.get("few_shot", 0)
+        if not isinstance(shots, int) or isinstance(shots, bool) or shots < 0:
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} declares 'few_shot' as {shots!r}; it is "
+                "how many worked examples you counted in the prompt"
+            )
+        earned = PROMPT_PRESENT_POINTS
+        if shots >= FEW_SHOT_PATTERN:
+            earned += FEW_SHOT_POINTS
+        elif shots == 1:
+            earned += FEW_SHOT_POINTS / 2
+        counted = (
+            f"{shots} worked example(s) in it" if shots else "no worked examples in it"
+        )
+        return BuildSignal(check, earned, f"a prompt, {counted} ({evidence})")
+    if check == "output-contract":
+        if _build_flag(check, spec, "present"):
+            return BuildSignal(
+                check, weight, f"the answer's shape is constrained ({evidence})"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            "nothing constrains the shape of the answer, so an evaluator has to "
+            f"accept whatever comes back ({evidence})",
+        )
+    if check == "control-flow":
+        if not _build_flag(check, spec, "loop"):
+            return BuildSignal(
+                check, weight, f"one call per input, so it ends ({evidence})"
+            )
+        if _build_flag(check, spec, "bounded"):
+            return BuildSignal(
+                check, weight, f"a loop, and a stop condition to point at ({evidence})"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            "a loop with no stop condition this read could point at, so one "
+            f"input can cost an unbounded number of calls ({evidence})",
+        )
+    if not _build_flag(check, spec, "used"):
+        # Excluded rather than credited or charged. There is nothing here to
+        # check, which is what README.md's "a check this tool could not compute
+        # is marked unmeasured and excluded" describes - and crediting an agent
+        # for calling no tools would pay for being simpler than the question.
+        return BuildSignal(
+            check,
+            0.0,
+            f"the agent calls no tools, so there is nothing to wire ({evidence})",
+            measured=False,
+            applicable=False,
+        )
+    declared = _build_names(check, spec, "declared")
+    if not declared:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} says tools are used and names none; the "
+            "check is whether each tool the agent declares can be reached"
+        )
+    unreachable = _build_names(check, spec, "unreachable")
+    stray = sorted(set(unreachable) - set(declared))
+    if stray:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} calls {', '.join(stray)} unreachable and "
+            "does not declare them; an unreachable tool is one of the declared "
+            "ones this read could not find behind its name"
+        )
+    reachable = len(declared) - len(set(unreachable))
+    if not unreachable:
+        return BuildSignal(
+            check,
+            weight,
+            f"{len(declared)} tool(s), each reachable ({evidence})",
+        )
+    return BuildSignal(
+        check,
+        round(weight * reachable / len(declared), 2),
+        f"{len(set(unreachable))} of {len(declared)} tool(s) declared and not "
+        f"found behind the name: {', '.join(sorted(set(unreachable)))} "
+        f"({evidence})",
+    )
+
+
+def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
+    """Read all four checks, and refuse a document that answers three.
+
+    Every check is required, including the ones whose answer is "the agent does
+    not do this". A missing key and a `no` are different statements about
+    somebody's code, and a reader that treated them alike would let the four
+    checks quietly become however many the author felt like answering - which
+    is the shape of silence this module refuses everywhere else.
+    """
+    if not isinstance(build, dict):
+        raise AgentDiscoveryInputError(
+            f"'build' must be an object keyed by check name, not "
+            f"{type(build).__name__}"
+        )
+    unknown = sorted(set(build) - set(BUILD_CHECK_FIELDS))
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"'build' carries unknown check(s) {', '.join(unknown)}; the checks "
+            f"read here are {', '.join(sorted(BUILD_CHECK_FIELDS))}"
+        )
+    missing = sorted(set(BUILD_CHECK_FIELDS) - set(build))
+    if missing:
+        raise AgentDiscoveryInputError(
+            f"'build' answers no {', '.join(missing)} check; answer every check, "
+            "using 'determined': false with a reason where the read could not "
+            "settle one - an omitted check and an undetermined one are "
+            "different statements about the agent"
+        )
+    return tuple(
+        build_signal_from_entry(check, build[check])
+        for check, _weight in AGENT_BUILD_CHECKS
+    )
+
+
 def agent_facts_from_discovery(document: Any) -> AgentFacts:
     """Read the assistant's read of the agent, and nothing about wiring.
 
@@ -6353,11 +7060,11 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
             f"the agent-knobs document must be an object, not "
             f"{type(document).__name__}"
         )
-    unknown = sorted(set(document) - {"knobs", "source"})
+    unknown = sorted(set(document) - {"knobs", "source", "build"})
     if unknown:
         raise AgentDiscoveryInputError(
             f"the agent-knobs document carries unknown field(s) "
-            f"{', '.join(unknown)}; it reads 'knobs' and 'source'"
+            f"{', '.join(unknown)}; it reads 'knobs', 'source' and 'build'"
         )
     knobs = document.get("knobs")
     if knobs is None:
@@ -6378,6 +7085,16 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
         ),
         # Reaching this line is the proof: the agent was read.
         discovery_supplied=True,
+        # Optional at this boundary and mandated by the guide, which is the
+        # same footing `knobs` has had since #210: the reader refuses a
+        # malformed answer and reports an absent one, and it is SKILL.md that
+        # says the read is not optional. `None` here is the absence, and it
+        # costs - see `build_subscores`.
+        build=(
+            agent_build_from_document(document["build"])
+            if "build" in document
+            else None
+        ),
     )
 
 
@@ -6434,10 +7151,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--agent-knobs",
         help=(
             "the coding assistant's own read of the agent's source (path or -): "
-            "which parameters it can already vary, each with the line that "
-            "shows it. Measures the search space at the opening gate, where no "
-            "config-space document exists; attests nothing about wiring, and is "
-            "ignored when --config-space is given"
+            "which parameters it can already vary and how it is put together, "
+            "each with the line that shows it. Measures the search space at the "
+            "opening gate, where no config-space document exists; attests "
+            "nothing about wiring. Its knob half is ignored when --config-space "
+            "is given, because that document decides the space; its build half "
+            "is read either way, because no config space describes how the "
+            "agent is built"
         ),
     )
     parser.add_argument(
@@ -6606,6 +7326,21 @@ def run(argv: Sequence[str] | None = None) -> int:
         # wired. See `score_agent`.
         if args.config_space:
             agent_facts = agent_facts_from_config_space(load_json(args.config_space))
+            if args.agent_knobs:
+                # The build half of the read survives the document; the search
+                # space half does not (#184). The `elif` that used to stand
+                # here existed to stop a source read talking over a document
+                # that says nothing is wired, which is a claim about the SEARCH
+                # SPACE - and no config space makes any claim about whether the
+                # agent has a prompt, a bounded loop, or tools it can reach. So
+                # dropping this half at the close would report those four
+                # checks falling to withheld between two cards while nothing
+                # about the agent changed, which is the fall SKILL.md already
+                # refuses for the knob read one paragraph over.
+                agent_facts = replace(
+                    agent_facts,
+                    build=agent_facts_from_discovery(load_json(args.agent_knobs)).build,
+                )
         elif args.agent_knobs:
             agent_facts = agent_facts_from_discovery(load_json(args.agent_knobs))
         else:

@@ -207,10 +207,17 @@ by an earlier guided run: it is historical, unverified context, not current wiri
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
 run does this, including a zero-anchor run.
 
-Then measure the search space from the agent itself and pass it as `--agent-knobs`, so the opening
-card grades what this project can search instead of reporting nothing. Read the agent's own source
-for parameters it can already vary - model, temperature, top_p, prompt strategy, retry/reflection
-flags, tool selection - and record each with the line that shows it. Never write a range or an
+Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
+grades this project instead of reporting nothing. Two halves, one pass, and neither is optional
+where an agent was found. Read its own source for parameters it can already vary - model,
+temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
+the line that shows it. Read the same source for how the agent is built and answer all four checks
+the reference names: whether it carries a prompt and worked examples, whether anything pins down the
+shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
+Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
+agent lacks the thing, and the two are different statements about somebody's code. Withholding the
+second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
+check does everywhere else in the score. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
@@ -307,7 +314,9 @@ If real material exists but appears too weak to support a meaningful comparison,
   headroom, misleading accuracy, or failure during evaluation.
 - Recommend: **"Repair a working copy and re-run validation"**.
 - Offer only these alternatives: repair now, continue as a clearly labeled workflow
-  demonstration when technically safe, or pause while the user edits it.
+  demonstration when technically safe, or pause while the user edits it. Where the finding is a row
+  count rather than a defect, the bounded top-up takes the place of the repair - nothing is broken,
+  so nothing is being mended.
 
 Do not call a component weak merely from intuition. For judgment-based findings such as "all
 examples are easy," cite representative rows and the missing challenge/failure modes. For
@@ -324,12 +333,15 @@ same substitution twice. When a quality advisory fires in the same turn, fold it
 weakness are one decision about what this run will measure. That question carries four things:
 
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
-   not seen, never what the project does not have.
-2. That this run can build each missing piece, derived from whatever does exist.
+   not seen, never what the project does not have - and, on the same line, what it found too little
+   of to compare on.
+2. That this run can build each missing piece, and top up a short one, derived from whatever does
+   exist.
 3. What that costs, in terms the score already uses: what this run writes stays `🛠️` and never
    becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
    present as strong however good the rest is, and no configuration from the result may be promoted.
-4. Two answers: proceed, or `I have it` and a path for each piece they have.
+4. Two answers where something is missing: proceed, or `I have it` and a path for each piece they
+   have. Where it is only short, keeping what they brought is the third.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
@@ -337,9 +349,20 @@ given here names material that was in the project all along, so re-run the openi
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
-asks one and carries these four things on it. The answer covers absence and never a defect; broken
+asks one and carries these four things on it. The answer covers absence and shortfall, never a
+defect; broken
 material keeps every gate stage 4 already puts on it. `references/component-creation.md` owns the
 wording, what a supplied path is checked for, and where each way of not getting one lands.
+
+A dataset with fewer rows than this run's own **28** rides here too, on that same question and never
+as a second one: a gap and a shortfall are one decision about what this run will measure. Nothing is
+stopped either way, so the offer is bounded and the bound is spoken - an offer to add examples with
+no number on it reads as an offer to generate without end. Agreeing changes what the dataset is,
+never what it earns: rows this run writes score as the generated rows they are, which on a short
+dataset is most of it, so say before they answer that accepting lowers the ceiling.
+`references/component-creation.md` owns how each size is put, what that sentence says and where the
+offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
+ceiling that follows.
 
 ### 3. Complete the system
 
@@ -442,10 +465,12 @@ route that only scopes what the result may claim lets the run proceed wherever t
 scope, and divides again: where the scope leaves a person something to settle, put it once in the
 home that owns that question and carry the answer to the pre-spend approval in stage 6; where it
 leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
-never by the kind - a scoping condition that finds nothing to compare at all blocks, and the bullets
-carrying both halves say so:
+never by the kind - the agent's own no-varying-knobs condition still reads both ways, and its
+paragraph below carries both halves:
 
-- `dataset-absent` - enter the creation dependency matrix.
+- `dataset-absent` - enter the creation dependency matrix, and put both ways out on the one ask:
+  point this run at the dataset they already have, or have it derive one from whatever the project
+  does hold - the agent, the evaluation method, logs.
 - `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
   a verdict on the data: do not enter the creation dependency matrix or call it invalid. Read and
   re-map it per the dataset reference, then re-score; repair, then create, only if mapping fails.
@@ -468,14 +493,15 @@ carrying both halves say so:
 - `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one
   approval-gated question and take the answer, per "A `no` is never a silent edit" in
   `references/evaluation-and-dataset.md`.
+- `dataset-tuning-split-empty` - the rows are fine and the split is not: no row on the side the
+  search compares on can be scored. Repair the split as `dataset-tune-holdout-overlap` above is
+  repaired; do not enter the creation dependency matrix and do not ask for more data.
 - `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
-  rankings exploratory, not stable comparisons, only where some example can be scored. Where none
-  can, the same condition blocks and the card prints `FIX BEFORE PAID RUN`; route that by its
-  reason - nothing can be compared at all, so there is no result to bound - and get labelled
-  examples before any paid run.
-- `dataset-coarse-resolution` - more comparable examples is what lifts this too; after paired
-  outputs exist, report paired outcome counts and justified uncertainty, calling a small or flat
-  difference directional or inconclusive.
+  rankings exploratory, not stable comparisons. The run is worth making, so where the card asks,
+  carry the top-up on the one ask rather than sending anyone away for data.
+- `dataset-coarse-resolution` - more comparable examples is what lifts this too, and the same
+  bounded offer carries it wherever the card asks; after paired outputs exist, report paired outcome counts and justified
+  uncertainty, calling a small or flat difference directional or inconclusive.
 
 Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
@@ -545,7 +571,7 @@ inference provider/route may receive it. Connected synchronization waits until a
 
 ### 6. Approve and run the baseline
 
-Scope the run before pricing it. When the dataset carries more than about 100 usable rows, select the
+Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
 bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
 least four from each difficulty band, drawn within each split rather than across it - and estimate
 runtime and spend from that subset, not from the full row count.

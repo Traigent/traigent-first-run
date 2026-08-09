@@ -9,7 +9,7 @@ import re
 import sys
 import tempfile
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -585,6 +585,15 @@ class DatasetScoringTests(unittest.TestCase):
         split. That removed the fixture's zero without removing the rule the
         fixture is about, so the zero moves to a split half that still sets
         the comparison's resolution.
+
+        #197 gave that zero a condition of its own. It travelled as a second
+        reading of `dataset-below-measurable-size`, told apart from the first
+        only by a runtime flag, which is what let one remedy mean both "stop"
+        and "carry on" about the same instruction. The finding this fixture
+        reaches is unchanged and so is the ceiling firing at all; what moved is
+        the name, the remedy, and the number - `resplit-dataset` at 50, because
+        the rows here are real, labelled and readable and it is the line drawn
+        through them that leaves nothing to compare on.
         """
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -597,7 +606,15 @@ class DatasetScoringTests(unittest.TestCase):
                 holdout_labelled_rows=30,
             )
         )
-        self.assertIn("dataset-below-measurable-size", [cap.condition for cap in caps])
+        raised = {cap.condition: cap for cap in caps}
+        self.assertIn("dataset-tuning-split-empty", raised)
+        cap = raised["dataset-tuning-split-empty"]
+        self.assertTrue(cap.blocks)
+        self.assertEqual(cap.action_kind, "resplit-dataset")
+        self.assertEqual(cap.ceiling, MODULE.TUNING_SPLIT_EMPTY_CEILING)
+        # And it does not also arrive as the small-dataset finding, which is
+        # the two-FIX-lines-for-one-fact defect this file already fixed once.
+        self.assertNotIn("dataset-below-measurable-size", raised)
 
     def test_fully_synthetic_dataset_is_capped_however_good(self) -> None:
         facts = MODULE.DatasetFacts(
@@ -641,9 +658,9 @@ class DatasetScoringTests(unittest.TestCase):
     def test_a_skipped_check_is_never_scored_as_a_passed_check(self) -> None:
         """The rule, over every diversity check and every not-run spelling.
 
-        A check that did not run used to keep its full points and the sentence
-        "no repeated questions, and no single answer used by most rows" - a
-        clean result nobody established. Parameterised over all three checks so
+        A check that did not run used to keep its full points and a sentence
+        beginning "no repeated questions" - a clean result nobody established.
+        Parameterised over all three checks so
         a fourth cannot be added with the old behaviour, and over SKIP as well
         as an absent record because both mean the same thing.
         """
@@ -1520,7 +1537,7 @@ class AgentScoringTests(unittest.TestCase):
         document exists to clear.
         """
         facts = MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
-        pillar, caps, _ = MODULE.score_agent(facts)
+        pillar, caps, _ = score_space(facts)
         self.assertEqual([cap.condition for cap in caps], [])
         # Full marks, and the number is the guide's own recommended shape
         # scoring as such: 48 distinct configurations against a 12-trial
@@ -1551,9 +1568,7 @@ class AgentScoringTests(unittest.TestCase):
             knobs=dict(WALKTHROUGH_CONFIG_SPACE["knobs"], temperature=[0.0]),
         )
         self.assertEqual(reasoning, WALKTHROUGH_CONFIG_SPACE)
-        pillar, caps, _ = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space(reasoning)
-        )
+        pillar, caps, _ = score_space(MODULE.agent_facts_from_config_space(reasoning))
         self.assertEqual([cap.condition for cap in caps], [])
         self.assertEqual(pillar.score, 100)
 
@@ -1749,7 +1764,7 @@ class AgentScoringTests(unittest.TestCase):
         """
         absent = MODULE.agent_facts_from_config_space({"knobs": {"a": [1, 2]}})
         self.assertIsNone(absent.max_trials)
-        pillar, caps, _ = MODULE.score_agent(absent)
+        pillar, caps, _ = score_space(absent)
         # This used to assert `confidence < 1.0`, and #189's own review found
         # why that was worthless: it passed on the `coverage` sub-score being
         # unmeasured, then kept passing after #182 deleted `coverage`, on the
@@ -1816,14 +1831,14 @@ class AgentScoringTests(unittest.TestCase):
         }
         facts = MODULE.agent_facts_from_config_space(document)
         self.assertEqual(facts.bounds, {"retrieval_k": {"low": 1.0, "high": 5.0}})
-        pillar, caps, _ = MODULE.score_agent(facts)
+        pillar, caps, _ = score_space(facts)
         self.assertEqual([cap.condition for cap in caps], [])
         # One knob, two values a 1-5 range can tell apart: a space of two.
         self.assertEqual(pillar.score, 35)
         numeric = MODULE.agent_facts_from_config_space(
             dict(document, bounds={"retrieval_k": {"low": 1, "high": 5}})
         )
-        self.assertEqual(MODULE.score_agent(numeric)[0].score, pillar.score)
+        self.assertEqual(score_space(numeric)[0].score, pillar.score)
 
     def test_falsey_malformed_fields_are_refused_like_truthy_ones(self) -> None:
         """`or {}` read a malformed field as an absent one.
@@ -2069,24 +2084,24 @@ class AgentScoringTests(unittest.TestCase):
         )
         self.assertEqual(integral.max_trials, 12)
         self.assertIsInstance(integral.max_trials, int)
-        pillar, caps, _ = MODULE.score_agent(integral)
+        pillar, caps, _ = score_space(integral)
         self.assertEqual([cap.condition for cap in caps], [])
         # The walkthrough document's own score; the point here is that the
         # float spelling reaches it rather than exiting 2.
         self.assertEqual(pillar.score, 100)
         self.assertEqual(
             pillar.score,
-            MODULE.score_agent(
-                MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
-            )[0].score,
+            score_space(MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE))[
+                0
+            ].score,
         )
         # the trial cap still damps the search-space points identically either way
         crowded = {"knobs": {f"k{i}": [1, 2, 3, 4] for i in range(6)}}
         self.assertEqual(
-            MODULE.score_agent(
+            score_space(
                 MODULE.agent_facts_from_config_space(dict(crowded, max_trials=2.0))
             )[0].score,
-            MODULE.score_agent(
+            score_space(
                 MODULE.agent_facts_from_config_space(dict(crowded, max_trials=2))
             )[0].score,
         )
@@ -2109,9 +2124,7 @@ class AgentScoringTests(unittest.TestCase):
             "knobs": {"widget": [1, 50]},
             "wired": ["widget"],
         }
-        pillar, caps, _ = MODULE.score_agent(
-            MODULE.agent_facts_from_config_space(sweeping)
-        )
+        pillar, caps, _ = score_space(MODULE.agent_facts_from_config_space(sweeping))
         self.assertEqual([cap.condition for cap in caps], [])
         # Two values a noise floor can tell apart, so a space of two - and a
         # run that compares both of them.
@@ -2444,7 +2457,10 @@ class AgentScoringTests(unittest.TestCase):
             },
             wired=("model", "temperature", "prompt_style"),
         )
-        self.assertEqual(sorted(sub.name for sub in pillar.subscores), ["search-space"])
+        self.assertEqual(
+            sorted(sub.name for sub in pillar.subscores),
+            ["control-flow", "output-contract", "prompt", "search-space", "tools"],
+        )
         for sub in pillar.subscores:
             with self.subTest(subscore=sub.name):
                 self.assertNotIn("max_tokens", sub.evidence)
@@ -2466,7 +2482,7 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
     BUDGET = 12
 
     def _shape(self, knobs, **facts) -> tuple:
-        pillar, caps, _ = MODULE.score_agent(
+        pillar, caps, _ = score_space(
             MODULE.AgentFacts(
                 knobs=knobs,
                 wired=tuple(sorted(knobs)),
@@ -2478,17 +2494,30 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
         space = next(s for s in pillar.subscores if s.name == "search-space")
         return pillar.score, space.evidence, [cap.condition for cap in caps]
 
-    def test_the_pillar_reports_one_sub_score(self) -> None:
+    def test_the_search_space_is_measured_by_exactly_one_sub_score(self) -> None:
         """Two numbers only need weighing while there are two of them.
 
         `knob-count` and `variation` are gone with the 55/45 that weighed them.
         Asserted on the pillar rather than on the absence of a constant,
         because a re-introduced sub-score under a new name is the same defect.
+
+        The claim was "the pillar reports one sub-score" and #184 made that
+        false without making it wrong: the pillar now also carries four checks
+        about how the agent is BUILT, which is a different question and the
+        whole point of widening it. What may not come back is a second number
+        for the same question, so that is what this asserts - one check
+        measures the search space, and the ones beside it measure something
+        else.
         """
         pillar, _, _ = self._pillar({"model": ["a", "b", "c"]})
-        self.assertEqual([sub.name for sub in pillar.subscores], ["search-space"])
-        self.assertEqual(pillar.subscores[0].maximum, MODULE.SEARCH_SPACE_WEIGHT)
+        space = [sub for sub in pillar.subscores if sub.name == "search-space"]
+        self.assertEqual(len(space), 1)
+        self.assertEqual(space[0].maximum, MODULE.SEARCH_SPACE_WEIGHT)
         self.assertEqual(MODULE.SEARCH_SPACE_WEIGHT, 100.0)
+        self.assertEqual(
+            sorted(sub.name for sub in pillar.subscores if sub.name != "search-space"),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
         for retired in ("KNOB_COUNT_WEIGHT", "VARIATION_WEIGHT", "knob_count_points"):
             with self.subTest(retired=retired):
                 self.assertFalse(hasattr(MODULE, retired))
@@ -2911,9 +2940,9 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         # change the knob's notes and not the pillar. What they still change is
         # whether the two values are two at all - that is the noise floor, and
         # it is inside the configuration count.
-        self.assertEqual(MODULE.score_agent(facts)[0].score, 35)
+        self.assertEqual(score_space(facts)[0].score, 35)
         self.assertEqual(
-            MODULE.score_agent(MODULE.agent_facts_from_config_space(sweeping))[0].score,
+            score_space(MODULE.agent_facts_from_config_space(sweeping))[0].score,
             35,
         )
 
@@ -2956,7 +2985,7 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(facts.bounds["k"]["high"], float(edges["high"]))
         self.assertEqual(
-            MODULE.score_agent(
+            score_space(
                 MODULE.agent_facts_from_config_space(
                     dict(sweeping, bounds={"k": {"low": 1, "high": 50}})
                 )
@@ -3043,7 +3072,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         The shipped space declares only `prompt_style`, so collapsing the alias
         leaves its six dimensions and 48 configurations untouched.
         """
-        pillar, caps, _ = MODULE.score_agent(
+        pillar, caps, _ = score_space(
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
         )
         self.assertEqual([cap.condition for cap in caps], [])
@@ -3063,7 +3092,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         hand-written file buy agent points and retire the cap, so the honest
         state is zero knobs attested as wired, still capped.
         """
-        pillar, caps, knobs = MODULE.score_agent(
+        pillar, caps, knobs = score_space(
             MODULE.AgentFacts(knobs={"model": ["a", "b"]})
         )
         self.assertIn("agent-no-varying-knobs", [cap.condition for cap in caps])
@@ -3089,10 +3118,10 @@ class DocumentedSchemaTests(unittest.TestCase):
         withholds. The direction is the constraint - see
         `test_a_config_space_never_lowers_agent_confidence`.
         """
-        declared, _, _ = MODULE.score_agent(
+        declared, _, _ = score_space(
             MODULE.AgentFacts(knobs={"model": ["a", "b"]}, config_space_supplied=True)
         )
-        absent, _, _ = MODULE.score_agent(MODULE.AgentFacts())
+        absent, _, _ = score_space(MODULE.AgentFacts())
         self.assertEqual(declared.score, absent.score)
         self.assertEqual(declared.confidence, 1.0)
         self.assertEqual(absent.confidence, 0.0)
@@ -3128,7 +3157,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         """
         for document in ({"knobs": {}}, {"knobs": {}, "wired": []}):
             with self.subTest(document=document):
-                pillar, caps, knobs = MODULE.score_agent(
+                pillar, caps, knobs = score_space(
                     MODULE.agent_facts_from_config_space(document)
                 )
                 self.assertEqual(
@@ -3179,7 +3208,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         pinned number would fail there for a reason that has nothing to do with
         wiring.
         """
-        pillar, caps, knobs = MODULE.score_agent(
+        pillar, caps, knobs = score_space(
             MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=("model",))
         )
         self.assertNotIn("agent-no-varying-knobs", [cap.condition for cap in caps])
@@ -3389,10 +3418,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         score = json.loads(output)
         agent = next(p for p in score["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["score"], 100)
+        checks = {sub["name"]: sub for sub in agent["subscores"]}
+        # The document establishes the whole search space, which is what this
+        # test has always been about, and it still does.
+        self.assertEqual(checks["search-space"]["value"], MODULE.SEARCH_SPACE_WEIGHT)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in score["caps"]]
         )
+        # And the pillar is no longer only that. A document says nothing about
+        # whether the agent has a prompt, a bounded loop, or tools it can
+        # reach, so those four checks are unanswered here - withheld rather
+        # than excluded, because the guide asks for that read at every gate
+        # where an agent was found, and a check the run was asked for and did
+        # not supply may not be free.
+        for name, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=name):
+                self.assertFalse(checks[name]["measured"])
+                self.assertTrue(checks[name]["withheld"])
+        self.assertLess(agent["score"], 100)
 
     def test_malformed_config_space_exits_two(self) -> None:
         """A typo in a hand-authored document is bad input, not a crash.
@@ -3488,7 +3531,11 @@ class CliTests(unittest.TestCase):
                 )[1]
             )
         agent = next(p for p in read["pillars"] if p["name"] == "agent")
-        self.assertEqual(agent["confidence"], 1.0)
+        space = next(s for s in agent["subscores"] if s["name"] == "search-space")
+        # The read measured the search space. The pillar's own confidence is
+        # lower since #184 because this document answers only the knob half of
+        # the read, which is the point: the other half is asked for and absent.
+        self.assertTrue(space["measured"])
         self.assertGreater(agent["score"], 0)
         self.assertNotIn(
             "agent-no-varying-knobs", [cap["condition"] for cap in read["caps"]]
@@ -3919,7 +3966,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         agent is what counts them"), and "read the agent first" is one edit away
         from "the enhanced run will write that document".
         """
-        pillar, caps, _ = MODULE.score_agent(MODULE.AgentFacts())
+        pillar, caps, _ = score_space(MODULE.AgentFacts())
         lines = [sub.evidence for sub in pillar.subscores] + [
             cap.reason for cap in caps
         ]
@@ -3966,7 +4013,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 "evidence": "agent.py:11 STYLES[style] selects the system prompt",
             },
         )
-        pillar, caps, knobs = MODULE.score_agent(facts)
+        pillar, caps, knobs = score_space(facts)
         self.assertEqual(caps, [])
         self.assertEqual(knobs, [])
         self.assertEqual(pillar.confidence, 1.0)
@@ -4102,7 +4149,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 "evidence": "agent.py:12 seed= is passed through",
             },
         )
-        pillar, caps, _knobs = MODULE.score_agent(facts)
+        pillar, caps, _knobs = score_space(facts)
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         self.assertTrue(caps[0].blocks)
         self.assertTrue(pillar.subscores[0].measured)
@@ -4245,14 +4292,25 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         here. `FULLY_SYNTHETIC_CAP` takes its place, which keeps the pair the
         test was built to compare - two conditions with unrelated remedies,
         because a rule proven on one advisory cap is a rule about that cap.
+
+        The size fixture is 28 comparable rows and not 15, because #197 made a
+        size below that one ASK - it offers to write the difference up to the
+        walkthrough's own total - and a cap that asks is a cap the report is
+        supposed to route. That is the sibling case below. What is asserted
+        here is still the same rule on the same condition: a ceiling that
+        bounds a claim and asks for nothing prints no fix.
         """
         pillars = [
             MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
-        for cap in (MODULE.FULLY_SYNTHETIC_CAP, MODULE.power_ceiling(15)):
+        for cap in (
+            MODULE.FULLY_SYNTHETIC_CAP,
+            MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS),
+        ):
             with self.subTest(cap=cap.condition):
                 self.assertFalse(cap.blocks)
+                self.assertFalse(cap.asks)
                 report = MODULE.render_markdown(
                     MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
                 )
@@ -5164,6 +5222,14 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 25: ["evaluator-invalid", "dataset-shape-unrecognised"],
                 40: ["evaluator-absent", "evaluator-unresolved"],
                 45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                # One split defect read from each end: the same rows on both
+                # sides, and every scoreable row on one. Neither breaks the
+                # material and both leave the run comparing nothing, so they
+                # bound the claim by the same amount. The overlap is ranked
+                # first because it is the older and broader finding - a leaky
+                # split is wrong wherever the rows fall - while the empty
+                # tuning side is one arrangement of the same line.
+                50: ["dataset-tune-holdout-overlap", "dataset-tuning-split-empty"],
                 # The declared/silent pair. Identical ceilings deliberately -
                 # the assumption IS "generated" either way - and the declared
                 # one is ranked first because what differs is the remedy, which
@@ -5450,6 +5516,31 @@ class TheDeclaredCapOrderDecidesTheRunTests(unittest.TestCase):
         self.assertEqual(score.recommended_action, "get-data")
 
 
+def score_space(facts):
+    """`score_agent`, reported as the search-space-only pillar it used to be.
+
+    #184 widened the AGENT pillar. It carried one sub-score - how much there is
+    to search - and printed `AGENT` over it, which a customer reads as a verdict
+    on their agent; it now carries four more checks about how the agent is put
+    together, so `Pillar.score` and `Pillar.confidence` are no longer the search
+    space's own percentage and coverage.
+
+    Every assertion that reaches this helper predates that change and is asking
+    the OLD question, which is still a real question and still has an exact
+    answer. So it is asked exactly: `combine` is re-run over the one sub-score
+    that answers it, which reproduces the previous pillar rather than
+    approximating it. Rewriting those expectations to the widened pillar's
+    numbers would have been the other option and a worse one - it would leave
+    the search-space arithmetic asserted nowhere, which is the half of this
+    pillar #184 does not touch.
+
+    Tests about the widened pillar call `MODULE.score_agent` directly.
+    """
+    pillar, caps, knobs = MODULE.score_agent(facts)
+    space = [sub for sub in pillar.subscores if sub.name == "search-space"]
+    return MODULE.combine(pillar.name, space), caps, knobs
+
+
 def _clean_dataset(**overrides: object) -> "MODULE.DatasetFacts":
     """A dataset with nothing wrong with it, minus whatever a test changes.
 
@@ -5583,7 +5674,12 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
             [("dataset-below-measurable-size", False)],
         )
         self.assertEqual(score.status, "OK")
-        self.assertEqual(score.recommended_action, "proceed")
+        # Bounded, not blocked - and since #197 routed, because at this size
+        # there is something this run can do about it that does not involve
+        # sending anyone away for data. 18 comparable rows is under the
+        # walkthrough's own total, so the payload carries the offer.
+        self.assertTrue(score.caps[0].asks)
+        self.assertEqual(score.recommended_action, "add-examples")
         self.assertEqual(score.overall, MODULE.WIRING_CHECK_CEILING)
 
     def test_a_split_with_nothing_scoreable_still_blocks(self) -> None:
@@ -5596,10 +5692,13 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         score = self._score(_clean_dataset(labelled_rows=120, tuning_labelled_rows=0))
         self.assertEqual(
             [(cap.condition, cap.blocks) for cap in score.caps],
-            [("dataset-below-measurable-size", True)],
+            [("dataset-tuning-split-empty", True)],
         )
         self.assertEqual(score.status, "BLOCKED")
-        self.assertEqual(score.recommended_action, "get-data")
+        # `resplit-dataset` since #197, and the remedy is the finding: the
+        # rows are there and labelled, so `get-data` was sending a customer
+        # holding 120 usable examples away to collect more.
+        self.assertEqual(score.recommended_action, "resplit-dataset")
 
     def test_a_condition_asking_for_a_creation_or_repair_still_blocks(self) -> None:
         """The other half of the rule, so this is a partition and not a purge.
@@ -5648,10 +5747,18 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         Both fixtures here are the third state: a ceiling that bounds a claim
         and asks the user for nothing. `dataset-fully-synthetic` routes to
         `connect-real-data`, which is a scope on the claim rather than an
-        errand, and `dataset-coarse-resolution` routes to `get-data`, which is
-        the case this test was written for - telling a customer with 30 rows to
-        go and get more before their first run is the conflation `blocks` was
-        added to end.
+        errand, and `dataset-coarse-resolution` routes to `add-examples`, which
+        is the case this test was written for - telling a customer with a
+        working dataset to go and get more before their first run is the
+        conflation `blocks` was added to end.
+
+        The size fixture holds 58 rows split 29 and 29, and both halves of that
+        matter. 29 keeps the comparison under thirty, so the resolution ceiling
+        still fires and there is a cap to assert about; and 58 comparable rows
+        is above the walkthrough's own total, so #197's offer to write the
+        difference has nothing to offer and this cap asks nothing. Below that
+        total the same condition asks, and the sibling test below is where that
+        belongs.
 
         `dataset-generated-answer-key` used to be a third fixture here and is
         not one any more; it moved to the sibling below when it began to ask.
@@ -5661,15 +5768,15 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
                 collected_rows=0, synthesised_rows=240, sources=("synthetic",)
             ),
             _clean_dataset(
-                rows=30,
-                labelled_rows=30,
-                tuning_rows=15,
-                holdout_rows=15,
-                tuning_labelled_rows=15,
-                holdout_labelled_rows=15,
-                difficulty_tagged_rows=30,
-                collected_rows=30,
-                answerable_rows=30,
+                rows=58,
+                labelled_rows=58,
+                tuning_rows=29,
+                holdout_rows=29,
+                tuning_labelled_rows=29,
+                holdout_labelled_rows=29,
+                difficulty_tagged_rows=58,
+                collected_rows=58,
+                answerable_rows=58,
             ),
         ):
             score = self._score(facts)
@@ -6296,8 +6403,12 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
                 pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS)
             ).recommended_action
 
-        advisory = MODULE.power_ceiling(15)
+        # At the walkthrough's own size: still the coarse-resolution ceiling,
+        # and since #197 no longer an offer to add rows, so it is the advisory
+        # cap this test needs - one that neither blocks nor asks.
+        advisory = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS)
         self.assertFalse(advisory.blocks)
+        self.assertFalse(advisory.asks)
         self.assertEqual(action_for([]), MODULE.PROCEED)
         self.assertEqual(action_for([advisory]), MODULE.PROCEED)
 
@@ -6858,9 +6969,18 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     """
 
     def all_check_names(self) -> set[str]:
-        """Read off the module, so a new check cannot be added unnamed."""
+        """Read off the module, so a new check cannot be added unnamed.
+
+        Two readings, because one of them has a blind spot this module walked
+        into. The AST scan finds `SubScore("literal", ...)`, which is every
+        check written out by hand; #184's four are built in a loop over
+        `AGENT_BUILD_CHECKS`, so their first argument is a variable and the scan
+        saw none of them - the same class `cap_construction_blocks` records for
+        caps built inside a function. The table is therefore read as well, and a
+        check declared in either place has to be named.
+        """
         source = Path(MODULE.__file__).read_text(encoding="utf-8")
-        return {
+        literal = {
             node.args[0].value
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.Call)
@@ -6869,6 +6989,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             and node.args
             and isinstance(node.args[0], ast.Constant)
         }
+        return literal | {name for name, _weight in MODULE.AGENT_BUILD_CHECKS}
 
     def test_every_check_has_a_plain_language_name(self) -> None:
         names = self.all_check_names()
@@ -7410,16 +7531,23 @@ class RowLevelSanityTests(unittest.TestCase):
     def test_a_ceiling_that_asks_nothing_still_recommends_nothing(self) -> None:
         """The false-red direction, and the conflation this must not restore.
 
-        A small dataset is bounded and has no question behind it. Telling a
-        customer with 25 rows to go and get more before their first run is the
-        defect `blocks` was added to end, so an advisory ceiling that does not
-        ask keeps `proceed`.
+        A dataset the run cannot add to is bounded and has no question behind
+        it. Telling a customer to go and get more data before their first run
+        is the defect `blocks` was added to end, so an advisory ceiling that
+        does not ask keeps `proceed`.
+
+        The count is the walkthrough's own total. Below it #197 turns this cap
+        into an offer to write the difference, which is a question and is
+        routed as one by the sibling test; at it and above there is nothing to
+        offer, the ceiling still stands on the resolution, and this is the
+        false-red direction that must stay silent.
         """
         pillars = [
             MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
-        advisory = MODULE.power_ceiling(25)
+        advisory = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS)
+        self.assertEqual(advisory.condition, "dataset-coarse-resolution")
         self.assertFalse(advisory.blocks)
         self.assertFalse(advisory.asks)
         score = MODULE.aggregate(pillars, [advisory], (), dict(MODULE.DEFAULT_WEIGHTS))
@@ -7958,3 +8086,672 @@ class AbsentAndConsentedIsNotTheSameAsBrokenTests(unittest.TestCase):
                     MODULE.recommended_action([found[condition]]),
                     found[condition].action_kind,
                 )
+
+
+class TheDatasetSizeLadderTests(unittest.TestCase):
+    """One remedy per verdict, and an offer bounded at the size we build (#197).
+
+    Three conditions used to emit `get-data`. Measured through `power_ceiling`
+    on trunk `6de98918`: it blocked for an absent dataset, blocked at zero
+    comparable rows, and proceeded from one row to twenty-nine. So a consumer
+    switching on `recommended_action` could not tell "there is no dataset" from
+    "your dataset is small", and a person reading the card got one instruction
+    whose meaning was decided by a field beside it.
+
+    The fix is the remedy, not a restatement of the rule: two instructions, two
+    slugs, and a third condition for the finding that was travelling inside the
+    first one as a runtime branch. What these assert is the owner's table -
+    nothing to compare stops, anything to compare does not, and below the size
+    this guide builds for a project with none the card offers the difference.
+    """
+
+    def test_the_ladder_is_the_one_the_owner_drew(self) -> None:
+        """Every rung, executed, with no declared split so the counts agree.
+
+        Written as the whole table rather than as a rung per test, because the
+        defect was never in one rung: it was in two rungs disagreeing, which
+        only a table can state.
+        """
+        walkthrough = MODULE.WALKTHROUGH_DATASET_ROWS
+        expected = {
+            0: ("dataset-tuning-split-empty", "resplit-dataset", True, False),
+            1: ("dataset-below-measurable-size", "add-examples", False, True),
+            9: ("dataset-below-measurable-size", "add-examples", False, True),
+            10: ("dataset-coarse-resolution", "add-examples", False, True),
+            walkthrough - 1: ("dataset-coarse-resolution", "add-examples", False, True),
+            walkthrough: ("dataset-coarse-resolution", "add-examples", False, False),
+            29: ("dataset-coarse-resolution", "add-examples", False, False),
+        }
+        for count, (condition, remedy, blocks, asks) in sorted(expected.items()):
+            with self.subTest(comparable=count):
+                cap = MODULE.power_ceiling(count)
+                self.assertIsNotNone(cap, "a size under thirty raises a ceiling")
+                self.assertEqual(
+                    (cap.condition, cap.action_kind, cap.blocks, cap.asks),
+                    (condition, remedy, blocks, asks),
+                )
+        # And the top of the ladder, where nothing is raised at all.
+        for count in (MODULE.COARSE_RESOLUTION_EXAMPLES, 200):
+            with self.subTest(comparable=count):
+                self.assertIsNone(MODULE.power_ceiling(count))
+
+    def test_every_dataset_remedy_gives_one_answer_about_waiting(self) -> None:
+        """The defect stated as the property that refuses it.
+
+        Read off the module rather than listed here: every condition that
+        shares a remedy is built and its `blocks` compared, so a fifteenth cap
+        added to an existing slug with the opposite verdict fails on arrival.
+
+        `vary-knobs` is excluded and named rather than quietly skipped. Three of
+        its caps report an agent that was looked at and holds nothing to search
+        and a fourth reports that nothing about the agent reached the score at
+        all; that pair is the agent pillar's question and is recorded beside
+        `NO_SEARCH_SPACE_ESTABLISHED_CAP`, not settled here.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        declared = cap_construction_field(
+            source, "blocks", MODULE.Cap.__dataclass_fields__["blocks"].default
+        )
+        # Every condition observed, the way the sibling class already insists.
+        # Without it this reader is one-directional: a condition the AST scan
+        # missed is a remedy group judged on the half of its members the reader
+        # happened to find, and the group would agree with itself by omission.
+        self.assertEqual(
+            set(declared),
+            set(MODULE.ACTION_FOR_CONDITION),
+            "the conditions built and the conditions mapped are not the same set",
+        )
+        by_remedy: dict[str, dict[str, set]] = {}
+        for condition, values in declared.items():
+            if condition == "agent-no-varying-knobs":
+                continue
+            remedy = MODULE.ACTION_FOR_CONDITION[condition]
+            by_remedy.setdefault(remedy, {})[condition] = values
+        shared = {
+            remedy: group for remedy, group in by_remedy.items() if len(group) > 1
+        }
+        self.assertIn("add-examples", shared, "the split remedy lost a sibling")
+        self.assertIn("resplit-dataset", shared, "the blocking pair lost a sibling")
+        for remedy, group in sorted(shared.items()):
+            with self.subTest(remedy=remedy):
+                answers = {value for values in group.values() for value in values}
+                self.assertEqual(
+                    len(answers),
+                    1,
+                    f"the conditions routing to {remedy!r} disagree about "
+                    f"whether the run waits: "
+                    f"{ {c: sorted(v) for c, v in sorted(group.items())} } - one "
+                    "instruction that means stop on one card and carry on on "
+                    "the next is what #197 was filed about",
+                )
+        self.assertEqual(
+            {c for c, r in MODULE.ACTION_FOR_CONDITION.items() if r == "get-data"},
+            {"dataset-absent"},
+            "`get-data` carries a second condition again; it is the one remedy "
+            "that means the customer has to go and find data this run cannot "
+            "write, so anything a top-up would fix does not belong on it",
+        )
+
+    def test_the_offer_stops_at_the_size_this_guide_builds(self) -> None:
+        """The owner's messaging constraint, checked on the printed sentence.
+
+        The bound has to be a number on the card. An offer to add examples that
+        names no total reads as an offer to generate without end, which is the
+        one thing a customer must not be left imagining about their bill.
+        """
+        offered = MODULE.power_ceiling(9).reason
+        self.assertIn(f"{MODULE.WALKTHROUGH_DATASET_ROWS} rows in total", offered)
+        self.assertIn(f"{MODULE.WALKTHROUGH_TUNING_ROWS} to tune on", offered)
+        self.assertIn(f"{MODULE.WALKTHROUGH_HOLDOUT_ROWS} held back", offered)
+        self.assertIn("stops there", offered)
+        self.assertIn("asks first", offered)
+        # Nothing in it scales with the customer's project, and no phrasing
+        # leaves the total open. Both are checked on the words, because both
+        # are how a bounded offer is misread as an unbounded one.
+        for unbounded in ("as many", "more rows", "up to date", "each row"):
+            with self.subTest(phrase=unbounded):
+                self.assertNotIn(unbounded, offered)
+        # THE FALSE-RED DIRECTION. At and above that size there is nothing to
+        # offer, so the sentence is absent rather than reworded - a project
+        # holding what this run builds must not be offered it.
+        settled = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS).reason
+        self.assertNotIn("generated examples", settled)
+        self.assertNotIn("rows in total", settled)
+        # Not `assertNotIn("28")`: at exactly this size the sentence opens with
+        # the count, so the digits are in it for an unrelated reason and that
+        # assertion would have been a spelling check on the wrong string.
+        self.assertTrue(settled.startswith(f"{MODULE.WALKTHROUGH_DATASET_ROWS} "))
+
+    def test_the_ceiling_reads_the_split_and_the_offer_reads_the_dataset(
+        self,
+    ) -> None:
+        """Two counts, and the fixture that proved they cannot be one.
+
+        The guide's own walkthrough dataset is 28 rows cut 18 to tune on and 10
+        held back. Asked of the tuning side alone, the offer fired on it: a
+        project holding exactly what this run builds was offered rows to reach
+        a total it already had. The ceiling still reads the tuning side,
+        because resolution is a property of the comparison and not of the file.
+        """
+        cap = MODULE.power_ceiling(
+            MODULE.WALKTHROUGH_TUNING_ROWS, MODULE.WALKTHROUGH_DATASET_ROWS
+        )
+        self.assertEqual(cap.condition, "dataset-coarse-resolution")
+        self.assertFalse(cap.asks, "the walkthrough's own dataset was offered a top-up")
+        # And the reverse: a small dataset whose split leaves fewer rows on the
+        # tuning side is still one small dataset, so the offer fires once on
+        # what the file holds.
+        asked = MODULE.power_ceiling(9, 12)
+        self.assertTrue(asked.asks)
+        self.assertIn("only 9 comparable example(s)", asked.reason)
+
+    def test_partial_labels_are_repaired_before_a_bounded_top_up(self) -> None:
+        cap = MODULE.power_ceiling(1, 1, available_rows=27)
+        self.assertFalse(cap.asks)
+        self.assertIn("Review or label the 26 existing row(s)", cap.reason)
+        self.assertNotIn("18 to tune on", cap.reason)
+
+    def test_a_project_owned_split_is_preserved_in_the_offer(self) -> None:
+        cap = MODULE.power_ceiling(
+            9, 14, available_rows=14, preserve_existing_split=True
+        )
+        self.assertTrue(cap.asks)
+        self.assertIn("preserving your project's existing", cap.reason)
+        self.assertNotIn("18 to tune on", cap.reason)
+        self.assertNotIn("10 held back", cap.reason)
+
+    def test_a_split_with_nothing_scoreable_is_a_split_repair(self) -> None:
+        """Reached through `score_dataset`, so the branch is proved reachable.
+
+        The state is a real one and no other cap stops it: every label on one
+        side of a declared split, so the aggregate count is non-zero and
+        `dataset-no-expected-outputs` never fires. What #197 changes is that
+        the card names the split rather than asking a customer holding 120
+        labelled rows to go and collect examples.
+        """
+        _, caps = MODULE.score_dataset(
+            _clean_dataset(labelled_rows=120, tuning_labelled_rows=0)
+        )
+        raised = {cap.condition: cap for cap in caps}
+        self.assertIn("dataset-tuning-split-empty", raised)
+        cap = raised["dataset-tuning-split-empty"]
+        self.assertTrue(cap.blocks)
+        self.assertFalse(cap.asks)
+        self.assertEqual(cap.action_kind, "resplit-dataset")
+        self.assertEqual(cap.ceiling, MODULE.TUNING_SPLIT_EMPTY_CEILING)
+        self.assertEqual(
+            MODULE.ROUTE_CATEGORY["dataset-tuning-split-empty"],
+            MODULE.CREATION_OR_REPAIR,
+        )
+        # It is ranked below the sizes it implies and above the conditions that
+        # imply it, which is the ordering rule with a derivation behind it.
+        self.assertLess(cap.ceiling, MODULE.WIRING_CHECK_CEILING)
+        self.assertLess(cap.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
+        self.assertGreater(cap.ceiling, MODULE.DATASET_NO_EXPECTED_OUTPUTS_CEILING)
+        # THE FALSE-RED DIRECTION. Move the labels back onto the tuning side
+        # and nothing here fires: this cap is about an empty side, not about a
+        # declared split.
+        _, healthy = MODULE.score_dataset(_clean_dataset())
+        self.assertNotIn(
+            "dataset-tuning-split-empty", [cap.condition for cap in healthy]
+        )
+
+    def test_consent_removes_the_stop_and_never_the_score(self) -> None:
+        """The rule the ask is allowed to change, and the one it is not.
+
+        Structural, the way #213 asserted the same rule for provenance: the
+        scorer takes no consent input at all, so no answer at the ask can reach
+        the arithmetic. A topped-up dataset scores what its rows score.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        for word in ("consent", "agreed", "approval", "permission"):
+            with self.subTest(word=word):
+                self.assertNotIn(f'"--{word}', source)
+        # The rows a top-up writes are generated rows and are priced as such,
+        # so agreeing cannot pay: the credit for a synthesised row is below the
+        # credit for a collected one, and the generated ceiling still binds.
+        self.assertLess(MODULE.SYNTHESISED_ROW_POINTS, MODULE.COLLECTED_ROW_POINTS)
+        band, _limited = MODULE.band_for(MODULE.FULLY_SYNTHETIC_CEILING, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band), MODULE.BAND_ORDER.index("STRONG")
+        )
+
+
+def _build_document(**overrides):
+    """A read of a well-built agent, minus whatever a test changes.
+
+    Written once because these tests are about what ONE answer does to the
+    pillar, and a document assembled per test drifts into carrying two.
+    """
+    document = {
+        "prompt": {
+            "present": True,
+            "few_shot": 3,
+            "evidence": "agent.py:9-31 SYSTEM carries three worked examples",
+        },
+        "output-contract": {
+            "present": True,
+            "evidence": "agent.py:40 json.loads(reply) parses the answer",
+        },
+        "control-flow": {
+            "loop": True,
+            "bounded": True,
+            "evidence": "agent.py:44 for _ in range(MAX_STEPS)",
+        },
+        "tools": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": [],
+            "evidence": "agent.py:31 TOOLS lists both; both resolve here",
+        },
+    }
+    document.update(overrides)
+    return document
+
+
+def _read(build=None, knobs=None):
+    """The agent-knobs document as the CLI's own adapter reads it."""
+    document = {
+        "knobs": (
+            {
+                "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+                "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
+            }
+            if knobs is None
+            else knobs
+        )
+    }
+    if build is not None:
+        document["build"] = build
+    return MODULE.agent_facts_from_discovery(document)
+
+
+class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
+    """#184: `AGENT` over one number that answered a question about our search.
+
+    The pillar measured how many settings-combinations there were to try and
+    printed the customer's word over it. Two people with the same declared
+    space and very different agents scored the same, which is the complaint,
+    and the owner's answer was to keep the name by making it true rather than
+    to rename the pillar `SEARCH SPACE`.
+
+    What these pin is the honest half of that: the four checks are facts a read
+    of source can establish with a citation, the two that cannot be established
+    are said rather than scored, and a read that could not settle a check
+    reports that rather than scoring the agent zero for it.
+    """
+
+    def test_the_documented_agent_read_is_one_complete_consumable_object(self) -> None:
+        guide = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text()
+        section = guide.split("## Reading the agent for the opening score", 1)[1]
+        payload = section.split("```json", 1)[1].split("```", 1)[0]
+        document = json.loads(payload)
+        facts = MODULE.agent_facts_from_discovery(document)
+        self.assertTrue(facts.discovery_supplied)
+        self.assertEqual(
+            {signal.name for signal in facts.build or ()},
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
+
+    def _pillar(self, facts):
+        pillar, _caps, _knobs = MODULE.score_agent(facts)
+        return pillar, {sub.name: sub for sub in pillar.subscores}
+
+    def test_the_same_search_space_no_longer_scores_two_agents_alike(self) -> None:
+        """The complaint, executed, on one project with one config space.
+
+        Identical knobs; the only difference is what the read found about how
+        each agent is put together. Before #184 these were one number.
+        """
+        pillars = [
+            MODULE.Pillar("dataset", 98, 1.0, ()),
+            MODULE.Pillar("evaluation", 100, 1.0, ()),
+        ]
+
+        def overall(build):
+            pillar, caps, knobs = MODULE.score_agent(_read(build))
+            return MODULE.aggregate(
+                [*pillars, pillar], caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        strong = overall(_build_document())
+        thin = overall(
+            _build_document(
+                prompt={
+                    "present": True,
+                    "few_shot": 0,
+                    "evidence": "agent.py:9 one instruction line",
+                },
+                **{
+                    "output-contract": {
+                        "present": False,
+                        "evidence": "agent.py:40 returns the raw reply",
+                    },
+                    "control-flow": {
+                        "loop": True,
+                        "bounded": False,
+                        "evidence": "agent.py:44 while True with no break",
+                    },
+                },
+            )
+        )
+        self.assertGreater(
+            strong.overall,
+            thin.overall,
+            "the same declared search space still grades two agents alike",
+        )
+        # Both are honest answers, so both are fully measured - what separates
+        # them is what the read found, not how much of it happened.
+        self.assertEqual(strong.pillars[0].confidence, 1.0)
+        self.assertEqual(thin.pillars[0].confidence, 1.0)
+
+    def test_a_check_the_read_could_not_settle_is_not_a_zero(self) -> None:
+        """README.md's promise, on the input most likely to break it.
+
+        "A check this tool could not compute is marked unmeasured and excluded
+        rather than scored zero." A prompt assembled at runtime is the ordinary
+        case, and scoring it zero would say the agent has no prompt.
+        """
+        undetermined = _build_document(
+            prompt={
+                "determined": False,
+                "reason": "the prompt is fetched at runtime",
+                "evidence": "agent.py:12 load_prompt(url) returns it",
+            }
+        )
+        pillar, checks = self._pillar(_read(undetermined))
+        self.assertFalse(checks["prompt"].measured)
+        self.assertFalse(checks["prompt"].withheld)
+        self.assertIn("not established by this read", checks["prompt"].evidence)
+        self.assertIn("fetched at runtime", checks["prompt"].evidence)
+        # Excluded, so it lowers confidence and not the score, and it scores
+        # strictly better than an agent that genuinely has no prompt.
+        self.assertLess(pillar.confidence, 1.0)
+        answered, _ = self._pillar(
+            _read(
+                _build_document(
+                    prompt={
+                        "present": False,
+                        "evidence": "agent.py: no prompt reaches the call",
+                    }
+                )
+            )
+        )
+        self.assertGreater(pillar.score, answered.score)
+
+    def test_determined_is_a_strict_boolean(self) -> None:
+        for malformed in ("false", None, 0):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(
+                    MODULE.AgentDiscoveryInputError, "must be true or false"
+                ):
+                    _read(
+                        _build_document(
+                            prompt={
+                                "determined": malformed,
+                                "present": True,
+                                "evidence": "agent.py:12",
+                            }
+                        )
+                    )
+
+    def test_a_read_that_never_happened_is_withheld_and_never_free(self) -> None:
+        """The rule this repository has broken in six places.
+
+        Silence must not outscore an honest answer. The four checks are the
+        run's to supply wherever an agent was found, so their absence keeps its
+        weight and earns nothing - and the worst honest read still beats it.
+        """
+        silent, checks = self._pillar(_read())
+        for name, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=name):
+                self.assertFalse(checks[name].measured)
+                self.assertTrue(checks[name].withheld)
+                self.assertEqual(checks[name].value, 0.0)
+        worst, _ = self._pillar(
+            _read(
+                _build_document(
+                    prompt={"present": False, "evidence": "agent.py: none"},
+                    **{
+                        "output-contract": {
+                            "present": False,
+                            "evidence": "agent.py:40 raw reply",
+                        },
+                        "control-flow": {
+                            "loop": True,
+                            "bounded": False,
+                            "evidence": "agent.py:44 while True",
+                        },
+                        "tools": {
+                            "used": True,
+                            "declared": ["search"],
+                            "unreachable": ["search"],
+                            "evidence": "agent.py:31 declared, never defined",
+                        },
+                    },
+                )
+            )
+        )
+        # Never OUTSCORES, which is the rule, and here it ties: a withheld
+        # check keeps its weight and earns nothing, and so does an honest zero,
+        # so the arithmetic is deliberately the same. What separates them is
+        # the other half of the pair - the honest read is MEASURED, so it says
+        # what it found and the silence does not, and confidence is where that
+        # shows. Asserting a strict points gap would be asking the score to
+        # punish silence twice.
+        self.assertLessEqual(
+            silent.score,
+            worst.score,
+            "saying nothing about the agent outscores the worst honest read",
+        )
+        self.assertGreater(
+            worst.confidence,
+            silent.confidence,
+            "an honest read of the agent is no better evidenced than silence",
+        )
+        # And the band gate survives it: a run that supplies only the knob half
+        # keeps enough of the pillar measured that the card is not demoted on a
+        # fact about our own input.
+        self.assertGreaterEqual(silent.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
+
+    def test_an_agent_with_no_tools_is_neither_charged_nor_paid(self) -> None:
+        """The N/A case, which is not a zero and is not full marks either."""
+        none = _build_document(
+            tools={"used": False, "evidence": "agent.py: no tool list reaches the call"}
+        )
+        pillar, checks = self._pillar(_read(none))
+        self.assertFalse(checks["tools"].measured)
+        self.assertFalse(checks["tools"].withheld)
+        self.assertFalse(checks["tools"].applicable)
+        self.assertEqual(checks["tools"].value, 0.0)
+        # Excluded, so the pillar renormalizes over the checks that apply. That
+        # is not the same number as an agent whose tools all resolve - the
+        # denominator moved - and it is close to it rather than below it, which
+        # is the property that matters: having no tools is not a deduction.
+        every_tool, _ = self._pillar(_read(_build_document()))
+        self.assertAlmostEqual(pillar.score, every_tool.score, delta=2)
+        # And a declared tool nothing implements is charged, which is the one
+        # thing "wired correctly" can be checked for by reading source.
+        broken, broken_checks = self._pillar(
+            _read(
+                _build_document(
+                    tools={
+                        "used": True,
+                        "declared": ["search", "fetch"],
+                        "unreachable": ["fetch"],
+                        "evidence": "agent.py:31 fetch is declared and undefined",
+                    }
+                )
+            )
+        )
+        self.assertLess(broken.score, pillar.score)
+        self.assertIn("not found behind the name", broken_checks["tools"].evidence)
+
+    def test_every_check_names_the_line_it_was_read_from(self) -> None:
+        """#210's discipline, on the input that can raise a score.
+
+        Evidence is required on every answer including the ones that say no,
+        because "this agent has no prompt" is a finding about somebody's code
+        and has to be pointed at.
+        """
+        for check in ("prompt", "output-contract", "control-flow", "tools"):
+            with self.subTest(check=check, missing="evidence"):
+                spec = dict(_build_document()[check])
+                spec.pop("evidence")
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    _read(_build_document(**{check: spec}))
+                self.assertIn("carries no evidence", str(caught.exception))
+        # An undetermined check has to say what stopped the read, for the same
+        # reason: it leaves the pillar, and a silent exit is unauditable.
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            _read(
+                _build_document(prompt={"determined": False, "evidence": "agent.py:12"})
+            )
+        self.assertIn("gives no reason", str(caught.exception))
+
+    def test_a_document_that_answers_three_checks_is_refused(self) -> None:
+        """A missing key and a `no` are different statements about the code."""
+        partial = _build_document()
+        partial.pop("tools")
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            _read(partial)
+        self.assertIn("answers no tools check", str(caught.exception))
+        self.assertIn("'determined': false", str(caught.exception))
+
+    def test_what_the_pillar_does_not_cover_is_said_and_not_scored(self) -> None:
+        """Two of the owner's six, reported rather than guessed at.
+
+        Whether the dataset and the evaluation method are wired into the agent
+        is an integration this run builds later and verifies against the
+        installed SDK, so the opening read has nothing to establish. It is a
+        sentence on the card and not a check, because a check that can never be
+        measured would hold this pillar's confidence under the band gate on
+        every card forever.
+        """
+        pillar, _checks = self._pillar(_read(_build_document()))
+        self.assertEqual(pillar.confidence, 1.0)
+        self.assertNotIn(
+            "wired",
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
+        score = MODULE.aggregate(
+            [MODULE.Pillar("dataset", 98, 1.0, ()), pillar],
+            [],
+            (),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        card = MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False)
+        self.assertIn(MODULE.AGENT_NOT_COVERED, card)
+        self.assertIn("not covered by this pillar", card)
+        # Under the agent pillar and nowhere else - it is a statement about
+        # what this pillar reads, not a disclaimer about the card.
+        agent_block = card.split("AGENT", 1)[1].split("DATASET", 1)[0]
+        self.assertIn("not covered by this pillar", agent_block)
+        self.assertEqual(card.count("not covered by this pillar"), 1)
+
+    def test_the_build_read_survives_a_config_space_document(self) -> None:
+        """A document decides the search space and says nothing about the rest.
+
+        The `elif` this replaces existed to stop a source read talking over a
+        document that attests nothing is wired - a claim about the SEARCH
+        SPACE. No config space claims anything about whether the agent has a
+        prompt or a bounded loop, so dropping the build half at the close would
+        report four checks falling to withheld while nothing about the agent
+        changed.
+        """
+        facts = MODULE.agent_facts_from_config_space(
+            {"knobs": {"model": ["a", "b"]}, "wired": ["model"]}
+        )
+        with_build = replace(facts, build=_read(_build_document()).build)
+        document_only, document_checks = self._pillar(facts)
+        both, both_checks = self._pillar(with_build)
+        self.assertTrue(document_checks["prompt"].withheld)
+        self.assertTrue(both_checks["prompt"].measured)
+        self.assertEqual(
+            document_checks["search-space"].value,
+            both_checks["search-space"].value,
+            "the read moved the search space, which is the thing it may not do",
+        )
+        self.assertGreater(both.score, document_only.score)
+
+
+class OneFactIsOneRemediationLineTests(unittest.TestCase):
+    """Found by reviewing the fix rather than the feature (#184).
+
+    The card already collapses several checks resting on one fact into one
+    line, and says why in its own comment: printing it per check "reads as
+    several findings" a customer must each act on. `collect_gaps` did not, so
+    widening the agent pillar turned one absent reading into four remediation
+    lines carrying the identical sentence - the same defect the card fixed, one
+    layer over, re-shipped by the change that made four checks possible.
+    """
+
+    def _gaps(self, document):
+        pillar, caps, knobs = MODULE.score_agent(
+            MODULE.agent_facts_from_discovery(document)
+        )
+        return MODULE.aggregate(
+            [MODULE.Pillar("dataset", 98, 1.0, ()), pillar],
+            caps,
+            knobs,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_one_absent_reading_is_one_line_naming_every_check_it_covers(
+        self,
+    ) -> None:
+        score = self._gaps(
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+        )
+        absent = [gap for gap in score.gaps if "could not be measured" in gap]
+        self.assertEqual(len(absent), 1, f"one fact, {len(absent)} lines: {absent}")
+        # Collapsed, not dropped: every check it stands for is still named, so
+        # the line says what it covers rather than hiding three of them.
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=check):
+                self.assertIn(check, absent[0])
+
+    def test_checks_resting_on_different_facts_stay_separate(self) -> None:
+        """The false-red direction: collapsing is keyed on the fact, not the
+        pillar. Two unmeasured checks with different reasons are two findings,
+        and merging them would hide one.
+        """
+        score = self._gaps(
+            {
+                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}},
+                "build": {
+                    "prompt": {
+                        "determined": False,
+                        "reason": "the prompt is fetched at runtime",
+                        "evidence": "a:2",
+                    },
+                    "output-contract": {"present": True, "evidence": "a:3"},
+                    "control-flow": {"loop": False, "evidence": "a:4"},
+                    "tools": {"used": False, "evidence": "a:5"},
+                },
+            }
+        )
+        absent = [gap for gap in score.gaps if "could not be measured" in gap]
+        self.assertEqual(len(absent), 1, absent)
+        self.assertTrue(any("fetched at runtime" in gap for gap in absent))
+        self.assertFalse(any("no tools" in gap for gap in score.gaps))
+
+    def test_the_durable_report_says_what_the_pillar_does_not_cover(self) -> None:
+        """The card said it and the saved report did not.
+
+        The report is the artifact that outlives the terminal, and it is where
+        four agent checks most read as all of them.
+        """
+        score = self._gaps(
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+        )
+        report = MODULE.render_markdown(score)
+        self.assertIn(MODULE.AGENT_NOT_COVERED, report)
+        agent_block = report.split("## Agent", 1)[1].split("## ", 1)[0]
+        self.assertIn("not covered by this pillar", agent_block)

@@ -171,13 +171,25 @@ The lines under each pillar on the card
     range of difficulty        - whether the rows span easy to hard. If every
                                  row is easy, every configuration looks equally
                                  good.
-    repeated or dominant answers - whether the same input or the same expected
-                                 answer keeps recurring, which lets a lazy
-                                 configuration score well by guessing it. Rows
-                                 repeat when 90% or more of their words match,
-                                 identical rows included; charged once. 90% is
-                                 a chosen line, not a discovered one - 89%
-                                 alike is below it, not thereby far apart.
+    repeated or dominant answers - whether the same input recurs, or one answer
+                                 covers most rows, which lets a lazy
+                                 configuration score well by guessing it.
+                                 Reusing an answer is fine; one taking over is
+                                 not. Rows repeat when 70% or more of their
+                                 3-word runs match; charged once. Runs, so
+                                 reordered words are not a repeat, and under 3
+                                 words only identical rows count. 70% is
+                                 derived: one word changed mid-row still counts
+                                 at 19 words, 8 if it is the first or last. An
+                                 answer dominates when guessing it alone
+                                 already covers a third of the way from chance
+                                 - 1 in however many answers your rows use - to
+                                 a perfect score, so 50% is balanced for yes/no
+                                 and dominant for a/b/c/d. Fewer than two rows
+                                 per distinct answer on average - free text, or too few rows
+                                 to fill your labels - have no chance to measure
+                                 against, and that line then reports as not
+                                 checked rather than as clean.
     where the rows came from   - whether the data was collected or written by a
                                  model. Both are usable; only one is evidence
                                  about production.
@@ -201,6 +213,29 @@ The lines under each pillar on the card
                                  budget to try. Values too close to tell apart
                                  count once, so ten settings with one value
                                  each is a space of one, not a space of ten.
+    what the model is told, and shown - whether a prompt reaches the model at
+                                 all, and how many worked examples go with it.
+                                 Two examples begin to show a pattern; one
+                                 illustrates.
+    whether the answer's shape is pinned down - whether anything makes the agent
+                                 answer in a fixed shape: a parser, a schema, a
+                                 response format, or an instruction naming one.
+                                 Without it, an evaluator has to accept whatever
+                                 comes back.
+    whether it ends, and on what - whether the agent stops on something you can
+                                 point at. One call per input stops trivially; a
+                                 loop with a limit stops on the limit; a loop
+                                 with neither can spend an unbounded number of
+                                 calls on a single input.
+    tools it declares, and can reach - whether every tool the agent lists can be
+                                 found behind its name. An agent that calls no
+                                 tools is not scored on this, because there is
+                                 nothing here to be right or wrong about.
+    Four of the six things this pillar was asked to cover, and the card names the
+    other two rather than leaving them implied: whether your dataset and your
+    evaluation method are wired into the agent. This run builds that integration
+    and checks it against the installed SDK later, so at the opening score there
+    is nothing in your agent's own code to read it from.
   Words the evidence beside those lines uses:
     settings document          - the file listing which of your agent's settings
                                  the search may vary, and which of them the
@@ -279,7 +314,8 @@ The lines under each pillar on the card
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
   to be optimized, broken into three parts: your dataset, your evaluator, and
-  your agent's knobs.
+  your agent - which is what there is to search in it, and what a read of its
+  own code can establish about how it is built.
   It is computed at the start of every run - before anything is created or
   repaired - and again after each repair or creation, to check that what failed
   a gate now passes it before anything is paid for. Only the opening number is

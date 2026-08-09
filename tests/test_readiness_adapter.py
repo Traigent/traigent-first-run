@@ -1975,6 +1975,55 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             self.assertTrue(diversity["measured"])
             self.assertIn("one expected output dominates", diversity["evidence"])
 
+    def test_free_text_answers_reach_the_card_as_unasked_not_as_clean(self) -> None:
+        """#216, end to end: preflight declines, and the card says it declined.
+
+        Dominance is measured against a chance baseline of `1 / k`, which is a
+        baseline only when the `k` answers seen ARE the answer space. On a
+        free-text task they are a sample of an open-ended one - `k` grows with
+        the row count - so the check does not run.
+
+        That is a legitimate answer and a dangerous one: the whole point of
+        #158 is that a check which did not run must never read as a check that
+        passed. So preflight emits `dataset-ceiling-risk` as SKIP rather than
+        staying silent, because silence here is indistinguishable from a clean
+        dataset - `dataset-outputs` is a PASS either way, and readiness reads
+        that PASS as its witness that the spread was examined.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            rows = [
+                {
+                    "id": f"row-{index}",
+                    "input": f"question {index} token{index} distinct{index}",
+                    "output": (
+                        "a shared sentence answer"
+                        if index < 2
+                        else f"a distinct sentence answer number {index}"
+                    ),
+                    "metadata": {"provenance": "production"},
+                }
+                for index in range(66)
+            ]
+            dataset = _write_jsonl(directory, "free-text.jsonl", rows)
+            statuses = {r["check"]: r["status"] for r in _preflight_records(dataset)}
+            # PASS on the record readiness would otherwise take as its witness,
+            # which is exactly why the SKIP has to be emitted rather than left
+            # implicit in an absent record.
+            self.assertEqual(statuses["dataset-outputs"], "PASS")
+            self.assertEqual(statuses["dataset-ceiling-risk"], "SKIP")
+
+            diversity = next(
+                sub
+                for pillar in _score(dataset)["pillars"]
+                if pillar["name"] == "dataset"
+                for sub in pillar["subscores"]
+                if sub["name"] == "diversity"
+            )
+            self.assertFalse(diversity["measured"], diversity["evidence"])
+            self.assertIn("not checked", diversity["evidence"])
+            self.assertIn("dominates", diversity["evidence"])
+
     def test_a_large_dataset_is_still_checked_for_near_duplicates(self) -> None:
         """The readiness half of the 500-row skip: no silent clean bill.
 

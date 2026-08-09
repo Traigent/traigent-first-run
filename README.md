@@ -155,7 +155,14 @@ what fills that one in.
 
 No settings document exists before the search, so the agent pillar is read from the agent's own
 code instead - which parameters it can already vary, each against the line that shows it - and that
-is what the opening score grades the search space from. Where the read finds settings, no agent
+is what the opening score grades the search space from. The same read answers four more questions
+about how the agent is built: whether it carries a prompt and worked examples, whether anything
+pins down the shape of its answer, whether it ends and on what, and whether the tools it declares
+can be reached. Each is a fact with a line of your code behind it, and a question the read cannot
+settle is reported as unsettled rather than counted against you. Two things the pillar is not
+allowed to guess at are named on the card instead: whether your dataset and your evaluation method
+are wired into the agent, which this run builds afterwards and checks against the installed SDK.
+Where the read finds settings, no agent
 ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
 inside Partial, and they are different findings. A reading that found nothing your agent can vary
 says a search here would compare one configuration - a measurement of your project - so it blocks
@@ -266,10 +273,10 @@ further to use this guide. External contributions require a signed CLA - see
 
 ## SDK licensing
 
-The pinned requirements install `traigent==0.25.0`. The Traigent SDK is offered under the
-[GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.25.0/LICENSE)
+The pinned requirements install `traigent==0.26.0`. The Traigent SDK is offered under the
+[GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.26.0/LICENSE)
 (`AGPL-3.0-only`) or, under a separate written agreement, a
-[Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.25.0/COMMERCIAL-LICENSE.md).
+[Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.26.0/COMMERCIAL-LICENSE.md).
 Installing the package does not itself grant commercial terms. Organizations that need terms other
 than the AGPL must obtain a separate written commercial agreement from Traigent; contact
 `legal@traigent.ai`. This notice describes the SDK dependency.
@@ -277,7 +284,7 @@ than the AGPL must obtain a separate written commercial agreement from Traigent;
 ## Privacy
 
 According to the
-[pinned SDK 0.25.0 telemetry contract](https://github.com/Traigent/Traigent/blob/v0.25.0/docs/api-reference/telemetry.md),
+[pinned SDK 0.26.0 telemetry contract](https://github.com/Traigent/Traigent/blob/v0.26.0/docs/api-reference/telemetry.md),
 connected runs can send tuned configuration keys and values, numeric metrics, trial/run state, and
 content-free metadata needed for optimization and portal history. Except for content deliberately
 placed in a tuned configuration value and any observability content the project explicitly opts
@@ -289,7 +296,7 @@ content-free labels inside the agent; raw prompt text is not used as a configura
 walkthrough does not independently audit network packets; it stops if observed runtime behavior
 contradicts that contract.
 
-That backend boundary is separate from local retention. SDK 0.25.0 writes each example's `query`,
+That backend boundary is separate from local retention. SDK 0.26.0 writes each example's `query`,
 `response`, and `expected` text to local optimization logs by default. The walkthrough sets
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps
