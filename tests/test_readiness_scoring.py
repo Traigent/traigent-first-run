@@ -8087,6 +8087,15 @@ class TheDatasetSizeLadderTests(unittest.TestCase):
         declared = cap_construction_field(
             source, "blocks", MODULE.Cap.__dataclass_fields__["blocks"].default
         )
+        # Every condition observed, the way the sibling class already insists.
+        # Without it this reader is one-directional: a condition the AST scan
+        # missed is a remedy group judged on the half of its members the reader
+        # happened to find, and the group would agree with itself by omission.
+        self.assertEqual(
+            set(declared),
+            set(MODULE.ACTION_FOR_CONDITION),
+            "the conditions built and the conditions mapped are not the same set",
+        )
         by_remedy: dict[str, dict[str, set]] = {}
         for condition, values in declared.items():
             if condition == "agent-no-varying-knobs":
