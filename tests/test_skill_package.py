@@ -5240,10 +5240,10 @@ class SkillPackageTests(unittest.TestCase):
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
         """Motivation for a further run must come from measured evidence.
 
-        The close reads the post-run caps without reporting their score; what
-        this pins is that it names the gaps still open and what each costs,
-        rather than offering encouragement or implying a further run fixes a gap
-        the walkthrough cannot close.
+        The close ranks from the recorded opening score without reporting any
+        later one; what this pins is that it names the gaps still open and what
+        each costs, rather than offering encouragement or implying a further run
+        fixes a gap the walkthrough cannot close.
         """
         skill_text = " ".join(SKILL.read_text().casefold().split())
 
@@ -5259,7 +5259,7 @@ class SkillPackageTests(unittest.TestCase):
         # reason attached. A menu of everything they could do is the same as no
         # recommendation, so the anti-pattern is pinned too.
         self.assertIn(
-            "give the one next action the **latest validated state** earns", skill_text
+            "give the one next action the **recorded opening state** earns", skill_text
         )
         self.assertIn(
             "a menu offered *instead of* a recommendation is the same as no recommendation",
@@ -5287,8 +5287,9 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(state=state):
                 self.assertIn(state, skill_text)
-        # It ranks from the remaining caps, so it must follow the paragraph that
-        # reads them and precede the optional next steps.
+        # It ranks from the recorded opening score, and still has to follow the
+        # paragraph that settles what the post-run score is and is not for, and
+        # precede the optional next steps.
         transition = skill_text.index("do not close on a second number")
         motivation = skill_text.index("saying what a further run would be worth")
         next_steps = skill_text.index(
@@ -7957,14 +7958,218 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+    def test_the_cta_is_ranked_from_the_state_the_customer_arrived_in(self) -> None:
+        """A gap this run filled with its own scaffolding is not a cleared gap.
+
+        The close used to re-rank the post-run caps and drop whatever had
+        cleared. On this walkthrough's commonest input - a customer with no
+        dataset, who is handed a generated one - `dataset-absent` reads as
+        cleared by then, so the re-rank dropped it and the recommendation never
+        mentioned the thing that customer most needs to do next. The re-rank
+        could not have known better: after the run there is a dataset on disk
+        either way, and no evidence there says who wrote it.
+
+        So the ranking comes from the opening score, which is the one reading
+        taken on material this run did not create, and a substitute-filled gap
+        stays on the list as provisionally filled with the move that closes it
+        properly attached. Both halves of that move are pinned, and so is their
+        order: real examples first, a human reading what we generated second.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            # ranked from the arrival state rather than from a post-run re-read
+            "give the one next action the **recorded opening state** earns",
+            "rank the opening score's caps and this run's own recorded limits",
+            # a substitute does not close a gap, and the close says so
+            "a gap this run filled with a substitute is not cleared - it is "
+            "filled provisionally, so it stays on this list",
+            # and why a post-run re-rank cannot see that for itself
+            "a gap this run filled with a substitute reads exactly like one "
+            "the customer closed themselves",
+            # the two ways to close it, in the owner's order
+            "**best:** collect or export real examples of the same task, and "
+            "build the evaluation method from them",
+            "**otherwise:** keep what this run generated and have a person "
+            "read and approve it",
+            "whose grading logic has to match what the agent is really scored "
+            "on and what its expected result is",
+            # and the forward half, which no cap raises because it is not a gap
+            "more of the agent's controls, the whole dataset instead of the "
+            "slice, a space wider than a first look needs",
+            "it names an action they can take, never a result a wider run would find",
+            # Only one of the two moves lifts the ceiling, and the bullet says
+            # which. It offered human review - the remedy for the LESSER gap,
+            # `dataset-generated-answer-key` at 74 - as a second route out of
+            # the greater one at 65, which it is not.
+            "this is the only one of the two that lifts the ceiling",
+            "say plainly that this one does not lift the ceiling",
+            "a person approving generated rows leaves them generated",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        # Derived, not restated. The row review is the mechanism a human verdict
+        # would travel on, and it refuses this run's own generated rows outright
+        # - `synthesised` is not a reviewable origin - so no amount of reading
+        # and approving what this run wrote can reach the provenance counts that
+        # `dataset-fully-synthetic` fires on. The ordering of the two ceilings
+        # is the other half: 65 is the greater finding and 74 the lesser, so the
+        # lesser one's remedy cannot be a route out of the greater.
+        self.assertNotIn(
+            "synthesised",
+            READINESS.ROW_REVIEW_ORIGINS,
+            "a review entry may now carry this run's own generated rows, so a "
+            "human verdict can reach the synthetic ceiling after all and this "
+            "bullet should stop saying it cannot",
+        )
+        self.assertLess(
+            READINESS.FULLY_SYNTHETIC_CEILING,
+            READINESS.GENERATED_ANSWER_KEY_CEILING,
+            "the generated-data ceiling is no longer the stricter of the two, "
+            "so 'the gap that ceilings the score' names the wrong one",
+        )
+        # Order is the argument. Reversed, the close recommends keeping our own
+        # rows first and getting real data reads as the afterthought. Located
+        # with `find` rather than `index` so a missing half is reported as the
+        # missing half and not as a bare ValueError from the ordering check.
+        best = skill.find("**best:**")
+        otherwise = skill.find("**otherwise:**")
+        recommendation = skill.find("give the one next action")
+        forward = skill.find("then the forward half, which is not a gap in anything")
+        for label, found in (
+            ("**best:**", best),
+            ("**otherwise:**", otherwise),
+            ("the one next action", recommendation),
+            ("the forward half", forward),
+        ):
+            with self.subTest(present=label):
+                self.assertNotEqual(found, -1, f"{label} is not in the close")
+        self.assertLess(
+            best,
+            otherwise,
+            "the close offers keeping this run's generated material before it "
+            "offers collecting real examples; the order is the recommendation, "
+            "and reversed it reads as real data being the afterthought",
+        )
+        # And the forward half is a clause on the one recommendation, so it
+        # follows the state-specific list rather than opening the close.
+        self.assertLess(
+            recommendation,
+            forward,
+            "the forward half opens the close, which makes it a second "
+            "recommendation rather than a clause on the one the state earned",
+        )
+
+    def test_the_post_run_score_keeps_only_the_reading_nothing_else_takes(self) -> None:
+        """Why the stage-8 re-run survives losing two of its three jobs.
+
+        It had three: show the opening-to-closing transition, name which caps
+        cleared and which remain, and rank the close. The transition went with
+        the second number. The ranking goes with the finding above, and so does
+        most of the second job - a dataset or evaluation cap read after the run
+        cannot tell a gap the customer closed from one this run papered over.
+
+        What is left is a reading nothing else in the run takes. The opening
+        gate and the stage-4 score each omit every config-space document, in
+        their own words rather than by inheriting the rule, so the space the
+        search actually received is measured nowhere before the close - and the
+        two omissions pinned here are why the safety property they carry, that
+        a historical `wired` attestation is never current wiring, does not
+        depend on this decision.
+
+        Review found the surviving job had no reader. Not shown, not ranked
+        from, dataset and evaluation caps declared inert, and the agent cap
+        forbidden from standing in for the search's own outcome report - so the
+        score was computed and discarded, and the only reason left for keeping
+        the call was that deleting it would strand the freeze/unlink/write
+        lifecycle, which is circular: the lifecycle exists to feed this score.
+
+        So the call keeps two STATED readers instead of a defence. Its agent
+        cap is a finding about the search that just ran - an emitted document
+        that varies nothing means the paid run compared one configuration, and
+        that blocks and gets reported. And this is the sole reader of
+        `traigent-runs/config-space.json` anywhere in the package, so it is
+        also what refuses a document this run wrote and cannot parse, rather
+        than leaving a broken artifact in the customer's project unremarked.
+        Both are asserted below against the module and the corpus rather than
+        against the sentence describing them.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        for phrase in (
+            "the agent pillar, scored from the space the enhanced search "
+            "actually received",
+            "the opening and stage-4 scores withhold every config-space "
+            "document by construction",
+            "its dataset and evaluation caps rank nothing and settle nothing "
+            "about what is still open",
+            # The readers, named. Without these the paragraph describes a score
+            # nothing consumes, which is what review found.
+            "two things read that call",
+            "its agent cap is a finding about the search that just ran",
+            "the only place anything reads `traigent-runs/config-space.json`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        # Reader one, derived: the agent condition really does have a blocking
+        # branch, so "the card blocks" is a state the close can reach and not a
+        # sentence about a cap that only ever advises.
+        blocking_agent = [
+            cap
+            for cap in vars(READINESS).values()
+            if isinstance(cap, READINESS.Cap)
+            and cap.condition == "agent-no-varying-knobs"
+            and cap.blocks
+        ]
+        self.assertTrue(
+            blocking_agent,
+            "no agent cap blocks any more, so the closing card cannot reach "
+            "the finding this paragraph says it reports - and the call is back "
+            "to having one reader",
+        )
+        # Reader two, derived: the scorer refuses a document it cannot read, by
+        # name, rather than scoring around it. That refusal is the whole value
+        # of putting the file through this call.
+        self.assertIn("exit 2", " ".join(RUN_SAFETY.read_text().casefold().split()))
+        omissions = re.findall(
+            r"omit every config-space file found before this run's enhanced search",
+            skill,
+        )
+        self.assertGreaterEqual(
+            len(omissions),
+            2,
+            "the opening gate and the stage-4 score each have to state the "
+            "omission for themselves; with one of them inheriting it from the "
+            "other, the refusal to read a historical `wired` attestation as "
+            "current wiring depends on whichever site survives an edit. A "
+            "further gate that omits too is welcome and raises this count, "
+            "which is why the floor is two and not an exact number",
+        )
+        # One producer, one consumer. Counted on the flag WITH its argument,
+        # because that is an invocation; the bare flag name is prose and this
+        # package is entitled to explain itself more than once without that
+        # reading as a second score being handed the document.
+        self.assertEqual(
+            skill.count("--config-space traigent-runs/config-space.json"),
+            1,
+            "SKILL.md hands `traigent-runs/config-space.json` to a readiness "
+            "score in more than one place. The post-run score is the only "
+            "consumer this decision weighed - a second one would be reading "
+            "the document at a gate that deliberately refuses to",
+        )
+        self.assertIn(
+            "the finished file is passed to the closing readiness score with "
+            "`--config-space`",
+            sdk,
+        )
+
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
             "do not close on a second number",
             "never show that score or set it beside the opening one",
             "which remaining gap to close first",
-            "one action selected from the latest closing evidence",
-            "re-rank the remaining closing caps",
+            "one action the recorded opening state earns",
+            "rank the opening score's caps and this run's own recorded limits",
             "npx skills add traigent/traigent-skills",
             "restart the session so the new skills load",
         ):
@@ -8768,7 +8973,7 @@ class SkillPackageTests(unittest.TestCase):
                     "noun is `configurations`",
                 )
 
-    def test_final_report_layers_facts_limits_and_the_latest_next_action(
+    def test_final_report_layers_facts_limits_and_the_earned_next_action(
         self,
     ) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -8777,11 +8982,11 @@ class SkillPackageTests(unittest.TestCase):
             "**outcome** - baseline versus enhanced result",
             "**what the evidence establishes**",
             "**current state and limits**",
-            "**next action** - one action selected from the latest closing evidence",
+            "**next action** - one action the recorded opening state earns",
             "**details** - configurations, objectives, trials, failures, cost",
             "only fields actually returned",
             "verified run-scoped platform artifact actually returned them",
-            "latest validated state",
+            "recorded opening state",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)

@@ -272,8 +272,11 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   It is computed at the start of every run - before anything is created or
   repaired - and again after each repair or creation, to check that what failed
   a gate now passes it before anything is paid for. Only the opening number is
-  your project's score: a later one mostly grades the substitutes this run
-  wrote, so it is read for which caps cleared instead.
+  your project's score: a re-score after a repair mostly grades the substitutes
+  this run wrote, so it is read for which caps cleared instead. The opening
+  number is also what the closing recommendation is ranked from, for the same
+  reason: a gap the run filled with a substitute of its own looks cleared
+  afterwards whether or not your project changed.
   It decides what the run does next: repair, create, or continue as a clearly
   labeled walkthrough. A low number alone does not stop a safe walkthrough, but
   a blocking cap does stop paid optimization when the current components or
