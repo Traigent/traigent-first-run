@@ -731,12 +731,13 @@ Five rules make the subset honest:
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
    validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
    afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
-   the user's data wear the run's limitation: measured on 500 labelled, difficulty-tagged production
-   rows, the dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row
-   subset sees only 8 and calls it `a wiring check, not a score`. That sentence is true of the run
-   and false of the dataset, and the gate re-score would read 18 points below the opening one on
-   nothing but our own sampling. Difficulty and diversity survive a compliant sample; evidence
-   volume collapses, so that limitation must be attributed correctly.
+   the user's data wear the run's limitation: measured through `scripts/readiness.py` on 500
+   labelled, difficulty-tagged production rows, the dataset pillar sees 249 comparable examples;
+   the same dataset scored as an 18-row subset sees only 8 and calls it `a wiring check, not a
+   score`. That sentence is true of the run and false of the dataset, and the gate re-score would
+   read 18 points below the opening one on nothing but our own sampling. Difficulty and diversity
+   survive a compliant sample; evidence volume collapses, so that limitation must be attributed
+   correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small
    difference as directional unless paired uncertainty from the completed outputs supports it."

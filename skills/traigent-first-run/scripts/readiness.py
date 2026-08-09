@@ -2181,10 +2181,11 @@ SYNTHESISED_ROW_POINTS = 3.0  # neither was observed
 # the synthesised credit rather than repeating 3.0, because the two are one
 # decision: silence is an assumption, and the assumption is the pessimistic one.
 #
-# It used to score 6.0 and carry no ceiling, which paid for silence. Measured on
-# 200 identical rows differing only in whether `provenance` was present: declared
-# synthetic scored 65 and BLOCKED the paid run, the same rows with the field
-# removed scored 91 and OK. Twenty-six points and a block, for telling the truth.
+# It used to score 6.0 and carry no ceiling, which paid for silence. Measured
+# through `score_dataset` on 200 identical rows differing only in whether the
+# `provenance` field was present: declared synthetic scored 65 and BLOCKED the
+# paid run, the same rows with the field removed scored 91 and OK. Twenty-six
+# points and a block, for telling the truth.
 #
 # The assumption is never silent in return - `main` re-scores the same evidence
 # with these rows counted as collected and prints both numbers, so a customer
@@ -3860,11 +3861,11 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # project needs repairing for this", printed while holding every card in the
 # product at 45. It said the customer was fine and capped them anyway, and it
 # fired on every guided run by construction, because the guide withholds every
-# config-space file found before this run's search. Measured on the strongest
-# realistic opening project (200 production rows, difficulty-tagged, 180/20
-# split, evaluator calibrated and passing all seven probes): dataset 94,
-# evaluation 100, agent 0 at confidence 0.00, weighted average 73, overall 45
-# PARTIAL, with that cap the only one firing.
+# config-space file found before this run's search. Measured through
+# `build_plan` on the strongest realistic opening project (200 production rows,
+# difficulty-tagged, 180/20 split, evaluator calibrated and passing all seven
+# probes): dataset 94, evaluation 100, agent 0 at confidence 0.00, weighted
+# average 73, overall 45 PARTIAL, with that cap the only one firing.
 #
 # What changed is not the ceiling. It is that there is now something a run can
 # DO about this state at the gate where it is reported: read the agent

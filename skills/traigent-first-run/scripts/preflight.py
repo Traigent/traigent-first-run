@@ -57,10 +57,12 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # posting-list step to find and then a set union and intersection over both
 # rows' tokens, so a row of 300 tokens costs 600 units where a row of 12 costs
 # 24. Bounding the pair count therefore bounded nothing on exactly the datasets
-# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M candidate
-# pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03 BILLION
-# token operations, which ran for 45 s with no output and no timeout and then
-# answered PASS. Trunk took 0.24 s on the same file.
+# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens, through
+# `near_duplicate_pairs` - the loop this bounds, and the one thing to re-run if
+# the figures stop holding: 1.7M candidate pairs - 34% of a 5,000,000 pair
+# budget, so it never fired - and 1.03 BILLION token operations, which ran for
+# 45 s with no output and no timeout and then answered PASS. Trunk took 0.24 s
+# on the same file.
 #
 # The number is derived from wall clock and nothing else. This loop sustains
 # 15-22M token operations per second across the shapes measured (2,000x300 RAG
@@ -750,11 +752,12 @@ def classify_provenance(token: Any) -> tuple[str, bool]:
     `collected`, on the reasoning that a project using its own vocabulary
     (`crm-export`) should not be demoted by a word list. What that bought
     instead was that a lie outscored the truth. Measured on 200 identical
-    rows with only the token varying, through the full scorer: no token at all
-    scored 65 and BLOCKED; the truthful `synthetic` scored 65 and BLOCKED;
-    `crm-export` scored 95 EXCELLENT; and so did `zzz`. Three junk characters
-    in a field nothing checks were worth thirty points and the difference
-    between a blocked run and an excellent one.
+    rows with only the token varying, through this classifier and then
+    `score_dataset` in `scripts/readiness.py`: no token at all scored 65 and
+    BLOCKED; the truthful `synthetic` scored 65 and BLOCKED; `crm-export`
+    scored 95 EXCELLENT; and so did `zzz`. Three junk characters in a field
+    nothing checks were worth thirty points and the difference between a
+    blocked run and an excellent one.
 
     The rule this now implements is narrower than "refuse unknown tokens",
     which would be wrong for the reason above: an UNVERIFIABLE declaration
