@@ -947,6 +947,47 @@ class StaticPreflightTests(unittest.TestCase):
         )
         self.assertEqual(pairs, [])
 
+    def test_reused_answers_with_distinct_inputs_are_not_repetition(self) -> None:
+        """Repeating an ANSWER is not the defect; repeating a QUESTION is.
+
+        A closed-label task is supposed to reuse its labels - a yes/no set has
+        two of them and a balanced one uses each half the time. Pointing this
+        check at the output field would read 60 rows as 60 duplicates and charge
+        a correct dataset 7 of its 20 diversity points, while missing the actual
+        defect entirely. So the near-duplicate scan reads the input and only the
+        input, and this holds it there.
+
+        Answer spread is a real question, and a different one: it has its own
+        record (`dataset-ceiling-risk`), which fires on DOMINANCE rather than on
+        reuse and correctly stays silent on a balanced set.
+        """
+        rows = [
+            {
+                "id": f"r{index}",
+                "input": (
+                    f"is order {index} from warehouse {index} eligible for a "
+                    "refund today"
+                ),
+                "output": "yes" if index % 2 else "no",
+                "source": "production",
+            }
+            for index in range(60)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "closed_label.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertEqual(
+            checks["dataset-near-duplicates"].status,
+            MODULE.PASS,
+            checks["dataset-near-duplicates"].detail,
+        )
+        self.assertEqual(checks["dataset-duplicates"].status, MODULE.PASS)
+        # Two labels used evenly is the best a binary task can do, so nothing
+        # here may read as an answer having taken the dataset over.
+        self.assertNotIn("dataset-ceiling-risk", checks)
+
     def test_near_duplicates_are_still_checked_above_five_hundred_rows(self) -> None:
         """The check must not stop running as the dataset gets big.
 
