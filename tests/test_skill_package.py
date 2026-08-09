@@ -5188,11 +5188,21 @@ class SkillPackageTests(unittest.TestCase):
         # Counted against the estate as it stands: 38 of the 47 private
         # repositories are covered, 23 of them structurally - so a repository
         # created tomorrow is caught if it is named the way 18 of the current
-        # ones are, and missed if it is named the way the other 9 are. Those 9
-        # are snake_case, single-word, or mixed-case-hyphenated, and closing
-        # them by digest would buy 9 names at the price of a confirmation
-        # oracle over most of the estate, which is the trade this guard already
-        # refused once.
+        # ones are, and missed if it is named the way the other 9 are. Counted
+        # by shape, those 9 are 4 snake_case, 2 single-word, 2
+        # mixed-case-hyphenated and 1 dot-prefixed; closing them by digest
+        # would buy 9 names at the price of a confirmation oracle over most of
+        # the estate, which is the trade this guard already refused once.
+        # A second, narrower residual belongs beside it, because the shape rule
+        # reads a name as a contiguous ASCII token with a clean left edge. It
+        # therefore does not see one glued to the tail of a preceding word or
+        # hyphenated segment, one split across a line break, or one written
+        # with a non-ASCII hyphen. The digest set does see the first of those
+        # for the names it stores, since it matches substrings; the
+        # `traigent-`-prefixed names are not stored, so for them nothing does.
+        # This is the price of the lookbehind that keeps a licence identifier
+        # from reading as a citation, and it buys back a false red rather than
+        # a false green in the shape anyone actually writes.
         # So: do not "repair" the remainder by writing names into this
         # published file. What closes it is a private pre-publish scan, or the
         # same guard living somewhere that is allowed to know the private set -
@@ -5330,9 +5340,11 @@ class SkillPackageTests(unittest.TestCase):
             return found
 
         offenders: list[str] = []
+        scanned = 0
         for name in listed.stdout.split("\0"):
             if not name:
                 continue
+            scanned += 1
             path = ROOT / name
             # The PATH is checked before the contents, and unconditionally: a
             # file that cannot be decoded still has a name, and a name is
@@ -5343,6 +5355,14 @@ class SkillPackageTests(unittest.TestCase):
             except (UnicodeDecodeError, OSError):
                 continue  # binary or deleted-but-tracked; no prose to leak
             offenders.extend(scan(raw, name))
+        # `git ls-files` exits 0 with no output whenever it is pointed somewhere
+        # with nothing tracked, and an empty corpus produces an empty offender
+        # list - a green run that read no file at all. The returncode check
+        # above cannot see that, because nothing failed. Fail closed on the
+        # absent input rather than reporting the tree clean.
+        self.assertGreater(
+            scanned, 0, "the guard scanned no tracked file - it proved nothing"
+        )
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
 
         # The tree being clean proves nothing about what the guard can SEE, and
