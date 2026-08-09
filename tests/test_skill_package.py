@@ -4983,24 +4983,45 @@ class SkillPackageTests(unittest.TestCase):
         # of what it buys - and it is worth buying, because the reader who was
         # learning the estate from this file was not guessing.
         #
-        # Two families are covered: the internal test bank and its harness, and
+        # Three families are covered: the internal test bank and its harness;
         # internal infrastructure - a private repository, two clusters, an
-        # internal observability stack, a non-production host. Only what no
-        # structural rule below can reach belongs here.
-        forbidden_lengths = (7, 10, 12, 13, 15, 17, 18, 24)
+        # internal observability stack, a non-production host; and, added for
+        # #176, the private repositories named in lowercase-and-hyphens that
+        # carry no `traigent-` prefix for the shape rule below to anchor on.
+        # Only what no structural rule below can reach belongs here, which is
+        # why the `traigent-`-prefixed private names are deliberately NOT here:
+        # a shape rule covers them and discloses nothing, while every digest
+        # added is one more name someone who already guessed it can confirm.
+        # That division is the whole policy - structural where a structure
+        # exists, hashed only where none does.
+        forbidden_lengths = (7, 10, 11, 12, 13, 15, 17, 18, 19, 20, 21, 23, 24, 26)
         forbidden_digests = frozenset(
             bytes.fromhex(digest)
             for digest in (
                 "001794b3d3cdd97012ef80c1e46ea9f688286ece5e89ed910c5ff003ec24110b",
+                "015d07f208ee8cf6c390f7a3eeaaa568e31d3e95831277692304cda120145752",
                 "0ca18865d86f87b138d88f539fd0727f4240a2836842436f86ea31f07c506b43",
+                "1aa32d1aa2a8344825367e4bbaff31a94ea2c78d63ee67714a9a136e588775e9",
                 "2595809007003a29ceb06e6ff7b42e7f79a613dec7f27f8a95c307dd39d95c6e",
                 "29598efb405e50a72098d65e2e8e8b06f66ac45ff3b5890976cbaa7ad0653da4",
+                "391a364e9196b157e8bdb5745825c41d25d17d3b013048b311b33bde080ded80",
                 "422bc40ddc42faf8dfbe083b601daf85e828de904e3d38b2941265e4c0200186",
+                "490e753e165c2cd2f5d313db19b5fcaac9f1abd1b127da39224d1da65984271c",
+                "4ecbe734aa012cd4a50e9065a4bc1034f61747ea41586dfe27fb7b7cc150ab18",
                 "4f7f51f01a2ca6b25bea64840d28bb572441d9862cca573c4b1f2ee40dc12ac7",
                 "50ffa53cfa10a5cfc2eacf9a270071d184abb026770822a42a4208f47c60d5e9",
                 "5e4bce6b1241887627c40c217bbbc3449cf1671fee397a1b491e8216ae04e704",
                 "634c62abdbffeefb6b7376779adfccfaca27551686418a9fba835c24f8d2e23e",
+                "6c35c06d3e4ea493755a1c37249faefee9d87ee4aba6ccda850b8a436c6e6d43",
+                "6e3ba5aab46accf96a705b05e6cb6d27b8d4556ec6e8081df9276be14f3235f3",
+                "6f5c3e486be2f8c0090010c6433600c7099e2fd85036c4839af6f4e43e4049e8",
+                "7d0f1c57ebe9d9a9e5ad409d0a7e4c010e6f3a8d754367ba7b86779de63281a5",
+                "8cc943dde59ec39701388379051d1f0e2d9a9c10de6d00e06d298ff52a5ab4b9",
                 "a11358728514ae1c6d7a65d99c3ac5dba1d159a302b09774af7415fe0493a5f2",
+                "d14804fd8b75d3838dbd3471cb014b57d766b31d1b5538d65be7c90cddb6426d",
+                "d1d18fbb7764d0918320e4cb40f0ca0e790a4e14376337a6c553a0e161121bd4",
+                "e3a44cd2dd17226fb9694483ad7cd1d8399ca186663cf0d3f04ff37ae3b9c3e0",
+                "f1013580a16da17102775259e2a012a99c9f388e94157c754e5660d5135fc1fa",
                 "f356164dd71afbb8770f4a004585d0378da7c9996b9cc41804719d89b86d2e5d",
             )
         )
@@ -5081,22 +5102,101 @@ class SkillPackageTests(unittest.TestCase):
         # and are checked against it, so this needs to know nothing secret to
         # fail closed on a name nobody has seen yet.
         internal_repo_shape = re.compile(r"\bTraigent[A-Z][A-Za-z0-9]*")
+        # The same repository named bare in LOWERCASE-AND-HYPHENS (#176). The
+        # CamelCase rule needs a capital and the organisation rule needs the
+        # owner segment, so `traigent-<something>` written on its own carried
+        # neither and shipped clean - and lowercase-and-hyphens is the shape
+        # this organisation actually uses: of the 47 private repositories, 33
+        # are named that way against 5 in `Traigent` + CamelCase, so the rule
+        # that existed covered the smaller share of the estate - and #176
+        # reports that both repositories the guard's own motivating examples
+        # cite are the shape it could not see.
+        # 18 of those 33 carry the `traigent-` prefix, and that prefix is the
+        # anchor: it needs to know nothing secret, it fails closed on a name
+        # nobody has created yet, and - like the CamelCase rule - it is checked
+        # against the same public allowlist rather than against a list of what
+        # is private. The other 15 have no anchor at all and are reachable only
+        # by the digests above, which is why they were added there and these
+        # were not.
+        # Anchored on `traigent-` and NOT on hyphens generally, which is the
+        # difference between a rule and a nuisance: this guidance is full of
+        # legitimate hyphenated words (`first-run`, `run-safety`, `agent-type`,
+        # `closed-label`) and a shape rule that read those as repository names
+        # would be routed around within a week.
+        # Case-insensitive for the same reason the organisation rule is: the
+        # discriminator must not be orthographic. The same name Capitalised in
+        # a filename is the same disclosure as the lowercase form in a
+        # sentence, and this comment cannot show either without being caught by
+        # the rule it is describing - which is the demonstration.
+        # The lookbehind is structural too - a repository reference is not
+        # glued to the tail of a longer hyphenated token, so
+        # `LicenseRef-Traigent-Commercial` is a licence identifier rather than
+        # a citation, and is not matched at all rather than excused by name.
+        traigent_hyphen_shape = re.compile(
+            r"(?<![\w-])traigent-[a-z0-9]+(?:-[a-z0-9]+)*", re.IGNORECASE
+        )
+        # MEASURED before this rule was accepted, because a shape rule buys
+        # recall with false reds and the trade is only honest with the number
+        # in it. Over the tracked corpus as this change leaves it, the rule
+        # matches 18 distinct tokens in 331 places: 3 public repositories, 0
+        # private repositories, and the 15 below - nothing unaccounted for, and
+        # no entry below that never matches. So the rule costs no false red
+        # today, and the tree it has to stay green on is the whole tree.
+        # The 15 are listed rather than exempted by shape because no shape
+        # separates them: `traigent-runs` is a directory,
+        # `traigent-analyze-results` is a skill published by the public
+        # `traigent-skills` package, and `Traigent-owned` is ordinary English -
+        # all three are spelled exactly like a repository name, and pretending
+        # otherwise is how an exemption widens until it covers the leak.
+        # Kept apart from `public_repos` for the reason `not_repositories` is:
+        # "this is not a repository" and "this is a public repository" are
+        # different claims, and merging them is what lets an allowlist rot.
+        # Adding to it is a decision someone makes with the failure message in
+        # front of them, which is the property a shape exemption never has.
+        # Each entry is also a permanent exemption, and that is its cost: a
+        # private repository named exactly one of these would be waved through.
+        # It is listed by hand for that reason - fifteen decisions someone made
+        # are auditable in a way that "anything shaped like a directory" is not.
+        traigent_vocabulary = {
+            # Directories and path prefixes this package writes or ignores.
+            "traigent-runs",
+            "traigent-offline-evidence",
+            "traigent-contract",
+            # Ordinary hyphenated English on the product name.
+            "traigent-key",
+            "traigent-owned",
+            "traigent-backend",
+            "traigent-tuned-variables",
+            # Skills shipped by the public `traigent-skills` package, cited by
+            # name as the earned next move after a first run.
+            "traigent-analyze-results",
+            "traigent-analyze-variable-importance",
+            "traigent-configuration-space",
+            "traigent-dataset-curate",
+            "traigent-decorator-setup",
+            "traigent-eval-audit",
+            "traigent-optimize-config-space",
+            "traigent-optimize-run",
+        }
         # ACCEPTED RESIDUAL, recorded here rather than left for the next reader
-        # to rediscover: the three rules above are anchored on an organisation
-        # segment (`<owner>/<repo>`) or on the `Traigent` + CamelCase shape, so a
-        # private repository whose name carries NEITHER is invisible to all of
-        # them. Bare lowercase-and-hyphens and bare snake_case names exist in
-        # this organisation, and written on their own - no owner segment, no
-        # capital - only the hashed denylist can reach them. That denylist
-        # stores eight window lengths, which does not span every such name, so
-        # some are not covered at all.
-        # This is not a bug to be fixed here, and the fix that suggests itself
-        # is worse than the gap: a complete denylist of private names would have
-        # to be written into this published file, which discloses exactly what
-        # it is protecting. The structural rules are deliberately the ones that
-        # can be stated in public without leaking; the residual is the price.
-        # What closes it is a private pre-publish scan, not a rule in this file.
-        # Do not "repair" this by adding names.
+        # to rediscover, and re-measured for #176 rather than carried forward.
+        # The structural rules anchor on an organisation segment
+        # (`<owner>/<repo>`), on `Traigent` + CamelCase, or on the `traigent-`
+        # prefix. A private repository whose name carries none of the three is
+        # invisible to all of them and is reachable only by the hashed
+        # denylist, which knows only the names someone already enumerated.
+        # Counted against the estate as it stands: 38 of the 47 private
+        # repositories are covered, 23 of them structurally - so a repository
+        # created tomorrow is caught if it is named the way 18 of the current
+        # ones are, and missed if it is named the way the other 9 are. Those 9
+        # are snake_case, single-word, or mixed-case-hyphenated, and closing
+        # them by digest would buy 9 names at the price of a confirmation
+        # oracle over most of the estate, which is the trade this guard already
+        # refused once.
+        # So: do not "repair" the remainder by writing names into this
+        # published file. What closes it is a private pre-publish scan, or the
+        # same guard living somewhere that is allowed to know the private set -
+        # which is what the follow-up on this pull request proposes.
         # The two canonical documentation placeholders (RFC 9562 nil and max).
         # A guide that documents experiment and session identifiers has to be
         # able to show the shape of one, and a guard that answers "you leaked a
@@ -5128,7 +5228,13 @@ class SkillPackageTests(unittest.TestCase):
                 f"could not list tracked files from git: {listed.stderr.strip()}"
             )
 
-        def scan(text: str, where: str) -> list[str]:
+        def scan(
+            text: str,
+            where: str,
+            *,
+            digests: frozenset[bytes] = forbidden_digests,
+            hyphen_shape: re.Pattern[str] = traigent_hyphen_shape,
+        ) -> list[str]:
             """Every rule, over one string - a filename as readily as a body.
 
             The rules used to be split by accident rather than by intent: the
@@ -5138,6 +5244,13 @@ class SkillPackageTests(unittest.TestCase):
             omission this test exists to close - and two of the three reports
             this pull request deletes leaked through their names as much as
             their bodies.
+
+            The two keyword arguments exist for the self-probe at the end, and
+            only for it: they let the probe empty the digest set and defeat the
+            hyphen shape rule, then assert that the planted name it just caught
+            goes straight through. Without that, a probe proves only that
+            SOMETHING refused the string - which a guard that had been
+            neutered into refusing everything would also satisfy.
             """
             found: list[str] = []
             # Every window of every stored length, hashed and looked up. The
@@ -5156,7 +5269,7 @@ class SkillPackageTests(unittest.TestCase):
             for length in forbidden_lengths:
                 for start in range(len(blob) - length + 1):
                     window = blob[start : start + length]
-                    if hashlib.sha256(window).digest() in forbidden_digests:
+                    if hashlib.sha256(window).digest() in digests:
                         leaked.add(window.decode("utf-8", "replace"))
             for name in sorted(leaked):
                 found.append(f"{where}: {name!r}")
@@ -5191,6 +5304,21 @@ class SkillPackageTests(unittest.TestCase):
                 found.append(
                     f"{where}: names a non-public repository {camel!r} "
                     "(add it to public_repos only if it really is public)"
+                )
+            for hyphenated in hyphen_shape.findall(text):
+                token = hyphenated.casefold()
+                if token in public_repos or token in traigent_vocabulary:
+                    continue
+                # Worded to offer both true answers, because this rule has two
+                # kinds of red and the author knows which they are looking at:
+                # a genuine private repository, or a directory, skill or
+                # hyphenated phrase that merely reads like one. Naming only the
+                # allowlist would invite the second author to answer the first
+                # question wrongly.
+                found.append(
+                    f"{where}: names a non-public repository {hyphenated!r} "
+                    "(add it to public_repos only if it really is public, or "
+                    "to traigent_vocabulary if it is not a repository at all)"
                 )
             for match in uuid_reference.finditer(text):
                 if match.group(0).casefold() in uuid_placeholders:
@@ -5236,6 +5364,82 @@ class SkillPackageTests(unittest.TestCase):
         # has been tightened into a false red that teaches authors to route
         # around it - which is how the exemption was born.
         self.assertEqual(scan("traigent/config_generator/presets/x.py", "probe"), [])
+
+        # #176: the bare lowercase-and-hyphens shape, in prose and in a
+        # filename, which is what the estate is actually named. Invented, so
+        # this file still holds no private name - the rule anchors on the
+        # `traigent-` prefix and the allowlist, so it refuses an invented name
+        # exactly as it refuses a real one, which is the property being tested.
+        # Assembled from fragments for the same reason the probes above are:
+        # this test scans its own file, so a probe written as one literal is a
+        # probe that fails the moment it is written.
+        bare = "traigent-{}".format("not-a-real-repo")
+        for probe in (
+            f"the {bare} repository holds the cluster configuration",
+            f"docs/{bare}-notes.md",
+            f"{bare}/README.md",
+            "See {} for the rest.".format(bare.title()),
+        ):
+            with self.subTest(probe=probe):
+                self.assertNotEqual(
+                    scan(probe, "probe"),
+                    [],
+                    f"the guard accepts {probe!r} - a private repository named "
+                    "the way most of this organisation's are",
+                )
+                # The positive half, and the reason the argument exists: with
+                # the shape rule defeated the SAME string sails through. A
+                # probe that only shows the guard is unhappy cannot tell a
+                # working rule from a guard that refuses everything, and a
+                # guard asserting only that the tree is currently clean is the
+                # defect class this repository spent the week removing.
+                self.assertEqual(
+                    scan(probe, "probe", hyphen_shape=re.compile(r"(?!x)x")),
+                    [],
+                    f"{probe!r} is refused with the hyphen shape rule defeated, "
+                    "so the probe above is not testing that rule",
+                )
+        # No regression on the bare CamelCase shape. The org-prefixed shapes
+        # are probed by the block above; this is the one that had no probe.
+        camel_probe = "Traigent{}".format("NotARealRepo")
+        self.assertNotEqual(scan(camel_probe, "probe"), [])
+        # The digest half cannot be probed with a real name without writing one
+        # here, so the MECHANISM is probed instead: an invented token of a
+        # stored length is caught when its digest is present and passes when it
+        # is not. That is the same two-sided evidence, and it also pins the one
+        # property the digest set must never lose - that it decides on the
+        # digest and not on the shape of the token.
+        invented = "not-a-real-repo"
+        self.assertIn(len(invented.encode()), forbidden_lengths)
+        planted = frozenset({hashlib.sha256(invented.encode()).digest()})
+        self.assertNotEqual(
+            scan(f"see {invented} for more", "probe", digests=planted), []
+        )
+        self.assertEqual(scan(f"see {invented} for more", "probe"), [])
+        # And the false reds the shape rule must not have. These are ordinary
+        # hyphenated guidance words, a filename, and the vocabulary families
+        # the rule matches but must not refuse; each appears in the corpus
+        # constantly, so a rule that reddened on them would be reverted rather
+        # than fixed.
+        for legitimate in (
+            "first-run",
+            "closed-label",
+            "references/run-safety.md",
+            "agent-type",
+            "n-gram",
+            "getting-familiar",
+            "assistant-created logs under the ignored `traigent-runs/` directory",
+            "a Traigent-owned follow-up",
+            "the earned next move is `traigent-optimize-run`",
+            "SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial",
+        ):
+            with self.subTest(legitimate=legitimate):
+                self.assertEqual(
+                    scan(legitimate, "probe"),
+                    [],
+                    f"the guard reddens on {legitimate!r}, which is legitimate "
+                    "guidance prose",
+                )
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
         """The user-facing definition has to follow the code that changed.
