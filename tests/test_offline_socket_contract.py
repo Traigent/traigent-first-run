@@ -124,6 +124,7 @@ def _credential_stripped_environment(overrides: dict[str, str]) -> dict[str, str
     # Drop any pre-existing value from the environment this test itself runs
     # in, so each scenario below controls both flags exactly rather than
     # inheriting whatever the host happened to have exported.
+    environment.pop("TRAIGENT_OFFLINE", None)
     environment.pop("TRAIGENT_OFFLINE_MODE", None)
     environment.pop("LITELLM_LOCAL_MODEL_COST_MAP", None)
     environment.update(overrides)
