@@ -1408,13 +1408,12 @@ class EvaluationScoringTests(unittest.TestCase):
 # The document the walkthrough's generated wrapper writes: the enhanced space,
 # with the template's placeholder model ids. Kept here so the consumer contract
 # is pinned to the shape the producer actually emits. There is no longer a
-# placeholder value to substitute first - the four behaviour knobs are binary
+# placeholder value to substitute first - the three behaviour knobs are binary
 # and temperature is pinned, so the space is fixed before either run.
 WALKTHROUGH_CONFIG_SPACE = {
     "knobs": {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
         "prompt_style": ["plain", "structured"],
-        "pre_action_reflect": [False, True],
         "thinking_shape": ["direct", "chain_of_thought"],
         "reflect": [False, True],
         "temperature": [0.0],
@@ -1424,7 +1423,6 @@ WALKTHROUGH_CONFIG_SPACE = {
         "model",
         "temperature",
         "prompt_style",
-        "pre_action_reflect",
         "thinking_shape",
         "reflect",
     ],
@@ -1540,10 +1538,10 @@ class AgentScoringTests(unittest.TestCase):
         pillar, caps, _ = score_space(facts)
         self.assertEqual([cap.condition for cap in caps], [])
         # Full marks, and the number is the guide's own recommended shape
-        # scoring as such: 48 distinct configurations against a 12-trial
+        # scoring as such: 24 distinct configurations against a 12-trial
         # budget, so the run compares twelve of them - `SEARCH_SPACE_FULL`,
-        # which is what this guide's own baseline sweep enumerates - and 48 is
-        # four times the budget rather than twenty.
+        # which is what this guide's own baseline sweep enumerates - and 24 is
+        # twice the budget rather than twenty times it.
         #
         # It was 93 while the pillar also averaged a per-knob quality blend,
         # where the shortfall was the deliberately pinned `temperature`. A
@@ -2539,9 +2537,9 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
         """Every shape the owner named, against one twelve-trial budget.
 
         The two entries that carry the argument are the last pair. A
-        1024-configuration space scores BELOW a 48-configuration one because
+        1024-configuration space scores BELOW a 24-configuration one because
         the twelve trials are the same twelve either way and the larger report
-        describes a sample nobody chose - and a 48 and a 12 score the SAME,
+        describes a sample nobody chose - and a 24 and a 12 score the SAME,
         because which of them is the better search is exactly what this scorer
         cannot know before the run.
         """
@@ -2561,7 +2559,6 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
                 "model": ["a", "b", "c"],
                 "temperature": [0],
                 "prompt_style": ["direct", "structured"],
-                "pre_action_reflect": [False, True],
                 "thinking_shape": ["direct", "cot"],
                 "reflect": [False, True],
             }
@@ -3070,7 +3067,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         """The pin the alias change could have moved, measured rather than assumed.
 
         The shipped space declares only `prompt_style`, so collapsing the alias
-        leaves its six dimensions and 48 configurations untouched.
+        leaves its five declared dimensions and 24 configurations untouched.
         """
         pillar, caps, _ = score_space(
             MODULE.agent_facts_from_config_space(WALKTHROUGH_CONFIG_SPACE)
@@ -3080,7 +3077,7 @@ class DocumentedSchemaTests(unittest.TestCase):
         space = next(s for s in pillar.subscores if s.name == "search-space")
         self.assertEqual(
             space.evidence,
-            "your space has 48 distinct configurations; this run will try up to "
+            "your space has 24 distinct configurations; this run will try up to "
             "12 of them",
         )
 
