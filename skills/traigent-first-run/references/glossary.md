@@ -179,8 +179,8 @@ The lines under each pillar on the card
                                  3-word runs match; charged once. Runs, so
                                  reordered words are not a repeat, and under 3
                                  words only identical rows count. 70% is
-                                 derived: one changed word still counts at 19
-                                 words.
+                                 derived: one word changed mid-row still counts
+                                 at 19 words, 8 if it is the first or last.
     where the rows came from   - whether the data was collected or written by a
                                  model. Both are usable; only one is evidence
                                  about production.

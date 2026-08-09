@@ -22,7 +22,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
@@ -109,16 +109,106 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # counts posting steps and pair comparisons. It does not count the fixed cost
 # of ranking every distinct sequence in the dataset and sorting each row's
 # prefix, which is roughly linear in total sequences and therefore in dataset
-# size. On 2,000 rows of 300 words that fixed cost is about 4 s with `work` at
-# 0, so the check takes about 6 s end to end there and this constant is not
-# what decided it. Linear, predictable and proportional to the file the user
-# handed over - which is why it is left uncounted rather than folded in at a
-# second, incompatible unit price. The quadratic half is the half that needs a
-# ceiling, and that is the half this counts.
+# size. On 2,000 rows of 300 words `work` is 0 and that fixed cost is the
+# whole wait, so this constant is not what decided it. The seconds themselves
+# are a property of the machine and are not restated here - the ratio is the
+# claim, and the absolutes for one machine are in the table on
+# `MAX_NEAR_DUPLICATE_SHINGLES` below. Linear, predictable and proportional to
+# the file the user handed over - which is why it is left uncounted rather than
+# folded in at a second, incompatible unit price. The quadratic half is the
+# half that needs a ceiling, and that is the half this counts.
+#
+# And it does not cover MEMORY, which is the other half of that fixed cost and
+# the more dangerous one. The sequences this ranks are held all at once, so the
+# same linear growth that is merely "predictable" in seconds is unbounded in
+# bytes: 16,000 rows of 300 words spend 0 operations here, finish `complete`,
+# and peak at about 36x the file. `MAX_NEAR_DUPLICATE_SHINGLES` is the ceiling
+# on that, checked before any of it is allocated, and the two bounds are not
+# interchangeable - this one cannot see the memory at all, because on the data
+# that costs the most memory it reads zero.
 #
 # Re-derive it if the loop's inner work changes; do not move it because a
 # dataset wanted more.
 MAX_NEAR_DUPLICATE_WORK = 15_000_000
+# A ceiling on the MEMORY the near-duplicate scan may take, counted in the word
+# runs it would have to hold. The bound above counts operations and is a
+# wall-clock promise; this one is a bytes promise, and the check needed both
+# because the two do not move together. On high-diversity data `work` reads 0
+# at every size - the index admits no candidates, so the counter never fires -
+# while peak memory climbs with the file and nothing stops it (measured below,
+# and the #170 review's finding).
+#
+# Memory fails differently from time, which is why this is not a nicety. A slow
+# check still answers. A check the kernel kills answers nothing at all, and
+# that is strictly worse than the SKIP this whole change exists to remove. Word
+# sets degraded gracefully at 16,000 rows - they reached the work bound above
+# and emitted SKIP - and sequence sets do not, so this is a bound the metric
+# change created and owes.
+#
+# TARGET, stated first because the number is derived from it and means nothing
+# without it: the scan may add at most 512 MB to peak RSS. Written against a
+# 2 GB container - the low end of hosted CI, and Docker Desktop's default
+# allocation - where the interpreter, the dataset itself and the rest of the
+# run also need room. Half a gigabyte is already a quarter of that floor, and
+# it is about where the failure stops being "slow" and becomes "killed".
+#
+# MEASURED, as peak RSS over the already-resident dataset, for the whole path:
+# one set per row, then the frequency count, the ranking, and the posting
+# index. RSS and not `tracemalloc`, because what an allocator kills a process
+# over is its resident size, not the total Python objects charge for - the two
+# are different quantities and must not be quoted into one column. High-
+# diversity rows, which is the shape that costs the most and reads `work` 0.
+# The seconds are one machine's and do not transfer; the bytes per run and the
+# ratios are what the number below rests on.
+#
+#     shape                        runs      peak    bytes/run     wall
+#      50,000 x 12 words        500,000    196 MB          393    2.1 s
+#      12,000 x 50 words        576,000    201 MB          349    2.2 s
+#       5,000 x 120 words       590,000    220 MB          373    2.3 s
+#       2,000 x 300 words       596,000    196 MB          329    2.2 s
+#         600 x 1,000 words     598,800    199 MB          333    2.3 s
+#     150,000 x 4 words         300,000    133 MB          443    1.9 s
+#     550,000 x 4 words       1,100,000    499 MB          453    7.7 s
+#
+# And the shapes this refuses, measured the same way: 8,000 x 300 words is
+# 2,384,000 runs at 769 MB, and 16,000 x 300 is 4,768,000 at 1,538 MB - 36x the
+# file, with `work` at 0 and `complete` True at both sizes.
+#
+# Bytes per run is flat in row LENGTH - 600 rows of 1,000 words and 50,000 of
+# 12 cost the same - and rises only for very short rows, where each row's own
+# set object is amortized over two or three members. 453 is the worst measured,
+# so 512,000,000 / 453 = 1,130,242 runs, rounded DOWN to 1,100,000 because the
+# rounding direction has to be the one that cannot exceed the target. Then
+# measured back rather than left as arithmetic: 1,100,000 runs in that worst
+# shape peaks at 499 MB, and that is the figure this ceiling is bought with.
+#
+# WHY RUNS, and not the three obvious alternatives - each rejected against the
+# same measurements, not on principle:
+#   * ROWS. 600 rows of 1,000 words and 50,000 rows of 12 cost 199 MB and
+#     196 MB. A row cap is wrong by a factor of 83 between two datasets that
+#     cost the same, and it is the exact shape of the 500-row ceiling #151
+#     removed - and of the pair count `MAX_NEAR_DUPLICATE_WORK` replaced.
+#   * INPUT BYTES. At a fixed 596,000 runs, 3.00 MB of short words and 10.20 MB
+#     of long ones cost 185 MB and 206 MB. Memory per input byte spans 3.1x
+#     across nothing but word length, because it is words that make runs.
+#   * A LIMIT READ FROM THE HOST'S FREE MEMORY. Adaptive, and it would make the
+#     same dataset pass on one machine and SKIP on another, with a SKIP nobody
+#     can reproduce or argue with. A stated ceiling is worth more here than an
+#     accurate one.
+#
+# WHAT IT COSTS, measured rather than hoped, because it is a real cost. The
+# count is per row, so a dataset whose rows repeat each OTHER's runs is counted
+# against a bigger index than it would really build. 6,000 rows of 300 words
+# sharing one 290-word frame count 1,788,000 runs against 60,201 distinct, use
+# 210 MB, and are refused here - and both trunk and this branch report 1,000
+# pairs on that shape, so the refusal loses a real finding. Two things make
+# that the right trade and neither is that it never happens: the exact figure
+# is unknowable before building the index that is being bounded, and 1,100,000
+# runs is 3,700 rows of 300 words or 92,000 rows of 14, which is far above a
+# first-run dataset. Re-open this if a customer is refused here while their
+# distinct run count is small - that is the one case this bound is wrong about,
+# and it is wrong in the direction that answers instead of dying.
+MAX_NEAR_DUPLICATE_SHINGLES = 1_100_000
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
@@ -579,6 +669,33 @@ def shingle_set(value: Any) -> set[str]:
         " ".join(tokens[start : start + NEAR_DUPLICATE_SHINGLE])
         for start in range(len(tokens) - NEAR_DUPLICATE_SHINGLE + 1)
     }
+
+
+def near_duplicate_index_size(values: Iterable[Any]) -> int:
+    """How many word runs the near-duplicate scan would hold, without holding them.
+
+    The scan's memory is bounded by refusing datasets above
+    `MAX_NEAR_DUPLICATE_SHINGLES`, and a bound is only a bound if it is consulted
+    BEFORE the thing it bounds is allocated. That is this function's whole reason
+    to exist: it walks the rows one at a time and keeps an integer, so the answer
+    costs the tokenization and nothing that survives the loop - measured at 0.0 to
+    0.2 MB over the resident dataset at every shape in the table on that constant,
+    against the 133 MB to 1,538 MB the sets themselves take.
+
+    Counted by CALLING `shingle_set` rather than by evaluating `len(tokens) - n +
+    1`, which is the same number for ordinary rows and the wrong one for short
+    ones: a row under n words contributes one run, not zero or a negative. The
+    formula would be a second statement of that rule, in a different file region
+    from the rule it copies, free to drift the moment either moves - and this
+    repository has four recorded contradictions that were exactly a rule stated
+    twice. Calling the function cannot drift from the function.
+
+    An upper bound on the index, not its exact size, because rows that repeat each
+    OTHER's runs are counted once per row and stored once in total. The gap is
+    measured and argued on `MAX_NEAR_DUPLICATE_SHINGLES`; it is in the direction
+    that refuses too early rather than too late.
+    """
+    return sum(len(shingle_set(value)) for value in values)
 
 
 def near_duplicate_prefix(
@@ -1356,60 +1473,99 @@ def check_dataset(
     # labelled yes/no would look like 500 duplicates to a check pointed at the
     # output field. Whether one answer has taken over the dataset is a different
     # question with its own record (`dataset-ceiling-risk`).
-    near_pairs, near_complete = near_duplicate_pairs(
-        [shingle_set(row["input"]) for row in rows]
-    )
-    if near_pairs:
-        # A truncated scan still answered the question - there ARE
-        # near-duplicates - so it stays a finding rather than becoming a SKIP.
-        # What it cannot claim is that these are all of them.
-        more = "" if near_complete else "; the scan stopped early, so there may be more"
-        emit(
-            "dataset-near-duplicates",
-            FAIL if synthetic else WARN,
-            f"input pairs at least {threshold_percent} similar (shared runs of "
-            f"{NEAR_DUPLICATE_SHINGLE} consecutive words over total runs, so "
-            "the same words in a different order are not a repeat), identical "
-            f"rows included: {near_pairs[:10]}{more}",
-        )
-    elif near_complete:
-        emit(
-            "dataset-near-duplicates",
-            PASS,
-            f"no input pair reaches {threshold_percent} similarity",
-        )
-    else:
-        # Found nothing AND did not finish, which is not the same statement as
-        # "found nothing". The only way here is a dataset so repetitive that the
-        # filter admits everything; say that this is unchecked, never clean.
-        #
-        # And say why it took so long, in terms of the dataset the user is
-        # holding. Getting here is the one slow path in this script, so they
-        # have just waited and are then told the check did not run; without the
-        # second sentence that reads as the script having hung on their data.
-        #
-        # The cause is not what it was, and the text moved with it. Under word
-        # sets the two ways in were long rows and a small vocabulary, and BOTH
-        # are now wrong: 2,000 rows of 300 words spend 964M operations as word
-        # sets and 0 as sequences, and 5,000 twelve-word rows over a 60-word
-        # vocabulary also spend 0, because sequences repeat across rows far less
-        # than words do. What is left is the one thing that still makes a
-        # sequence common - many rows genuinely phrased alike - so that is what
-        # this now names. A user reading the old sentence about their own file
-        # would have been sent to split inputs that were never the cause.
+    # Counted before the list comprehension below, which is the whole point: that
+    # comprehension and the index built from it are what reach 36x the file, and a
+    # ceiling consulted after they exist has bounded nothing. This pass holds one
+    # row's runs at a time (`near_duplicate_index_size`), so the refusal costs the
+    # tokenization and no allocation the check could have died on.
+    index_runs = near_duplicate_index_size(row["input"] for row in rows)
+    if index_runs > MAX_NEAR_DUPLICATE_SHINGLES:
+        # The second way this check can decline to run, and it must not be
+        # mistakable for the first. The work SKIP below means "too many
+        # comparisons"; this one means "too much memory", the reader's dataset is
+        # not slow but large, and de-duplicating it would not help. Naming the
+        # wrong limit would send them to fix the wrong thing.
         emit(
             "dataset-near-duplicates",
             SKIP,
-            "the near-duplicate scan reached its work budget before comparing "
-            "every candidate pair, so this dataset is UNCHECKED for "
-            "near-duplicates - not clean. The exact check compares whole sets "
-            "of word runs, so it costs most when many rows are phrased alike: "
-            "shared boilerplate, one template filled in repeatedly, or the same "
-            "passage retrieved into many rows. Long rows make each of those "
-            "comparisons dearer, but length alone does not reach this budget. "
-            "De-duplicate the obvious repeats, or scan a sample, if you need "
-            "this answered",
+            f"the inputs hold {index_runs:,} runs of {NEAR_DUPLICATE_SHINGLE} "
+            f"words against a {MAX_NEAR_DUPLICATE_SHINGLES:,} run MEMORY "
+            "ceiling, so this dataset is UNCHECKED for near-duplicates - not "
+            "clean. The scan is exact, which means every row's runs are held at "
+            "once; past this ceiling that costs more memory than one preflight "
+            "check may take. It is refused before any of it is allocated, "
+            "deliberately: running out of memory would end the whole preflight "
+            "with no output at all, which is worse than one line saying it did "
+            "not run. This is a size limit and not a repetition one, so "
+            "de-duplicating will not clear it - scan a sample of the rows, or "
+            "split the dataset, if you need this answered",
         )
+    else:
+        near_pairs, near_complete = near_duplicate_pairs(
+            [shingle_set(row["input"]) for row in rows]
+        )
+        if near_pairs:
+            # A truncated scan still answered the question - there ARE
+            # near-duplicates - so it stays a finding rather than becoming a
+            # SKIP. What it cannot claim is that these are all of them.
+            more = (
+                ""
+                if near_complete
+                else "; the scan stopped early, so there may be more"
+            )
+            emit(
+                "dataset-near-duplicates",
+                FAIL if synthetic else WARN,
+                f"input pairs at least {threshold_percent} similar (shared runs "
+                f"of {NEAR_DUPLICATE_SHINGLE} consecutive words over total runs, "
+                "so the same words in a different order are not a repeat), "
+                f"identical rows included: {near_pairs[:10]}{more}",
+            )
+        elif near_complete:
+            emit(
+                "dataset-near-duplicates",
+                PASS,
+                f"no input pair reaches {threshold_percent} similarity",
+            )
+        else:
+            # Found nothing AND did not finish, which is not the same statement
+            # as "found nothing". The only way here is a dataset so repetitive
+            # that the filter admits everything; say that this is unchecked,
+            # never clean.
+            #
+            # And say why it took so long, in terms of the dataset the user is
+            # holding. Getting here is the one slow path in this script, so they
+            # have just waited and are then told the check did not run; without
+            # the second sentence that reads as the script having hung on their
+            # data.
+            #
+            # The cause is not what it was, and the text moved with it. Under
+            # word sets the two ways in were long rows and a small vocabulary,
+            # and BOTH are now wrong: 2,000 rows of 300 words spend 964M
+            # operations as word sets and 0 as sequences, and 5,000 twelve-word
+            # rows over a 60-word vocabulary also spend 0, because sequences
+            # repeat across rows far less than words do. What is left is the one
+            # thing that still makes a sequence common - many rows genuinely
+            # phrased alike - so that is what this now names. A user reading the
+            # old sentence about their own file would have been sent to split
+            # inputs that were never the cause.
+            #
+            # Reachable only BELOW the memory ceiling, which is what makes the
+            # two SKIPs a real pair rather than a race: a dataset large enough
+            # to be refused above never gets here to be called slow.
+            emit(
+                "dataset-near-duplicates",
+                SKIP,
+                "the near-duplicate scan reached its work budget before "
+                "comparing every candidate pair, so this dataset is UNCHECKED "
+                "for near-duplicates - not clean. The exact check compares "
+                "whole sets of word runs, so it costs most when many rows are "
+                "phrased alike: shared boilerplate, one template filled in "
+                "repeatedly, or the same passage retrieved into many rows. Long "
+                "rows make each of those comparisons dearer, but length alone "
+                "does not reach this budget. De-duplicate the obvious repeats, "
+                "or scan a sample, if you need this answered",
+            )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
     scoreable_rows = [row for row in rows if dataset_row_is_labelled(row)]

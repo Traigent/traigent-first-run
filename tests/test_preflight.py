@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -1114,13 +1117,18 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("dataset-ceiling-risk", checks)
 
     def test_an_exhausted_budget_emits_skip_rather_than_a_clean_result(self) -> None:
-        """The one remaining way this check can fail to run must say so.
+        """One of the two ways this check can fail to run must say so.
 
         Driven through `check_dataset` and not just the join, because the
         defect being guarded lived in the emit: the old ceiling produced a SKIP
         that nothing downstream distinguished from a pass. The budget is
         patched down rather than a pathological dataset built, so the test
         states the contract instead of the size at which it triggers.
+
+        The other way is the memory ceiling below. Both are SKIPs and they are
+        not interchangeable, so each of these tests also asserts the absence of
+        the other's wording - a reader told the wrong limit fixes the wrong
+        thing.
         """
         rows = [
             {
@@ -1160,6 +1168,253 @@ class StaticPreflightTests(unittest.TestCase):
         # advice about a cost their file does not have.
         self.assertIn("phrased alike", near.detail)
         self.assertNotIn("small vocabulary", near.detail)
+        # ...and not the memory ceiling's, which is a different limit with a
+        # different remedy. This scan ran and ran out of comparisons.
+        self.assertNotIn("MEMORY ceiling", near.detail)
+
+    def _rows_of(self, count: int, words: int) -> list[dict]:
+        """Rows whose runs are all distinct, so the count is the whole story."""
+        return [
+            {
+                "id": f"real-{index}",
+                "input": " ".join(f"w{index}x{position}" for position in range(words)),
+                "output": f"answer {index % 4}",
+                "source": "production",
+            }
+            for index in range(count)
+        ]
+
+    def _near_duplicate_result(self, rows: list[dict], **patches: object):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with contextlib.ExitStack() as stack:
+                for name, value in patches.items():
+                    stack.enter_context(mock.patch.object(MODULE, name, value))
+                MODULE.check_dataset(dataset)
+        return next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+
+    def test_a_dataset_too_large_to_index_skips_and_names_the_memory_ceiling(
+        self,
+    ) -> None:
+        """The bound the work budget cannot see, and the reason it had to exist.
+
+        `MAX_NEAR_DUPLICATE_WORK` counts operations, and on high-diversity rows
+        it counts ZERO at every size: the index admits no candidates, so the
+        counter never moves while the sets it is built from grow with the file.
+        Measured on the shipped scan before this ceiling existed, 16,000 rows of
+        300 words spent 0 operations, returned `complete`, and peaked at about
+        36x the file - 1,538 MB. A dataset twice that size does not run slowly,
+        it is killed, and a killed preflight prints nothing at all.
+
+        So the SKIP has to name the MEMORY limit specifically. The work SKIP
+        tells a reader to de-duplicate; that advice is actively wrong here,
+        because this dataset is refused for being large and de-duplicating a
+        corpus of distinct rows removes nothing.
+        """
+        rows = self._rows_of(12, 6)
+        near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=10)
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertIn("UNCHECKED", near.detail)
+        self.assertIn("MEMORY ceiling", near.detail)
+        # The measured size and the ceiling it failed, both of them, so the
+        # reader can tell how far over they are rather than only that they are.
+        self.assertIn(
+            f"{12 * (6 - MODULE.NEAR_DUPLICATE_SHINGLE + 1):,} runs", near.detail
+        )
+        self.assertIn("10 run MEMORY ceiling", near.detail)
+        # And never the work budget's wording or its remedy.
+        self.assertNotIn("work budget", near.detail)
+        self.assertNotIn("De-duplicate", near.detail)
+
+    def test_the_memory_ceiling_is_consulted_before_the_index_is_built(self) -> None:
+        """A ceiling checked after the allocation has bounded nothing.
+
+        This is the whole mechanism, so it is measured rather than inferred from
+        the SKIP. Asserting only that `near_duplicate_pairs` is never called is
+        NOT enough, and that gap was found by writing the mutation instead of
+        assuming it: an implementation that builds the list of one set per row,
+        sums it, and then refuses passes that assertion while allocating the
+        larger half of what it claims to be avoiding. The sets are two thirds of
+        the peak on high-diversity rows and nearly all of it on repetitive ones.
+
+        So the bound is compared against the thing it must stay under: the cost
+        of the sets alone, measured here rather than written down as a constant
+        that could quietly stop describing the code. Over the ceiling, the whole
+        of `check_dataset` must peak BELOW what one list of shingle sets costs.
+        """
+        rows = self._rows_of(400, 60)
+        values = [row["input"] for row in rows]
+
+        tracemalloc.start()
+        try:
+            start = tracemalloc.get_traced_memory()[0]
+            sets = [MODULE.shingle_set(value) for value in values]
+            sets_cost = tracemalloc.get_traced_memory()[0] - start
+            del sets
+        finally:
+            tracemalloc.stop()
+
+        tracemalloc.start()
+        try:
+            with mock.patch.object(MODULE, "near_duplicate_pairs") as join:
+                near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=10)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+        join.assert_not_called()
+        self.assertEqual(near.status, MODULE.SKIP, near.detail)
+        self.assertLess(
+            peak,
+            sets_cost,
+            f"refusing this dataset peaked at {peak:,} bytes, which is at least "
+            f"what its {len(rows)} shingle sets cost to build ({sets_cost:,}). "
+            "The ceiling is being applied after the index exists, so it bounds "
+            "the report and not the memory - which is the defect it was added "
+            "for, one step later in the same function.",
+        )
+
+    def test_a_dataset_inside_the_memory_ceiling_is_still_scanned(self) -> None:
+        """The false-red direction, and the win this must not take back.
+
+        A memory bound that refuses everything is trivially safe and useless -
+        the point of #170's work bound was to stop a 500-row ceiling silently
+        withdrawing this check from every dataset big enough to need it, and a
+        ceiling set too low would reintroduce exactly that. Same rows as the
+        test above, one ceiling above their real size instead of one below: the
+        scan runs and answers.
+        """
+        rows = self._rows_of(12, 6)
+        runs = 12 * (6 - MODULE.NEAR_DUPLICATE_SHINGLE + 1)
+        near = self._near_duplicate_result(rows, MAX_NEAR_DUPLICATE_SHINGLES=runs)
+        self.assertEqual(near.status, MODULE.PASS, near.detail)
+        self.assertNotIn("UNCHECKED", near.detail)
+
+    def test_the_index_size_count_is_what_the_scan_would_actually_hold(self) -> None:
+        """The count may not drift from the sets it predicts.
+
+        `near_duplicate_index_size` exists to answer "how big is the index"
+        without building it, so the one way it can be wrong is by disagreeing
+        with what does get built. It is computed by CALLING `shingle_set`
+        precisely so it cannot, and this pins that: the arithmetic shortcut
+        `len(tokens) - n + 1` is checked here too, and it is wrong for rows
+        shorter than n, which contribute one whole-row run rather than zero or a
+        negative number.
+        """
+        values = [
+            "alpha beta gamma delta",  # 4 words -> 2 runs
+            "one two",  # under n -> 1 run, not -1 and not 0
+            "solo",  # under n -> 1 run
+            "",  # no word characters -> no runs at all
+            "repeat repeat repeat repeat",  # collapses to 1 distinct run
+        ]
+        built = [MODULE.shingle_set(value) for value in values]
+        self.assertEqual(
+            MODULE.near_duplicate_index_size(values),
+            sum(len(tokens) for tokens in built),
+        )
+        self.assertEqual([len(tokens) for tokens in built], [2, 1, 1, 0, 1])
+
+    def test_the_memory_ceiling_is_the_arithmetic_its_own_comment_states(
+        self,
+    ) -> None:
+        """The ceiling is derived, so the derivation is what is checked.
+
+        Every other guard here patches `MAX_NEAR_DUPLICATE_SHINGLES` to state a
+        contract independent of its value, which is right - and leaves the
+        shipped value itself guarded by nothing. Raising it to a number no
+        measurement supports would pass all of them, and that is the failure
+        this repository keeps finding: a constant whose justification sits
+        beside it as prose and stops describing it.
+
+        So the number is recomputed from the two figures its comment gives - the
+        memory target, and the worst bytes-per-run of the shapes measured - and
+        the comment's own division is checked against Python's. The table is
+        read too: its worst row must BE the divisor, so adding a costlier shape
+        without re-deriving fails here rather than being absorbed into prose.
+        """
+        source = SCRIPT.read_text()
+        block = source.split("MAX_NEAR_DUPLICATE_WORK = ", 1)[1].split(
+            "MAX_NEAR_DUPLICATE_SHINGLES = ", 1
+        )[0]
+        prose = " ".join(
+            line.lstrip("#").strip() for line in block.splitlines()
+        ).replace("  ", " ")
+
+        target = re.search(r"add at most ([\d,]+) MB to peak RSS", prose)
+        self.assertIsNotNone(target, "the comment no longer states a memory target")
+        target_bytes = int(target.group(1).replace(",", "")) * 1_000_000
+
+        derivation = re.search(
+            r"([\d,]+) / ([\d,]+) = ([\d,]+) runs, rounded DOWN to ([\d,]+)", prose
+        )
+        self.assertIsNotNone(
+            derivation, "the comment no longer shows how the ceiling was derived"
+        )
+        dividend, divisor, quotient, rounded = (
+            int(group.replace(",", "")) for group in derivation.groups()
+        )
+
+        self.assertEqual(dividend, target_bytes, "the division is not of the target")
+        self.assertEqual(
+            quotient, dividend // divisor, "the comment's division is wrong"
+        )
+        self.assertEqual(rounded, MODULE.MAX_NEAR_DUPLICATE_SHINGLES)
+        self.assertLessEqual(
+            MODULE.MAX_NEAR_DUPLICATE_SHINGLES * divisor,
+            target_bytes,
+            "the shipped ceiling does not buy the memory target its comment "
+            "claims. Re-measure and re-derive, or state a different target.",
+        )
+
+        measured = [
+            int(row.group(1).replace(",", ""))
+            for row in re.finditer(
+                r"^#\s+[\d,]+ x [\d,]+ words\s+[\d,]+\s+[\d,]+ MB\s+(\d+)",
+                block,
+                re.MULTILINE,
+            )
+        ]
+        self.assertGreaterEqual(len(measured), 5, "the measured table is gone")
+        self.assertEqual(
+            max(measured),
+            divisor,
+            "the ceiling is divided by a bytes-per-run figure that is not the "
+            f"worst one measured ({max(measured)} appears in the table). The "
+            "worst shape is the one the ceiling has to hold for.",
+        )
+
+    def test_the_first_run_sized_dataset_sits_well_inside_the_memory_ceiling(
+        self,
+    ) -> None:
+        """The regression this fix could most easily cause, stated as a ratio.
+
+        2,000 rows of 300 words is the shape the metric change was argued on:
+        it SKIPs on trunk and COMPLETES on this branch, and the memory ceiling
+        must not quietly take that back. Its index is 596,000 runs, and it is
+        pinned here as a fraction of the ceiling rather than as a passing run,
+        so moving either number - the ceiling down, or `NEAR_DUPLICATE_SHINGLE`
+        up - fails here with both figures named instead of somewhere slower.
+
+        Measured through `check_dataset` at that size, after this ceiling: PASS,
+        208 MB peak, against 769 MB and 1,538 MB for the 8,000 and 16,000-row
+        datasets the ceiling now refuses.
+        """
+        runs = 2_000 * (300 - MODULE.NEAR_DUPLICATE_SHINGLE + 1)
+        self.assertEqual(runs, 596_000)
+        self.assertLess(
+            runs,
+            MODULE.MAX_NEAR_DUPLICATE_SHINGLES * 0.6,
+            f"a first-run-sized dataset indexes {runs:,} runs against a "
+            f"{MODULE.MAX_NEAR_DUPLICATE_SHINGLES:,} ceiling, which is no "
+            "longer comfortable. The ceiling exists to refuse datasets that "
+            "would be killed, not the size this check was reinstated for.",
+        )
 
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [

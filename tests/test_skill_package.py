@@ -7555,21 +7555,60 @@ class SkillPackageTests(unittest.TestCase):
         # is computed here from the shipped `shingle_set` rather than restated -
         # move either constant and this recomputes, disagrees with the sentence,
         # and fails naming both numbers.
-        crossing = self._one_changed_word_crossing_length()
-        self.assertIn(f"one changed word still counts at {crossing} words", glossary)
+        # And WHERE the word changed, which the sentence used to leave out while
+        # this guard quietly assumed it. The word-set metric it replaced was
+        # position-blind - one changed word destroyed one member wherever it
+        # sat - so "one changed word still counts at 19 words" needed no
+        # qualifier and had none. Runs are not position-blind: a word in the
+        # middle of a row destroys 3 runs, a word at either end destroys 1, and
+        # the crossing length moves from 19 to 8 accordingly.
+        #
+        # The guard computed the mid-row value and asserted a sentence that
+        # claimed no position, so it proved the claim for one case out of a
+        # range the claim did not restrict itself to - true where it was
+        # measured and false at both ends of every row. Both figures are
+        # recomputed here and both are stated in the glossary.
+        middle = self._one_changed_word_crossing_length(lambda length: length // 2)
+        edge = self._one_changed_word_crossing_length(lambda _length: 0)
+        self.assertIn(
+            f"one word changed mid-row still counts at {middle} words, "
+            f"{edge} if it is the first or last",
+            glossary,
+        )
+        # The last word behaves as the first does - one destroyed run either
+        # way - so the sentence may say "first or last" only while that holds.
+        self.assertEqual(
+            edge, self._one_changed_word_crossing_length(lambda length: length - 1)
+        )
+        # And the distinction is only worth the words while the two differ. If
+        # a future n or threshold made the metric position-blind again, this
+        # says so instead of leaving a qualifier that has quietly stopped
+        # meaning anything.
+        self.assertNotEqual(
+            middle,
+            edge,
+            "a changed word now costs the same wherever it sits, so the "
+            "glossary's mid-row qualifier no longer distinguishes anything - "
+            "drop it and go back to the unrestricted sentence.",
+        )
 
-    def _one_changed_word_crossing_length(self) -> int:
-        """Shortest row where changing one word still reaches the threshold.
+    def _one_changed_word_crossing_length(self, position) -> int:
+        """Shortest row where changing the word at `position` still repeats.
 
         Measured through the shipped functions, on synthetic rows of distinct
         words, so it is the check's own behaviour and not a formula that could
-        drift away from it.
+        drift away from it. `position` is a callable of the row length, because
+        the answer depends on where the word sits and the two ends have to be
+        addressable as the length moves.
         """
         threshold = PREFLIGHT.NEAR_DUPLICATE_THRESHOLD
         for length in range(1, 400):
+            changed = position(length)
+            if not 0 <= changed < length:
+                continue
             left = " ".join(f"word{index}" for index in range(length))
             right = " ".join(
-                ("changed" if index == length // 2 else f"word{index}")
+                ("changed" if index == changed else f"word{index}")
                 for index in range(length)
             )
             first, second = PREFLIGHT.shingle_set(left), PREFLIGHT.shingle_set(right)
