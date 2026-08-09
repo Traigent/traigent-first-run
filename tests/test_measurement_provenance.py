@@ -574,6 +574,25 @@ class MeasuredNumbersAreReDerivableTests(unittest.TestCase):
         }
         self.assertEqual(names, published)
 
+    def test_the_opening_cap_numbers_name_the_test_that_scores_them(self) -> None:
+        """A real but unrelated symbol is not a reproducible producer."""
+        readiness = (
+            ROOT / "skills" / "traigent-first-run" / "scripts" / "readiness.py"
+        ).read_text()
+        anchor = (
+            "tests/test_readiness_scoring.py#"
+            "TheAgentPillarReadsTheAgentTests."
+            "test_the_opening_cap_measurement_has_an_executable_fixture"
+        )
+        anchor_at = readiness.index(anchor)
+        measured = readiness[anchor_at - 500 : anchor_at + len(anchor) + 300]
+        self.assertIn(anchor, measured)
+        self.assertNotIn("`build_plan`", measured)
+        self.assertIn(
+            "def test_the_opening_cap_measurement_has_an_executable_fixture",
+            (ROOT / "tests" / "test_readiness_scoring.py").read_text(),
+        )
+
     # ------------------------------------------------------------------
     # The five failures, planted. Each is quoted as it was found, and each
     # is planted twice: once as it stood, and once with a source added.

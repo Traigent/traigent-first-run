@@ -2,7 +2,7 @@
 
 follows: 0027
 total-ceiling: 347_300
-total-measured: 346_921
+total-measured: 347_299
 
 This buys prevention where the guide previously had detection. `algorithm="auto"`
 with an unreachable managed brain does not fail: measured on a stub agent with no
@@ -18,7 +18,10 @@ no backend session, so the deliberately local baseline stops before spending
 under an inherited true value. The approval card must name the conflict before a
 new baseline process is deliberately launched with a phase-local false value;
 merely unsetting would let `.env` restore true. The wrapper never neutralizes the
-customer's environment policy in silence. In the other direction
+customer's environment policy in silence. It also forces the baseline process's
+Traigent backend offline before import: deleting the environment key does not
+disable a stored CLI login, while the process-local setting dies before the fresh
+connected launch. In the other direction
 either offline spelling resolves the run
 to local-only before a session is attempted, the enforcement site never executes,
 and the phase completes locally while the guard reads as on. That last state is
@@ -48,7 +51,7 @@ so a success cannot contradict stale evidence. A session that never opened spent
 baseline standing; a brain lost mid-search has already bought trials that must be
 recovered and reported as an early stop rather than dressed as a frontier.
 
-346_921 measured with `assistant_facing_documents()` on the fully aligned tree,
+347_299 measured with `assistant_facing_documents()` on the fully aligned tree,
 including the 0.26.0 pin and every other technical PR in this consolidation.
 Resident is 76_345: this change itself remains in `sdk-execution.md` and
 `run-safety.md`, both of which load per stage.

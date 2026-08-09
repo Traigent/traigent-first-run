@@ -1048,7 +1048,7 @@ class StaticPreflightTests(unittest.TestCase):
             }
             for index in range(900)
         ]
-        # Row 2 repeats nine of row 1's ten tokens: Jaccard 9/10, at threshold.
+        # With 3-word shingles, row 2 shares 7 of row 1's 8 runs: Jaccard 7/8.
         rows[0]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
         rows[1]["input"] = "alpha beta gamma delta epsilon zeta eta theta iota"
         with tempfile.TemporaryDirectory() as directory:

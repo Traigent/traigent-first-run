@@ -1998,8 +1998,9 @@ def band_for(
 
 def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     """Renormalize over measured sub-scores and report the observed fraction."""
-    measured = [item for item in subscores if item.measured]
-    total_weight = sum(item.maximum for item in subscores)
+    applicable = [item for item in subscores if item.applicable]
+    measured = [item for item in applicable if item.measured]
+    total_weight = sum(item.maximum for item in applicable)
     measured_weight = sum(item.maximum for item in measured)
     if not measured or measured_weight <= 0:
         return Pillar(
@@ -2016,7 +2017,7 @@ def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     # honest answer. See `SubScore.withheld`. Confidence below is unchanged and
     # still reports them as unchecked, because they are.
     scored_weight = measured_weight + sum(
-        item.maximum for item in subscores if item.withheld and not item.measured
+        item.maximum for item in applicable if item.withheld and not item.measured
     )
     score = round_half_up(100.0 * earned / scored_weight)
     confidence = measured_weight / total_weight if total_weight else 0.0
@@ -4218,11 +4219,12 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # project needs repairing for this", printed while holding every card in the
 # product at 45. It said the customer was fine and capped them anyway, and it
 # fired on every guided run by construction, because the guide withholds every
-# config-space file found before this run's search. Measured through
-# `build_plan` on the strongest realistic opening project (200 production rows,
-# difficulty-tagged, 180/20 split, evaluator calibrated and passing all seven
-# probes): dataset 94, evaluation 100, agent 0 at confidence 0.00, weighted
-# average 73, overall 45 PARTIAL, with that cap the only one firing.
+# config-space file found before this run's search. On the strongest realistic
+# opening project (200 production rows, difficulty-tagged, 180/20 split,
+# evaluator calibrated and passing all seven probes), executed by
+# `tests/test_readiness_scoring.py#TheAgentPillarReadsTheAgentTests.test_the_opening_cap_measurement_has_an_executable_fixture`:
+# dataset 98, evaluation 100, agent 0 at confidence 0.00, weighted average 74,
+# overall 45 PARTIAL, with that cap the only one firing.
 #
 # What changed is not the ceiling. It is that there is now something a run can
 # DO about this state at the gate where it is reported: read the agent
@@ -6971,14 +6973,13 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
             f"input can cost an unbounded number of calls ({evidence})",
         )
     if not _build_flag(check, spec, "used"):
-        # Excluded rather than credited or charged. There is nothing here to
-        # check, which is what README.md's "a check this tool could not compute
-        # is marked unmeasured and excluded" describes - and crediting an agent
-        # for calling no tools would pay for being simpler than the question.
+        # Excluded rather than credited or charged. Only tool wiring is N/A;
+        # prompt, output-contract, control-flow, and search-space checks remain.
+        # Crediting no tools would pay for being simpler than the question.
         return BuildSignal(
             check,
             0.0,
-            f"the agent calls no tools, so there is nothing to wire ({evidence})",
+            f"the agent declares no tools, so tool wiring does not apply ({evidence})",
             measured=False,
             applicable=False,
         )

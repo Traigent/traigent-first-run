@@ -328,7 +328,9 @@ if FIRST_RUN_PHASE == "baseline":
             "baseline process with TRAIGENT_REQUIRE_CLOUD=0 in its environment. "
             "Do not merely unset it: .env could restore the true value."
         )
-    # Remove before import so no client can capture a portal key locally.
+    # Backend-offline is process-local: a stored CLI credential can survive
+    # removing the environment key, so this is what keeps the baseline local.
+    os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
     os.environ.pop("TRAIGENT_API_KEY", None)
 else:
     # Both spellings: the SDK reads either as offline, and either resolves this
@@ -1002,8 +1004,10 @@ evaluator instead.
 
 For the generated walkthrough, run the credible small space as one local fixed grid containing its
 initial configuration. Start a fresh process with `TRAIGENT_FIRST_RUN_PHASE=baseline` (the
-fail-safe default), supplied by the process and never by `.env`. The contract removes
-`TRAIGENT_API_KEY` before importing Traigent while preserving its file value for later:
+fail-safe default), supplied by the process and never by `.env`. The contract forces backend-offline
+before import: removing `TRAIGENT_API_KEY` does not suppress a stored CLI login. Provider calls stay
+real. The setting dies with the baseline process; never export it, because the connected
+process requires it absent and refuses it if inherited.
 
 ```python
 assert FIRST_RUN_PHASE == "baseline", "baseline must run in the local phase"

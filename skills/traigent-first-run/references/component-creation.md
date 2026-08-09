@@ -208,9 +208,9 @@ anywhere - a parser, a schema, a response format, an instruction naming the form
 answer of any shape is one an evaluator has to accept whole. **Control flow** is whether the agent
 ends and on what: no loop ends trivially and earns the check, a loop with a bound you can point at
 earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
-is whether each tool the agent declares can be found behind its name; `"used": false` takes the
-check out of the score rather than earning it, because an agent that calls no tools has nothing here
-to be right or wrong about.
+is whether each declared tool can be found. `"used": false` removes only this wiring check; prompt,
+output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
+pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
 None of the four is a judgment about how good the agent is, and none may become one. Whether a
 prompt is well written, whether a tool is the right tool, whether the objective is a sensible

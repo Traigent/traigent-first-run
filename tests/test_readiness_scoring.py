@@ -8399,6 +8399,43 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
         )
 
+    def test_the_opening_cap_measurement_has_an_executable_fixture(self) -> None:
+        """Keep the source comment's score and producer re-runnable."""
+        score = MODULE.score_run(
+            _clean_dataset(
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=180,
+                holdout_rows=20,
+                tuning_labelled_rows=180,
+                holdout_labelled_rows=20,
+                difficulty_tagged_rows=200,
+                collected_rows=200,
+                answerable_rows=200,
+            ),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                task_kind="closed-label",
+                calibration_present=True,
+                calibration_supplied=True,
+                checks=({f"check-{index}": True for index in range(7)},),
+                probe_scores=((1.0, 0.0),),
+            ),
+            MODULE.AgentFacts(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(
+            [(pillar.name, pillar.score) for pillar in score.pillars],
+            [("agent", 0), ("dataset", 98), ("evaluation", 100)],
+        )
+        self.assertEqual(score.weighted_average, 74)
+        self.assertEqual(score.overall, 45)
+        self.assertEqual(score.band, "PARTIAL")
+        self.assertEqual(
+            [cap.condition for cap in score.caps], ["agent-no-varying-knobs"]
+        )
+
     def _pillar(self, facts):
         pillar, _caps, _knobs = MODULE.score_agent(facts)
         return pillar, {sub.name: sub for sub in pillar.subscores}
@@ -8576,6 +8613,8 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # is the property that matters: having no tools is not a deduction.
         every_tool, _ = self._pillar(_read(_build_document()))
         self.assertAlmostEqual(pillar.score, every_tool.score, delta=2)
+        self.assertEqual(pillar.confidence, 1.0)
+        self.assertEqual(pillar.confidence, every_tool.confidence)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(

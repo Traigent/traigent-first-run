@@ -11389,8 +11389,11 @@ class SkillPackageTests(unittest.TestCase):
         phase = decorator.index("FIRST_RUN_PHASE = os.environ.get(")
         dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
         remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
+        force_offline = decorator.index('os.environ["TRAIGENT_OFFLINE_MODE"] = "true"')
         import_traigent = decorator.index("import traigent")
         self.assertLess(phase, dotenv)
+        self.assertLess(dotenv, force_offline)
+        self.assertLess(force_offline, import_traigent)
         self.assertLess(dotenv, remove_key)
         self.assertLess(remove_key, import_traigent)
         self.assertIn('if FIRST_RUN_PHASE == "baseline":', decorator)
@@ -11409,6 +11412,49 @@ class SkillPackageTests(unittest.TestCase):
             "supplied by the process and never by `.env`",
             " ".join(connected.split()),
         )
+
+    def test_baseline_offline_mode_ends_before_the_fresh_connected_process(
+        self,
+    ) -> None:
+        """Baseline isolation must not silently turn the enhanced run local."""
+        fence = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        tree = ast.parse(fence)
+        prefix: list[ast.stmt] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        program = compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            "<phase-environment-policy>",
+            "exec",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "traigent-runs" / "walkthrough.py"
+            script.parent.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                clear=True,
+            ):
+                exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
+
+            # A fresh process starts from its own launch environment; the
+            # baseline assignment never mutates the parent shell.
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "connected"},
+                clear=True,
+            ):
+                exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertNotIn("TRAIGENT_OFFLINE_MODE", os.environ)
+                self.assertEqual(os.environ["TRAIGENT_REQUIRE_CLOUD"], "1")
 
     def test_first_json_fence_is_the_calibration_matrix(self) -> None:
         """Guard the same positional dependency for the calibration example.
