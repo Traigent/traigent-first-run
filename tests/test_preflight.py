@@ -157,7 +157,7 @@ class StaticPreflightTests(unittest.TestCase):
                     item for item in MODULE.RESULTS if item.check == "sdk-version"
                 )
                 self.assertEqual(result.status, MODULE.FAIL)
-                self.assertIn("install traigent==0.25.0", result.detail)
+                self.assertIn("install traigent==0.26.0", result.detail)
 
     def test_provider_credentials_are_inventory_not_route_selection(self) -> None:
         MODULE.check_keys(

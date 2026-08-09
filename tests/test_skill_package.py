@@ -1597,7 +1597,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         # Not files, and each is something this guidance genuinely writes.
         for innocent in (
-            "Pinned to `0.25.0` for the first run.",
+            "Pinned to `0.26.0` for the first run.",
             "Costs `$5.00` at most.",
             "Set `TRAIGENT_API_KEY=` in the file.",
             "Roughly `0.75` of the rows.",
@@ -2017,7 +2017,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.25.0",
+                "traigent==0.26.0",
                 "litellm==1.93.0",
                 "python-dotenv==1.2.2",
             ],
@@ -2025,6 +2025,29 @@ class SkillPackageTests(unittest.TestCase):
         for text in (skill_text, safety_text, guide_text):
             self.assertIn("never", text)
             self.assertIn("unversioned `pip install traigent`", text)
+
+    def test_preflight_supports_exactly_the_release_the_pin_installs(self) -> None:
+        """The gate and the pin are two literals; nothing tied them together.
+
+        `preflight.py` fails the `sdk-version` check unless the interpreter has
+        exactly `SUPPORTED_TRAIGENT_VERSION`, and that constant is restated
+        rather than derived. The test above pins the requirements file and
+        `test_preflight.py` pins the constant, so each half is self-consistent
+        and neither notices the other moving: bump only the pin and every user's
+        preflight fails the run with "install traigent==<the old release>",
+        naming a release the guide no longer installs. That is the failure this
+        repository keeps finding under a different name - one decision with two
+        homes - and it costs one assertion to refuse it.
+        """
+        self.assertEqual(
+            PREFLIGHT.SUPPORTED_TRAIGENT_VERSION,
+            pinned_sdk_version(),
+            "preflight.py's SUPPORTED_TRAIGENT_VERSION and the release "
+            "assets/requirements-first-run.txt installs have diverged. "
+            "Preflight refuses any version other than the one it names, so "
+            "this combination fails the first run for every user, telling them "
+            "to install the release the guide just stopped pinning.",
+        )
 
     def test_readme_discloses_pinned_sdk_license_terms(self) -> None:
         # The version is DERIVED from the file that pins it, never restated
@@ -2089,12 +2112,17 @@ class SkillPackageTests(unittest.TestCase):
 
         `test_readme_discloses_pinned_sdk_license_terms` already refuses a
         release-shaped literal in README.md that is not the pinned one. The
-        same claim is made in four more places the reader is sent to -
-        `sdk-execution.md` names the pinned release three times (the local-log
-        note, the relative-path defect, the sync limitation) and
-        `run-safety.md` once - and none of them was covered by anything. So a
-        pin bump could update README and leave the references describing the
-        behaviour of a release nobody installs, with the suite green.
+        same claim is made in the references the reader is sent to -
+        `sdk-execution.md` in the local-log note, and `run-safety.md` once - and
+        none of them was covered by anything. So a pin bump could update README
+        and leave the references describing the behaviour of a release nobody
+        installs, with the suite green.
+
+        It has since caught exactly that: the 0.25.0 -> 0.26.0 bump updated
+        README, both scripts and the run-safety note, and left this file's
+        local-log comment naming the old release. The other two sites the
+        original version of this docstring listed - the relative-path defect and
+        the sync limitation - are gone, because 0.26.0 fixed both.
 
         Derived twice over: the permitted set is every version
         `assets/requirements-first-run.txt` actually pins, so naming the pinned
@@ -8063,7 +8091,7 @@ class SkillPackageTests(unittest.TestCase):
                     )
 
     def test_baseline_pins_grid_and_warns_about_the_auto_fallback(self) -> None:
-        """Verified against installed traigent 0.25.0.
+        """Verified against installed traigent 0.26.0.
 
         Locally the SDK registers only `grid` and `random`; the managed
         algorithms are not registered. With no Traigent key, `algorithm="auto"`
@@ -8652,7 +8680,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
 
     def test_post_run_insight_avoids_the_plugin_only_analyze_method(self) -> None:
-        """Verified on installed traigent 0.25.0.
+        """Verified on installed traigent 0.26.0.
 
         `result.analyze()` raises ImportError without the traigent-tuned-variables
         plugin, which this run does not install - calling it would turn a
@@ -9112,14 +9140,22 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.25.0.
+        """Verified against installed traigent 0.26.0.
 
-        `--all` pushes every optimization ever logged on the machine - 1042
+        `--all` pushes every optimization ever logged on the machine - 10066
         sessions on the box used to check this, including unrelated projects.
-        Separately, the SDK exposes no supported id
-        for the run just completed, and the fix for that belongs upstream: this
-        repo must not work around it by reading the SDK's private storage
-        layout.
+        The pinned release does expose the id for the run just completed
+        (`OptimizationResult.sync_session_id`, upstream #2020, absent through
+        0.25.0), so the exact-sync branch is now reachable - but the reason not
+        to read the SDK's private storage layout is unchanged, because the
+        supported attribute is what replaced it.
+
+        The id is store-relative and `traigent sync` is a separate process that
+        resolves its own store from the environment. This wrapper points the run
+        at `RUN_DIR/sdk-results`, so the same folder has to be passed to the CLI;
+        measured on 0.26.0, a shell without it rejects the very id the run just
+        returned with "not found in the local store" - the #2020 failure, rebuilt
+        one layer up. That is why the folder is pinned here and not only the id.
         """
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for phrase in (
@@ -9128,10 +9164,18 @@ class SkillPackageTests(unittest.TestCase):
             "do not inspect private storage",
             "baseline_results.sync_session_id",
             "successful sync json",
-            # Was "traigent/traigent issue 2020". The guidance may not carry an
-            # internal issue number at all, so what is pinned is the decision -
-            # the fix is upstream's and this repo must not route around it.
-            "tracked upstream and the fix belongs there",
+            # Was "tracked upstream and the fix belongs there", which described
+            # a gap the pinned release has closed. What replaces it is the part
+            # of the shipped path that a later edit can silently drop: the
+            # command has to name the store the run wrote to, or the id is
+            # rejected. The decision is pinned, not the issue number.
+            #
+            # The command, not the bare variable name: `TRAIGENT_RESULTS_FOLDER`
+            # already appears in the wrapper listing higher up this file, so
+            # asserting the name alone passes even with both sync lines stripped
+            # back to `traigent sync "$SESSION_ID"`. Measured, not assumed.
+            'traigent_results_folder="$run_dir/sdk-results" traigent sync',
+            "a shell without it rejects the id",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -10516,7 +10560,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
         """Pinning the connected search to a local algorithm would gut it.
 
-        Verified on installed traigent 0.25.0: `auto` resolves to a cloud-brain
+        Verified on installed traigent 0.26.0: `auto` resolves to a cloud-brain
         execution intent, while naming `grid` or `random` resolves to a
         local-only intent. So pinning the enhanced run does not merely choose a
         weaker search - it bypasses a valid key entirely and the second run stops

@@ -312,7 +312,7 @@ if FIRST_RUN_PHASE == "baseline":
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.25.0 otherwise stores query/response/expected text in local per-example
+# SDK 0.26.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
@@ -945,11 +945,8 @@ Do not include `expected` in the agent signature. Dataset inputs call the agent;
 belongs only to evaluation.
 
 Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
-(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
-contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
-onto its own resolved parent by dataset validation and doubles into
-`.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
-time. Never shorten these to a relative path. It is an SDK defect, tracked upstream.
+(`str(RUN_DIR / "...")`). A relative path means whatever the launching process's working directory
+happens to be, which this wrapper does not control. Never shorten these to a relative path.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
@@ -1041,8 +1038,8 @@ A baseline that ran without a Traigent key is logged locally. Upload it without 
 call only when the installed public result exposes an exact sync id:
 
 ```bash
-traigent sync "$SESSION_ID" --dry-run --json
-traigent sync "$SESSION_ID" --json
+TRAIGENT_RESULTS_FOLDER="$RUN_DIR/sdk-results" traigent sync "$SESSION_ID" --dry-run --json
+TRAIGENT_RESULTS_FOLDER="$RUN_DIR/sdk-results" traigent sync "$SESSION_ID" --json
 ```
 
 Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
@@ -1052,9 +1049,10 @@ JSON and use its `cloud_url` as the baseline portal link; syncing does not mutat
 
 Use `baseline_results.sync_session_id` only after feature-detecting that public attribute and a
 non-empty value. If unavailable, leave the baseline local and report it from the saved local
-results - do not inspect private storage or substitute `--all`. The pinned 0.25.0 release does not
-expose this id; support is capability-gated for a later release. It is tracked upstream and the fix
-belongs there.
+results - do not inspect private storage or substitute `--all`. The pinned release exposes it, and
+it is `None` whenever the backend already holds the run - then there is nothing to upload. The id
+names a record in one store and `traigent sync` is a separate process that picks its own, so pass
+the same `TRAIGENT_RESULTS_FOLDER` this wrapper set; a shell without it rejects the id.
 
 ## Broader optimization
 
