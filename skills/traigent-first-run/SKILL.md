@@ -207,10 +207,17 @@ by an earlier guided run: it is historical, unverified context, not current wiri
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
 run does this, including a zero-anchor run.
 
-Then measure the search space from the agent itself and pass it as `--agent-knobs`, so the opening
-card grades what this project can search instead of reporting nothing. Read the agent's own source
-for parameters it can already vary - model, temperature, top_p, prompt strategy, retry/reflection
-flags, tool selection - and record each with the line that shows it. Never write a range or an
+Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
+grades this project instead of reporting nothing. Two halves, one pass, and neither is optional
+where an agent was found. Read its own source for parameters it can already vary - model,
+temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
+the line that shows it. Read the same source for how the agent is built and answer all four checks
+the reference names: whether it carries a prompt and worked examples, whether anything pins down the
+shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
+Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
+agent lacks the thing, and the two are different statements about somebody's code. Withholding the
+second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
+check does everywhere else in the score. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the

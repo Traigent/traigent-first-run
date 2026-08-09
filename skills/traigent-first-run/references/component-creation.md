@@ -9,7 +9,7 @@ before creating any of them.
 2. The one ask, and the path that answers it
 3. Dependency matrix
 4. Agent creation
-5. Reading the agent's search space for the opening score
+5. Reading the agent for the opening score
 6. Compatibility contract
 7. Readiness transitions
 
@@ -135,9 +135,10 @@ real behavior and can be evaluated safely. A generated Python walkthrough agent 
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
 
-## Reading the agent's search space for the opening score
+## Reading the agent for the opening score
 
-SKILL.md's opening gate asks for this; the shape is here. Write it to a scratch path outside the
+SKILL.md's opening gate asks for this; the shape is here. One document, two halves: `knobs` is what
+the agent can be told to do differently, and `build` is how it is put together. Write it to a scratch path outside the
 user's project and pass it as `scripts/readiness.py --agent-knobs`.
 
 ```json
@@ -161,6 +162,46 @@ A range counts as at least two distinct values and no more; a value list counts 
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
 what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
 the config-space document the enhanced search emits.
+
+### The build half
+
+Four checks, all four answered, each with the line you read:
+
+```json
+{"build": {
+  "prompt": {"present": true, "few_shot": 2,
+             "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
+  "output-contract": {"present": true, "evidence": "agent.py:24 json.loads(reply) parses it"},
+  "control-flow": {"loop": true, "bounded": true,
+                   "evidence": "agent.py:31 for _ in range(MAX_STEPS)"},
+  "tools": {"used": true, "declared": ["search", "fetch"], "unreachable": [],
+            "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
+```
+
+What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
+the call, and how many worked examples ride with it; two is where examples start showing a pattern
+rather than illustrating one. **Output contract** is whether the answer's shape is pinned down
+anywhere - a parser, a schema, a response format, an instruction naming the format - because an
+answer of any shape is one an evaluator has to accept whole. **Control flow** is whether the agent
+ends and on what: no loop ends trivially and earns the check, a loop with a bound you can point at
+earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
+is whether each tool the agent declares can be found behind its name; `"used": false` takes the
+check out of the score rather than earning it, because an agent that calls no tools has nothing here
+to be right or wrong about.
+
+None of the four is a judgment about how good the agent is, and none may become one. Whether a
+prompt is well written, whether a tool is the right tool, whether the objective is a sensible
+objective - those are opinions, and an opinion may lower a score and never raise one, so they are
+outside this document. Answer `{"determined": false, "reason": "...", "evidence": "..."}` where the
+read genuinely could not settle a check - a prompt assembled at runtime from somewhere this read
+cannot reach is the common case - and the check leaves the pillar rather than scoring zero against
+the agent.
+
+Two of the criteria this pillar is asked about are not here, and the card says so rather than
+letting four checks imply that six were looked at: whether the dataset and the evaluation method are
+wired into the agent. That integration is what the matrix above builds and stage 5 verifies against
+the installed SDK, so at the opening gate there is nothing in the agent's source to read, and a
+score for it would be grading this run's own later work.
 
 ## Compatibility contract
 

@@ -1406,6 +1406,12 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     "probe-spread": "separates good answers from bad",
     # agent
     "search-space": "how many settings-combinations there are to try",
+    # #184's four, phrased as the question each answers so the line reads as a
+    # finding about the agent rather than as a category the reader must decode.
+    "prompt": "what the model is told, and shown",
+    "output-contract": "whether the answer's shape is pinned down",
+    "control-flow": "whether it ends, and on what",
+    "tools": "tools it declares, and can reach",
 }
 
 
@@ -1719,6 +1725,83 @@ class DiscoveredKnob:
 
 
 @dataclass(frozen=True)
+class BuildSignal:
+    """One checkable fact about how the agent is put together (#184).
+
+    The AGENT pillar used to answer one question - how many settings vary, and
+    how widely - and print `AGENT` over it. A customer reads that as a verdict
+    on their agent, and it was a verdict on their config space. The owner's
+    decision was to keep the name by making it true rather than to rename the
+    pillar `SEARCH SPACE`, so the pillar gains the facts about an agent that a
+    read of its source can actually establish.
+
+    Same discipline as `DiscoveredKnob`, and for the same reason: `evidence` is
+    required, so a signal with no citation is a signal this score has not seen.
+    The rule is #210's - score what is genuinely reachable, never invent one -
+    and it applies harder here, because these signals are about the customer's
+    craft and a wrong one is an accusation rather than a missed point.
+
+    `measured=False` is the honest answer for a signal a read could not settle,
+    and it is not the same as zero. Zero says the agent does not have this;
+    unmeasured says this read could not tell. README.md promises the second is
+    reported rather than scored, and `combine` keeps the promise by leaving an
+    unmeasured check out of the pillar and out of its confidence.
+    """
+
+    name: str
+    points: float
+    evidence: str
+    measured: bool = True
+
+
+# What the read of the agent's build is asked, and what each answer is worth.
+#
+# FOUR CHECKS OUT OF THE OWNER'S SIX, and the two that are missing are missing
+# for a reason that is written down rather than left to be inferred. "Is the
+# dataset wired into the agent" and "is the evaluation method wired in" are not
+# facts about the agent's source at the gate where this read happens: the
+# integration that wires them is built in stage 3 and verified against the
+# installed SDK in stage 5, so at the opening card there is nothing to read and
+# a score for it would be grading this run's own future work. They are said on
+# the card instead, as what this pillar does not cover.
+#
+# "Is the objective defined" is here in the one form a read can settle. Whether
+# a prompt states the task well is an opinion, and an opinion may lower a score
+# and never raise one; whether the agent constrains the shape of its answer is a
+# line of code - a parser, a schema, a response format, an instruction naming
+# the format - and #184 names exactly that case: "a customer whose prompt states
+# no output format has a real, findable weakness that no knob count reveals".
+#
+# The weights are a judgment and are not dressed up as anything else. The two
+# that decide whether a search has anything to improve - what the model is told,
+# and what shape its answer must take - carry more than the two that only apply
+# to agents shaped a particular way. What IS derived is the total: 30 against
+# the search space's 100, so a run that supplies the knob half of the read and
+# not this half keeps a pillar confidence of 100/130, above the 0.75 gate that
+# would otherwise demote every such card to WORKABLE on a fact about our own
+# input rather than about the customer's project.
+AGENT_BUILD_CHECKS: tuple[tuple[str, float], ...] = (
+    ("prompt", 8.0),
+    ("output-contract", 8.0),
+    ("control-flow", 7.0),
+    ("tools", 7.0),
+)
+AGENT_BUILD_WEIGHT = {name: weight for name, weight in AGENT_BUILD_CHECKS}
+AGENT_BUILD_TOTAL = sum(AGENT_BUILD_WEIGHT.values())
+
+# What the card says about the two the pillar does not score, so that "not
+# measured" is a sentence a customer reads rather than an absence they have to
+# notice. Printed with the pillar, never as a check, because a check that can
+# never be measured would hold this pillar's confidence under the band gate for
+# every project forever.
+AGENT_NOT_COVERED = (
+    "not covered by this pillar: whether your dataset and evaluation method are "
+    "wired into the agent - this run builds that integration and verifies it "
+    "against the installed SDK, so the opening read has nothing to measure"
+)
+
+
+@dataclass(frozen=True)
 class AgentFacts:
     max_trials: int | None = None
     knobs: dict[str, list[Any]] = field(default_factory=dict)
@@ -1755,6 +1838,25 @@ class AgentFacts:
     # "the look found nothing" are different findings and get different
     # sentences.
     discovery_supplied: bool = False
+    # The other half of the same read (#184): not how much there is to search,
+    # but how the agent is put together. `None` means no such read reached this
+    # score, which is distinct from a read that answered - and the distinction
+    # costs, because a check the run was asked for and did not supply keeps its
+    # weight and earns nothing rather than leaving the denominator.
+    #
+    # Deliberately NOT part of `discovered`. Those are parameters and multiply
+    # into a space; these are facts about one agent and do not. Sharing a field
+    # would mean one of the two readings deciding the shape of the other, which
+    # is how the wiring attestation got confused with a source read once
+    # already.
+    #
+    # It survives a supplied config-space document, where `discovered` does
+    # not. That order exists so a read of the source cannot talk over a
+    # document saying nothing is wired, which is a claim about the SEARCH
+    # SPACE; how the agent is built is a different question that no config
+    # space answers, so there is nothing here for the document to be talked
+    # over about.
+    build: tuple[BuildSignal, ...] | None = None
 
 
 def round_half_up(value: float) -> int:
@@ -4072,6 +4174,69 @@ def score_discovered_agent(
     )
 
 
+def build_subscores(facts: AgentFacts) -> list[SubScore]:
+    """The four build checks, in every state the read can be in.
+
+    Always four, whichever path established the search space, because the
+    pillar's shape may not depend on which document arrived - a pillar that
+    declares three checks on one card and four on the next is a pillar whose
+    confidence means something different each time.
+
+    No read at all is WITHHELD: the guide asks for this at every gate where an
+    agent was found, so its absence is this run's silence rather than something
+    the tool could not compute. A withheld check keeps its weight and earns
+    nothing, which is what stops omitting the read from outscoring doing it -
+    the defect this module has now shipped in six places and refuses in
+    `SubScore.withheld`.
+
+    A check the read could not settle is UNMEASURED and not withheld. That is
+    the other half of the same rule and the one #184 insists on: a signal you
+    cannot determine is reported as undetermined, never scored zero, because
+    zero says the agent lacks the thing and the read only says it could not
+    tell.
+    """
+    if facts.build is None:
+        return [
+            SubScore(
+                name,
+                0.0,
+                weight,
+                False,
+                "no reading of how the agent is built reached this score; "
+                "reading the agent is what answers this",
+                withheld=True,
+            )
+            for name, weight in AGENT_BUILD_CHECKS
+        ]
+    found = {signal.name: signal for signal in facts.build}
+    return [
+        SubScore(
+            name,
+            found[name].points if found[name].measured else 0.0,
+            weight,
+            found[name].measured,
+            found[name].evidence,
+        )
+        for name, weight in AGENT_BUILD_CHECKS
+    ]
+
+
+def with_build(pillar: Pillar, facts: AgentFacts) -> Pillar:
+    """Re-combine a search-space pillar with the build checks beside it.
+
+    Applied at every `return` in `score_agent` rather than inside one branch,
+    which is the whole point: the four paths that establish a search space -
+    a read of the source, a document, a document that lists nothing, and
+    nothing at all - are four answers to a question this half does not ask, so
+    none of them may decide whether the agent's build is graded.
+
+    Re-running `combine` rather than adjusting the score by hand, so the
+    renormalization, the withheld denominator and the confidence are computed
+    once, in the one place that knows the rules for them.
+    """
+    return combine(pillar.name, [*pillar.subscores, *build_subscores(facts)])
+
+
 def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -4084,7 +4249,8 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     # any of that, or it becomes a way to score around a document that says
     # nothing is wired.
     if facts.discovery_supplied and not facts.config_space_supplied:
-        return score_discovered_agent(facts)
+        space, discovered_caps, discovered_knobs = score_discovered_agent(facts)
+        return with_build(space, facts), discovered_caps, discovered_knobs
 
     # Order is deliberate: an empty `knobs` map is answered here, ahead of the
     # `wired` branch, so `{"knobs": {}}` keeps saying "no knobs declared"
@@ -4138,13 +4304,17 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # this module cannot tell the two gates apart, so it says the one thing
         # true at both - no settings document reached this score.
         return (
-            nothing_to_search_pillar(
-                evidence,
-                supplied=facts.config_space_supplied,
-                # Nothing about the agent reached this score - not a document,
-                # not a read of its source. The guide asks for one of the two at
-                # every gate, so this is silence, and silence keeps its weight.
-                withheld=not facts.config_space_supplied,
+            with_build(
+                nothing_to_search_pillar(
+                    evidence,
+                    supplied=facts.config_space_supplied,
+                    # Nothing about the agent reached this score - not a
+                    # document, not a read of its source. The guide asks for one
+                    # of the two at every gate, so this is silence, and silence
+                    # keeps its weight.
+                    withheld=not facts.config_space_supplied,
+                ),
+                facts,
             ),
             [
                 (
@@ -4167,10 +4337,13 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         # `demonstrably_wired()` probe, and until that lands the `wired` list
         # is an unenforced claim.
         return (
-            nothing_to_search_pillar(
-                f"{len(facts.knobs)} setting(s) listed, none marked as one the "
-                "agent uses - list those in the document's 'wired' field",
-                supplied=True,
+            with_build(
+                nothing_to_search_pillar(
+                    f"{len(facts.knobs)} setting(s) listed, none marked as one "
+                    "the agent uses - list those in the document's 'wired' field",
+                    supplied=True,
+                ),
+                facts,
             ),
             [UNATTESTED_WIRING_CAP],
             [],
@@ -4290,7 +4463,7 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
         )
     )
 
-    return combine("agent", subs), caps, knobs
+    return combine("agent", [*subs, *build_subscores(facts)]), caps, knobs
 
 
 # Caps outrank every sub-score gap - a broken ruler is not a few points - but
@@ -4823,6 +4996,18 @@ def render_card(
                 lines.append(
                     f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
                 )
+        if pillar.name == "agent":
+            # The half of #184's answer that is not a number. The pillar widened
+            # to cover what a read of the agent's source can establish, and two
+            # of the owner's six criteria are not that - so the card says so
+            # where the pillar is read, rather than letting a customer conclude
+            # from four checks that all six were looked at.
+            #
+            # Deliberately NOT a check. A check that can never be measured would
+            # hold this pillar's confidence under the band gate on every card
+            # forever, which would report a permanent gap in our reach as a
+            # permanent gap in the customer's project.
+            lines.append(f"    {palette.dim}{AGENT_NOT_COVERED}{palette.reset}")
         lines.append("")
     if score.caps:
         for cap in score.caps:
@@ -6339,6 +6524,217 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
     return DiscoveredKnob(name, "numeric", 2, evidence)
 
 
+# The keys each build check may carry. Closed and checked for the reason the
+# knob fields are: a misspelled key is a check that silently answers something
+# nobody wrote.
+BUILD_CHECK_FIELDS: dict[str, frozenset[str]] = {
+    "prompt": frozenset({"present", "few_shot", "evidence", "determined", "reason"}),
+    "output-contract": frozenset({"present", "evidence", "determined", "reason"}),
+    "control-flow": frozenset({"loop", "bounded", "evidence", "determined", "reason"}),
+    "tools": frozenset(
+        {"used", "declared", "unreachable", "evidence", "determined", "reason"}
+    ),
+}
+# A prompt earns most of its check for existing and the rest for carrying
+# worked examples. Two is where "examples" starts meaning a pattern rather than
+# an illustration, which is the same threshold `DiscoveredKnob` applies to a
+# categorical option list: one is not a choice, and one example is not a shape.
+PROMPT_PRESENT_POINTS = 6.0
+FEW_SHOT_POINTS = 2.0
+FEW_SHOT_PATTERN = 2
+
+
+def _build_flag(check: str, spec: dict[str, Any], field: str) -> bool:
+    value = spec.get(field)
+    if not isinstance(value, bool):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} declares {field!r} as {value!r}; it is a "
+            "yes or no about what the read of the agent actually found"
+        )
+    return value
+
+
+def _build_names(check: str, spec: dict[str, Any], field: str) -> list[str]:
+    value = spec.get(field, [])
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) and name.strip() for name in value
+    ):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} declares {field!r} as {value!r}; it is the "
+            "list of tool names you read out of the agent"
+        )
+    return [name.strip() for name in value]
+
+
+def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
+    """Read one build check, and refuse a guess rather than scoring it.
+
+    Every branch here is #210's rule applied to a second kind of evidence:
+    credit only what the citation establishes. So `evidence` is required on
+    every check including the ones that answer "no", because "this agent has no
+    prompt" is a finding about somebody's code and has to be pointed at.
+
+    `determined: false` is a first-class answer and the reason this reader is
+    not just a schema. A read that could not settle a check says so and the
+    check leaves the pillar - it is not scored zero, which would say the agent
+    lacks the thing rather than that we could not tell.
+    """
+    if not isinstance(spec, dict):
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} must be an object with the evidence for it, "
+            f"not {type(spec).__name__}"
+        )
+    unknown = sorted(set(spec) - BUILD_CHECK_FIELDS[check])
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} carries unknown field(s) "
+            f"{', '.join(unknown)}; the fields read here are "
+            f"{', '.join(sorted(BUILD_CHECK_FIELDS[check]))}"
+        )
+    evidence = spec.get("evidence")
+    if not isinstance(evidence, str) or not evidence.strip():
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} carries no evidence; this score reports what "
+            "it can see in the agent, so name the file and line you read - "
+            "including when the answer is that the agent does not do this"
+        )
+    evidence = evidence.strip()
+    if spec.get("determined") is False:
+        reason = spec.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} is undetermined and gives no reason; a "
+                "check that leaves the pillar has to say what stopped the read"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            f"not established by this read - {reason.strip()} ({evidence})",
+            measured=False,
+        )
+
+    weight = AGENT_BUILD_WEIGHT[check]
+    if check == "prompt":
+        if not _build_flag(check, spec, "present"):
+            return BuildSignal(
+                check, 0.0, f"no prompt reached the model call ({evidence})"
+            )
+        shots = spec.get("few_shot", 0)
+        if not isinstance(shots, int) or isinstance(shots, bool) or shots < 0:
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} declares 'few_shot' as {shots!r}; it is "
+                "how many worked examples you counted in the prompt"
+            )
+        earned = PROMPT_PRESENT_POINTS
+        if shots >= FEW_SHOT_PATTERN:
+            earned += FEW_SHOT_POINTS
+        elif shots == 1:
+            earned += FEW_SHOT_POINTS / 2
+        counted = (
+            f"{shots} worked example(s) in it" if shots else "no worked examples in it"
+        )
+        return BuildSignal(check, earned, f"a prompt, {counted} ({evidence})")
+    if check == "output-contract":
+        if _build_flag(check, spec, "present"):
+            return BuildSignal(
+                check, weight, f"the answer's shape is constrained ({evidence})"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            "nothing constrains the shape of the answer, so an evaluator has to "
+            f"accept whatever comes back ({evidence})",
+        )
+    if check == "control-flow":
+        if not _build_flag(check, spec, "loop"):
+            return BuildSignal(
+                check, weight, f"one call per input, so it ends ({evidence})"
+            )
+        if _build_flag(check, spec, "bounded"):
+            return BuildSignal(
+                check, weight, f"a loop, and a stop condition to point at ({evidence})"
+            )
+        return BuildSignal(
+            check,
+            0.0,
+            "a loop with no stop condition this read could point at, so one "
+            f"input can cost an unbounded number of calls ({evidence})",
+        )
+    if not _build_flag(check, spec, "used"):
+        # Excluded rather than credited or charged. There is nothing here to
+        # check, which is what README.md's "a check this tool could not compute
+        # is marked unmeasured and excluded" describes - and crediting an agent
+        # for calling no tools would pay for being simpler than the question.
+        return BuildSignal(
+            check,
+            0.0,
+            f"the agent calls no tools, so there is nothing to wire ({evidence})",
+            measured=False,
+        )
+    declared = _build_names(check, spec, "declared")
+    if not declared:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} says tools are used and names none; the "
+            "check is whether each tool the agent declares can be reached"
+        )
+    unreachable = _build_names(check, spec, "unreachable")
+    stray = sorted(set(unreachable) - set(declared))
+    if stray:
+        raise AgentDiscoveryInputError(
+            f"build check {check!r} calls {', '.join(stray)} unreachable and "
+            "does not declare them; an unreachable tool is one of the declared "
+            "ones this read could not find behind its name"
+        )
+    reachable = len(declared) - len(set(unreachable))
+    if not unreachable:
+        return BuildSignal(
+            check,
+            weight,
+            f"{len(declared)} tool(s), each reachable ({evidence})",
+        )
+    return BuildSignal(
+        check,
+        round(weight * reachable / len(declared), 2),
+        f"{len(set(unreachable))} of {len(declared)} tool(s) declared and not "
+        f"found behind the name: {', '.join(sorted(set(unreachable)))} "
+        f"({evidence})",
+    )
+
+
+def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
+    """Read all four checks, and refuse a document that answers three.
+
+    Every check is required, including the ones whose answer is "the agent does
+    not do this". A missing key and a `no` are different statements about
+    somebody's code, and a reader that treated them alike would let the four
+    checks quietly become however many the author felt like answering - which
+    is the shape of silence this module refuses everywhere else.
+    """
+    if not isinstance(build, dict):
+        raise AgentDiscoveryInputError(
+            f"'build' must be an object keyed by check name, not "
+            f"{type(build).__name__}"
+        )
+    unknown = sorted(set(build) - set(BUILD_CHECK_FIELDS))
+    if unknown:
+        raise AgentDiscoveryInputError(
+            f"'build' carries unknown check(s) {', '.join(unknown)}; the checks "
+            f"read here are {', '.join(sorted(BUILD_CHECK_FIELDS))}"
+        )
+    missing = sorted(set(BUILD_CHECK_FIELDS) - set(build))
+    if missing:
+        raise AgentDiscoveryInputError(
+            f"'build' answers no {', '.join(missing)} check; answer every check, "
+            "using 'determined': false with a reason where the read could not "
+            "settle one - an omitted check and an undetermined one are "
+            "different statements about the agent"
+        )
+    return tuple(
+        build_signal_from_entry(check, build[check])
+        for check, _weight in AGENT_BUILD_CHECKS
+    )
+
+
 def agent_facts_from_discovery(document: Any) -> AgentFacts:
     """Read the assistant's read of the agent, and nothing about wiring.
 
@@ -6353,11 +6749,11 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
             f"the agent-knobs document must be an object, not "
             f"{type(document).__name__}"
         )
-    unknown = sorted(set(document) - {"knobs", "source"})
+    unknown = sorted(set(document) - {"knobs", "source", "build"})
     if unknown:
         raise AgentDiscoveryInputError(
             f"the agent-knobs document carries unknown field(s) "
-            f"{', '.join(unknown)}; it reads 'knobs' and 'source'"
+            f"{', '.join(unknown)}; it reads 'knobs', 'source' and 'build'"
         )
     knobs = document.get("knobs")
     if knobs is None:
@@ -6378,6 +6774,16 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
         ),
         # Reaching this line is the proof: the agent was read.
         discovery_supplied=True,
+        # Optional at this boundary and mandated by the guide, which is the
+        # same footing `knobs` has had since #210: the reader refuses a
+        # malformed answer and reports an absent one, and it is SKILL.md that
+        # says the read is not optional. `None` here is the absence, and it
+        # costs - see `build_subscores`.
+        build=(
+            agent_build_from_document(document["build"])
+            if "build" in document
+            else None
+        ),
     )
 
 
@@ -6606,6 +7012,21 @@ def run(argv: Sequence[str] | None = None) -> int:
         # wired. See `score_agent`.
         if args.config_space:
             agent_facts = agent_facts_from_config_space(load_json(args.config_space))
+            if args.agent_knobs:
+                # The build half of the read survives the document; the search
+                # space half does not (#184). The `elif` that used to stand
+                # here existed to stop a source read talking over a document
+                # that says nothing is wired, which is a claim about the SEARCH
+                # SPACE - and no config space makes any claim about whether the
+                # agent has a prompt, a bounded loop, or tools it can reach. So
+                # dropping this half at the close would report those four
+                # checks falling to withheld between two cards while nothing
+                # about the agent changed, which is the fall SKILL.md already
+                # refuses for the knob read one paragraph over.
+                agent_facts = replace(
+                    agent_facts,
+                    build=agent_facts_from_discovery(load_json(args.agent_knobs)).build,
+                )
         elif args.agent_knobs:
             agent_facts = agent_facts_from_discovery(load_json(args.agent_knobs))
         else:

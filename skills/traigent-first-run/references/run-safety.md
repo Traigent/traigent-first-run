@@ -354,11 +354,19 @@ current-run file enters closing readiness. A stopped, failed, or zero-trial sear
 the agent pillar is scored from absent evidence and its 45 ceiling stays in force - the closing
 score cannot exceed it.
 
-`--agent-knobs` is deliberately not passed at the close, and it is the only score in the run that
-leaves it off. The opening read says what the agent makes reachable; this score says what the search
-actually received, and they are different quantities. Letting a read of the source stand in for a
-document the search never emitted would lift this ceiling on exactly the runs it exists for - the
-ones that stopped, failed, or bought no trial.
+The read's KNOBS half is deliberately not allowed to establish the space at the close, and this is
+the only score in the run where it is left off. The opening read says what the agent makes
+reachable; this score says what the search actually received, and they are different quantities.
+Letting a read of the source stand in for a document the search never emitted would lift this
+ceiling on exactly the runs it exists for - the ones that stopped, failed, or bought no trial.
+
+Its BUILD half travels, and only where a config-space document decides the space beside it. Those
+four checks answer how the agent is put together, which no config space makes any claim about, so
+there is nothing here for a source read to stand in for and no ceiling it can reach. Dropping them
+would report four checks falling to unanswered between the opening card and the closing one while
+nothing about the agent had changed - the same fall the opening gate already refuses for the knob
+half. Where no document reaches the close, pass nothing: the knobs half would establish a space the
+search never received, and the two halves arrive in one file.
 
 `agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
 because the scorer cannot tell a document withheld before the search from one the search failed to

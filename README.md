@@ -155,7 +155,13 @@ what fills that one in.
 
 No settings document exists before the search, so the agent pillar is read from the agent's own
 code instead - which parameters it can already vary, each against the line that shows it - and that
-is what the opening score grades the search space from. Where the read finds settings, no agent
+is what the opening score grades the search space from. The same read answers four more questions
+about how the agent is built: whether it carries a prompt and worked examples, whether anything
+pins down the shape of its answer, whether it ends and on what, and whether the tools it declares
+can be reached. Each is a fact with a line of your code behind it, and a question the read cannot
+settle is reported as unsettled rather than counted against you. Two things the pillar is not
+allowed to guess at are named on the card instead: whether your dataset and your evaluation method
+are wired into the agent, which this run builds afterwards and checks against the installed SDK. Where the read finds settings, no agent
 ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
 inside Partial, and they are different findings. A reading that found nothing your agent can vary
 says a search here would compare one configuration - a measurement of your project - so it blocks

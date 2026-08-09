@@ -201,6 +201,29 @@ The lines under each pillar on the card
                                  budget to try. Values too close to tell apart
                                  count once, so ten settings with one value
                                  each is a space of one, not a space of ten.
+    what the model is told, and shown - whether a prompt reaches the model at
+                                 all, and how many worked examples go with it.
+                                 Two examples begin to show a pattern; one
+                                 illustrates.
+    whether the answer's shape is pinned down - whether anything makes the agent
+                                 answer in a fixed shape: a parser, a schema, a
+                                 response format, or an instruction naming one.
+                                 Without it, an evaluator has to accept whatever
+                                 comes back.
+    whether it ends, and on what - whether the agent stops on something you can
+                                 point at. One call per input stops trivially; a
+                                 loop with a limit stops on the limit; a loop
+                                 with neither can spend an unbounded number of
+                                 calls on a single input.
+    tools it declares, and can reach - whether every tool the agent lists can be
+                                 found behind its name. An agent that calls no
+                                 tools is not scored on this, because there is
+                                 nothing here to be right or wrong about.
+    Four of the six things this pillar was asked to cover, and the card names the
+    other two rather than leaving them implied: whether your dataset and your
+    evaluation method are wired into the agent. This run builds that integration
+    and checks it against the installed SDK later, so at the opening score there
+    is nothing in your agent's own code to read it from.
   Words the evidence beside those lines uses:
     settings document          - the file listing which of your agent's settings
                                  the search may vary, and which of them the
@@ -279,7 +302,8 @@ The lines under each pillar on the card
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
   to be optimized, broken into three parts: your dataset, your evaluator, and
-  your agent's knobs.
+  your agent - which is what there is to search in it, and what a read of its
+  own code can establish about how it is built.
   It is computed at the start of every run - before anything is created or
   repaired - and again after each repair or creation, to check that what failed
   a gate now passes it before anything is paid for. Only the opening number is

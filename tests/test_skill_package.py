@@ -4289,7 +4289,30 @@ class SkillPackageTests(unittest.TestCase):
                 "high": 1.0,
                 "evidence": "agent.py:9 temperature= reaches the provider call",
             },
-        }
+        },
+        # The read is two halves since #184, and SKILL.md mandates both in the
+        # same pass. A document carrying only the knobs is not the conformant
+        # opening card any more - it is a run that did half of what it was
+        # asked, and the four build checks are withheld for it.
+        "build": {
+            "prompt": {
+                "present": True,
+                "few_shot": 2,
+                "evidence": "agent.py:5-19 SYSTEM carries two worked examples",
+            },
+            "output-contract": {
+                "present": True,
+                "evidence": "agent.py:24 json.loads(reply) parses the answer",
+            },
+            "control-flow": {
+                "loop": False,
+                "evidence": "agent.py:20-26 one provider call per input",
+            },
+            "tools": {
+                "used": False,
+                "evidence": "agent.py: no tool list reaches the provider call",
+            },
+        },
     }
 
     def _opening_card(
@@ -11694,14 +11717,22 @@ class SkillPackageTests(unittest.TestCase):
         # What earns the 100 is the shape rather than the taste: 48 distinct
         # configurations against a 12-trial budget, so the run compares twelve
         # of them, and 48 is four times the budget rather than twenty.
-        self.assertEqual(pillar.score, 100)
         space = next(s for s in pillar.subscores if s.name == "search-space")
+        # The check, not the pillar: #184 put four build checks beside it, and
+        # a config-space document answers none of them. What earns full marks
+        # here is the search space, which is what this test is about.
+        self.assertEqual(space.value, READINESS.SEARCH_SPACE_WEIGHT)
         self.assertEqual(
             space.evidence,
             "your space has 48 distinct configurations; this run will try up to "
             "12 of them",
         )
-        self.assertEqual(pillar.confidence, 1.0)
+        self.assertTrue(space.measured)
+        # The pillar's confidence is lower than the check's on purpose. A
+        # config-space document establishes the search space completely and
+        # says nothing about how the agent is built, and #184 makes the pillar
+        # report that gap rather than round it away.
+        self.assertLess(pillar.confidence, 1.0)
 
     def test_the_qualitative_knob_rules_are_guidance_and_not_arithmetic(
         self,
@@ -11980,8 +12011,16 @@ class SkillPackageTests(unittest.TestCase):
         pillar, _ = score_config_space(
             namespace["config_space_document"](namespace["ENHANCED_SPACE"])
         )
+        # Over the checks a config-space document can answer. Since #184 the
+        # pillar also carries the four build checks, which no config space
+        # speaks to - they come from the read of the agent that travels beside
+        # it, and a template cannot supply them.
+        space_only = READINESS.combine(
+            "agent",
+            [sub for sub in pillar.subscores if sub.name == "search-space"],
+        )
         self.assertEqual(
-            pillar.confidence,
+            space_only.confidence,
             1.0,
             "every agent sub-score must be measured for the template's own document",
         )
@@ -12044,9 +12083,18 @@ class SkillPackageTests(unittest.TestCase):
         mutation that survived when `coverage` was dropped, leaving the
         customer a definition for a line the card no longer prints.
         """
+        # Every check the agent pillar can print, read off the module. The list
+        # was three hand-written names, two of which no longer exist; #184 adds
+        # four more, and a hard-coded tuple is exactly how the `coverage` entry
+        # outlived the sub-score it defined.
         printed = {
             READINESS.CHECK_DISPLAY_NAMES[name]
-            for name in ("knob-count", "variation", "search-space")
+            for name in (
+                "knob-count",
+                "variation",
+                "search-space",
+                *(check for check, _weight in READINESS.AGENT_BUILD_CHECKS),
+            )
             if name in READINESS.CHECK_DISPLAY_NAMES
         }
         glossary = (SKILL_ROOT / "references" / "glossary.md").read_text()
@@ -15664,7 +15712,8 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         empty_read = READINESS.AgentFacts(discovery_supplied=True, discovered=())
         _pillar, caps, _knobs = READINESS.score_agent(empty_read)
         self.assertEqual([cap.blocks for cap in caps], [True])
-        self.assertIn("the agent was read", _pillar.subscores[0].evidence)
+        space = next(s for s in _pillar.subscores if s.name == "search-space")
+        self.assertIn("the agent was read", space.evidence)
 
     def test_every_later_re_score_is_passed_the_reading_the_opening_took(
         self,
@@ -15690,12 +15739,29 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
             "re-reading the agent only where this run created or repaired it", gate
         )
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("`--agent-knobs` is deliberately not passed at the close", safety)
+        # The exception is the KNOBS half, and #184 is why that word is now
+        # load-bearing: the read has two halves and only one of them can stand
+        # in for a document the search never emitted. The build half makes no
+        # claim about the space, so nothing it says can reach this ceiling, and
+        # dropping it would print four checks falling to unanswered between two
+        # cards while nothing about the agent had changed.
+        self.assertIn(
+            "the read's knobs half is deliberately not allowed to establish the "
+            "space at the close",
+            safety,
+        )
         self.assertIn(
             "letting a read of the source stand in for a document the search "
             "never emitted would lift this ceiling",
             safety,
         )
+        self.assertIn("its build half travels", safety)
+        self.assertIn(
+            "only where a config-space document decides the space beside it", safety
+        )
+        # And the state where neither half may arrive, which is the one the
+        # ceiling exists for.
+        self.assertIn("where no document reaches the close, pass nothing", safety)
         # And the stale sentence the opening read replaced. run-safety.md still
         # told the opening and stage-4 scores to report the pillar as not yet
         # measured, which is the behaviour this branch removed.
