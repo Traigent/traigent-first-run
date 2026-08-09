@@ -103,7 +103,7 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   contents and expected outputs, model responses, source code, and credentials from that backend
   transmission. This guide does not independently inspect network packets; stop if observed
   runtime behavior contradicts that contract.
-- Treat backend transmission and local persistence as separate boundaries. SDK 0.25.0 writes
+- Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
   Traigent; this retains example ids and metrics while writing those content fields as `null`.
@@ -354,11 +354,19 @@ current-run file enters closing readiness. A stopped, failed, or zero-trial sear
 the agent pillar is scored from absent evidence and its 45 ceiling stays in force - the closing
 score cannot exceed it.
 
-`--agent-knobs` is deliberately not passed at the close, and it is the only score in the run that
-leaves it off. The opening read says what the agent makes reachable; this score says what the search
-actually received, and they are different quantities. Letting a read of the source stand in for a
-document the search never emitted would lift this ceiling on exactly the runs it exists for - the
-ones that stopped, failed, or bought no trial.
+The read's KNOBS half is deliberately not allowed to establish the space at the close, and this is
+the only score in the run where it is left off. The opening read says what the agent makes
+reachable; this score says what the search actually received, and they are different quantities.
+Letting a read of the source stand in for a document the search never emitted would lift this
+ceiling on exactly the runs it exists for - the ones that stopped, failed, or bought no trial.
+
+Its BUILD half travels, and only where a config-space document decides the space beside it. Those
+four checks answer how the agent is put together, which no config space makes any claim about, so
+there is nothing here for a source read to stand in for and no ceiling it can reach. Dropping them
+would report four checks falling to unanswered between the opening card and the closing one while
+nothing about the agent had changed - the same fall the opening gate already refuses for the knob
+half. Where no document reaches the close, pass nothing: the knobs half would establish a space the
+search never received, and the two halves arrive in one file.
 
 `agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
 because the scorer cannot tell a document withheld before the search from one the search failed to
@@ -705,6 +713,22 @@ paying, and to keep confirming it during the run. If tracking degrades to local-
 point in the connected run - a missing `cloud_url`, a `rejected` persistence state, or a mid-run
 403/400 - halt further paid work at once and report the degradation in the consolidated result. Never
 let a connected run finish spending and only then reveal that nothing reached the portal.
+
+The probe answers whether tracking attaches, at the moment it runs. It cannot answer whether the
+managed brain is still reachable when the paid search starts a moment later, and the two failures
+are not the same: a run can keep tracking trials to the portal while the search choosing those
+trials has quietly become local. `references/sdk-execution.md` owns the setting that closes it -
+the connected phase runs with local fallback disabled, so a session that cannot be created raises
+instead of degrading - along with the environment settings that defeat it and how a raised run is
+reported. Neither replaces the probe: the flag governs the SDK's own fallback, while the probe is
+what proves the key is scoped and the session reaches the portal at all.
+
+That setting turns one class of silent degradation into a stop, so decide the stop with the user
+before it costs anything. If the inventory finds a no-egress setting in the environment or `.env`,
+the connected phase cannot honestly run: ask once, at the point the second run is explained, which
+they want - keep no egress and finish on the local baseline, which is a complete and reportable
+result, or lift it deliberately for this run. Never clear it for them, and never carry the question
+past the approval card into the middle of a paid phase.
 
 ## Baseline and optimization
 

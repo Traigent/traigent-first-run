@@ -85,7 +85,8 @@ jobs:
     # same upward trend - the ten most recent are 59-104s. Added to the observed
     # maximum, not to the median: the slow-evaluator end-to-end test this branch
     # introduces sleeps 33s inside a local scorer - 33s by construction, and
-    # 34.2s wall for the test measured on a developer machine, not on a runner -
+    # 34.2s wall for the test measured on a developer machine, not on a runner.
+    # Source: tests/behavioral/test_contracts.py#ExplicitTimeoutEndToEndTests -
     # so the projected worst case for the job's own work is about 140s.
     #
     # This job runs `tests/behavioral/test_contracts.py`, which drives the same

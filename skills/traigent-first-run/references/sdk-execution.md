@@ -305,14 +305,56 @@ FIRST_RUN_PHASE = os.environ.get(
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
 if FIRST_RUN_PHASE not in {"baseline", "connected"}:
-    raise ValueError("TRAIGENT_FIRST_RUN_PHASE must be 'baseline' or 'connected'")
+    raise SystemExit("TRAIGENT_FIRST_RUN_PHASE must be 'baseline' or 'connected'")
+def inherited(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Both phases are paid, and a canned response costs nothing and proves nothing.
+# The SDK honours an inherited mock flag outside production, so neither phase
+# may start under one.
+if inherited("TRAIGENT_MOCK_LLM"):
+    raise SystemExit(
+        "TRAIGENT_MOCK_LLM is set. Both measurements would run on canned "
+        "responses, so every score would describe the mock and not the agent. "
+        "Unset it before a paid phase; this run will not unset it for you."
+    )
 if FIRST_RUN_PHASE == "baseline":
-    # Remove before import so no client can capture a portal key locally.
+    if inherited("TRAIGENT_REQUIRE_CLOUD"):
+        raise SystemExit(
+            "TRAIGENT_REQUIRE_CLOUD requires a backend session, but the baseline "
+            "is deliberately local. Stop before paid work, disclose this conflict "
+            "on the baseline approval card, and only after approval launch a new "
+            "baseline process with TRAIGENT_REQUIRE_CLOUD=0 in its environment. "
+            "Do not merely unset it: .env could restore the true value."
+        )
+    # Backend-offline is process-local: a stored CLI credential can survive
+    # removing the environment key, so this is what keeps the baseline local.
+    os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
     os.environ.pop("TRAIGENT_API_KEY", None)
+else:
+    # Both spellings: the SDK reads either as offline, and either resolves this
+    # run to local-only BEFORE a session is attempted - so the flag below is
+    # never consulted and the run completes locally with the guard apparently on.
+    for offline_name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+        if inherited(offline_name):
+            raise SystemExit(
+                f"{offline_name} is set, which resolves this run to local-only "
+                "before a backend session is attempted and so silently defeats "
+                "TRAIGENT_REQUIRE_CLOUD: this phase would spend on a local "
+                "search and report it as the managed one. Unset it deliberately "
+                "to run connected, or stop at the local baseline. This run will "
+                "not unset it for you - where data may go is a choice to make."
+            )
+    # Managed search or nothing. Without this the SDK degrades a connected run
+    # whose backend session cannot be created - absent, wrong, or unscoped key,
+    # backend unreachable - to a local sweep, and returns a result that reads
+    # like the managed one the user approved paying for.
+    os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.25.0 otherwise stores query/response/expected text in local per-example
+# SDK 0.26.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
@@ -945,11 +987,12 @@ Do not include `expected` in the agent signature. Dataset inputs call the agent;
 belongs only to evaluation.
 
 Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
-(`str(RUN_DIR / "...")`). On the installed SDK (through 0.25.0) a *relative* dataset path that
-contains a directory component (for example `"traigent-runs/tuning.jsonl"`) is silently re-joined
-onto its own resolved parent by dataset validation and doubles into
-`.../traigent-runs/traigent-runs/tuning.jsonl`, failing with `FileNotFoundError` at decoration
-time. Never shorten these to a relative path. It is an SDK defect, tracked upstream.
+(`str(RUN_DIR / "...")`). Never shorten these to a relative path: the SDK resolves a relative one
+against the working directory of whichever process opens it, and this run's dataset lives under
+`RUN_DIR` while the assistant works from the project root. An absolute path is the same file from
+any directory, which is the property that matters when the run, a re-run, and `traigent sync` are
+three different processes. Nothing announces a breach of this rule: a relative path that resolves
+against the wrong directory reads one file or misses one, and neither is a crash.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument
@@ -961,8 +1004,10 @@ evaluator instead.
 
 For the generated walkthrough, run the credible small space as one local fixed grid containing its
 initial configuration. Start a fresh process with `TRAIGENT_FIRST_RUN_PHASE=baseline` (the
-fail-safe default), supplied by the process and never by `.env`. The contract removes
-`TRAIGENT_API_KEY` before importing Traigent while preserving its file value for later:
+fail-safe default), supplied by the process and never by `.env`. The contract forces backend-offline
+before import: removing `TRAIGENT_API_KEY` does not suppress a stored CLI login. Provider calls stay
+real. The setting dies with the baseline process; never export it, because the connected
+process requires it absent and refuses it if inherited.
 
 ```python
 assert FIRST_RUN_PHASE == "baseline", "baseline must run in the local phase"
@@ -1041,9 +1086,18 @@ A baseline that ran without a Traigent key is logged locally. Upload it without 
 call only when the installed public result exposes an exact sync id:
 
 ```bash
-traigent sync "$SESSION_ID" --dry-run --json
-traigent sync "$SESSION_ID" --json
+SESSION_ID="<copy baseline_results.sync_session_id>"
+TRAIGENT_FIRST_RUN_RESULTS_DIR="/absolute/path/to/project/traigent-runs/sdk-results"
+TRAIGENT_RESULTS_FOLDER="$TRAIGENT_FIRST_RUN_RESULTS_DIR" traigent sync "$SESSION_ID" --dry-run --json
+TRAIGENT_RESULTS_FOLDER="$TRAIGENT_FIRST_RUN_RESULTS_DIR" traigent sync "$SESSION_ID" --json
 ```
+
+`TRAIGENT_RESULTS_FOLDER` is not optional here. The id is relative to the store that holds the
+record, `traigent sync` is a separate process that resolves its store from its own environment, and
+the run above set that variable inside the Python process only. Without it the CLI looks in its
+default root and rejects an id that is on disk. Replace the placeholder with the resolved absolute
+path to this project's `traigent-runs/sdk-results`; do not reuse the Python-only `RUN_DIR` name in
+the shell.
 
 Never use `--all`: it pushes every optimization ever logged on the machine, not this walkthrough's
 baseline. Always inspect the dry-run before anything leaves the machine. Parse the real command's
@@ -1052,9 +1106,15 @@ JSON and use its `cloud_url` as the baseline portal link; syncing does not mutat
 
 Use `baseline_results.sync_session_id` only after feature-detecting that public attribute and a
 non-empty value. If unavailable, leave the baseline local and report it from the saved local
-results - do not inspect private storage or substitute `--all`. The pinned 0.25.0 release does not
-expose this id; support is capability-gated for a later release. It is tracked upstream and the fix
-belongs there.
+results - do not inspect private storage or substitute `--all`, whatever the reason: any gap here is
+tracked upstream and the fix belongs there.
+
+An empty value is a normal answer, not a failure. The field carries a live id when the local store
+holds the authoritative copy of the run - this walkthrough's baseline, run with no Traigent key -
+and is empty when the backend tracked the run end to end, because then there is nothing to upload
+and `cloud_url` already names it. Read the field itself, never a `metadata` mirror of it, and do not
+carry it across a reload: it names a record in one machine's store, and a result loaded from disk
+may have come from another.
 
 ## Broader optimization
 
@@ -1102,13 +1162,52 @@ config_space_evidence = (
 # An earlier run's document describes an earlier search. It must not survive
 # this one, whatever this one does.
 Path(CONFIG_SPACE_DOCUMENT).unlink(missing_ok=True)
-optimized_results = agent.optimize_sync(
-    algorithm="auto",
-    configuration_space=ENHANCED_SPACE,
-    max_trials=ENHANCED_MAX_TRIALS,
-    timeout=OPTIMIZATION_TIMEOUT_SECONDS,
-    save_to=OPTIMIZED_RESULTS,
-)
+error_path = RUN_DIR / "optimization-error.json"
+try:
+    # A retry that succeeds must not retain the previous attempt's failure.
+    error_path.unlink(missing_ok=True)
+except OSError:
+    raise SystemExit(
+        "Managed optimization did not start: the stale sanitized error artifact could not be removed."
+    ) from None
+try:
+    optimized_results = agent.optimize_sync(
+        algorithm="auto",
+        configuration_space=ENHANCED_SPACE,
+        max_trials=ENHANCED_MAX_TRIALS,
+        timeout=OPTIMIZATION_TIMEOUT_SECONDS,
+        save_to=OPTIMIZED_RESULTS,
+    )
+except BaseException as exc:
+    # pyo3 panic exceptions inherit directly from BaseException. Preserve
+    # deliberate process cancellation, but turn SDK/provider failures into a
+    # bounded artifact and a non-traceback exit. Never persist str(exc): an SDK
+    # error can contain prompts, outputs, endpoints, personal data, or secrets.
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        raise
+    try:
+        error_path.write_text(
+            json.dumps(
+                {
+                    "status": "managed-optimization-stopped",
+                    "error_type": type(exc).__name__,
+                    "detail": "Raw exception omitted; inspect it locally and redact before reporting.",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        # Suppress both the artifact failure and the original exception. Python
+        # otherwise prints the original as chained context, undoing the redaction.
+        raise SystemExit(
+            "Managed optimization stopped; the sanitized error artifact could not be written."
+        ) from None
+    raise SystemExit(
+        f"Managed optimization stopped ({type(exc).__name__}); see {error_path}"
+    ) from None
 assert optimized_results.trials, "optimization did not execute"
 Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 ```
@@ -1123,6 +1222,43 @@ The pinning rule is therefore per phase, not global: pin the baseline so it is r
 the enhanced run on `auto` so it is actually optimized. If a connected search reports a local
 fallback reason, treat that as a failure to investigate rather than a result to present - the run
 did not do what the report will claim it did.
+
+`TRAIGENT_REQUIRE_CLOUD=1`, set for this phase in the wrapper above, is why that check is a
+backstop rather than the only defence. Without it `auto` does not fail when the managed brain is
+unreachable: it falls back to a local sweep, returns a result, and leaves the fallback reason for
+someone to notice afterwards - after twelve paid trials the user approved as a managed search. With
+it, session-creation failure raises before any trial. The flag is set only here: it fails any run
+that creates no backend session, which is what the baseline phase is. An inherited true value
+therefore stops the baseline before spending instead of being silently removed. Disclose the
+conflict on the approval card; only after approval may a fresh baseline process be launched with
+`TRAIGENT_REQUIRE_CLOUD=0` in its process environment. Do not merely unset it: because dotenv loads
+with `override=False`, a true value in `.env` would be restored and stop the baseline again.
+
+Setting it is necessary and not sufficient, and it has to be both spellings. `TRAIGENT_OFFLINE` and
+`TRAIGENT_OFFLINE_MODE` each resolve the run to local-only before a session is ever attempted, so
+the enforcement site never runs, and either one produces exactly the run this guards against while
+the guard reads as on - worse than not setting it. The wrapper refuses to start the connected phase
+under either instead of clearing it: no-egress is a deliberate choice about where the user's data
+may go, and unsetting it to satisfy this run would send data out on their behalf.
+
+Because the phase now fails instead of degrading, own the failure. The canonical call above catches
+ordinary SDK/provider exceptions and pyo3 panic exceptions, while preserving deliberate
+`KeyboardInterrupt`/`SystemExit`. It persists only the exception type and a fixed explanation, then
+exits nonzero without a traceback. Never save or display raw `str(exc)`: exception text can contain
+prompts, outputs, endpoints, personal data, or credentials. Inspect it locally, sanitize the useful
+category, and route that sanitized account through the ordinary honest-report path. If even the
+sanitized artifact cannot be written, the nested fallback exits with a fixed message and suppresses
+both exception contexts, so the original text still cannot leak through chaining. Before a retry,
+the wrapper removes that artifact or stops before spending; a later success can therefore never
+leave an earlier `managed-optimization-stopped` record beside it.
+
+Two shapes reach that handler and they cost differently. A session that cannot be created fails
+before any provider trial, so nothing was spent and the honest report is "the managed run did not
+start", with the sanitized reason and the baseline still standing as the result. A managed run that
+loses the brain mid-flight raises after some trials are already paid for: recover what the SDK
+persisted, report the trials that completed and the spend they carried, and say plainly that the
+search stopped early rather than presenting a partial frontier as the answer. Neither shape is a
+reason to re-run the phase without the flag - that would buy back the exact result this prevents.
 
 Do not enable mock mode in this process. The optimization space must include the current
 configuration and every baseline value, plus meaningful added knobs that the function consumes.

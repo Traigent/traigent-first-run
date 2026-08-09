@@ -36,7 +36,7 @@ Every scenario here runs the import (and, for the "happy path", a mock
 Dependency reproducibility (acceptance criterion 5): the repo already pins
 top-level versions for this exact path in
 ``skills/traigent-first-run/assets/requirements-first-run.txt``
-(``traigent==0.25.0``, ``litellm==1.93.0``, ``python-dotenv==1.2.2``), and
+(``traigent==0.26.0``, ``litellm==1.93.0``, ``python-dotenv==1.2.2``), and
 this test imports whatever ``litellm``/``traigent`` happen to be installed
 from that file - so a version bump there is exercised here automatically.
 That file pins exact versions but not hashes, and does not pin the
@@ -67,6 +67,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "tests" / "fixtures" / "offline_socket_probe.py"
+STORED_CREDENTIAL_PROBE = (
+    ROOT / "tests" / "fixtures" / "baseline_stored_credential_probe.py"
+)
 REQUIREMENTS = (
     ROOT / "skills" / "traigent-first-run" / "assets" / "requirements-first-run.txt"
 )
@@ -121,6 +124,7 @@ def _credential_stripped_environment(overrides: dict[str, str]) -> dict[str, str
     # Drop any pre-existing value from the environment this test itself runs
     # in, so each scenario below controls both flags exactly rather than
     # inheriting whatever the host happened to have exported.
+    environment.pop("TRAIGENT_OFFLINE", None)
     environment.pop("TRAIGENT_OFFLINE_MODE", None)
     environment.pop("LITELLM_LOCAL_MODEL_COST_MAP", None)
     environment.update(overrides)
@@ -146,6 +150,39 @@ def _run_probe(overrides: dict[str, str]) -> dict:
         ) from error
 
 
+def _run_stored_credential_probe(*, offline: bool) -> dict:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        results = root / "results"
+        results.mkdir()
+        overrides = {
+            "HOME": str(root / "home"),
+            "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+            "TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS": "true",
+            "TRAIGENT_DATASET_ROOT": str(root / "dataset"),
+            "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",
+            "TRAIGENT_RESULTS_FOLDER": str(results),
+        }
+        if offline:
+            overrides["TRAIGENT_OFFLINE_MODE"] = "true"
+        process = subprocess.run(
+            [sys.executable, str(STORED_CREDENTIAL_PROBE)],
+            env=_credential_stripped_environment(overrides),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        try:
+            return json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(
+                "stored-credential probe did not emit JSON: "
+                f"exit={process.returncode} stdout={process.stdout!r} "
+                f"stderr={process.stderr!r}"
+            ) from error
+
+
 class OfflineSocketContractTests(unittest.TestCase):
     def setUp(self) -> None:
         if importlib.util.find_spec("litellm") is None:
@@ -167,6 +204,20 @@ class OfflineSocketContractTests(unittest.TestCase):
                 "regression (the CI `validate` job installs it before running "
                 "the test suite)"
             )
+
+    def _require_traigent(self) -> None:
+        if importlib.util.find_spec("traigent") is not None:
+            return
+        if os.environ.get("CI"):
+            self.fail(
+                "traigent is missing under CI, so the SDK-backed socket "
+                f"guarantees did not run. Install {REQUIREMENTS} before the suite."
+            )
+        self.skipTest(
+            "traigent is not installed in this environment; install the "
+            f"pinned version from {REQUIREMENTS} to run the SDK-backed "
+            "socket guarantees"
+        )
 
     def test_documented_offline_flags_are_set_before_import(self) -> None:
         result = _run_probe(
@@ -203,6 +254,32 @@ class OfflineSocketContractTests(unittest.TestCase):
             [],
             "the documented local mock path must attempt zero outbound sockets",
         )
+
+    def test_baseline_offline_mode_blocks_a_stored_cli_key_from_the_backend(
+        self,
+    ) -> None:
+        """The SDK falls back to ~/.traigent after the env key is removed."""
+        self._require_traigent()
+        exposed = _run_stored_credential_probe(offline=False)
+        self.assertTrue(exposed["stored_key_resolved"])
+        self.assertEqual(exposed["error"], "BlockedNetworkAccess")
+        self.assertEqual(exposed["trials"], 0)
+        self.assertTrue(exposed["attempts"], exposed)
+        self.assertTrue(
+            any(
+                "portal.traigent.ai" in attempt["address"]
+                for attempt in exposed["attempts"]
+            ),
+            exposed,
+        )
+
+        protected = _run_stored_credential_probe(offline=True)
+        self.assertTrue(protected["stored_key_resolved"])
+        self.assertEqual(protected["offline"], "true")
+        self.assertEqual(protected["attempts"], [])
+        self.assertIsNone(protected["error"])
+        self.assertEqual(protected["trials"], 2)
+        self.assertIsNone(protected["cloud_url"])
 
     def test_missing_local_cost_map_flag_reproduces_the_reported_regression(
         self,
@@ -246,21 +323,7 @@ class OfflineSocketContractTests(unittest.TestCase):
         self.assertEqual(result["import_errors"], {})
 
     def test_traigent_import_also_makes_zero_outbound_socket_attempts(self) -> None:
-        if importlib.util.find_spec("traigent") is None:
-            # Same rule, and this is the only test in the repository that
-            # imports traigent at all - so when it skips, nothing anywhere
-            # exercises that import path.
-            if os.environ.get("CI"):
-                self.fail(
-                    "traigent is missing under CI, so the only test that "
-                    f"imports it did not run. Install {REQUIREMENTS} before "
-                    "the suite."
-                )
-            self.skipTest(
-                "traigent is not installed in this environment; install the "
-                f"pinned version from {REQUIREMENTS} to extend this hermetic "
-                "regression to the Traigent import itself"
-            )
+        self._require_traigent()
         result = _run_probe(
             {
                 "TRAIGENT_OFFLINE_MODE": "true",

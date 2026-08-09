@@ -10,11 +10,11 @@ not in the test. They are in this directory, one file per raise.
 Add a file. Do not edit an existing one.
 
 ```
-tests/guidance_budget/0007-say-what-the-wait-is-for.md
+tests/guidance_budget/<NNNN>-say-what-the-wait-is-for.md
 ```
 
 ```markdown
-# 0007 - say what the wait is for
+# <NNNN> - say what the wait is for
 
 follows: 0006
 total-ceiling: 234_750

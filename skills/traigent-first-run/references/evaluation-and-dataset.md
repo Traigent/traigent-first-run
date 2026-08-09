@@ -358,6 +358,30 @@ what it is for, when it is scored and disclosed, and why the count stays at ten.
 Adjust the tuning size when cost or task shape requires it, but keep all four bands represented in
 it. The held-out ten do not move.
 
+### Topping a real dataset up to that size
+
+A project that arrives with real rows but fewer than 28 comparable ones gets a bounded offer only
+when the available generation room can make the comparison meaningfully larger; existing rows that
+lack usable labels are reviewed or labelled first. Twenty-eight is a ceiling on the offer rather
+than a target the run pursues by itself. Two states sit outside it. A project that maintains its own held-out split keeps that split as it stands, per
+"Held-out set and claims" below, so nothing here re-cuts it. And a dataset whose tuning side holds
+nothing scoreable is stopped on a split to repair, where more rows answer nothing at all.
+
+Draw only the difference, and derive every drawn row from the rows already there so the added ones
+match the task the real ones describe. Where each row lands - real and generated alike - is owned by
+"Real rows reach both sets before either is topped up" below, which is this same shortfall seen from
+the split's side; a placement rule here would be a second answer to one question, and the two would
+be free to disagree. Never draw past 28 in total, and never draw to replace a real row.
+
+**Agreeing can lower the ceiling, so the offer says so before it is accepted.** The rows this adds
+are generated and are declared as such, so the provenance ladder below prices them exactly as it
+prices any other generated row - and on a small real dataset the generated share after a top-up is
+most of the set. Measured on nine real rows topped to twenty-eight: the card moves from a
+small-comparison-set ceiling to a mostly-generated one, four points lower. That is the trade the
+customer is being asked to make, and it is the reason the offer is a question rather than a service:
+more to compare on, against a claim bounded by who wrote the rows. A topped-up dataset is a dataset
+this run can compare on, not a dataset that has been improved.
+
 ### Declaring provenance
 
 Provenance answers one question twice: was the question observed, and was the answer? Declare the
@@ -483,7 +507,7 @@ offer. No configuration can earn that row, so it separates none of them.
 
 So name the count and the share, quote the result on the subset that can actually be scored, and
 record the excluded row ids so the run repeats exactly. That recording is unconditional. The
-bounded first-run subset records its own ids, but it is only drawn above about 100 rows - so on the
+bounded first-run subset records its own ids, but it is only drawn with more than 100 usable rows - so on the
 small datasets where a handful of degenerate golds decides the outcome, nothing else would be left
 behind at all.
 
@@ -719,7 +743,7 @@ the question wrote its band too, and the row already declares itself generated.
 
 ## First-run subset for a large dataset
 
-A first run has to show the capability, not exhaust the dataset. Above roughly 100 usable rows,
+A first run has to show the capability, not exhaust the dataset. With more than 100 usable rows,
 every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
 that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
 rows by default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
@@ -731,12 +755,13 @@ Five rules make the subset honest:
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
    validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
    afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
-   the user's data wear the run's limitation: measured on 500 labelled, difficulty-tagged production
-   rows, the dataset pillar sees 249 comparable examples; the same dataset scored as an 18-row
-   subset sees only 8 and calls it `a wiring check, not a score`. That sentence is true of the run
-   and false of the dataset, and the gate re-score would read 18 points below the opening one on
-   nothing but our own sampling. Difficulty and diversity survive a compliant sample; evidence
-   volume collapses, so that limitation must be attributed correctly.
+   the user's data wear the run's limitation: measured through `scripts/readiness.py` on 500
+   labelled, difficulty-tagged production rows, the dataset pillar sees 249 comparable examples;
+   the same dataset scored as an 18-row subset sees only 8 and calls it `a wiring check, not a
+   score`. That sentence is true of the run and false of the dataset, and the gate re-score would
+   read 18 points below the opening one on nothing but our own sampling. Difficulty and diversity
+   survive a compliant sample; evidence volume collapses, so that limitation must be attributed
+   correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small
    difference as directional unless paired uncertainty from the completed outputs supports it."

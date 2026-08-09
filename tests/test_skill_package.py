@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import math
+import os
 import posixpath
 import re
 import shutil
@@ -15,10 +16,12 @@ import subprocess
 import sys
 import tempfile
 import tokenize
+import traceback
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -459,6 +462,75 @@ def shipped_skill_files() -> set[str]:
         for name in tracked_files()
         if name.startswith(SKILL_PREFIX)
     }
+
+
+def tracked_text_files() -> dict[str, str]:
+    """Every file git publishes, read as text, keyed by repository path.
+
+    The corpus for the reference check below is `git ls-files` and nothing
+    else. A reference to a file that does not ship halts the walkthrough on a
+    customer's machine, and it halts it whatever KIND of file the reference was
+    written in - so the corpus cannot be a list of document kinds. The three
+    misses #155 records were each outside the old corpus by construction rather
+    than by decision: a fenced command line, `agents/openai.yaml`, and the
+    docstrings inside the scripts an installed run executes. Enumerating a
+    fourth kind would have left the fifth outside in the same way.
+
+    A file nothing can decode carries no reference. None exists today, and the
+    anchor beside the check refuses one appearing without a decision.
+    """
+    corpus: dict[str, str] = {}
+    for name in sorted(tracked_files()):
+        try:
+            corpus[name] = (ROOT / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+    return corpus
+
+
+def reference_roots() -> list[tuple[str, frozenset[str]]]:
+    """The two places a path in this repository is written relative to.
+
+    A shipped document names `scripts/preflight.py`; a repository document
+    names `skills/traigent-first-run/scripts/preflight.py`. Both are the same
+    file, so both roots are offered to every token rather than being selected
+    per document: which root a reference means is a property of the reference,
+    not of the file it was written in, and a token that resolves under either
+    one names a file that ships.
+
+    Each root carries its own top-level directories, which is what makes a
+    token a reference into THIS package rather than a path-shaped word. See
+    `_anchored_reference`.
+    """
+    tracked = tracked_files()
+
+    def top_level(base: str) -> frozenset[str]:
+        return frozenset(
+            name[len(base) :].split("/", 1)[0]
+            for name in tracked
+            if name.startswith(base) and "/" in name[len(base) :]
+        )
+
+    return [("", top_level("")), (SKILL_PREFIX, top_level(SKILL_PREFIX))]
+
+
+def published_paths() -> set[str]:
+    """Every path git publishes: the files, and the directories holding them.
+
+    Directories are included deliberately rather than by accident of a regex,
+    which is the choice #155 asks to be made explicitly. Guidance cites a
+    directory the same way it cites a file - "the handoff notes in
+    `references/`" - and a citation of a directory that does not exist fails a
+    reader exactly as a citation of a missing file does. Measured over this
+    tree, every directory reference already resolves, so including them costs
+    nothing and closes the shape rather than leaving it out.
+    """
+    paths = set(tracked_files())
+    for name in list(paths):
+        parts = name.split("/")
+        for depth in range(1, len(parts)):
+            paths.add("/".join(parts[:depth]))
+    return paths
 
 
 def conversation_contract_documents() -> list[Path]:
@@ -1674,6 +1746,294 @@ class SkillPackageTests(unittest.TestCase):
                 return True
         return False
 
+    # ONE EXTRACTOR OVER THE WHOLE TRACKED TREE.
+    #
+    # A path is a run of path characters, and that is the entire syntax this
+    # knows. It is not markdown-aware, YAML-aware or Python-aware, because the
+    # defect does not care: a reference to a file that does not ship halts the
+    # walkthrough on a customer's machine whether it was written in backticks,
+    # inside a fence, as a YAML value, or in the docstring of a script the run
+    # executes. Three of those four were unguarded, and a parser per syntax
+    # would have left the fifth shape unguarded in the same way.
+    #
+    # Angle brackets are not path characters, which is how this package already
+    # writes a placeholder - `<project root>/traigent-runs/holdout.jsonl`. A
+    # metasyntactic path is therefore not a path-shaped token at all, and needs
+    # no exemption to stay legal.
+    _PATH_SHAPED = re.compile(r"[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-][A-Za-z0-9_.\-/]*")
+
+    @classmethod
+    def _path_shaped_tokens(cls, text: str) -> list[str]:
+        """Every token in one file that is shaped like a path, as written."""
+        found = (
+            cls._reference_path(match.group(0))
+            for match in cls._PATH_SHAPED.finditer(text)
+        )
+        return [token for token in found if token]
+
+    @classmethod
+    def _anchored_reference(
+        cls, token: str, roots: list[tuple[str, frozenset[str]]], published: set[str]
+    ) -> tuple[bool, bool]:
+        """Is `token` a reference into this package, and does it resolve?
+
+        ANCHORING is the whole rule, and it is what keeps the check honest on
+        ordinary prose. Ordinary prose is full of path-shaped words, and
+        requiring all of them to resolve reports 492 references over this tree
+        that nobody can fix - `agent.py` and `evaluator.py` are the customer's
+        files, `traigent-runs/config-space.json` is written by their run, and a
+        test names dozens of fixtures it creates in a temporary directory. None
+        of those is a reference into this package, and a rule that flags them is
+        wrong rather than strict.
+
+        A token is a reference into this package when its LEADING SEGMENT names
+        a directory this package publishes at that position - `scripts/`,
+        `references/`, `assets/`, `agents/` inside the bundle, and `tests/`,
+        `tools/`, `skills/`, `reports/`, `.github/` at the repository root. That
+        one predicate sorts the three classes #155 asks to be told apart without
+        naming any of them:
+
+        * OURS resolves or fails: `scripts/preflight.py` is anchored.
+        * WHAT THE RUN CREATES is exempt by construction: `traigent-runs/` is
+          not a directory this package publishes, and must never become one -
+          no run artifact ships, and none exists before the run makes it.
+        * WHAT IS ILLUSTRATIVE is exempt by construction too: a bare
+          `run-safety.md` mid-sentence, `.env`, or a customer's `dataset.jsonl`
+          carries no leading directory of ours to be anchored by.
+
+        Measured over the whole tracked tree, 305 anchored tokens resolve and 3
+        do not - a false-red rate the check can actually be held to, against 33%
+        for the same extractor without the anchor.
+
+        Extensions are deliberately NOT part of this. The old check carried an
+        allowlist, so a reference to a `.toml`, `.cfg`, `.sh` or `.lock` file
+        was outside it and would have stayed outside until someone widened the
+        list by hand - the same silent narrowing in a different place. Anchoring
+        is what makes a token a reference; what it is spelled with is not.
+        """
+        token = token[2:] if token.startswith("./") else token
+        root_document = bool(
+            re.fullmatch(r"[A-Z][A-Z0-9]*-[A-Z0-9-]+\.(?:md|txt)", token)
+        )
+        if (
+            ("/" not in token and not root_document)
+            or token.startswith("/")
+            or ".." in token.split("/")
+        ):
+            return False, False
+        if root_document:
+            return True, token in published
+        head = token.split("/", 1)[0]
+        anchored = False
+        for base, directories in roots:
+            if head not in directories:
+                continue
+            anchored = True
+            if posixpath.normpath(posixpath.join(base, token)) in published:
+                return True, True
+        return anchored, False
+
+    def test_the_reference_corpus_is_every_file_git_publishes(self) -> None:
+        """The corpus is the check, so a corpus that narrows is a check that
+        stops running.
+
+        `assistant_facing_documents()` needed this anchor for exactly this
+        reason and got one: it is built from globs, and a glob narrows silently.
+        This corpus is built from `git ls-files`, which cannot narrow by a
+        rename - but it CAN narrow by a file that stops decoding as text, and
+        that path exits the loop with `continue` and no complaint. So the file
+        it skipped is named here rather than dropped, and a binary file added to
+        this repository fails until somebody decides that nothing inside it can
+        name a path.
+        """
+        self.assertEqual(
+            sorted(tracked_text_files()),
+            sorted(tracked_files()),
+            "a tracked file is not being read by the reference extractor, so "
+            "every path written in it is outside the check below",
+        )
+        # THE ANCHOR SET IS ITSELF A CORPUS, and it is derived from the tree -
+        # which is the same silent narrowing this whole check exists to refuse,
+        # one level further in. Every directory below is what makes a token a
+        # reference: delete or rename one, and every reference into it stops
+        # being anchored and is checked by nothing, quietly, exactly when the
+        # tree changed underneath the guidance that names it.
+        bundle, repository = reference_roots()[1][1], reference_roots()[0][1]
+        self.assertLessEqual(
+            {"references", "scripts", "assets", "agents"},
+            bundle,
+            "a directory the installed skill publishes is no longer anchored, "
+            "so references into it are no longer checked",
+        )
+        self.assertLessEqual(
+            {".github", "reports", "skills", "tests", "tools"},
+            repository,
+            "a directory this repository publishes is no longer anchored, so "
+            "references into it are no longer checked",
+        )
+        # And the artifacts the customer's run writes must NEVER become one:
+        # anchoring `traigent-runs/` would demand that every path the run
+        # creates already exist in this package, which is the false red this
+        # rule is shaped to avoid.
+        self.assertNotIn("traigent-runs", bundle | repository)
+
+    def test_no_tracked_file_names_a_bundled_path_that_does_not_ship(self) -> None:
+        """A reference into this package must resolve to a file that ships.
+
+        One rule, one corpus, no syntax: see `_path_shaped_tokens` for why the
+        extractor is format-agnostic and `_anchored_reference` for what makes a
+        path-shaped word a reference. The check above owns the corpus.
+
+        This is the property the enumerated version could not state. That one
+        scanned markdown documents for backticks and links, which left a fenced
+        command line, `agents/openai.yaml` and the script docstrings outside it
+        - not by decision, but because they were never in the list. A property
+        asserted over `git ls-files` has no list to be left out of.
+        """
+        roots, published = reference_roots(), published_paths()
+        # Paths named as DATA rather than written as references. Each one is an
+        # example handed to the extractor, or argued about in a docstring, so
+        # each has to LOOK like a reference and must not resolve - that is what
+        # it is for. Named individually and asserted cited below, exactly as
+        # `unshipped` is: a pattern exemption is how a rule quietly widens until
+        # it holds nothing.
+        # Keyed by (FILE, path), not by path alone. An exemption scoped to the
+        # path would hold everywhere: the moment SKILL.md told a reader to open
+        # `agents/openai.yml`, the exemption this file needs for its own probe
+        # data would have covered that too, silently, in the document where it
+        # matters most. An escape hatch has to be narrower than the rule.
+        illustrated = {
+            ("tests/test_skill_package.py", "agents/openai.yml"): (
+                "the extension probe proving `.yml` and `.yaml` are both read; "
+                "only the `.yaml` spelling ships"
+            ),
+            ("tests/test_skill_package.py", "assets/glossary.md"): (
+                "the counter-example in `_resolves`: a basename fallback would "
+                "pass this for the glossary that lives in `references/`"
+            ),
+        }
+        cited: set[tuple[str, str]] = set()
+
+        def scan(corpus: dict[str, str]) -> list[str]:
+            """Every anchored reference in `corpus` that resolves nowhere."""
+            dangling = []
+            for name, text in corpus.items():
+                for token in self._path_shaped_tokens(text):
+                    anchored, resolved = self._anchored_reference(
+                        token, roots, published
+                    )
+                    if not anchored or resolved:
+                        continue
+                    if (name, token) in illustrated:
+                        cited.add((name, token))
+                        continue
+                    dangling.append(f"{name} names {token!r}, which nothing ships")
+            return dangling
+
+        self.assertEqual(
+            scan(tracked_text_files()),
+            [],
+            "a tracked file names a path into this package that does not ship",
+        )
+        self.assertEqual(sorted(set(illustrated) - cited), [])
+
+        # A CLEAN TREE PROVES NOTHING ABOUT WHAT THE EXTRACTOR CAN SEE. So it
+        # is handed the defect in each of the four shapes #155 measured, and
+        # must report all four - the three that used to pass included.
+        # The dangling half of each probe is ASSEMBLED rather than written out,
+        # because this file is itself inside the corpus being scanned: written
+        # out, each one is a dangling anchored reference in a tracked file, and
+        # the check reports it - correctly, which is how this was found, twice,
+        # the second time in this comment. `scan` receives byte-identical
+        # strings either way, so the
+        # probe is unweakened, and the corpus stays whole rather than exempting
+        # the one file whose job is to name paths that must not resolve.
+        def missing(directory: str, name: str) -> str:
+            return f"{directory}/{name}"
+
+        shapes = [
+            ("SKILL.md", missing("scripts", "gone.py"), "Run `{}` first."),
+            (
+                "references/run-safety.md",
+                missing("scripts", "absent.py"),
+                "```bash\npython {} --help\n```\n",
+            ),
+            (
+                "agents/openai.yaml",
+                missing("references", "missing.md"),
+                "instructions_file: {}\n",
+            ),
+            (
+                "scripts/readiness.py",
+                missing("assets", "nothing.txt"),
+                '"""Reads {} at import time."""\n',
+            ),
+        ]
+        planted = {
+            SKILL_PREFIX + document: body.format(path)
+            for document, path, body in shapes
+        }
+        with self.subTest(direction="each shape of the defect is seen"):
+            self.assertEqual(
+                scan(planted),
+                [
+                    f"{SKILL_PREFIX + document} names {path!r}, which nothing ships"
+                    for document, path, _ in shapes
+                ],
+            )
+        root_missing = "GUIDE" + "-MISSING.md"
+        relative_missing = "./" + missing("scripts", "missing.py")
+        with self.subTest(direction="root and explicit-relative paths are seen"):
+            self.assertEqual(
+                scan(
+                    {
+                        "agents/openai.yaml": f"guide: {root_missing}\nscript: {relative_missing}"
+                    }
+                ),
+                [
+                    f"agents/openai.yaml names {root_missing!r}, which nothing ships",
+                    f"agents/openai.yaml names {relative_missing!r}, which nothing ships",
+                ],
+            )
+        # And the other direction, because a guard tightened until it flags
+        # working prose teaches authors to route around it. Every line here is
+        # written the way this package really writes it, and every one must stay
+        # legal: a reference file named mid-sentence, the artifacts the
+        # customer's run writes, their own files, and a placeholder.
+        with self.subTest(direction="legitimate path-shaped prose stays legal"):
+            self.assertEqual(
+                scan(
+                    {
+                        "prose": (
+                            "The handoff notes in run-safety.md say so, and "
+                            "traigent-runs/config-space.json is written by the "
+                            "run into <project root>/traigent-runs/holdout.jsonl"
+                            " once .env carries a key. Point it at your own "
+                            "dataset.jsonl and evaluator.py, then read "
+                            "requirements-first-run.txt for the pins."
+                        )
+                    }
+                ),
+                [],
+            )
+        # The positive self-probe: neuter the anchor and the planted violations
+        # stop being violations, which is the only way to prove the anchor is
+        # what is doing the work rather than the corpus happening to be clean.
+        with self.subTest(direction="a neutered extractor stops seeing them"):
+            self.assertNotEqual(scan(planted), [])
+            blinded = [("", frozenset())]
+            self.assertEqual(
+                [
+                    token
+                    for text in planted.values()
+                    for token in self._path_shaped_tokens(text)
+                    if self._anchored_reference(token, blinded, published)[0]
+                ],
+                [],
+                "an extractor with no anchored directory still reports "
+                "something, so the anchor is not what this check runs on",
+            )
+
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
             "SKILL.md",
@@ -2017,7 +2377,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.25.0",
+                "traigent==0.26.0",
                 "litellm==1.93.0",
                 "python-dotenv==1.2.2",
             ],
@@ -4289,7 +4649,30 @@ class SkillPackageTests(unittest.TestCase):
                 "high": 1.0,
                 "evidence": "agent.py:9 temperature= reaches the provider call",
             },
-        }
+        },
+        # The read is two halves since #184, and SKILL.md mandates both in the
+        # same pass. A document carrying only the knobs is not the conformant
+        # opening card any more - it is a run that did half of what it was
+        # asked, and the four build checks are withheld for it.
+        "build": {
+            "prompt": {
+                "present": True,
+                "few_shot": 2,
+                "evidence": "agent.py:5-19 SYSTEM carries two worked examples",
+            },
+            "output-contract": {
+                "present": True,
+                "evidence": "agent.py:24 json.loads(reply) parses the answer",
+            },
+            "control-flow": {
+                "loop": False,
+                "evidence": "agent.py:20-26 one provider call per input",
+            },
+            "tools": {
+                "used": False,
+                "evidence": "agent.py: no tool list reaches the provider call",
+            },
+        },
     }
 
     def _opening_card(
@@ -7506,7 +7889,13 @@ class SkillPackageTests(unittest.TestCase):
         the chosen line - the customer told one number and scored on another.
 
         Asserted against the deciding constant, not beside it: a test that
-        restates 90 is a fourth home for the same drift.
+        restates 70 is a fourth home for the same drift.
+
+        The metric under the number changed in #170 - word sets became runs of
+        consecutive words - so the glossary now has to state WHICH comparison
+        the percentage is over, and that is checked here too. "70% of the words"
+        and "70% of the 3-word runs" are different promises to the person
+        agreeing to be scored, and only the second one is true.
         """
         threshold = preflight_constant("NEAR_DUPLICATE_THRESHOLD")
         percent = READINESS.NEAR_DUPLICATE_PERCENT
@@ -7527,8 +7916,93 @@ class SkillPackageTests(unittest.TestCase):
         glossary = " ".join(
             (SKILL_ROOT / "references" / "glossary.md").read_text().split()
         )
-        self.assertIn(f"repeat when {percent}% or more of their words match", glossary)
-        self.assertIn(f"{percent}% is a chosen line", glossary)
+        shingle = preflight_constant("NEAR_DUPLICATE_SHINGLE")
+        self.assertIn(
+            f"repeat when {percent}% or more of their {shingle}-word runs match",
+            glossary,
+        )
+        self.assertIn(f"under {shingle} words only identical rows count", glossary)
+        # And the SENTENCE THAT JUSTIFIES the number is checked by recomputing
+        # the number it quotes, which is the part that used to be a weld.
+        #
+        # The glossary used to say 90% was "a chosen line, not a discovered
+        # one", and this guard asserted that phrase verbatim. That is backwards:
+        # it froze the wording and proved nothing about the value, so it would
+        # have held just as green if the threshold had stopped matching the
+        # justification beside it. #170 replaced the chosen line with a derived
+        # one, so the guard derives it too.
+        #
+        # What the glossary claims is a length: the shortest row in which ONE
+        # changed word is still a repeat. That is a property of
+        # NEAR_DUPLICATE_THRESHOLD and NEAR_DUPLICATE_SHINGLE together, and it
+        # is computed here from the shipped `shingle_set` rather than restated -
+        # move either constant and this recomputes, disagrees with the sentence,
+        # and fails naming both numbers.
+        # And WHERE the word changed, which the sentence used to leave out while
+        # this guard quietly assumed it. The word-set metric it replaced was
+        # position-blind - one changed word destroyed one member wherever it
+        # sat - so "one changed word still counts at 19 words" needed no
+        # qualifier and had none. Runs are not position-blind: a word in the
+        # middle of a row destroys 3 runs, a word at either end destroys 1, and
+        # the crossing length moves from 19 to 8 accordingly.
+        #
+        # The guard computed the mid-row value and asserted a sentence that
+        # claimed no position, so it proved the claim for one case out of a
+        # range the claim did not restrict itself to - true where it was
+        # measured and false at both ends of every row. Both figures are
+        # recomputed here and both are stated in the glossary.
+        middle = self._one_changed_word_crossing_length(lambda length: length // 2)
+        edge = self._one_changed_word_crossing_length(lambda _length: 0)
+        self.assertIn(
+            f"one word changed mid-row still counts at {middle} words, "
+            f"{edge} if it is the first or last",
+            glossary,
+        )
+        # The last word behaves as the first does - one destroyed run either
+        # way - so the sentence may say "first or last" only while that holds.
+        self.assertEqual(
+            edge, self._one_changed_word_crossing_length(lambda length: length - 1)
+        )
+        # And the distinction is only worth the words while the two differ. If
+        # a future n or threshold made the metric position-blind again, this
+        # says so instead of leaving a qualifier that has quietly stopped
+        # meaning anything.
+        self.assertNotEqual(
+            middle,
+            edge,
+            "a changed word now costs the same wherever it sits, so the "
+            "glossary's mid-row qualifier no longer distinguishes anything - "
+            "drop it and go back to the unrestricted sentence.",
+        )
+
+    def _one_changed_word_crossing_length(self, position) -> int:
+        """Shortest row where changing the word at `position` still repeats.
+
+        Measured through the shipped functions, on synthetic rows of distinct
+        words, so it is the check's own behaviour and not a formula that could
+        drift away from it. `position` is a callable of the row length, because
+        the answer depends on where the word sits and the two ends have to be
+        addressable as the length moves.
+        """
+        threshold = PREFLIGHT.NEAR_DUPLICATE_THRESHOLD
+        for length in range(1, 400):
+            changed = position(length)
+            if not 0 <= changed < length:
+                continue
+            left = " ".join(f"word{index}" for index in range(length))
+            right = " ".join(
+                ("changed" if index == changed else f"word{index}")
+                for index in range(length)
+            )
+            first, second = PREFLIGHT.shingle_set(left), PREFLIGHT.shingle_set(right)
+            union = first | second
+            similarity = len(first & second) / len(union) if union else 1.0
+            if similarity >= threshold:
+                return length
+        raise AssertionError(
+            "no row length up to 400 makes a one-word change reach "
+            f"{threshold} - the glossary's justification cannot be true"
+        )
 
     def test_no_document_states_the_similarity_line_as_its_own_number(
         self,
@@ -9112,14 +9586,20 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.25.0.
+        """Verified against installed traigent 0.26.0.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
-        Separately, the SDK exposes no supported id
-        for the run just completed, and the fix for that belongs upstream: this
-        repo must not work around it by reading the SDK's private storage
-        layout.
+
+        The second half of this used to say the SDK exposed no supported id for
+        the run just completed. The pinned 0.26.0 does: `sync_session_id` is a
+        public field on the result, verified absent on 0.25.0 and present on
+        0.26.0. So the upload path is reachable now, and what stays pinned is
+        the decision that outlived the limitation - feature-detect the public
+        attribute, and when it is empty leave the baseline local rather than
+        reading the SDK's private storage layout or reaching for `--all`. An
+        empty value is the documented answer for a run the backend already
+        tracked, not a defect to route around.
         """
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for phrase in (
@@ -9135,6 +9615,50 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_preflight_supports_exactly_the_release_the_pin_installs(self) -> None:
+        self.assertEqual(PREFLIGHT.SUPPORTED_TRAIGENT_VERSION, pinned_sdk_version())
+
+    def test_sync_shell_hands_the_resolved_store_to_the_cli_with_run_dir_unset(
+        self,
+    ) -> None:
+        section = SDK_EXECUTION.read_text().split(
+            "## Carrying the local baseline into the portal", 1
+        )[1]
+        block = section.split("```bash", 1)[1].split("```", 1)[0].strip()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result_store = root / "project" / "traigent-runs" / "sdk-results"
+            result_store.mkdir(parents=True)
+            executable = root / "traigent"
+            executable.write_text(
+                "#!/bin/sh\n"
+                'printf \'%s|%s\\n\' "$TRAIGENT_RESULTS_FOLDER" "$*" >> "$CAPTURE"\n'
+            )
+            executable.chmod(0o755)
+            capture = root / "calls"
+            runnable = block.replace(
+                "/absolute/path/to/project/traigent-runs/sdk-results",
+                str(result_store),
+            ).replace("<copy baseline_results.sync_session_id>", "session-123")
+            environment = dict(os.environ)
+            environment.pop("RUN_DIR", None)
+            environment.update(
+                {"PATH": f"{root}:{environment['PATH']}", "CAPTURE": str(capture)}
+            )
+            completed = subprocess.run(
+                ["bash", "-eu", "-c", runnable],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = capture.read_text().splitlines()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(line.startswith(f"{result_store}|") for line in calls))
+        self.assertTrue(all("session-123" in line for line in calls))
 
     def test_local_baseline_checkpoint_states_exactly_what_is_known(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
@@ -10513,6 +11037,275 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never a raw traceback", safety)
         self.assertIn("sanitized provider message", safety)
 
+    def test_the_connected_phase_disables_local_fallback(self) -> None:
+        """`auto` without this completes locally instead of failing.
+
+        Measured on installed traigent, identically on 0.25.0 and 0.26.0, with
+        a stub agent that makes no provider call. `algorithm="auto"` and no
+        reachable backend: with `TRAIGENT_REQUIRE_CLOUD` unset the run
+        COMPLETES - two trials, `cloud_url` None - and with it set to `1` the
+        run raises `Cloud execution is required, but backend session creation
+        failed`. The completing case is the one that costs money: twelve paid
+        trials the user approved as a managed search, returned as a result that
+        reads like one.
+
+        The guide already told the assistant to treat a reported local fallback
+        as a failure rather than a result. That check runs after the spend. This
+        one runs before it, which is why both exist.
+
+        Scoped to the connected phase because the flag is not conditional on
+        wanting a session - it fails any run that creates none, and the
+        baseline phase deliberately creates none. Measured: `algorithm="grid"`
+        with the flag inherited raises the same error, so the baseline must
+        stop before spend and require an explicit phase-local override.
+        """
+        wrapper = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"', wrapper)
+        self.assertNotIn('os.environ.pop("TRAIGENT_REQUIRE_CLOUD"', wrapper)
+        self.assertIn('os.environ.pop("TRAIGENT_API_KEY", None)', wrapper)
+
+        block = SDK_EXECUTION.read_text()
+        setting = block.index('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"')
+        # The wrapper's own import section, not the capability-discovery snippet
+        # at the top of this document, which also imports traigent.
+        importing = block.index("import litellm")
+        self.assertLess(
+            setting,
+            importing,
+            "the execution policy is resolved from the environment at import; "
+            "setting the variable after it leaves the fallback enabled for the "
+            "run that reads it",
+        )
+        baseline_stop = block.index('if inherited("TRAIGENT_REQUIRE_CLOUD"):')
+        self.assertLess(baseline_stop, importing)
+        self.assertIn("Stop before paid work", block)
+
+    def test_the_connected_phase_refuses_an_inherited_offline_setting(self) -> None:
+        """`TRAIGENT_OFFLINE` defeats the flag above without saying so.
+
+        Measured on both releases: `algorithm="auto"` with
+        `TRAIGENT_REQUIRE_CLOUD=1` AND `TRAIGENT_OFFLINE=1` COMPLETES locally.
+        Offline resolves the policy to local-only before a session is ever
+        attempted, so the enforcement site that raises for the flag never runs.
+        The result is the exact run this guards against, produced while the
+        guard is on - which is worse than not setting it, because the wrapper
+        would otherwise look protected.
+
+        It has to be refused rather than cleared. `load_dotenv` runs in this
+        same block, so the value can arrive from the customer's own `.env`, and
+        no-egress is a decision about where their data may go. Unsetting it to
+        satisfy this run would send data out on their behalf, which no
+        convenience justifies.
+        """
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertIn(
+            'for offline_name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):',
+            wrapper,
+            "the SDK reads either spelling as offline, so checking one leaves "
+            "the other as an open path to the run this guards against",
+        )
+        for name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+            with self.subTest(name=name):
+                self.assertNotIn(f'os.environ.pop("{name}"', wrapper)
+        # Phrases are checked inside one source line each. The wrapper is a
+        # Python snippet inside a fenced block, so its string-concatenation
+        # quotes survive normalization and a phrase spanning two literals is
+        # never present however the document is read.
+        normalized = " ".join(wrapper.casefold().split())
+        for phrase in (
+            "is set, which resolves this run to local-only",
+            "before a backend session is attempted and so silently defeats",
+            "traigent_require_cloud: this phase would spend on a local",
+            "not unset it for you - where data may go is a choice to make",
+            "each resolve the run to local-only before a session is ever",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+
+    def test_neither_paid_phase_starts_under_an_inherited_mock_flag(self) -> None:
+        """Mock mode is free, and that is the problem, not the reassurance.
+
+        The guide already says not to enable mock mode in the connected
+        process. Nothing enforced it against a value the process inherited, and
+        the SDK honours `TRAIGENT_MOCK_LLM` outside production - so a connected
+        run could complete on canned responses, consume platform quota, and
+        return scores describing the mock. The banner the SDK prints is easy to
+        lose in a long transcript, and the wrapper's own token guard does not
+        catch it because mock responses report synthetic token counts.
+
+        Checked before the phase split because both phases are paid: a baseline
+        of canned responses is the same worthless measurement, and it is the one
+        the whole comparison is anchored on.
+        """
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertIn('if inherited("TRAIGENT_MOCK_LLM"):', wrapper)
+        self.assertNotIn('os.environ.pop("TRAIGENT_MOCK_LLM"', wrapper)
+        guard = wrapper.index('if inherited("TRAIGENT_MOCK_LLM"):')
+        self.assertLess(
+            guard,
+            wrapper.index('if FIRST_RUN_PHASE == "baseline":'),
+            "the mock check is not phase-specific; placing it inside a branch "
+            "would exempt the other phase from it",
+        )
+
+    def test_an_inherited_require_cloud_stops_before_baseline_spend(self) -> None:
+        """The wrapper cannot quietly neutralize an environment policy."""
+        wrapper = SDK_EXECUTION.read_text()
+        self.assertNotIn("BASELINE_DROPPED_REQUIRE_CLOUD", wrapper)
+        normalized = " ".join(wrapper.casefold().split())
+        self.assertIn("baseline approval card", normalized)
+        self.assertIn("stops the baseline before spending", normalized)
+        self.assertIn("only after approval", normalized)
+
+    def test_connected_failure_boundary_omits_raw_exception_data(self) -> None:
+        """Ordinary and pyo3-shaped failures leave no traceback payload."""
+        fence = next(
+            block
+            for block in re.findall(
+                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+            )
+            if "except BaseException as exc:" in block
+        )
+        tree = ast.parse(fence)
+        protected = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Try)
+            and any(
+                isinstance(handler.type, ast.Name)
+                and handler.type.id == "BaseException"
+                for handler in node.handlers
+            )
+        )
+        handler = next(
+            item
+            for item in protected.handlers
+            if isinstance(item.type, ast.Name) and item.type.id == "BaseException"
+        )
+        exercise = ast.FunctionDef(
+            name="exercise",
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[ast.arg(arg="injected")],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
+            ),
+            body=[
+                ast.Try(
+                    body=[ast.Raise(exc=ast.Name(id="injected", ctx=ast.Load()))],
+                    handlers=[handler],
+                    orelse=[],
+                    finalbody=[],
+                )
+            ],
+            decorator_list=[],
+        )
+        module = ast.fix_missing_locations(ast.Module(body=[exercise], type_ignores=[]))
+
+        class Pyo3LikePanic(BaseException):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            namespace = {
+                "Path": Path,
+                "json": json,
+                "RUN_DIR": Path(directory),
+                "error_path": Path(directory) / "optimization-error.json",
+            }
+            exec(compile(module, "<failure-boundary>", "exec"), namespace)  # noqa: S102
+            for failure in (
+                RuntimeError("prompt=PRIVATE_SENTINEL"),
+                Pyo3LikePanic("output=PRIVATE_SENTINEL"),
+            ):
+                with self.subTest(kind=type(failure).__name__):
+                    with self.assertRaises(SystemExit) as stopped:
+                        namespace["exercise"](failure)
+                    artifact = (Path(directory) / "optimization-error.json").read_text()
+                    self.assertNotIn("PRIVATE_SENTINEL", artifact)
+                    self.assertNotIn("PRIVATE_SENTINEL", str(stopped.exception))
+                    self.assertIn(type(failure).__name__, artifact)
+
+            namespace["RUN_DIR"] = Path(directory) / "missing-directory"
+            namespace["error_path"] = namespace["RUN_DIR"] / "optimization-error.json"
+            with self.assertRaises(SystemExit) as unwritable:
+                namespace["exercise"](RuntimeError("prompt=PRIVATE_SENTINEL"))
+            rendered = "".join(
+                traceback.format_exception(
+                    type(unwritable.exception),
+                    unwritable.exception,
+                    unwritable.exception.__traceback__,
+                )
+            )
+            self.assertNotIn("PRIVATE_SENTINEL", rendered)
+            self.assertIn("could not be written", str(unwritable.exception))
+
+    def test_false_process_value_overrides_true_dotenv_baseline_policy(self) -> None:
+        """Unsetting loops; an approved explicit false survives dotenv loading."""
+        fence = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        tree = ast.parse(fence)
+        prefix: list[ast.stmt] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        program = compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            "<baseline-environment-policy>",
+            "exec",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            run_dir = project / "traigent-runs"
+            run_dir.mkdir()
+            (project / ".env").write_text("TRAIGENT_REQUIRE_CLOUD=1\n")
+            script = run_dir / "walkthrough.py"
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+                    "TRAIGENT_REQUIRE_CLOUD": "0",
+                },
+                clear=True,
+            ):
+                exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertEqual(os.environ["TRAIGENT_REQUIRE_CLOUD"], "0")
+
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                clear=True,
+            ):
+                with self.assertRaises(SystemExit) as stopped:
+                    exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertIn("TRAIGENT_REQUIRE_CLOUD=0", str(stopped.exception))
+
+    def test_the_probe_and_the_fallback_flag_are_named_as_different_checks(
+        self,
+    ) -> None:
+        """They fail in different windows and neither covers the other.
+
+        The zero-LLM probe proves a key is scoped and a session reaches the
+        portal, at the moment it runs. The flag governs what the SDK does when
+        a session cannot be created later. A run can keep tracking trials while
+        the search selecting them has become local, so `run-safety.md` must
+        point at the setting instead of implying its probe already covers it.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for phrase in (
+            "cannot answer whether the managed brain is still reachable",
+            "the connected phase runs with local fallback disabled",
+            "neither replaces the probe",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+
     def test_the_grid_pin_is_scoped_to_the_baseline_only(self) -> None:
         """Pinning the connected search to a local algorithm would gut it.
 
@@ -10596,8 +11389,11 @@ class SkillPackageTests(unittest.TestCase):
         phase = decorator.index("FIRST_RUN_PHASE = os.environ.get(")
         dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
         remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
+        force_offline = decorator.index('os.environ["TRAIGENT_OFFLINE_MODE"] = "true"')
         import_traigent = decorator.index("import traigent")
         self.assertLess(phase, dotenv)
+        self.assertLess(dotenv, force_offline)
+        self.assertLess(force_offline, import_traigent)
         self.assertLess(dotenv, remove_key)
         self.assertLess(remove_key, import_traigent)
         self.assertIn('if FIRST_RUN_PHASE == "baseline":', decorator)
@@ -10616,6 +11412,49 @@ class SkillPackageTests(unittest.TestCase):
             "supplied by the process and never by `.env`",
             " ".join(connected.split()),
         )
+
+    def test_baseline_offline_mode_ends_before_the_fresh_connected_process(
+        self,
+    ) -> None:
+        """Baseline isolation must not silently turn the enhanced run local."""
+        fence = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        tree = ast.parse(fence)
+        prefix: list[ast.stmt] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        program = compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            "<phase-environment-policy>",
+            "exec",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "traigent-runs" / "walkthrough.py"
+            script.parent.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                clear=True,
+            ):
+                exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
+
+            # A fresh process starts from its own launch environment; the
+            # baseline assignment never mutates the parent shell.
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "connected"},
+                clear=True,
+            ):
+                exec(program, {"__file__": str(script)})  # noqa: S102
+                self.assertNotIn("TRAIGENT_OFFLINE_MODE", os.environ)
+                self.assertEqual(os.environ["TRAIGENT_REQUIRE_CLOUD"], "1")
 
     def test_first_json_fence_is_the_calibration_matrix(self) -> None:
         """Guard the same positional dependency for the calibration example.
@@ -10965,7 +11804,11 @@ class SkillPackageTests(unittest.TestCase):
         # two.
         # #177 then added `dataset-unsound-expected-outputs`, the row-level
         # sanity check's one ceiling, which is the fourteenth.
-        self.assertEqual(len(conditions), 14)
+        # #197 added `dataset-tuning-split-empty` as the fifteenth: the state
+        # where no row on the tuning side can be scored, which used to travel
+        # as a runtime branch of the small-dataset cap and is a different
+        # finding with a different repair.
+        self.assertEqual(len(conditions), 15)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -11009,6 +11852,13 @@ class SkillPackageTests(unittest.TestCase):
             # bullets: #149 gave `below-measurable-size` a second, blocking
             # half that a merged bullet cannot carry, so `.index()` on one
             # shared phrase would find the earlier bullet for both.
+            # Its own bullet since #197, and it must say the two things the
+            # small-dataset bullet used to have to carry as a second half: the
+            # repair is the split, and nobody is sent for data.
+            (
+                "dataset-tuning-split-empty",
+                "the rows are fine and the split is not",
+            ),
             (
                 "dataset-below-measurable-size",
                 "more comparable examples is what lifts this",
@@ -11055,11 +11905,20 @@ class SkillPackageTests(unittest.TestCase):
             "ceiling is advisory and there is no repair to route",
             normalized,
         )
+        sites = cap_construction_blocks(
+            source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
         blocking = {
             "dataset-absent",
             "dataset-no-expected-outputs",
             "dataset-integrity-fail",
             "dataset-tune-holdout-overlap",
+            # #197's fifteenth condition, and it belongs here rather than in
+            # `conditional` below because it has one reading only: no row on
+            # the compared side can be scored, so there is no result to bound
+            # and the repair is the split. It is what the small-dataset cap's
+            # blocking half became when the two findings were separated.
+            "dataset-tuning-split-empty",
         }
         scoping = {
             "dataset-fully-synthetic",
@@ -11083,6 +11942,11 @@ class SkillPackageTests(unittest.TestCase):
             # the run proceeds meanwhile.
             "dataset-mostly-generated-answer-key",
             "dataset-coarse-resolution",
+            # Moved out of `conditional` by #197. Its blocking half was the
+            # zero-comparable-rows state, which is now its own condition, and
+            # what is left scopes a claim in every reading: a real comparison
+            # on few rows, whose ceiling is the whole of what it costs.
+            "dataset-below-measurable-size",
             # #177's row-level sanity check. It scopes for the plainest reason
             # on this list: the finding is the assistant's own reading of the
             # customer's answer key, and an opinion that can be wrong may bound
@@ -11092,20 +11956,36 @@ class SkillPackageTests(unittest.TestCase):
             # "bounded, not stopped".
             "dataset-unsound-expected-outputs",
         }
-        # The third category, and the reason it has to exist: one condition
-        # decides at runtime. `dataset-below-measurable-size` is advisory with
-        # examples to compare on and blocks with none, so it belongs in neither
-        # set above, and the routing bullet has to carry both halves - the same
-        # shape `agent-no-varying-knobs` was given by the sibling test below.
-        conditional = {"dataset-below-measurable-size"}
+        # The third category, derived rather than listed, and empty since #197.
+        #
+        # It held `dataset-below-measurable-size`, which was advisory with
+        # examples to compare on and blocked with none - two verdicts from one
+        # bullet, which the reader had to classify per card. Separating the two
+        # findings into two conditions emptied it, and the emptiness is what
+        # this test now asserts rather than a name.
+        #
+        # Read off the module instead of written down, so the both-halves rule
+        # below is not dead code: a condition that acquires a runtime `blocks`
+        # again lands here by itself, and its bullet is held to carrying both
+        # readings the same day. `agent-no-varying-knobs` is the same shape and
+        # is checked by the sibling test below.
+        conditional = {
+            condition
+            for condition in conditions
+            if sites[condition] not in ({"True"}, {"False"})
+        }
+        self.assertEqual(
+            conditional,
+            set(),
+            f"{sorted(conditional)} decide whether the run waits at runtime, "
+            "so one bullet has to teach a reader both readings; #197 removed "
+            "the last of them by giving each finding its own condition",
+        )
         # #144's condition: the remedy is one look at the file, so it is
         # neither a repair nor a scope. It stops the run - nothing was
         # measured - but the card may not call the file broken.
         diagnostic = {"dataset-shape-unrecognised"}
         self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
-        sites = cap_construction_blocks(
-            source, READINESS.Cap.__dataclass_fields__["blocks"].default
-        )
         # The universal claim this paragraph used to make - "a route that only
         # scopes what the result may claim never blocks" - was false the day it
         # was written, and SKILL.md contradicted it twenty-five lines later in
@@ -11694,14 +12574,22 @@ class SkillPackageTests(unittest.TestCase):
         # What earns the 100 is the shape rather than the taste: 48 distinct
         # configurations against a 12-trial budget, so the run compares twelve
         # of them, and 48 is four times the budget rather than twenty.
-        self.assertEqual(pillar.score, 100)
         space = next(s for s in pillar.subscores if s.name == "search-space")
+        # The check, not the pillar: #184 put four build checks beside it, and
+        # a config-space document answers none of them. What earns full marks
+        # here is the search space, which is what this test is about.
+        self.assertEqual(space.value, READINESS.SEARCH_SPACE_WEIGHT)
         self.assertEqual(
             space.evidence,
             "your space has 48 distinct configurations; this run will try up to "
             "12 of them",
         )
-        self.assertEqual(pillar.confidence, 1.0)
+        self.assertTrue(space.measured)
+        # The pillar's confidence is lower than the check's on purpose. A
+        # config-space document establishes the search space completely and
+        # says nothing about how the agent is built, and #184 makes the pillar
+        # report that gap rather than round it away.
+        self.assertLess(pillar.confidence, 1.0)
 
     def test_the_qualitative_knob_rules_are_guidance_and_not_arithmetic(
         self,
@@ -11882,6 +12770,7 @@ class SkillPackageTests(unittest.TestCase):
                         document.parent / "optimized-results.json"
                     ),
                     "CONFIG_SPACE_DOCUMENT": str(document),
+                    "RUN_DIR": document.parent,
                 }
             )
             exec(block, namespace)
@@ -11910,13 +12799,33 @@ class SkillPackageTests(unittest.TestCase):
             # search raises. Write-after-return alone leaves the stale file as
             # evidence for a search that is no longer the one being reported.
             document.write_text(stale)
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(SystemExit):
                 run(document, raises)
             self.assertFalse(
                 document.exists(),
                 "a search that raised must leave no config-space document, "
                 "including one written by an earlier search",
             )
+            error_artifact = document.parent / "optimization-error.json"
+            self.assertTrue(error_artifact.exists())
+
+            # A corrected retry succeeds. Its current result must not sit
+            # beside the prior attempt's singular failure record.
+            run(document, lambda: SimpleNamespace(trials=[{"trial": 2}]))
+            self.assertFalse(
+                error_artifact.exists(),
+                "a successful retry must remove the previous attempt's failure artifact",
+            )
+
+            # If stale evidence cannot be removed, stop before optimize_sync.
+            document.unlink()
+            error_artifact.mkdir()
+            calls_before = len(searched)
+            with self.assertRaises(SystemExit) as stale_error:
+                run(document, lambda: SimpleNamespace(trials=[{"trial": 3}]))
+            self.assertEqual(len(searched), calls_before)
+            self.assertIn("could not be removed", str(stale_error.exception))
+            error_artifact.rmdir()
 
             # A search that returns having executed nothing searched no space
             # either, so it must not produce evidence that it did.
@@ -11980,8 +12889,16 @@ class SkillPackageTests(unittest.TestCase):
         pillar, _ = score_config_space(
             namespace["config_space_document"](namespace["ENHANCED_SPACE"])
         )
+        # Over the checks a config-space document can answer. Since #184 the
+        # pillar also carries the four build checks, which no config space
+        # speaks to - they come from the read of the agent that travels beside
+        # it, and a template cannot supply them.
+        space_only = READINESS.combine(
+            "agent",
+            [sub for sub in pillar.subscores if sub.name == "search-space"],
+        )
         self.assertEqual(
-            pillar.confidence,
+            space_only.confidence,
             1.0,
             "every agent sub-score must be measured for the template's own document",
         )
@@ -12044,9 +12961,18 @@ class SkillPackageTests(unittest.TestCase):
         mutation that survived when `coverage` was dropped, leaving the
         customer a definition for a line the card no longer prints.
         """
+        # Every check the agent pillar can print, read off the module. The list
+        # was three hand-written names, two of which no longer exist; #184 adds
+        # four more, and a hard-coded tuple is exactly how the `coverage` entry
+        # outlived the sub-score it defined.
         printed = {
             READINESS.CHECK_DISPLAY_NAMES[name]
-            for name in ("knob-count", "variation", "search-space")
+            for name in (
+                "knob-count",
+                "variation",
+                "search-space",
+                *(check for check, _weight in READINESS.AGENT_BUILD_CHECKS),
+            )
             if name in READINESS.CHECK_DISPLAY_NAMES
         }
         glossary = (SKILL_ROOT / "references" / "glossary.md").read_text()
@@ -15664,7 +16590,8 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         empty_read = READINESS.AgentFacts(discovery_supplied=True, discovered=())
         _pillar, caps, _knobs = READINESS.score_agent(empty_read)
         self.assertEqual([cap.blocks for cap in caps], [True])
-        self.assertIn("the agent was read", _pillar.subscores[0].evidence)
+        space = next(s for s in _pillar.subscores if s.name == "search-space")
+        self.assertIn("the agent was read", space.evidence)
 
     def test_every_later_re_score_is_passed_the_reading_the_opening_took(
         self,
@@ -15690,12 +16617,29 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
             "re-reading the agent only where this run created or repaired it", gate
         )
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("`--agent-knobs` is deliberately not passed at the close", safety)
+        # The exception is the KNOBS half, and #184 is why that word is now
+        # load-bearing: the read has two halves and only one of them can stand
+        # in for a document the search never emitted. The build half makes no
+        # claim about the space, so nothing it says can reach this ceiling, and
+        # dropping it would print four checks falling to unanswered between two
+        # cards while nothing about the agent had changed.
+        self.assertIn(
+            "the read's knobs half is deliberately not allowed to establish the "
+            "space at the close",
+            safety,
+        )
         self.assertIn(
             "letting a read of the source stand in for a document the search "
             "never emitted would lift this ceiling",
             safety,
         )
+        self.assertIn("its build half travels", safety)
+        self.assertIn(
+            "only where a config-space document decides the space beside it", safety
+        )
+        # And the state where neither half may arrive, which is the one the
+        # ceiling exists for.
+        self.assertIn("where no document reaches the close, pass nothing", safety)
         # And the stale sentence the opening read replaced. run-safety.md still
         # told the opening and stage-4 scores to report the pillar as not yet
         # measured, which is the behaviour this branch removed.
@@ -15794,6 +16738,149 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         # scorer and the gate's routing should be revisited with it.
         self.assertNotIn("agent_present", fields)
         self.assertNotIn("agent_exists", fields)
+
+
+class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
+    """A small dataset is a shortfall, and a shortfall is not a second question.
+
+    #213 folded every MISSING component into one question at discovery. #197
+    adds the other half - a dataset that exists and is too small to compare on -
+    and the whole risk is that it arrives as a prompt of its own. Two questions
+    in two turns are individually defensible and together are the form that ask
+    was introduced to abolish.
+
+    The other rule these keep is the owner's: say the total. An offer to write
+    more examples that names no number is read as an offer to generate without
+    end, and that is a worry about somebody's bill.
+    """
+
+    ASK = "#### One ask for every gap"
+    ASK_END = "### 3. Complete the system"
+
+    def _ask(self) -> str:
+        text = SKILL.read_text()
+        return text.split(self.ASK, 1)[1].split(self.ASK_END, 1)[0]
+
+    def test_the_shortfall_is_folded_into_the_question_already_being_asked(
+        self,
+    ) -> None:
+        section = self._ask()
+        normalized = " ".join(section.casefold().split())
+        # Still one question, which is the sibling class's rule and is the one
+        # this addition is most likely to break.
+        self.assertEqual(section.count("?"), 0)
+        self.assertIn("never as a second one", normalized)
+        self.assertIn("what it found too little of", normalized)
+        # And the answer is theirs: a decline is a named outcome rather than a
+        # thing the flow works around.
+        # The answer is theirs, and the third answer is named where the
+        # enumeration above it lists the other two.
+        self.assertIn("keeping what they brought is the third", normalized)
+
+    def test_the_total_is_stated_and_the_offer_ends_at_it(self) -> None:
+        normalized = " ".join(self._ask().casefold().split())
+        walkthrough = READINESS.WALKTHROUGH_DATASET_ROWS
+        self.assertIn(f"fewer rows than this run's own **{walkthrough}**", normalized)
+        self.assertIn("the bound is spoken", normalized)
+        # The reason the number is compulsory, stated where the number is, so
+        # an editor removing the figure meets the argument for it.
+        self.assertIn("generate without end", normalized)
+
+    def test_consent_is_told_what_it_does_not_buy(self) -> None:
+        """The rule established for provenance, applied to the same shape.
+
+        Agreeing removes the stop and not the score. The flow says so, and the
+        scorer is asked rather than quoted: the rows a top-up writes are
+        generated rows, and a generated row is worth strictly less than a
+        collected one wherever it came from.
+        """
+        normalized = " ".join(self._ask().casefold().split())
+        # Not "removes the stop": these caps never block, so there is no
+        # stop for an answer to remove, and the flow said otherwise while
+        # its own routing bullet three hundred lines down said the run is
+        # worth making. What consent does change is nothing.
+        self.assertNotIn("removes the stop", normalized)
+        self.assertIn("changes what the dataset is, never what it earns", normalized)
+        self.assertIn("score as the generated rows they are", normalized)
+        # And the half a customer cannot weigh without being told: a
+        # topped-up short dataset is mostly generated, so accepting the
+        # offer lowers the ceiling rather than raising the score.
+        self.assertIn("accepting lowers the ceiling", normalized)
+        self.assertLess(
+            READINESS.SYNTHESISED_ROW_POINTS, READINESS.COLLECTED_ROW_POINTS
+        )
+
+    def test_the_size_the_offer_stops_at_is_the_split_the_guide_builds(
+        self,
+    ) -> None:
+        """The scorer's number, read out of the document that owns the split.
+
+        `WALKTHROUGH_DATASET_ROWS` is a constant in a script and the split it
+        stands for is a decision in a reference. Greping the figure out of the
+        prose would only prove somebody wrote it; this reads the composition
+        the guide actually builds to and requires the module to agree with it,
+        so the two cannot drift into offering a size nothing constructs.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        generated = re.search(
+            r"create (\d+) examples by default: (\d+) tuning rows", dataset
+        )
+        self.assertIsNotNone(
+            generated,
+            "the walkthrough dataset's own size is no longer stated where the "
+            "reader meets it, so nothing here can check what the offer stops at",
+        )
+        total, tuning = (int(group) for group in generated.groups())
+        reserved = re.search(r"reserve (\d+) held-out rows", dataset)
+        self.assertIsNotNone(reserved)
+        holdout = int(reserved.group(1))
+        self.assertEqual(tuning + holdout, total, "the two halves do not sum")
+        self.assertEqual(READINESS.WALKTHROUGH_TUNING_ROWS, tuning)
+        self.assertEqual(READINESS.WALKTHROUGH_HOLDOUT_ROWS, holdout)
+        self.assertEqual(READINESS.WALKTHROUGH_DATASET_ROWS, total)
+
+    def test_the_wording_and_the_end_of_the_offer_live_in_one_reference(
+        self,
+    ) -> None:
+        """Depth where CLAUDE.md sends it, and the point above which it stops.
+
+        The flow states the mandate and the bound. How urgently each size is
+        put, and the size at which there is nothing left to offer, belong to
+        the reference that already owns the wording of the question they ride
+        on - stated once there rather than twice.
+        """
+        text = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        self.assertIn("### When the gap is a shortfall", text)
+        # Blockquote markers stripped per line, the way the sibling class reads
+        # the same file: the sentence a user hears is quoted, so a phrase that
+        # spans a wrapped quote line otherwise carries a `>` through it.
+        creation = " ".join(
+            " ".join(line.lstrip("> ") for line in text.casefold().splitlines()).split()
+        )
+        for clause in (
+            "can come down to one lucky row",
+            "lowers the ceiling on what the result may claim",
+            "three answers, not two",
+            "rather than a must-have",
+            "with continuing as is named first",
+            "the total goes in the sentence either way",
+            "when the card stops asking there is nothing to offer",
+            "a ceiling left standing over it is not a request",
+            "none of this applies while the card is blocked on an empty tuning split",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, creation)
+        # The urgency split is stated once. It was in the flow as well while
+        # this was drafted, which is a rule with two homes and about four
+        # hundred resident bytes.
+        self.assertNotIn(
+            "rather than a must-have", " ".join(SKILL.read_text().casefold().split())
+        )
 
 
 if __name__ == "__main__":

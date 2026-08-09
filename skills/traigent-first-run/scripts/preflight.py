@@ -20,22 +20,53 @@ import sys
 import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
+from fractions import Fraction
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
-SUPPORTED_TRAIGENT_VERSION = "0.25.0"
-# Jaccard similarity over normalized word sets. This is the only number the
-# repetition deduction now rests on (traigent-first-run#158), and nothing
-# derives it: it is order-blind, so a reordered sentence scores 1.0, and it is
-# length-sensitive, so one changed word clears 0.9 at 19 tokens and never does
-# below that. What it should be is an open owner question
-# (traigent-first-run#170); until it is answered the user-facing text calls it
-# a chosen line rather than a discovered one.
-NEAR_DUPLICATE_THRESHOLD = 0.9
+SUPPORTED_TRAIGENT_VERSION = "0.26.0"
+# How long a word sequence has to be before repeating it means anything.
+#
+# The comparison below is Jaccard over overlapping n-word sequences, not over
+# word sets. The set comparison this replaced was ORDER-BLIND, which is the
+# defect (traigent-first-run#170): "the cat sat on the mat" and "the mat sat on
+# the cat" have identical word sets and scored 1.000, so a corpus that varies
+# word order on purpose - a perfectly ordinary robustness set - read as
+# duplicated. As sequences that pair scores 0.143.
+#
+# 3 because it is the shortest n that actually removes the defect. Source:
+# `StaticPreflightTests.test_a_reordered_sentence_is_not_a_repeat`, applying
+# each candidate shingle length to its two literal sentences: n=2 scores 0.667,
+# which is still
+# a near-duplicate at any threshold this check could carry, and n=3 scores
+# 0.143. Larger n keeps working - n=4 scores 0.000 - and costs sensitivity
+# everywhere else, because one changed word destroys n sequences rather than 3,
+# so the shortest n that works is the one that gives up least.
+NEAR_DUPLICATE_SHINGLE = 3
+# DERIVED, and not the 0.9 it replaces. Under sequences this number controls
+# exactly one thing a reader can check for themselves: the shortest row at
+# which ONE changed word still counts as a repeat. Source: `shingle_set`, on
+# unique L-token rows whose token L//2 is replaced with `different`, sweeping
+# L upward -
+# 0.50 -> 11 words, 0.60 -> 14, 0.65 -> 17, 0.70 -> 19, 0.75 -> 23, 0.80 -> 29,
+# 0.90 -> 59 - against the shipped word-set 0.9, which crossed at 19.
+#
+# 0.7 is the value that HOLDS that crossing at 19 words. So the switch changes
+# what the check knows about word order without changing how sensitive it is to
+# edits, and the one behavioural change is the one that was decided. Inheriting
+# 0.9 would have moved the crossing to 59 words and made the check three times
+# more inert while looking like it had not moved at all.
+#
+# What it does NOT reach is template repetition - one frame with the entity
+# swapped, "...customers in France..." against "...in Germany..." - which
+# scores 0.333 at 8 words here and scored 0.778 as word sets. Neither metric
+# catches it and no threshold separates it from "what is 2 + 2" against "what
+# is 3 + 3"; #170 records that as a limit of word overlap, not of this number.
+NEAR_DUPLICATE_THRESHOLD = 0.7
 # How many near-duplicate pairs the scan will collect before it stops. A display
 # bound, not a limit on what is checked: the emit prints ten, and a dataset with
 # a thousand near-duplicate pairs has already answered the only question this
@@ -52,25 +83,215 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # dataset over 500 rows silently lost near-duplicate detection - precisely the
 # size at which duplicates become likely (traigent-first-run#151).
 #
-# COUNTED IN TOKEN OPERATIONS, and that is the correction. It used to count
+# COUNTED IN SEQUENCE OPERATIONS, and that is the correction. It used to count
 # distinct candidate PAIRS, which is not what the loop spends: a pair costs one
 # posting-list step to find and then a set union and intersection over both
-# rows' tokens, so a row of 300 tokens costs 600 units where a row of 12 costs
-# 24. Bounding the pair count therefore bounded nothing on exactly the datasets
-# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M candidate
-# pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03 BILLION
-# token operations, which ran for 45 s with no output and no timeout and then
-# answered PASS. Trunk took 0.24 s on the same file.
+# rows' whole sets, so a row of 300 words costs 600 units where a row of 12
+# costs 24. Bounding the pair count therefore bounded nothing on exactly the
+# datasets that are slow. Measured through `near_duplicate_pairs` on 2,000
+# RAG-shaped rows of 300 tokens: 1.7M candidate pairs - 34% of a 5,000,000 pair
+# budget, so it never fired - and 1.03 BILLION token operations, which ran for
+# 45 s with no output and no timeout and then answered PASS. Trunk took 0.24 s
+# on the same file.
 #
-# The number is derived from wall clock and nothing else. This loop sustains
-# 15-22M token operations per second across the shapes measured (2,000x300 RAG
-# chunks, 5,000 rows over a 60-word vocabulary, 5,000 short rows), so 60M is
-# about three to four seconds - long enough that no ordinary dataset reaches it
-# and short enough that a user is not left watching a script that will not
-# answer. Re-derive it if the loop's inner work changes; do not move it because
-# a dataset wanted more.
-MAX_NEAR_DUPLICATE_WORK = 60_000_000
-DOMINANT_OUTCOME_RATIO = 0.9
+# The number is derived from wall clock and nothing else, and it moved from 60M
+# because the unit under it changed. Word sets sustained 15-22M operations per
+# second; sequence sets sustain 4.0-9.5M across the shapes measured (2,000x300
+# with 20 repeated frames, 2,000x50, 3,000x120, 5,000 rows over a 60-word
+# vocabulary), because a set of sequences is larger than a set of words and each
+# member costs more to hash. At that rate 60M would have been six to fifteen
+# seconds - the old comment's "three to four" would have quietly become false
+# while the constant sat unchanged - and 15M is about two to four seconds.
+#
+# Lowering it costs no ordinary dataset anything, which is why the wall-clock
+# promise wins over the larger figure. Sequences are far rarer than words, so
+# the index admits far fewer candidates: 2,000x300 rows spend 964M operations as
+# word sets and reach this bound, and 0 as sequences. The shapes that DO spend
+# real work here are ones full of genuine repeats, and those reach
+# MAX_NEAR_DUPLICATE_PAIRS first.
+#
+# What this bound does NOT cover, stated because the number above is a
+# wall-clock promise and would otherwise be read as the whole one. `work`
+# counts posting steps and pair comparisons. It does not count the fixed cost
+# of ranking every distinct sequence in the dataset and sorting each row's
+# prefix, which is roughly linear in total sequences and therefore in dataset
+# size. On 2,000 rows of 300 words `work` is 0 and that fixed cost is the
+# whole wait, so this constant is not what decided it. The seconds themselves
+# are a property of the machine and are not restated here - the ratio is the
+# claim, and the absolutes for one machine are in the table on
+# `MAX_NEAR_DUPLICATE_SHINGLES` below. Linear, predictable and proportional to
+# the file the user handed over - which is why it is left uncounted rather than
+# folded in at a second, incompatible unit price. The quadratic half is the
+# half that needs a ceiling, and that is the half this counts.
+#
+# And it does not cover MEMORY, which is the other half of that fixed cost and
+# the more dangerous one. The sequences this ranks are held all at once, so the
+# same linear growth that is merely "predictable" in seconds is unbounded in
+# bytes: 16,000 rows of 300 words spend 0 operations here, finish `complete`,
+# and peak at about 36x the file. `MAX_NEAR_DUPLICATE_SHINGLES` is the ceiling
+# on that, checked before any of it is allocated, and the two bounds are not
+# interchangeable - this one cannot see the memory at all, because on the data
+# that costs the most memory it reads zero.
+#
+# Re-derive it if the loop's inner work changes; do not move it because a
+# dataset wanted more.
+MAX_NEAR_DUPLICATE_WORK = 15_000_000
+# A ceiling on the MEMORY the near-duplicate scan may take, counted in the word
+# runs it would have to hold. The bound above counts operations and is a
+# wall-clock promise; this one is a bytes promise, and the check needed both
+# because the two do not move together. On high-diversity data `work` reads 0
+# at every size - the index admits no candidates, so the counter never fires -
+# while peak memory climbs with the file and nothing stops it (measured below,
+# and the #170 review's finding).
+#
+# Memory fails differently from time, which is why this is not a nicety. A slow
+# check still answers. A check the kernel kills answers nothing at all, and
+# that is strictly worse than the SKIP this whole change exists to remove. Word
+# sets degraded gracefully at 16,000 rows - they reached the work bound above
+# and emitted SKIP - and sequence sets do not, so this is a bound the metric
+# change created and owes.
+#
+# TARGET, stated first because the number is derived from it and means nothing
+# without it: the scan may add at most 512 MB to peak RSS. Written against a
+# 2 GB container - the low end of hosted CI, and Docker Desktop's default
+# allocation - where the interpreter, the dataset itself and the rest of the
+# run also need room. Half a gigabyte is already a quarter of that floor, and
+# it is about where the failure stops being "slow" and becomes "killed".
+#
+# MEASURED, as peak RSS over the already-resident dataset, for the whole path:
+# one set per row, then the frequency count, the ranking, and the posting
+# index. RSS and not `tracemalloc`, because what an allocator kills a process
+# over is its resident size, not the total Python objects charge for - the two
+# are different quantities and must not be quoted into one column. High-
+# diversity rows, which is the shape that costs the most and reads `work` 0.
+# The seconds are one machine's and do not transfer; the bytes per run and the
+# ratios are what the number below rests on.
+#
+#     shape                        runs      peak    bytes/run     wall
+#      50,000 x 12 words        500,000    196 MB          393    2.1 s
+#      12,000 x 50 words        576,000    201 MB          349    2.2 s
+#       5,000 x 120 words       590,000    220 MB          373    2.3 s
+#       2,000 x 300 words       596,000    196 MB          329    2.2 s
+#         600 x 1,000 words     598,800    199 MB          333    2.3 s
+#     150,000 x 4 words         300,000    133 MB          443    1.9 s
+#     550,000 x 4 words       1,100,000    499 MB          453    7.7 s
+#
+# And the shapes this refuses, measured the same way: 8,000 x 300 words is
+# 2,384,000 runs at 769 MB, and 16,000 x 300 is 4,768,000 at 1,538 MB - 36x the
+# file, with `work` at 0 and `complete` True at both sizes.
+#
+# Bytes per run is flat in row LENGTH - 600 rows of 1,000 words and 50,000 of
+# 12 cost the same - and rises only for very short rows, where each row's own
+# set object is amortized over two or three members. 453 is the worst measured,
+# so 512,000,000 / 453 = 1,130,242 runs, rounded DOWN to 1,100,000 because the
+# rounding direction has to be the one that cannot exceed the target. Then
+# measured back rather than left as arithmetic: 1,100,000 runs in that worst
+# shape peaks at 499 MB, and that is the figure this ceiling is bought with.
+#
+# WHY RUNS, and not the three obvious alternatives - each rejected against the
+# same measurements, not on principle:
+#   * ROWS. 600 rows of 1,000 words and 50,000 rows of 12 cost 199 MB and
+#     196 MB. A row cap is wrong by a factor of 83 between two datasets that
+#     cost the same, and it is the exact shape of the 500-row ceiling #151
+#     removed - and of the pair count `MAX_NEAR_DUPLICATE_WORK` replaced.
+#   * INPUT BYTES. At a fixed 596,000 runs, 3.00 MB of short words and 10.20 MB
+#     of long ones cost 185 MB and 206 MB. Memory per input byte spans 3.1x
+#     across nothing but word length, because it is words that make runs.
+#   * A LIMIT READ FROM THE HOST'S FREE MEMORY. Adaptive, and it would make the
+#     same dataset pass on one machine and SKIP on another, with a SKIP nobody
+#     can reproduce or argue with. A stated ceiling is worth more here than an
+#     accurate one.
+#
+# WHAT IT COSTS, measured rather than hoped, because it is a real cost. The
+# count is per row, so a dataset whose rows repeat each OTHER's runs is counted
+# against a bigger index than it would really build. 6,000 rows of 300 words
+# sharing one 290-word frame count 1,788,000 runs against 60,201 distinct, use
+# 210 MB, and are refused here - and both trunk and this branch report 1,000
+# pairs on that shape, so the refusal loses a real finding. Two things make
+# that the right trade and neither is that it never happens: the exact figure
+# is unknowable before building the index that is being bounded, and 1,100,000
+# runs is 3,700 rows of 300 words or 92,000 rows of 14, which is far above a
+# first-run dataset. Re-open this if a customer is refused here while their
+# distinct run count is small - that is the one case this bound is wrong about,
+# and it is wrong in the direction that answers instead of dying.
+MAX_NEAR_DUPLICATE_SHINGLES = 1_100_000
+# Answer dominance is defined against CHANCE, never against a fixed share of
+# the rows. A fixed share cannot express what this check is for, because the
+# same share means opposite things at different label counts: a top answer
+# covering 50% of a yes/no set is perfectly balanced - the best a binary task
+# can do - while 50% of an a/b/c/d set is twice what guessing gets
+# (traigent-first-run#216). The quantity is therefore how far the
+# majority-only baseline has already moved from chance towards a perfect
+# score, for `k` distinct expected answers:
+#
+#     excess = (majority_share - 1/k) / (1 - 1/k)
+#
+# 0 for a balanced set at any `k`, 1 when one answer holds every row, and
+# comparable across label counts - which is exactly the property the fixed
+# share lacked. "Headroom", `1 - majority_share`, was considered and does not
+# work: it is the arithmetic complement of the old rule rather than a different
+# rule, and it hands balanced-binary and skewed-four-way the same 0.50.
+#
+# THE LINE IS RE-DERIVED, NOT PORTED ACROSS. 0.9 was a share of the rows and
+# this is an excess over chance; they are different quantities, and carrying
+# the number over is the mistake #216 was filed about. What 1/3 decides, in
+# terms a reader can check against their own file, is the majority share it
+# corresponds to at each label count:
+#
+#     k = 2   66.7%      k = 4   50.0%      k = 10   40.0%
+#     k = 3   55.6%      k = 5   46.7%      k -> inf 33.3%
+#
+# It is pinned by the dataset shape the owner named as the defect - a four-way
+# set whose top answer takes half the rows - and set at the LARGEST value that
+# still catches it, so the reach past today's behaviour is the smallest the
+# decision requires. It IS a reach: the old rule was silent on that dataset and
+# this one is not. The false-red direction does not constrain the choice.
+# Measured over 32 real datasets. Source:
+# tests/test_preflight.py#StaticPreflightTests. The largest excess any of them
+# reaches is 0.071 (a 28-row binary set split 53.6/46.4), so the line sits
+# about 4.7x above the noisiest healthy data available to measure against.
+#
+# Held as a Fraction and compared against a Fraction built from row counts, so
+# the boundary is settled by the counts and never by float rounding. Source:
+# tests/test_preflight.py#StaticPreflightTests. Swept over every integer shape with k = 2..20,
+# n = k..600 and every majority count, exact and float disagree on 200 of them,
+# all at k = 2 and all in the same direction - a binary set split exactly 2:1
+# (30/20, 300/200, 600/400) is ON the line, and float puts it at
+# 0.33333333333333326 and stays silent. The four-way 50/25/15/10 set that pins
+# the line is itself one of these boundary shapes.
+DOMINANCE_EXCESS_THRESHOLD = Fraction(1, 3)
+# The absolute share at which one answer is a ceiling whatever the answer space
+# looks like. This is the SHIPPED rule, kept at the value and in the units it
+# already had - a share of the rows, not an excess over chance - and demoted
+# from "the rule" to a floor underneath it.
+#
+# BE PRECISE ABOUT WHAT IT EARNS, because an earlier revision of this comment
+# was not. It was introduced to stop the regime gate withdrawing a finding the
+# shipped rule made, and it did: with the gate that revision had, 100 rows of 90
+# identical answers and 10 one-off ones crossed into "UNCHECKED", which pays -
+# an unmeasured diversity sub-score outscores a flagged one on 449 of 512 scored
+# dataset shapes, by up to 6 points of the DATASET pillar. That gate was wrong
+# for other reasons and was replaced, and the replacement does not need rescuing:
+# Source: `StaticPreflightTests.test_no_shipped_finding_is_withdrawn_at_any_dataset_shape`
+# enumerates every integer answer-count partition from 2 through 40 rows; in
+# that enumerated space this floor changes the
+# verdict on ZERO shapes with two or more distinct answers. It is dead for every
+# dataset a customer would call a dataset.
+#
+# It is kept anyway, for two things it still does. It holds "no shipped finding
+# is ever withdrawn" as a property of the CODE rather than of an argument that
+# has to be re-derived every time the gate moves - and that argument has already
+# been wrong once here. And it is the only arm that answers when there is no
+# baseline to be had: one distinct answer makes `1/k` 100%, so the chance
+# sentence would read "against a 100.0% chance baseline for 1 distinct answers".
+#
+# It cannot make the check stricter, which is what makes it cheap to keep: the
+# excess line corresponds to a share of `1/3 + 2/(3k)`, at most 66.7% at k = 2
+# and falling from there, so any dataset this floor would flag was already
+# flagged by the rule above it. Below the gate it is a DETECTOR and never a
+# certifier - finding nothing at 90% is not a finding of no dominance, so the
+# caller still reports SKIP.
+DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
 WIRING_CHECK_EXAMPLES = 10
@@ -123,6 +344,90 @@ def emit(
     the sentence - a wording change should never alter a score.
     """
     RESULTS.append(Result(check, status, detail, metrics))
+
+
+class RowCountMismatch(Exception):
+    """A row count this run published cannot be accounted for.
+
+    Raised, never emitted as a check. A disagreement between the rows this run
+    CLAIMS and the rows it actually counted is a defect in the check, not a
+    finding about the customer's dataset, so it must not arrive on their card
+    looking like one. Raising routes it through the boundary in `main`, which
+    says whose defect it is and reports nothing as checked.
+    """
+
+
+# A row count is any metric whose key is `rows` or ends in `_rows`. Stated as a
+# rule rather than a list because a list is what silently narrows: a check
+# added later that counts rows is covered the moment it is written, and cannot
+# be left out by nobody remembering this function exists.
+FULL_ROW_COUNT = "candidate_rows"
+
+
+def row_counts(metrics: dict[str, Any] | None) -> dict[str, int]:
+    """Every row count in one check's metrics."""
+    if not metrics:
+        return {}
+    return {
+        key: value
+        for key, value in metrics.items()
+        if (key == "rows" or key.endswith("_rows")) and isinstance(value, int)
+    }
+
+
+def validate_row_count_bounds(results: list[Result]) -> None:
+    """Refuse row counts that lack or exceed their published population.
+
+    This run does not score rows - the SDK does, and `check_evaluator` says so
+    on the card - so what can be checked here is the arithmetic this run states
+    about the rows it read, and the checkable claim is stated rather than the
+    stronger one implied.
+
+    Two things are refused, and both are our defect rather than the customer's:
+
+    * A count LARGER THAN THE FILE. Any count of rows that exceeds the number
+      of rows the file actually had is a number reported over rows that were
+      never there. That is the silent failure - a figure a customer could act
+      on that no row supports - and it is arithmetic, so it is decidable here.
+    * A count with NO POPULATION BESIDE IT. Several counts in one run are
+      honestly different numbers: every line in the file, the lines carrying an
+      input, the lines this method can score. A row EXCLUDED BY DESIGN is not a
+      row silently dropped - but only if the exclusion is visible. Published
+      alone, `12` reads as the whole file whether the file held 12 rows or 20.
+      This is the same promise the bounded-subset disclosure makes when it
+      names the subset size beside the full row count; the run keeps it in data
+      as well as in prose.
+    """
+    published = [
+        (result.check, key, value)
+        for result in results
+        for key, value in row_counts(result.metrics).items()
+    ]
+    if not published:
+        return
+    full = [value for _, key, value in published if key == FULL_ROW_COUNT]
+    if not full:
+        raise RowCountMismatch(
+            "this run published "
+            + ", ".join(f"{check}.{key}={value}" for check, key, value in published)
+            + f" without publishing {FULL_ROW_COUNT}, so every count above "
+            "reads as the whole file and none of them can be shown to be"
+        )
+    if len(set(full)) > 1:
+        raise RowCountMismatch(
+            f"this run published {len(set(full))} different values for "
+            f"{FULL_ROW_COUNT} ({sorted(set(full))}), so the rows it read is "
+            "not one number"
+        )
+    over = [
+        f"{check}.{key}={value}" for check, key, value in published if value > full[0]
+    ]
+    if over:
+        raise RowCountMismatch(
+            f"the file held {full[0]} rows, but this run published "
+            + ", ".join(over)
+            + " - a count over rows the file did not contain"
+        )
 
 
 def key_present(value: str | None) -> bool:
@@ -339,11 +644,21 @@ def check_cost_settings(
             "TRAIGENT_COST_APPROVED is active in the process; confirm this is the approved paid process",
         )
 
-    if key_present(env.get("TRAIGENT_BACKEND_URL")):
+    # Both names, because the SDK resolves its backend origin from either and
+    # prefers them over the stored/default route. Naming one left the other as
+    # an unreported way to point a paid, portal-tracked run somewhere the user
+    # did not approve - and a connected run that reaches an unexpected backend
+    # still looks connected.
+    overridden = [
+        name
+        for name in ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
+        if key_present(env.get(name))
+    ]
+    if overridden:
         emit(
             "backend-url",
             WARN,
-            "TRAIGENT_BACKEND_URL is overridden; verify that a non-default backend is intentional",
+            f"{' and '.join(overridden)} overridden; verify that a non-default backend is intentional",
         )
 
 
@@ -496,8 +811,71 @@ def normalized_identity(value: Any) -> str:
     return text.strip().casefold()
 
 
-def token_set(value: Any) -> set[str]:
-    return set(normalized_text(value).split())
+def shingle_set(value: Any) -> set[str]:
+    """One row as the SET OF OVERLAPPING WORD SEQUENCES it contains.
+
+    A row of L words yields L - n + 1 sequences. Comparing these instead of the
+    row's word set is what makes the similarity below order-sensitive, and the
+    reasoning for n lives on `NEAR_DUPLICATE_SHINGLE`.
+
+    Joined on a space, which is unambiguous because `normalized_text` keeps only
+    runs of word characters, so no token can contain the separator. A joined
+    string rather than a tuple because it is cheaper in both. Source:
+    tests/test_preflight.py#StaticPreflightTests. Measured over
+    2,000 rows of 300 words, 71.8 MB peak against 104.4 MB and 6.96 s against
+    9.52 s for the identical 65.9M-operation join.
+
+    A row SHORTER than n has no n-word sequences, and the two obvious answers
+    are both wrong. Scoring it zero would make a repeated two-word row
+    invisible - and a two-word row repeated forty times is real repetition.
+    Falling back to its word set would make it comparable with nothing else: a
+    set of words and a set of sequences are drawn from different universes, so
+    every long row would score 0.0 against every short one whatever they say.
+
+    So a short row contributes ONE sequence: itself, whole. Two short rows then
+    score 1.0 when they are the same words in the same order and 0.0 otherwise.
+    That is deliberately a different KIND of answer from the graded one longer
+    rows get - below n words there is no "nearly", only "same" - and the
+    glossary says so rather than leaving a reader to assume a smooth scale that
+    silently stops.
+    """
+    tokens = normalized_text(value).split()
+    if len(tokens) < NEAR_DUPLICATE_SHINGLE:
+        return {" ".join(tokens)} if tokens else set()
+    return {
+        " ".join(tokens[start : start + NEAR_DUPLICATE_SHINGLE])
+        for start in range(len(tokens) - NEAR_DUPLICATE_SHINGLE + 1)
+    }
+
+
+def near_duplicate_index_size(values: Iterable[Any]) -> int:
+    """How many word runs the near-duplicate scan would hold, without holding them.
+
+    The scan's memory is bounded by refusing datasets above
+    `MAX_NEAR_DUPLICATE_SHINGLES`, and a bound is only a bound if it is consulted
+    BEFORE the thing it bounds is allocated. That is this function's whole reason
+    to exist: it walks the rows one at a time and keeps an integer, so the answer
+    costs the tokenization and nothing that survives the loop - measured at 0.0 to
+    0.2 MB over the resident dataset at every shape in the table on that constant,
+    against the 133 MB to 1,538 MB the sets themselves take.
+
+    Counted conservatively from token count rather than by calling
+    `shingle_set`: constructing that set is the allocation this pre-check must
+    prevent. A short non-empty row contributes one run; a longer row contributes
+    at most `words - n + 1`. Repeated runs can make the real set smaller, so this
+    remains the documented upper bound and can only refuse early.
+
+    An upper bound on the index, not its exact size, because rows that repeat each
+    OTHER's runs are counted once per row and stored once in total. The gap is
+    measured and argued on `MAX_NEAR_DUPLICATE_SHINGLES`; it is in the direction
+    that refuses too early rather than too late.
+    """
+    total = 0
+    for value in values:
+        text = value if isinstance(value, str) else stable_json(value)
+        words = sum(1 for _ in re.finditer(r"\w+", text.casefold()))
+        total += 0 if words == 0 else max(1, words - NEAR_DUPLICATE_SHINGLE + 1)
+    return total
 
 
 def near_duplicate_prefix(
@@ -536,6 +914,13 @@ def near_duplicate_pairs(
     max_work: int | None = None,
 ) -> tuple[list[tuple[int, int]], bool]:
     """Find every pair of rows at or above `threshold` Jaccard similarity.
+
+    Deliberately agnostic about what a row's set CONTAINS - "token" here is the
+    prefix-filtering term for an indexed set member, not a claim that the
+    members are words. That is why switching the check from word sets to
+    sequence sets (`shingle_set`, traigent-first-run#170) needed no change in
+    here at all: the join is exact for Jaccard over any sets, so the metric
+    changed and the algorithm, its proof, and its bounds did not.
 
     Returns `(pairs, complete)` as 1-based row numbers. `complete` says whether
     the scan examined every candidate it needed to; it is the honest half of the
@@ -750,11 +1135,12 @@ def classify_provenance(token: Any) -> tuple[str, bool]:
     `collected`, on the reasoning that a project using its own vocabulary
     (`crm-export`) should not be demoted by a word list. What that bought
     instead was that a lie outscored the truth. Measured on 200 identical
-    rows with only the token varying, through the full scorer: no token at all
-    scored 65 and BLOCKED; the truthful `synthetic` scored 65 and BLOCKED;
-    `crm-export` scored 95 EXCELLENT; and so did `zzz`. Three junk characters
-    in a field nothing checks were worth thirty points and the difference
-    between a blocked run and an excellent one.
+    rows with only the token varying, through this classifier and then
+    `score_dataset` in `scripts/readiness.py`: no token at all scored 65 and
+    BLOCKED; the truthful `synthetic` scored 65 and BLOCKED; `crm-export`
+    scored 95 EXCELLENT; and so did `zzz`. Three junk characters in a field
+    nothing checks were worth thirty points and the difference between a
+    blocked run and an excellent one.
 
     The rule this now implements is narrower than "refuse unknown tokens",
     which would be wrong for the reason above: an UNVERIFIABLE declaration
@@ -821,6 +1207,154 @@ def structured_outcomes(
             f"output field '{outcome_field}' is missing or non-scalar in one or more rows",
         )
     return None
+
+
+def answer_distribution_is_established(counts: Counter[str]) -> bool:
+    """Whether these rows establish a distribution over answers at all.
+
+    Dominance is measured against chance, `1/k` for `k` distinct answers, and
+    that comparison only says something when the answers actually repeat. On a
+    free-text task they do not: `k` climbs with the number of rows read, so
+    `1/k` is a fact about the sample rather than about the task, and an excess
+    computed against it is arithmetic about nothing. Two rows per answer is the
+    least repetition under which the most common answer's share is a measurement
+    rather than a listing, so the rule is `rows >= 2 * labels`.
+
+    THE QUESTION IS DELIBERATELY NOT "IS THIS FREE TEXT". An earlier revision of
+    this branch asked exactly that and got it wrong, in the direction nobody
+    reports: it classified the task and then stated the classification to the
+    customer. Its rule compared the Good-Turing estimate of unseen answer mass,
+    `f1/n`, against one answer's fair share `1/k` - which tightens as `k` grows,
+    precisely where a real label set is most likely to carry rare labels. A
+    101-row dataset over 18 labels with 8 rare ones was told "the 18 answers
+    seen are a sample of an open-ended answer space rather than a closed set of
+    labels". That is a false statement about somebody's data, printed as a fact.
+    It also declined on 46.2% of all answer-count shapes up to 40 rows, against
+    7.7% for the rule above.
+
+    So this asks what can be measured instead of what the task IS, and declining
+    on free text is a consequence rather than a claim: a set of distinct
+    sentences has one row per answer and fails the same arithmetic that a 4-row
+    label set fails, for the same honest reason.
+
+    Two other candidates were dropped by measurement, not by taste. Answer
+    LENGTH does not separate anything - real label sets run from one-word labels
+    to table rows long enough to be mistaken for prose, and a five-word rule
+    reports a 60-row set of four long SQL answers split 30/12/10/8 as unchecked
+    while it is plainly dominant. A declared TASK KIND is the wrong kind of
+    evidence and is also not here: `readiness.py` takes `--task-kind`, whose
+    choices include `closed-label` and `free-text`, but that is a declaration,
+    scored as one (an undeclared kind is `withheld`, never measured), and this
+    script is a different process that is never given it. Letting a measurement
+    switch itself off from a user-supplied label is the opposite of preflight.
+
+    WHAT HAPPENS AT THE BOUNDARY, since a rule with two regimes has to say. One
+    added row can move a dataset across this line, so the two things that must be
+    true at the crossing are made true by construction rather than hoped for.
+
+    The crossing never withdraws a finding. `DOMINANT_OUTCOME_SHARE` is tested
+    ahead of this gate and on both sides of it, so every dataset the shipped rule
+    flags is still flagged after crossing. It was not so in an earlier revision
+    of this branch, and the cost was measured rather than reasoned about: 100
+    rows carrying 90 identical answers and 10 one-off ones crossed into
+    "UNCHECKED", and an unmeasured diversity sub-score outscores a flagged one on
+    449 of 512 scored dataset shapes, by up to 6 points.
+
+    The crossing is still a discontinuity in what is REPORTED, and that is
+    deliberate and not smoothed over: on one side the answer is a chance-relative
+    verdict, on the other it is SKIP, which `readiness.py` reads as UNCHECKED and
+    never as clean. So crossing can turn an answer into "no answer" - which the
+    card then says out loud - and it cannot turn a finding into a pass.
+    """
+    return sum(counts.values()) >= 2 * len(counts)
+
+
+def dominance_excess(counts: Counter[str]) -> Fraction:
+    """How far the majority-only baseline sits above chance, on a 0-1 scale.
+
+    Exact rational arithmetic over the row counts, so a dataset sitting on the
+    line is decided by its counts rather than by a float that rounded the wrong
+    way.
+
+    A single distinct answer returns the maximum rather than raising. `1/k` at
+    k=1 is 100%, so the general expression divides by zero there - and the only
+    reason it never did was that every caller happens to test the absolute share
+    first, which catches a one-answer dataset at 100%. That is protection by
+    call order, not by the function, and it would have become a crash the moment
+    a caller reordered its tests or `DOMINANT_OUTCOME_SHARE` moved above 1. One
+    answer holding every row is unambiguously total dominance, so returning 1 is
+    the answer the formula is reaching for anyway.
+    """
+    labels = len(counts)
+    if labels < 2:
+        return Fraction(1)
+    chance = Fraction(1, labels)
+    share = Fraction(max(counts.values()), sum(counts.values()))
+    return (share - chance) / (1 - chance)
+
+
+def answer_dominance_finding(
+    counts: Counter[str], *, subject: str
+) -> tuple[str, str] | None:
+    """The dominance verdict for one set of answers, or `None` when clean.
+
+    Three outcomes, not two. `WARN` when the majority-only baseline is at or
+    past the line; `SKIP` when the answers are not a closed label set, so the
+    chance-relative question did not get answered and must not be read as having
+    passed; `None` when it ran and found nothing.
+
+    The absolute share is tested FIRST and outside the gate, so declining to
+    answer can never withdraw a finding: whatever the answer space is, a
+    majority at `DOMINANT_OUTCOME_SHARE` is a ceiling. The number is never
+    written out here - it decides in one place and prints from that place, so
+    lowering it cannot leave a sentence promising the old one.
+    """
+    rows = sum(counts.values())
+    labels = len(counts)
+    if rows < 2:
+        return (
+            SKIP,
+            f"answer dominance is UNCHECKED for {subject}, not clean: fewer "
+            "than two rows cannot establish an answer distribution",
+        )
+    share = Fraction(max(counts.values()), rows)
+    if share >= DOMINANT_OUTCOME_SHARE:
+        return (
+            WARN,
+            f"the most common {subject} covers {max(counts.values())}/{rows} "
+            f"rows ({float(share):.1%}); always answering it already scores "
+            f"that well, so configurations have little left to tell them "
+            "apart. This one needs no chance baseline - a share that large is "
+            "a ceiling whatever the answers are drawn from",
+        )
+    if not answer_distribution_is_established(counts):
+        return (
+            SKIP,
+            f"answer dominance is UNCHECKED for every {subject}, not clean: "
+            f"{rows} rows spread over {labels} distinct answers is fewer than "
+            "two rows per distinct answer on average, so how often the most common one appears is a "
+            "listing of your answers rather than a measurement of them, and 1 "
+            f"in {labels} is not a chance baseline to compare it against. Free "
+            "text lands here because every row is its own answer; so does a "
+            "label set with too few rows to fill it. No answer here reaches "
+            f"{float(DOMINANT_OUTCOME_SHARE):.0%} of the rows either, which is "
+            "the one thing that can be said without a baseline - and that is "
+            "not the same as no answer dominating",
+        )
+    excess = dominance_excess(counts)
+    if excess < DOMINANCE_EXCESS_THRESHOLD:
+        return None
+    dominant_count = max(counts.values())
+    return (
+        WARN,
+        f"the most common {subject} covers {dominant_count}/{rows} rows "
+        f"({dominant_count / rows:.1%}) against a {1 / labels:.1%} chance "
+        f"baseline for {labels} distinct answers - {float(excess):.0%} of the "
+        f"way from chance to a perfect score, at or past the "
+        f"{float(DOMINANCE_EXCESS_THRESHOLD):.0%} line. Always answering it "
+        "already scores that well, so configurations have little left to tell "
+        "them apart",
+    )
 
 
 def emit_dataset_provenance(
@@ -1209,7 +1743,17 @@ def check_dataset(
         emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None
     if not invalid_rows:
-        emit("dataset-shape", PASS, f"{len(rows)} valid JSONL rows")
+        # The card's headline row count had no machine twin at all, so the one
+        # number a customer reads first was the one number nothing downstream
+        # could check. `candidate_rows` travels with it because `len(rows)` is
+        # the rows this method can SCORE, which is not the size of their file
+        # whenever a row is excluded by design.
+        emit(
+            "dataset-shape",
+            PASS,
+            f"{len(rows)} valid JSONL rows",
+            {"scoreable_rows": len(rows), FULL_ROW_COUNT: candidate_count},
+        )
     if len(rows) < WIRING_CHECK_EXAMPLES:
         emit(
             "dataset-size",
@@ -1247,7 +1791,7 @@ def check_dataset(
     ]
     # Both records describe repetition, and the readiness score deducts for it
     # once - `dataset-near-duplicates` is what it deducts on, because identical
-    # rows are 100% similar and so are already inside "at least 90% similar".
+    # rows score 1.0 and so are already inside whatever the near line is.
     # This one is kept because it is a hash bucket: O(n), always complete, and
     # therefore still able to report repetition on a dataset where the bounded
     # near-duplicate join gave up. It detects; it does not score twice.
@@ -1261,53 +1805,106 @@ def check_dataset(
         emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
 
     threshold_percent = f"{NEAR_DUPLICATE_THRESHOLD:.0%}"
-    near_pairs, near_complete = near_duplicate_pairs(
-        [token_set(row["input"]) for row in rows]
-    )
-    if near_pairs:
-        # A truncated scan still answered the question - there ARE
-        # near-duplicates - so it stays a finding rather than becoming a SKIP.
-        # What it cannot claim is that these are all of them.
-        more = "" if near_complete else "; the scan stopped early, so there may be more"
-        emit(
-            "dataset-near-duplicates",
-            FAIL if synthetic else WARN,
-            f"input pairs at least {threshold_percent} similar (shared words "
-            f"over total words), identical rows included: {near_pairs[:10]}{more}",
-        )
-    elif near_complete:
-        emit(
-            "dataset-near-duplicates",
-            PASS,
-            f"no input pair reaches {threshold_percent} similarity",
-        )
-    else:
-        # Found nothing AND did not finish, which is not the same statement as
-        # "found nothing". The only way here is a dataset so repetitive that the
-        # filter admits everything; say that this is unchecked, never clean.
-        #
-        # And say why it took so long, in terms of the dataset the user is
-        # holding. Getting here is the one slow path in this script, so they
-        # have just waited and are then told the check did not run; without the
-        # second sentence that reads as the script having hung on their data.
-        #
-        # The sentence that used to be here named only one of the two ways in -
-        # "a vocabulary small enough to make nearly every pair a candidate" -
-        # and a 2,000-row set of 300-word RAG chunks, which has an ordinary
-        # vocabulary, is the other and the slower one. A user reading the old
-        # text about their own file would have concluded it did not apply.
+    # The INPUT, and only the input. Repeated inputs are the defect this check
+    # exists to find - the same question asked twice spends two trials learning
+    # one thing. Repeated expected ANSWERS are not a defect and are not read
+    # here: a closed-label task is supposed to reuse its labels, and 500 rows
+    # labelled yes/no would look like 500 duplicates to a check pointed at the
+    # output field. Whether one answer has taken over the dataset is a different
+    # question with its own record (`dataset-ceiling-risk`).
+    # Counted before the list comprehension below, which is the whole point: that
+    # comprehension and the index built from it are what reach 36x the file, and a
+    # ceiling consulted after they exist has bounded nothing. This pass holds one
+    # row's runs at a time (`near_duplicate_index_size`), so the refusal costs the
+    # tokenization and no allocation the check could have died on.
+    index_runs = near_duplicate_index_size(row["input"] for row in rows)
+    if index_runs > MAX_NEAR_DUPLICATE_SHINGLES:
+        # The second way this check can decline to run, and it must not be
+        # mistakable for the first. The work SKIP below means "too many
+        # comparisons"; this one means "too much memory", the reader's dataset is
+        # not slow but large, and de-duplicating it would not help. Naming the
+        # wrong limit would send them to fix the wrong thing.
         emit(
             "dataset-near-duplicates",
             SKIP,
-            "the near-duplicate scan reached its work budget before comparing "
-            "every candidate pair, so this dataset is UNCHECKED for "
-            "near-duplicates - not clean. The exact check compares whole word "
-            "sets, so cost grows with both the number of rows and the length of "
-            "each one: long rows (documents, transcripts, retrieved chunks) "
-            "reach it soonest, and so do many short rows drawn from a small "
-            "vocabulary. Split long inputs, or scan a sample, if you need this "
-            "answered",
+            f"the inputs hold {index_runs:,} runs of {NEAR_DUPLICATE_SHINGLE} "
+            f"words against a {MAX_NEAR_DUPLICATE_SHINGLES:,} run MEMORY "
+            "ceiling, so this dataset is UNCHECKED for near-duplicates - not "
+            "clean. The scan is exact, which means every row's runs are held at "
+            "once; past this ceiling that costs more memory than one preflight "
+            "check may take. It is refused before any of it is allocated, "
+            "deliberately: running out of memory would end the whole preflight "
+            "with no output at all, which is worse than one line saying it did "
+            "not run. This is a size limit and not a repetition one, so "
+            "de-duplicating will not clear it - scan a sample of the rows, or "
+            "split the dataset, if you need this answered",
         )
+    else:
+        near_pairs, near_complete = near_duplicate_pairs(
+            [shingle_set(row["input"]) for row in rows]
+        )
+        if near_pairs:
+            # A truncated scan still answered the question - there ARE
+            # near-duplicates - so it stays a finding rather than becoming a
+            # SKIP. What it cannot claim is that these are all of them.
+            more = (
+                ""
+                if near_complete
+                else "; the scan stopped early, so there may be more"
+            )
+            emit(
+                "dataset-near-duplicates",
+                FAIL if synthetic else WARN,
+                f"input pairs at least {threshold_percent} similar (shared runs "
+                f"of {NEAR_DUPLICATE_SHINGLE} consecutive words over total runs, "
+                "so the same words in a different order are not a repeat), "
+                f"identical rows included: {near_pairs[:10]}{more}",
+            )
+        elif near_complete:
+            emit(
+                "dataset-near-duplicates",
+                PASS,
+                f"no input pair reaches {threshold_percent} similarity",
+            )
+        else:
+            # Found nothing AND did not finish, which is not the same statement
+            # as "found nothing". The only way here is a dataset so repetitive
+            # that the filter admits everything; say that this is unchecked,
+            # never clean.
+            #
+            # And say why it took so long, in terms of the dataset the user is
+            # holding. Getting here is the one slow path in this script, so they
+            # have just waited and are then told the check did not run; without
+            # the second sentence that reads as the script having hung on their
+            # data.
+            #
+            # The cause is not what it was, and the text moved with it. Under
+            # word sets the two ways in were long rows and a small vocabulary,
+            # and BOTH are now wrong: 2,000 rows of 300 words spend 964M
+            # operations as word sets and 0 as sequences, and 5,000 twelve-word
+            # rows over a 60-word vocabulary also spend 0, because sequences
+            # repeat across rows far less than words do. What is left is the one
+            # thing that still makes a sequence common - many rows genuinely
+            # phrased alike - so that is what this now names. A user reading the
+            # old sentence about their own file would have been sent to split
+            # inputs that were never the cause.
+            #
+            # Reachable only BELOW the memory ceiling, which is what makes the
+            # two SKIPs a real pair rather than a race: a dataset large enough
+            # to be refused above never gets here to be called slow.
+            emit(
+                "dataset-near-duplicates",
+                SKIP,
+                "the near-duplicate scan reached its work budget before "
+                "comparing every candidate pair, so this dataset is UNCHECKED "
+                "for near-duplicates - not clean. The exact check compares "
+                "whole sets of word runs, so it costs most when many rows are "
+                "phrased alike: shared boilerplate, one template filled in "
+                "repeatedly, or the same passage retrieved into many rows. Long "
+                "rows make each of those comparisons dearer, but length alone "
+                "does not reach this budget. De-duplicate the obvious repeats, "
+                "or scan a sample, if you need this answered",
+            )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
     scoreable_rows = [row for row in rows if dataset_row_is_labelled(row)]
@@ -1318,6 +1915,27 @@ def check_dataset(
             f"{evaluator_method} is reference-free; expected outputs are not required",
         )
     else:
+        # Every dominance verdict this run reaches, emitted as ONE record below.
+        # Both the expected answers and a structured outcome field can produce
+        # one, and `readiness.py` reads preflight's records into a dict keyed by
+        # check name, so two `dataset-ceiling-risk` records collapse to whichever
+        # was emitted last. That was harmless while the only record was a
+        # finding; it stops being harmless once one of the outcomes is "did not
+        # run", because the loser of that collapse is a whole verdict.
+        #
+        # The reachable case today is a SKIP from the expected answers and a
+        # WARN from the outcome field - free-text answers carrying one dominant
+        # label - and it is emitted in that order, so the WARN has to be chosen
+        # rather than arrived at last. The opposite order is currently NOT
+        # reachable, and the reason is worth writing down because it is what
+        # this code must not quietly depend on: the outcome field is a component
+        # of the output, so the field repeats wherever the whole output repeats,
+        # which makes it dominant whenever the output is and established
+        # whenever the output is. Choosing most-severe-first means that argument
+        # does not have to keep holding - a second subject, a nested field read
+        # through `--outcome-field`, or any later branch that can also decline
+        # gets the same answer without anyone re-deriving it.
+        dominance_findings: list[tuple[str, str]] = []
         placeholder_outputs = [
             row for row in scoreable_rows if not normalized_text(row["output"])
         ]
@@ -1350,10 +1968,13 @@ def check_dataset(
             # The size problem is real and `dataset-size` already says it.
             emit(
                 "dataset-outputs",
-                PASS,
+                SKIP,
                 f"{len(scoreable_outputs)} expected output, which is too few "
                 "for answer spread to mean anything; the row count is the "
                 "finding here",
+            )
+            dominance_findings.append(
+                (SKIP, "fewer than two expected outputs; answer dominance is unchecked")
             )
         elif len(output_counts) == 1:
             emit(
@@ -1377,12 +1998,18 @@ def check_dataset(
             # A skipped check is not a passed check - and a check that ran and
             # found the worst possible answer must not read as one that never
             # ran.
-            emit(
-                "dataset-ceiling-risk",
-                WARN,
-                f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
-                "outputs (100.0%) are identical; a majority-only strategy "
-                "could hide meaningful failures",
+            #
+            # This one case is stated without a chance baseline, because it does
+            # not need one: one answer holding every row is the maximum of this
+            # check at any label count, and `1/k` at k=1 is 100%, a baseline
+            # that would divide by zero and say nothing if it did not.
+            dominance_findings.append(
+                (
+                    WARN,
+                    f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
+                    "outputs (100.0%) are identical; a majority-only strategy "
+                    "could hide meaningful failures",
+                )
             )
         else:
             emit(
@@ -1390,37 +2017,37 @@ def check_dataset(
                 PASS,
                 f"{len(output_counts)} distinct expected outputs",
             )
-            dominant_count = max(output_counts.values())
-            dominant_ratio = dominant_count / len(scoreable_outputs)
-            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
-                emit(
-                    "dataset-ceiling-risk",
-                    WARN,
-                    f"{dominant_count}/{len(scoreable_outputs)} expected outputs "
-                    f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
-                    "could hide meaningful failures",
-                )
+            finding = answer_dominance_finding(output_counts, subject="expected output")
+            if finding:
+                dominance_findings.append(finding)
 
         structured = structured_outcomes(scoreable_rows, outcome_field)
         if structured:
             field, values = structured
             value_counts = Counter(normalized_identity(value) for value in values)
-            dominant_count = max(value_counts.values())
-            dominant_ratio = dominant_count / len(values)
-            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
-                emit(
-                    "dataset-ceiling-risk",
-                    WARN,
-                    f"{dominant_count}/{len(values)} values ({dominant_ratio:.1%}) in "
-                    f"output field '{field}' are identical; a majority-only strategy "
-                    "could hide meaningful failures",
-                )
-            else:
+            finding = answer_dominance_finding(
+                value_counts, subject=f"value in output field '{field}'"
+            )
+            if finding:
+                dominance_findings.append(finding)
+            if finding is None or finding[0] == SKIP:
                 emit(
                     "dataset-outcome-field",
                     PASS,
                     f"output field '{field}' has {len(value_counts)} distinct values",
                 )
+
+        if dominance_findings:
+            warned = [finding for finding in dominance_findings if finding[0] == WARN]
+            chosen = warned or dominance_findings
+            status = chosen[0][0]
+            # One record, but not one sentence. The record is single because
+            # readiness keys by check name and a second one would overwrite the
+            # first; the detail carries every finding of that severity because a
+            # person reading this terminal loses nothing the previous two-record
+            # version told them. Dominant expected answers AND a dominant
+            # outcome field are two facts about the dataset, not one said twice.
+            emit("dataset-ceiling-risk", status, "; also, ".join(d for _, d in chosen))
 
     splits: dict[str, set[str]] = {}
     split_counts: Counter[str] = Counter()
@@ -1575,7 +2202,13 @@ def check_dataset(
         ),
         {
             "tagged_rows": len(difficulty_values),
+            # `total_rows` counts the rows this method can score, which is the
+            # right denominator for coverage and the wrong one to read alone:
+            # on a file whose unlabelled rows were the tagged-hard ones, this
+            # line says "12 of 12" over a 20-row file. The population it
+            # counted travels beside it so the exclusion is visible.
             "total_rows": len(rows),
+            FULL_ROW_COUNT: candidate_count,
             "bands": sorted(difficulties),
             "missing_bands": sorted(EXPECTED_DIFFICULTIES - difficulties),
         },
@@ -1759,6 +2392,11 @@ def run() -> int:
 
     if args.evaluator:
         check_evaluator(Path(args.evaluator))
+
+    # Before anything is printed, not after: a count that cannot be accounted
+    # for must not reach the customer's card at all, and the boundary in `main`
+    # says so in our name rather than theirs.
+    validate_row_count_bounds(RESULTS)
 
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))
