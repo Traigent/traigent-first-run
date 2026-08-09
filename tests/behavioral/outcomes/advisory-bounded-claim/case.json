@@ -1,0 +1,20 @@
+{
+  "id": "advisory-bounded-claim",
+  "state": "advisory",
+  "why": "Caps that neither block nor ask: the run proceeds and the action is still `proceed`, but the ceiling bounds what the result may claim. This is the state the guide is in for most of a generated walkthrough, and it is the one most easily broken into either neighbour - promote an advisory cap to blocking and a healthy run stops; demote a blocking one and an invalid evaluator runs. Built from the material `partial-missing-dataset` already commits.",
+  "dataset": "evaluation-dataset.jsonl",
+  "calibration": {
+    "scorer": "evaluator.py:score_intent",
+    "cases": "calibration-cases.json"
+  },
+  "expected": {
+    "band": "PARTIAL",
+    "status": "OK",
+    "recommended_action": "proceed",
+    "caps": [
+      {"condition": "agent-no-varying-knobs", "ceiling": 45, "blocks": false, "asks": false},
+      {"condition": "dataset-fully-synthetic", "ceiling": 65, "blocks": false, "asks": false},
+      {"condition": "dataset-coarse-resolution", "ceiling": 89, "blocks": false, "asks": false}
+    ]
+  }
+}

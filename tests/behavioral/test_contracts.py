@@ -10,7 +10,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from behavioral import harness
+from behavioral import harness, outcomes
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS = Path(__file__).parent / "scenarios"
@@ -45,8 +45,104 @@ class BehavioralContractUnitTests(unittest.TestCase):
                 harness.verify_fixture_lock(scenario_dir)
 
     def test_current_behavior_package_matches_qualification_lock(self) -> None:
+        """The file-hash lock, kept for the one question it alone answers.
+
+        It is not a behaviour check and #153 is right that it never was: it
+        compares hashes to hashes and `tools/relock.py` can rewrite it. What it
+        still covers, and `outcome.lock.json` does not, is the behaviour-bearing
+        files no case exercises - `agents/openai.yaml`, `assets/run-plan.md`,
+        `references/glossary.md`, `references/component-creation.md`. Those
+        carry no derivable outcome, so dropping this lock would leave them
+        with nothing at all. Kept for that, and claiming only that.
+        """
         lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
         self.assertEqual(harness.behavior_manifest(ROOT), lock)
+
+    def test_recorded_outcomes_match_a_fresh_run_of_the_chain(self) -> None:
+        """The lock is a statement about behaviour, so it is checked by behaving.
+
+        Unlike the hash lock above, both sides of this equality are not the same
+        function: the left side runs `preflight.py | calibrate_evaluator.py |
+        readiness.py` over committed inputs, and the right side is what those
+        commands decided when the lock was written.
+        """
+        lock = json.loads(outcomes.OUTCOME_LOCK.read_text())
+        self.assertEqual(outcomes.outcome_manifest(), lock)
+
+    def test_every_recorded_outcome_matches_its_hand_declared_expectation(
+        self,
+    ) -> None:
+        """The half `tools/relock.py` cannot rewrite - and the point of #153.
+
+        `relock.py` regenerates `outcome.lock.json`. It never writes any
+        `case.json`. So a change that moves a band or a cap is still failing
+        here after a regeneration, which is precisely what the hash lock could
+        not do: there, one command made any failure disappear.
+        """
+        problems = outcomes.declaration_mismatches(outcomes.outcome_manifest())
+        self.assertEqual(
+            problems,
+            [],
+            "a recorded outcome no longer matches what its case declares. If "
+            "the new outcome is correct, say so by editing that case.json and "
+            "explaining the change - regenerating the lock alone is not a "
+            "requalification and will not clear this.",
+        )
+
+    def test_regenerating_the_lock_cannot_hide_a_changed_outcome(self) -> None:
+        """The executable form of the claim this whole change rests on.
+
+        Simulate the defect #153 describes: behaviour changes, and the lock is
+        regenerated so it agrees with the new behaviour. Under the old hash lock
+        that was a green suite. Here the regenerated lock is exactly what
+        `declaration_mismatches` is given, and it still reports the change -
+        because the declaration did not move with it.
+        """
+        manifest = outcomes.outcome_manifest()
+        self.assertEqual(outcomes.declaration_mismatches(manifest), [])
+
+        identifier = sorted(manifest["cases"])[0]
+        regenerated = json.loads(json.dumps(manifest))
+        regenerated["cases"][identifier]["outcome"]["band"] = "EXCELLENT"
+
+        problems = outcomes.declaration_mismatches(regenerated)
+        self.assertTrue(
+            any(
+                identifier in problem and "band" in problem and "EXCELLENT" in problem
+                for problem in problems
+            ),
+            f"a regenerated lock hid a changed band for {identifier}: {problems!r}",
+        )
+
+    def test_a_wording_only_change_moves_hashes_and_leaves_outcomes_alone(
+        self,
+    ) -> None:
+        """The two classes have to be distinguishable, or the lock explains nothing.
+
+        A reviewer reading a green CI could not previously tell an edited
+        sentence from an edited decision. Appending prose to a behaviour-bearing
+        document must move the hash lock and leave every recorded outcome
+        identical; a changed outcome is then unambiguously the other kind.
+        """
+        before_hashes = harness.behavior_manifest(ROOT)
+        before_outcomes = outcomes.outcome_manifest()
+
+        document = ROOT / "skills" / "traigent-first-run" / "SKILL.md"
+        original = document.read_bytes()
+        try:
+            document.write_bytes(original + b"\n<!-- wording probe -->\n")
+            self.assertNotEqual(
+                harness.behavior_manifest(ROOT),
+                before_hashes,
+                "a changed behaviour-bearing document did not move the hash lock",
+            )
+            self.assertEqual(
+                outcomes.outcome_manifest(),
+                before_outcomes,
+                "a wording-only edit changed a recorded outcome",
+            )
+        finally:
+            document.write_bytes(original)
 
     def test_the_committed_lock_hashes_every_path_exactly_once(self) -> None:
         """A malformed lock must be named as malformed, not as a behaviour change.

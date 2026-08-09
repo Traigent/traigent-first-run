@@ -1,0 +1,19 @@
+{
+  "id": "asking-answer-key",
+  "state": "asking",
+  "why": "The middle arm of `recommended_action`: no cap blocks, but one asks, so the action is that cap's (`review-answer-key`) rather than `proceed`. Deliberately a minimal pair with `clean-proceed` - identical agent, evaluator, config space and rows, differing only in each row's `output_source`. A file-hash lock sees two different datasets and says nothing; this lock records that one field moves the customer from `proceed` to being asked about the answer key.",
+  "dataset": "evaluation-dataset.jsonl",
+  "config_space": "config-space.json",
+  "calibration": {
+    "scorer": "evaluator.py:score_intent",
+    "cases": "calibration-cases.json"
+  },
+  "expected": {
+    "band": "WORKABLE",
+    "status": "OK",
+    "recommended_action": "review-answer-key",
+    "caps": [
+      {"condition": "dataset-generated-answer-key", "ceiling": 74, "blocks": false, "asks": true}
+    ]
+  }
+}
