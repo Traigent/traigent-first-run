@@ -101,6 +101,32 @@ def load_case(case_dir: Path) -> dict[str, Any]:
             f"{case_dir.name}: state {contract['state']!r} is not one of "
             f"{sorted(STATES)}"
         )
+    # Every recorded field must also be declared, and this is the assertion the
+    # lock's whole claim rests on.
+    #
+    # `declaration_mismatches` walks what the case DECLARES and compares it to
+    # what the run produced. A field that is recorded but never declared is
+    # therefore compared against nothing: `relock.py` rewrites the recorded
+    # value and no hand-written counterpart objects. That is silent re-greening,
+    # which is the defect this lock exists to end - and it was live here.
+    # Measured: re-weighting the pillars moved `clean-proceed`'s overall from 86
+    # to 84, the fresh-run test caught it, one relock buried it, and all 46
+    # behaviour-lock tests passed again.
+    #
+    # Checking `overall` in the four cases would have closed that instance. This
+    # closes the class: the comparison was one-directional - declared fields are
+    # checked against recorded ones, recorded fields were checked against
+    # nothing - so every field added to RECORDED_FIELDS later inherited zero
+    # declaration coverage, silently and by default.
+    undeclared = (set(RECORDED_FIELDS) | {"caps"}) - set(contract["expected"])
+    if undeclared:
+        raise OutcomeError(
+            f"{case_dir.name}: case.json records {sorted(undeclared)} without "
+            "declaring them, so relock.py may rewrite those values and no "
+            "hand-written expectation will object. Declare every recorded "
+            "field, or stop recording the ones this case is not a statement "
+            "about."
+        )
     return contract
 
 

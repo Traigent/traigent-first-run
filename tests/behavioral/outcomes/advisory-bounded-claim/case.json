@@ -11,10 +11,26 @@
     "band": "PARTIAL",
     "status": "OK",
     "recommended_action": "proceed",
+    "overall": 45,
     "caps": [
-      {"condition": "agent-no-varying-knobs", "ceiling": 45, "blocks": false, "asks": false},
-      {"condition": "dataset-fully-synthetic", "ceiling": 65, "blocks": false, "asks": false},
-      {"condition": "dataset-coarse-resolution", "ceiling": 89, "blocks": false, "asks": false}
+      {
+        "condition": "agent-no-varying-knobs",
+        "ceiling": 45,
+        "blocks": false,
+        "asks": false
+      },
+      {
+        "condition": "dataset-fully-synthetic",
+        "ceiling": 65,
+        "blocks": false,
+        "asks": false
+      },
+      {
+        "condition": "dataset-coarse-resolution",
+        "ceiling": 89,
+        "blocks": false,
+        "asks": false
+      }
     ]
   }
 }

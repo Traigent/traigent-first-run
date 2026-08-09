@@ -6,10 +6,26 @@
     "band": "NOT READY",
     "status": "BLOCKED",
     "recommended_action": "get-data",
+    "overall": 0,
     "caps": [
-      {"condition": "dataset-absent", "ceiling": 20, "blocks": true, "asks": false},
-      {"condition": "evaluator-absent", "ceiling": 40, "blocks": true, "asks": false},
-      {"condition": "agent-no-varying-knobs", "ceiling": 45, "blocks": false, "asks": false}
+      {
+        "condition": "dataset-absent",
+        "ceiling": 20,
+        "blocks": true,
+        "asks": false
+      },
+      {
+        "condition": "evaluator-absent",
+        "ceiling": 40,
+        "blocks": true,
+        "asks": false
+      },
+      {
+        "condition": "agent-no-varying-knobs",
+        "ceiling": 45,
+        "blocks": false,
+        "asks": false
+      }
     ]
   }
 }

@@ -12,8 +12,14 @@
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "review-answer-key",
+    "overall": 74,
     "caps": [
-      {"condition": "dataset-generated-answer-key", "ceiling": 74, "blocks": false, "asks": true}
+      {
+        "condition": "dataset-generated-answer-key",
+        "ceiling": 74,
+        "blocks": false,
+        "asks": true
+      }
     ]
   }
 }

@@ -12,6 +12,7 @@
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "proceed",
+    "overall": 86,
     "caps": []
   }
 }
