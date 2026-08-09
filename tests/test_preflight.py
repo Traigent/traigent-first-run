@@ -184,7 +184,10 @@ class StaticPreflightTests(unittest.TestCase):
         require-cloud guard in the wrapper does not catch it either.
         """
         for present, expected in (
-            ({"TRAIGENT_BACKEND_URL": "https://example.invalid"}, ["TRAIGENT_BACKEND_URL"]),
+            (
+                {"TRAIGENT_BACKEND_URL": "https://example.invalid"},
+                ["TRAIGENT_BACKEND_URL"],
+            ),
             ({"TRAIGENT_API_URL": "https://example.invalid/api"}, ["TRAIGENT_API_URL"]),
             (
                 {
