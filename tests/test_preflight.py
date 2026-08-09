@@ -1246,6 +1246,22 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(withdrawn[:5], [], f"{len(withdrawn)} findings withdrawn")
         self.assertGreater(newly_flagged, 0, "the chance-relative rule reaches nothing")
 
+    def test_dominance_excess_is_total_and_never_divides_by_zero(self) -> None:
+        """`1/k` at k=1 is 100%, so the general expression divides by zero.
+
+        Nothing reaches it today - every caller tests the absolute share first,
+        which catches a one-answer dataset at 100% - but that is protection by
+        call order rather than by the function, and it would become a crash the
+        moment a caller reordered. One answer on every row is total dominance,
+        so the maximum is the answer the formula is reaching for anyway.
+        """
+        self.assertEqual(MODULE.dominance_excess(MODULE.Counter({"a": 40})), 1)
+        self.assertEqual(MODULE.dominance_excess(MODULE.Counter({"a": 1})), 1)
+        # And the shape that made it unreachable still resolves the same way.
+        verdict = self._dominance_verdict({"same": 10})
+        self.assertIsNotNone(verdict)
+        self.assertEqual(verdict[0], MODULE.WARN)
+
     def test_the_line_is_stated_in_shares_a_reader_can_check(self) -> None:
         """What one third of the way from chance to perfect IS, per label count.
 

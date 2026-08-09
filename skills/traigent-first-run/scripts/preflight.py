@@ -963,11 +963,20 @@ def dominance_excess(counts: Counter[str]) -> Fraction:
 
     Exact rational arithmetic over the row counts, so a dataset sitting on the
     line is decided by its counts rather than by a float that rounded the wrong
-    way. Undefined below two distinct answers, which the caller handles: one
-    answer holding every row is the maximum of this check and needs no baseline
-    to say so.
+    way.
+
+    A single distinct answer returns the maximum rather than raising. `1/k` at
+    k=1 is 100%, so the general expression divides by zero there - and the only
+    reason it never did was that every caller happens to test the absolute share
+    first, which catches a one-answer dataset at 100%. That is protection by
+    call order, not by the function, and it would have become a crash the moment
+    a caller reordered its tests or `DOMINANT_OUTCOME_SHARE` moved above 1. One
+    answer holding every row is unambiguously total dominance, so returning 1 is
+    the answer the formula is reaching for anyway.
     """
     labels = len(counts)
+    if labels < 2:
+        return Fraction(1)
     chance = Fraction(1, labels)
     share = Fraction(max(counts.values()), sum(counts.values()))
     return (share - chance) / (1 - chance)
