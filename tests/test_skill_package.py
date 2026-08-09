@@ -5464,15 +5464,46 @@ class SkillPackageTests(unittest.TestCase):
         # and are checked against it, so this needs to know nothing secret to
         # fail closed on a name nobody has seen yet.
         internal_repo_shape = re.compile(r"\bTraigent[A-Z][A-Za-z0-9]*")
+        # A bare lowercase-and-hyphens repository has neither the owner segment
+        # used by `repo_reference` nor the capital after `Traigent` used by the
+        # CamelCase rule. Match the public `traigent-` prefix instead. This
+        # catches an unseen name without publishing a denylist of private names.
+        # The negative lookbehind keeps a longer hyphenated identifier such as
+        # `LicenseRef-Traigent-Commercial` outside the repository-shaped token.
+        hyphenated_repo_shape = re.compile(
+            r"(?<![\w-])traigent-[a-z0-9]+(?:-[a-z0-9]+)*", re.IGNORECASE
+        )
+        # These tokens already occur in this public tree and are not repository
+        # names: they are generated directories, product phrases, or skills in
+        # the public `traigent-skills` repository. Keep this separate from
+        # `public_repos`; "not a repository" and "a public repository" are
+        # different claims. The corpus assertion below rejects stale entries.
+        non_repository_hyphenated_terms = {
+            "traigent-runs",
+            "traigent-offline-evidence",
+            "traigent-contract",
+            "traigent-key",
+            "traigent-owned",
+            "traigent-backend",
+            "traigent-tuned-variables",
+            "traigent-analyze-results",
+            "traigent-analyze-variable-importance",
+            "traigent-configuration-space",
+            "traigent-dataset-curate",
+            "traigent-decorator-setup",
+            "traigent-eval-audit",
+            "traigent-optimize-config-space",
+            "traigent-optimize-run",
+        }
         # ACCEPTED RESIDUAL, recorded here rather than left for the next reader
-        # to rediscover: the three rules above are anchored on an organisation
-        # segment (`<owner>/<repo>`) or on the `Traigent` + CamelCase shape, so a
-        # private repository whose name carries NEITHER is invisible to all of
-        # them. Bare lowercase-and-hyphens and bare snake_case names exist in
-        # this organisation, and written on their own - no owner segment, no
-        # capital - only the hashed denylist can reach them. That denylist
-        # stores eight window lengths, which does not span every such name, so
-        # some are not covered at all.
+        # to rediscover: the public rules are anchored on an organisation
+        # segment (`<owner>/<repo>`), the `Traigent` + CamelCase shape, or the
+        # `traigent-` prefix. A private repository carrying none of those is
+        # invisible to the structural rules. Bare lowercase-and-hyphens without
+        # that prefix and bare snake_case names exist in this organisation; only
+        # the legacy hashed denylist can reach some of them. Its eight stored
+        # window lengths do not span every such name, so some are not covered at
+        # all.
         # This is not a bug to be fixed here, and the fix that suggests itself
         # is worse than the gap: a complete denylist of private names would have
         # to be written into this published file, which discloses exactly what
@@ -5511,7 +5542,14 @@ class SkillPackageTests(unittest.TestCase):
                 f"could not list tracked files from git: {listed.stderr.strip()}"
             )
 
-        def scan(text: str, where: str) -> list[str]:
+        observed_hyphenated_term_counts: dict[str, int] = {}
+
+        def scan(
+            text: str,
+            where: str,
+            *,
+            hyphen_shape: re.Pattern[str] = hyphenated_repo_shape,
+        ) -> list[str]:
             """Every rule, over one string - a filename as readily as a body.
 
             The rules used to be split by accident rather than by intent: the
@@ -5575,6 +5613,19 @@ class SkillPackageTests(unittest.TestCase):
                     f"{where}: names a non-public repository {camel!r} "
                     "(add it to public_repos only if it really is public)"
                 )
+            for hyphenated in hyphen_shape.findall(text):
+                token = hyphenated.casefold()
+                observed_hyphenated_term_counts[token] = (
+                    observed_hyphenated_term_counts.get(token, 0) + 1
+                )
+                if token in public_repos or token in non_repository_hyphenated_terms:
+                    continue
+                found.append(
+                    f"{where}: names a non-public repository {hyphenated!r} "
+                    "(add it to public_repos only if it really is public, or "
+                    "to non_repository_hyphenated_terms if it is not a "
+                    "repository at all)"
+                )
             for match in uuid_reference.finditer(text):
                 if match.group(0).casefold() in uuid_placeholders:
                     continue
@@ -5585,9 +5636,11 @@ class SkillPackageTests(unittest.TestCase):
             return found
 
         offenders: list[str] = []
+        scanned = 0
         for name in listed.stdout.split("\0"):
             if not name:
                 continue
+            scanned += 1
             path = ROOT / name
             # The PATH is checked before the contents, and unconditionally: a
             # file that cannot be decoded still has a name, and a name is
@@ -5598,7 +5651,21 @@ class SkillPackageTests(unittest.TestCase):
             except (UnicodeDecodeError, OSError):
                 continue  # binary or deleted-but-tracked; no prose to leak
             offenders.extend(scan(raw, name))
+        self.assertGreater(
+            scanned, 0, "the guard scanned no tracked file - it proved nothing"
+        )
         self.assertEqual(offenders, [], "internal tooling named in a public repository")
+        stale_hyphenated_exemptions = {
+            term: observed_hyphenated_term_counts.get(term, 0)
+            for term in non_repository_hyphenated_terms
+            if observed_hyphenated_term_counts.get(term, 0) <= 1
+        }
+        self.assertEqual(
+            stale_hyphenated_exemptions,
+            {},
+            "a non-repository exemption occurs only in its own declaration; "
+            "remove stale exemptions instead of keeping silent holes",
+        )
 
         # The tree being clean proves nothing about what the guard can SEE, and
         # the source-path exemption is where it saw nothing. Each string below
@@ -5619,6 +5686,45 @@ class SkillPackageTests(unittest.TestCase):
         # has been tightened into a false red that teaches authors to route
         # around it - which is how the exemption was born.
         self.assertEqual(scan("traigent/config_generator/presets/x.py", "probe"), [])
+
+        # The bare lowercase-and-hyphens form is caught in prose, paths, and
+        # capitalization variants. The token is assembled so this test does not
+        # teach its own whole-tree scan to accept the planted example.
+        invented_hyphenated = "traigent-{}".format("not-a-real-repo")
+        for probe in (
+            f"the {invented_hyphenated} repository holds the configuration",
+            f"docs/{invented_hyphenated}-notes.md",
+            f"{invented_hyphenated}/README.md",
+            "See {} for the rest.".format(invented_hyphenated.title()),
+        ):
+            with self.subTest(probe=probe):
+                self.assertNotEqual(scan(probe, "probe"), [])
+                self.assertEqual(
+                    scan(
+                        probe,
+                        "probe",
+                        hyphen_shape=re.compile(r"(?!x)x"),
+                    ),
+                    [],
+                    "the planted token is refused by another rule, so this "
+                    "probe does not prove the hyphenated-shape boundary",
+                )
+
+        camel_probe = "Traigent{}".format("NotARealRepo")
+        self.assertNotEqual(scan(camel_probe, "probe"), [])
+
+        for legitimate in (
+            "first-run",
+            "closed-label",
+            "references/run-safety.md",
+            "agent-type",
+            "n-gram",
+            "getting-familiar",
+            *sorted(non_repository_hyphenated_terms),
+            "SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial",
+        ):
+            with self.subTest(legitimate=legitimate):
+                self.assertEqual(scan(legitimate, "probe"), [])
 
     def test_the_glossary_distinguishes_a_ceiling_from_a_block(self) -> None:
         """The user-facing definition has to follow the code that changed.
