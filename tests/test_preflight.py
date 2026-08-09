@@ -1313,5 +1313,156 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertTrue(out.getvalue().strip())
 
 
+class EveryRowCountIsAccountedForTests(unittest.TestCase):
+    """A number over rows nothing scored is the failure that costs a decision.
+
+    A dangling reference halts the run loudly and a maintainer fixes it in
+    minutes. A row count is the other kind: the run finishes, the card prints a
+    figure, and the customer acts on a number drawn over a set that is not the
+    one they think it is. Nothing failed, so nothing said so.
+
+    What this run can honestly check is bounded, and the bound is stated rather
+    than papered over. `preflight.py` never executes the evaluator - it
+    `ast.parse`s it, and its own PASS detail says the scoring behavior "is not
+    executed here" - and no code in this package loops over dataset rows
+    scoring them; the SDK does that. So "every row was scored" is NOT
+    checkable here for any row, and this does not pretend otherwise. What is
+    checkable is the arithmetic this run states about the rows it read, and
+    that is what is checked.
+    """
+
+    def scan(self, rows: list[dict]) -> dict[str, dict[str, int]]:
+        """Every row count one run publishes, by check."""
+        del MODULE.RESULTS[:]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        return {
+            result.check: MODULE.row_counts(result.metrics)
+            for result in MODULE.RESULTS
+            if MODULE.row_counts(result.metrics)
+        }
+
+    def test_a_count_over_a_subset_names_the_file_it_was_drawn_from(self) -> None:
+        """The bounded-subset promise, kept in data and not only in prose.
+
+        The guidance rule for a bounded run is to report the subset size BESIDE
+        the full row count, so a bounded run never reads as though the whole
+        dataset was evaluated. The same claim was being made in the run's own
+        numbers with nothing beside them: on this file the difficulty line says
+        "12 of 12 rows carry a difficulty tag" over a 20-row file, because the
+        eight rows it left out are the eight this method cannot score. Those
+        eight are excluded BY DESIGN, which is exactly why the exclusion has to
+        be visible - a row excluded by design is not a row silently dropped,
+        and published alone the two are the same number.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(12)
+        ] + [{"input": f"u{index}", "difficulty": "hard"} for index in range(8)]
+        published = self.scan(rows)
+        coverage = published["dataset-difficulty-coverage"]
+        self.assertEqual(coverage["total_rows"], 12)
+        self.assertEqual(
+            coverage[MODULE.FULL_ROW_COUNT],
+            20,
+            "the difficulty line counts the rows this method can score and "
+            "published that count alone, so 12 of a 20-row file read as 12 of "
+            "12 - the whole file, scored",
+        )
+
+    def test_the_headline_row_count_the_card_prints_is_also_published(self) -> None:
+        """The first number a customer reads had no machine twin at all.
+
+        `dataset-shape` prints "N valid JSONL rows" and emitted no metrics, so
+        the one count the card leads with was the one count nothing downstream
+        could compare against anything.
+        """
+        rows = [{"input": f"q{index}", "output": f"a{index}"} for index in range(24)]
+        shape = self.scan(rows)["dataset-shape"]
+        self.assertEqual(shape, {"scoreable_rows": 24, MODULE.FULL_ROW_COUNT: 24})
+
+    def test_a_count_larger_than_the_file_is_refused(self) -> None:
+        """And refused as OUR defect, in our name, printing nothing."""
+        del MODULE.RESULTS[:]
+        MODULE.emit("dataset-shape", MODULE.PASS, "x", {"candidate_rows": 24})
+        MODULE.emit(
+            "dataset-difficulty-coverage", MODULE.PASS, "y", {"tagged_rows": 72}
+        )
+        with self.assertRaises(MODULE.RowCountMismatch) as raised:
+            MODULE.reconcile_row_counts(MODULE.RESULTS)
+        self.assertIn("the file held 24 rows", str(raised.exception))
+        self.assertIn(
+            "dataset-difficulty-coverage.tagged_rows=72", str(raised.exception)
+        )
+
+    def test_the_mismatch_reaches_the_user_as_our_defect_and_no_card(self) -> None:
+        """Read the message, not the exit code: the wording is the contract.
+
+        A discrepancy between what this run claims and what it counted is a
+        defect in the check. It must not arrive looking like a finding about
+        the customer's dataset, and no partial card may print beside it.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(24)
+        ]
+        real_emit = MODULE.emit
+
+        def triple(check, status, detail, metrics=None):
+            if check == "dataset-difficulty-coverage" and metrics:
+                metrics = dict(metrics, tagged_rows=metrics["tagged_rows"] * 3)
+            real_emit(check, status, detail, metrics)
+
+        del MODULE.RESULTS[:]
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            with mock.patch.object(MODULE, "emit", triple):
+                with mock.patch.object(
+                    sys, "argv", ["preflight.py", "--dataset", str(dataset)]
+                ):
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = MODULE.main()
+        self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
+        self.assertIn("defect in the check rather than in your project", err.getvalue())
+        self.assertIn("a count over rows the file did not contain", err.getvalue())
+        self.assertEqual(
+            out.getvalue(),
+            "",
+            "a card printed beside an unaccountable count, so the customer "
+            "read numbers this run had already failed to stand behind",
+        )
+
+    def test_a_legitimately_bounded_run_is_clean(self) -> None:
+        """The false-red direction, and the one that decides whether this ships.
+
+        Rows excluded by design are the ORDINARY case, not the defect. A run
+        that reconciles must stay silent on one, or the check teaches people to
+        route around it.
+        """
+        rows = [
+            {"input": f"q{index}", "output": f"a{index}", "difficulty": "easy"}
+            for index in range(12)
+        ] + [{"input": f"u{index}", "difficulty": "hard"} for index in range(8)]
+        published = self.scan(rows)
+        self.assertIsNone(MODULE.reconcile_row_counts(MODULE.RESULTS))
+        for check, counts in published.items():
+            for key, value in counts.items():
+                self.assertLessEqual(
+                    value, 20, f"{check}.{key} counts more rows than the file holds"
+                )
+
+    def test_the_reconciliation_is_not_vacuous(self) -> None:
+        """Neuter the rule and the probe above must stop being caught."""
+        blind = [MODULE.Result("dataset-shape", MODULE.PASS, "x", {"rows": 999})]
+        with self.assertRaises(MODULE.RowCountMismatch):
+            MODULE.reconcile_row_counts(blind)
+        self.assertEqual(MODULE.row_counts({"bands": ["easy"], "rows": 3}), {"rows": 3})
+        self.assertEqual(MODULE.row_counts(None), {})
+
+
 if __name__ == "__main__":
     unittest.main()

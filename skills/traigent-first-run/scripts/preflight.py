@@ -125,6 +125,90 @@ def emit(
     RESULTS.append(Result(check, status, detail, metrics))
 
 
+class RowCountMismatch(Exception):
+    """A row count this run published cannot be accounted for.
+
+    Raised, never emitted as a check. A disagreement between the rows this run
+    CLAIMS and the rows it actually counted is a defect in the check, not a
+    finding about the customer's dataset, so it must not arrive on their card
+    looking like one. Raising routes it through the boundary in `main`, which
+    says whose defect it is and reports nothing as checked.
+    """
+
+
+# A row count is any metric whose key is `rows` or ends in `_rows`. Stated as a
+# rule rather than a list because a list is what silently narrows: a check
+# added later that counts rows is covered the moment it is written, and cannot
+# be left out by nobody remembering this function exists.
+FULL_ROW_COUNT = "candidate_rows"
+
+
+def row_counts(metrics: dict[str, Any] | None) -> dict[str, int]:
+    """Every row count in one check's metrics."""
+    if not metrics:
+        return {}
+    return {
+        key: value
+        for key, value in metrics.items()
+        if (key == "rows" or key.endswith("_rows")) and isinstance(value, int)
+    }
+
+
+def reconcile_row_counts(results: list[Result]) -> None:
+    """Refuse a run whose row counts do not add up against the file it read.
+
+    This run does not score rows - the SDK does, and `check_evaluator` says so
+    on the card - so what can be checked here is the arithmetic this run states
+    about the rows it read, and the checkable claim is stated rather than the
+    stronger one implied.
+
+    Two things are refused, and both are our defect rather than the customer's:
+
+    * A count LARGER THAN THE FILE. Any count of rows that exceeds the number
+      of rows the file actually had is a number reported over rows that were
+      never there. That is the silent failure - a figure a customer could act
+      on that no row supports - and it is arithmetic, so it is decidable here.
+    * A count with NO POPULATION BESIDE IT. Several counts in one run are
+      honestly different numbers: every line in the file, the lines carrying an
+      input, the lines this method can score. A row EXCLUDED BY DESIGN is not a
+      row silently dropped - but only if the exclusion is visible. Published
+      alone, `12` reads as the whole file whether the file held 12 rows or 20.
+      This is the same promise the bounded-subset disclosure makes when it
+      names the subset size beside the full row count; the run keeps it in data
+      as well as in prose.
+    """
+    published = [
+        (result.check, key, value)
+        for result in results
+        for key, value in row_counts(result.metrics).items()
+    ]
+    if not published:
+        return
+    full = [value for _, key, value in published if key == FULL_ROW_COUNT]
+    if not full:
+        raise RowCountMismatch(
+            "this run published "
+            + ", ".join(f"{check}.{key}={value}" for check, key, value in published)
+            + f" without publishing {FULL_ROW_COUNT}, so every count above "
+            "reads as the whole file and none of them can be shown to be"
+        )
+    if len(set(full)) > 1:
+        raise RowCountMismatch(
+            f"this run published {len(set(full))} different values for "
+            f"{FULL_ROW_COUNT} ({sorted(set(full))}), so the rows it read is "
+            "not one number"
+        )
+    over = [
+        f"{check}.{key}={value}" for check, key, value in published if value > full[0]
+    ]
+    if over:
+        raise RowCountMismatch(
+            f"the file held {full[0]} rows, but this run published "
+            + ", ".join(over)
+            + " - a count over rows the file did not contain"
+        )
+
+
 def key_present(value: str | None) -> bool:
     if value is None:
         return False
@@ -1209,7 +1293,17 @@ def check_dataset(
         emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None
     if not invalid_rows:
-        emit("dataset-shape", PASS, f"{len(rows)} valid JSONL rows")
+        # The card's headline row count had no machine twin at all, so the one
+        # number a customer reads first was the one number nothing downstream
+        # could check. `candidate_rows` travels with it because `len(rows)` is
+        # the rows this method can SCORE, which is not the size of their file
+        # whenever a row is excluded by design.
+        emit(
+            "dataset-shape",
+            PASS,
+            f"{len(rows)} valid JSONL rows",
+            {"scoreable_rows": len(rows), FULL_ROW_COUNT: candidate_count},
+        )
     if len(rows) < WIRING_CHECK_EXAMPLES:
         emit(
             "dataset-size",
@@ -1575,7 +1669,13 @@ def check_dataset(
         ),
         {
             "tagged_rows": len(difficulty_values),
+            # `total_rows` counts the rows this method can score, which is the
+            # right denominator for coverage and the wrong one to read alone:
+            # on a file whose unlabelled rows were the tagged-hard ones, this
+            # line says "12 of 12" over a 20-row file. The population it
+            # counted travels beside it so the exclusion is visible.
             "total_rows": len(rows),
+            FULL_ROW_COUNT: candidate_count,
             "bands": sorted(difficulties),
             "missing_bands": sorted(EXPECTED_DIFFICULTIES - difficulties),
         },
@@ -1759,6 +1859,11 @@ def run() -> int:
 
     if args.evaluator:
         check_evaluator(Path(args.evaluator))
+
+    # Before anything is printed, not after: a count that cannot be accounted
+    # for must not reach the customer's card at all, and the boundary in `main`
+    # says so in our name rather than theirs.
+    reconcile_row_counts(RESULTS)
 
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))

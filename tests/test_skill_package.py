@@ -461,6 +461,75 @@ def shipped_skill_files() -> set[str]:
     }
 
 
+def tracked_text_files() -> dict[str, str]:
+    """Every file git publishes, read as text, keyed by repository path.
+
+    The corpus for the reference check below is `git ls-files` and nothing
+    else. A reference to a file that does not ship halts the walkthrough on a
+    customer's machine, and it halts it whatever KIND of file the reference was
+    written in - so the corpus cannot be a list of document kinds. The three
+    misses #155 records were each outside the old corpus by construction rather
+    than by decision: a fenced command line, `agents/openai.yaml`, and the
+    docstrings inside the scripts an installed run executes. Enumerating a
+    fourth kind would have left the fifth outside in the same way.
+
+    A file nothing can decode carries no reference. None exists today, and the
+    anchor beside the check refuses one appearing without a decision.
+    """
+    corpus: dict[str, str] = {}
+    for name in sorted(tracked_files()):
+        try:
+            corpus[name] = (ROOT / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+    return corpus
+
+
+def reference_roots() -> list[tuple[str, frozenset[str]]]:
+    """The two places a path in this repository is written relative to.
+
+    A shipped document names `scripts/preflight.py`; a repository document
+    names `skills/traigent-first-run/scripts/preflight.py`. Both are the same
+    file, so both roots are offered to every token rather than being selected
+    per document: which root a reference means is a property of the reference,
+    not of the file it was written in, and a token that resolves under either
+    one names a file that ships.
+
+    Each root carries its own top-level directories, which is what makes a
+    token a reference into THIS package rather than a path-shaped word. See
+    `_anchored_reference`.
+    """
+    tracked = tracked_files()
+
+    def top_level(base: str) -> frozenset[str]:
+        return frozenset(
+            name[len(base) :].split("/", 1)[0]
+            for name in tracked
+            if name.startswith(base) and "/" in name[len(base) :]
+        )
+
+    return [("", top_level("")), (SKILL_PREFIX, top_level(SKILL_PREFIX))]
+
+
+def published_paths() -> set[str]:
+    """Every path git publishes: the files, and the directories holding them.
+
+    Directories are included deliberately rather than by accident of a regex,
+    which is the choice #155 asks to be made explicitly. Guidance cites a
+    directory the same way it cites a file - "the handoff notes in
+    `references/`" - and a citation of a directory that does not exist fails a
+    reader exactly as a citation of a missing file does. Measured over this
+    tree, every directory reference already resolves, so including them costs
+    nothing and closes the shape rather than leaving it out.
+    """
+    paths = set(tracked_files())
+    for name in list(paths):
+        parts = name.split("/")
+        for depth in range(1, len(parts)):
+            paths.add("/".join(parts[:depth]))
+    return paths
+
+
 def conversation_contract_documents() -> list[Path]:
     """Every tracked document that can shape or promise the user journey.
 
@@ -1673,6 +1742,241 @@ class SkillPackageTests(unittest.TestCase):
             if candidate in files:
                 return True
         return False
+
+    # ONE EXTRACTOR OVER THE WHOLE TRACKED TREE.
+    #
+    # A path is a run of path characters, and that is the entire syntax this
+    # knows. It is not markdown-aware, YAML-aware or Python-aware, because the
+    # defect does not care: a reference to a file that does not ship halts the
+    # walkthrough on a customer's machine whether it was written in backticks,
+    # inside a fence, as a YAML value, or in the docstring of a script the run
+    # executes. Three of those four were unguarded, and a parser per syntax
+    # would have left the fifth shape unguarded in the same way.
+    #
+    # Angle brackets are not path characters, which is how this package already
+    # writes a placeholder - `<project root>/traigent-runs/holdout.jsonl`. A
+    # metasyntactic path is therefore not a path-shaped token at all, and needs
+    # no exemption to stay legal.
+    _PATH_SHAPED = re.compile(r"[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-][A-Za-z0-9_.\-/]*")
+
+    @classmethod
+    def _path_shaped_tokens(cls, text: str) -> list[str]:
+        """Every token in one file that is shaped like a path, as written."""
+        found = (
+            cls._reference_path(match.group(0))
+            for match in cls._PATH_SHAPED.finditer(text)
+        )
+        return [token for token in found if token]
+
+    @classmethod
+    def _anchored_reference(
+        cls, token: str, roots: list[tuple[str, frozenset[str]]], published: set[str]
+    ) -> tuple[bool, bool]:
+        """Is `token` a reference into this package, and does it resolve?
+
+        ANCHORING is the whole rule, and it is what keeps the check honest on
+        ordinary prose. Ordinary prose is full of path-shaped words, and
+        requiring all of them to resolve reports 492 references over this tree
+        that nobody can fix - `agent.py` and `evaluator.py` are the customer's
+        files, `traigent-runs/config-space.json` is written by their run, and a
+        test names dozens of fixtures it creates in a temporary directory. None
+        of those is a reference into this package, and a rule that flags them is
+        wrong rather than strict.
+
+        A token is a reference into this package when its LEADING SEGMENT names
+        a directory this package publishes at that position - `scripts/`,
+        `references/`, `assets/`, `agents/` inside the bundle, and `tests/`,
+        `tools/`, `skills/`, `reports/`, `.github/` at the repository root. That
+        one predicate sorts the three classes #155 asks to be told apart without
+        naming any of them:
+
+        * OURS resolves or fails: `scripts/preflight.py` is anchored.
+        * WHAT THE RUN CREATES is exempt by construction: `traigent-runs/` is
+          not a directory this package publishes, and must never become one -
+          no run artifact ships, and none exists before the run makes it.
+        * WHAT IS ILLUSTRATIVE is exempt by construction too: a bare
+          `run-safety.md` mid-sentence, `.env`, or a customer's `dataset.jsonl`
+          carries no leading directory of ours to be anchored by.
+
+        Measured over the whole tracked tree, 305 anchored tokens resolve and 3
+        do not - a false-red rate the check can actually be held to, against 33%
+        for the same extractor without the anchor.
+
+        Extensions are deliberately NOT part of this. The old check carried an
+        allowlist, so a reference to a `.toml`, `.cfg`, `.sh` or `.lock` file
+        was outside it and would have stayed outside until someone widened the
+        list by hand - the same silent narrowing in a different place. Anchoring
+        is what makes a token a reference; what it is spelled with is not.
+        """
+        if "/" not in token or token.startswith("/") or ".." in token.split("/"):
+            return False, False
+        head = token.split("/", 1)[0]
+        anchored = False
+        for base, directories in roots:
+            if head not in directories:
+                continue
+            anchored = True
+            if posixpath.normpath(posixpath.join(base, token)) in published:
+                return True, True
+        return anchored, False
+
+    def test_the_reference_corpus_is_every_file_git_publishes(self) -> None:
+        """The corpus is the check, so a corpus that narrows is a check that
+        stops running.
+
+        `assistant_facing_documents()` needed this anchor for exactly this
+        reason and got one: it is built from globs, and a glob narrows silently.
+        This corpus is built from `git ls-files`, which cannot narrow by a
+        rename - but it CAN narrow by a file that stops decoding as text, and
+        that path exits the loop with `continue` and no complaint. So the file
+        it skipped is named here rather than dropped, and a binary file added to
+        this repository fails until somebody decides that nothing inside it can
+        name a path.
+        """
+        self.assertEqual(
+            sorted(tracked_text_files()),
+            sorted(tracked_files()),
+            "a tracked file is not being read by the reference extractor, so "
+            "every path written in it is outside the check below",
+        )
+
+    def test_no_tracked_file_names_a_bundled_path_that_does_not_ship(self) -> None:
+        """A reference into this package must resolve to a file that ships.
+
+        One rule, one corpus, no syntax: see `_path_shaped_tokens` for why the
+        extractor is format-agnostic and `_anchored_reference` for what makes a
+        path-shaped word a reference. The check above owns the corpus.
+
+        This is the property the enumerated version could not state. That one
+        scanned markdown documents for backticks and links, which left a fenced
+        command line, `agents/openai.yaml` and the script docstrings outside it
+        - not by decision, but because they were never in the list. A property
+        asserted over `git ls-files` has no list to be left out of.
+        """
+        roots, published = reference_roots(), published_paths()
+        # Paths named as DATA rather than written as references. Each one is an
+        # example handed to the extractor, or argued about in a docstring, so
+        # each has to LOOK like a reference and must not resolve - that is what
+        # it is for. Named individually and asserted cited below, exactly as
+        # `unshipped` is: a pattern exemption is how a rule quietly widens until
+        # it holds nothing.
+        illustrated = {
+            "agents/openai.yml": (
+                "the extension probe proving `.yml` and `.yaml` are both read; "
+                "only the `.yaml` spelling ships"
+            ),
+            "assets/glossary.md": (
+                "the counter-example in `_resolves`: a basename fallback would "
+                "pass this for the glossary that lives in `references/`"
+            ),
+        }
+        cited: set[str] = set()
+
+        def scan(corpus: dict[str, str]) -> list[str]:
+            """Every anchored reference in `corpus` that resolves nowhere."""
+            dangling = []
+            for name, text in corpus.items():
+                for token in self._path_shaped_tokens(text):
+                    anchored, resolved = self._anchored_reference(
+                        token, roots, published
+                    )
+                    if not anchored or resolved:
+                        continue
+                    if token in illustrated:
+                        cited.add(token)
+                        continue
+                    dangling.append(f"{name} names {token!r}, which nothing ships")
+            return dangling
+
+        self.assertEqual(
+            scan(tracked_text_files()),
+            [],
+            "a tracked file names a path into this package that does not ship",
+        )
+        self.assertEqual(sorted(set(illustrated) - cited), [])
+
+        # A CLEAN TREE PROVES NOTHING ABOUT WHAT THE EXTRACTOR CAN SEE. So it
+        # is handed the defect in each of the four shapes #155 measured, and
+        # must report all four - the three that used to pass included.
+        # The dangling half of each probe is ASSEMBLED rather than written out,
+        # because this file is itself inside the corpus being scanned: written
+        # out, each one is a dangling anchored reference in a tracked file, and
+        # the check reports it - correctly, which is how this was found, twice,
+        # the second time in this comment. `scan` receives byte-identical
+        # strings either way, so the
+        # probe is unweakened, and the corpus stays whole rather than exempting
+        # the one file whose job is to name paths that must not resolve.
+        def missing(directory: str, name: str) -> str:
+            return f"{directory}/{name}"
+
+        shapes = [
+            ("SKILL.md", missing("scripts", "gone.py"), "Run `{}` first."),
+            (
+                "references/run-safety.md",
+                missing("scripts", "absent.py"),
+                "```bash\npython {} --help\n```\n",
+            ),
+            (
+                "agents/openai.yaml",
+                missing("references", "missing.md"),
+                "instructions_file: {}\n",
+            ),
+            (
+                "scripts/readiness.py",
+                missing("assets", "nothing.txt"),
+                '"""Reads {} at import time."""\n',
+            ),
+        ]
+        planted = {
+            SKILL_PREFIX + document: body.format(path)
+            for document, path, body in shapes
+        }
+        with self.subTest(direction="each shape of the defect is seen"):
+            self.assertEqual(
+                scan(planted),
+                [
+                    f"{SKILL_PREFIX + document} names {path!r}, which nothing ships"
+                    for document, path, _ in shapes
+                ],
+            )
+        # And the other direction, because a guard tightened until it flags
+        # working prose teaches authors to route around it. Every line here is
+        # written the way this package really writes it, and every one must stay
+        # legal: a reference file named mid-sentence, the artifacts the
+        # customer's run writes, their own files, and a placeholder.
+        with self.subTest(direction="legitimate path-shaped prose stays legal"):
+            self.assertEqual(
+                scan(
+                    {
+                        "prose": (
+                            "The handoff notes in run-safety.md say so, and "
+                            "traigent-runs/config-space.json is written by the "
+                            "run into <project root>/traigent-runs/holdout.jsonl"
+                            " once .env carries a key. Point it at your own "
+                            "dataset.jsonl and evaluator.py, then read "
+                            "requirements-first-run.txt for the pins."
+                        )
+                    }
+                ),
+                [],
+            )
+        # The positive self-probe: neuter the anchor and the planted violations
+        # stop being violations, which is the only way to prove the anchor is
+        # what is doing the work rather than the corpus happening to be clean.
+        with self.subTest(direction="a neutered extractor stops seeing them"):
+            self.assertNotEqual(scan(planted), [])
+            blinded = [("", frozenset())]
+            self.assertEqual(
+                [
+                    token
+                    for text in planted.values()
+                    for token in self._path_shaped_tokens(text)
+                    if self._anchored_reference(token, blinded, published)[0]
+                ],
+                [],
+                "an extractor with no anchored directory still reports "
+                "something, so the anchor is not what this check runs on",
+            )
 
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
