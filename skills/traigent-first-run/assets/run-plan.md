@@ -32,7 +32,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 - Current configuration/space and provider recipients:
 - Calls, runtime, and spend:
-- Baseline approval - status/scope/ceiling:
+- Baseline approval - status/scope/ceiling, and the pre-spend material card's proceed/fix answer:
 
 ## Running state
 

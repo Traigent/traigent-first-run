@@ -3080,7 +3080,7 @@ class SkillPackageTests(unittest.TestCase):
             # guide sanctions, and both are now ceilings - so the phrase pinned
             # a promise the card had stopped keeping. What the README must
             # still carry is the boundary itself, from the other side.
-            "they do not stop the run or ask you to fix anything",
+            "they do not stop the run and they ask nothing of you",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
@@ -8162,6 +8162,220 @@ class SkillPackageTests(unittest.TestCase):
             sdk,
         )
 
+    def test_the_documents_describe_the_three_cap_kinds_the_scorer_has(self) -> None:
+        """`asks` arrived mid-wave and nothing swept the documents behind it.
+
+        The scorer has three states, not two: a cap that stops the run, one
+        that lets it run and still needs a person before a correctness claim,
+        and one that only bounds what the result may claim. Two kinds cannot
+        express the middle. Making it block stops a paid run over the
+        assistant's reading of the customer's own data; making it a bare
+        ceiling shows a limit with no remedy, which is the defect fixed for two
+        caps in the scorer and left standing in every document that describes
+        the taxonomy.
+
+        The module is read rather than quoted, so what the documents claim is
+        checked against what the scorer does and not against a sentence
+        somebody once wrote about it. Which caps carry which flag is
+        deliberately not pinned here - that is settled per condition elsewhere,
+        and this is about the three states existing at all.
+        """
+        fields = READINESS.Cap.__dataclass_fields__
+        self.assertIn(
+            "asks",
+            fields,
+            "the middle state is a field on `Cap`; without it there are two "
+            "kinds and the documents below are describing the scorer",
+        )
+        self.assertIs(fields["asks"].default, False)
+        # The three states are exactly three because one combination is
+        # refused: a cap cannot be stopped and proceeding at once.
+        with self.assertRaises(ValueError) as refused:
+            READINESS.Cap("dataset-absent", 30, "probe", blocks=True, asks=True)
+        self.assertIn("both blocks and asks", str(refused.exception))
+        # And the middle state has to reach the payload, or it is a flag
+        # nothing reads and the two-way description was accurate after all.
+        asking = READINESS.Cap(
+            "dataset-unsound-expected-outputs", 65, "probe", blocks=False, asks=True
+        )
+        advisory = READINESS.Cap("dataset-coarse-resolution", 70, "probe", blocks=False)
+        self.assertEqual(
+            READINESS.recommended_action([advisory, asking]),
+            asking.action_kind,
+            "an asking cap's remedy has to arrive in `recommended_action`, or "
+            "the payload says `proceed` about a condition whose whole content "
+            "is a question for the user",
+        )
+        self.assertEqual(READINESS.recommended_action([advisory]), READINESS.PROCEED)
+
+        skill = " ".join(SKILL.read_text().casefold().split())
+        glossary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for document, phrase in (
+            ("SKILL.md", "three kinds, not two"),
+            (
+                "SKILL.md",
+                "the lowest-ceiling blocking remedy when a cap blocks, "
+                "otherwise the lowest-ceiling asking one, otherwise `proceed`",
+            ),
+            ("glossary.md", "there are three kinds"),
+            ("glossary.md", "some do not block and still put a question to you"),
+            ("README.md", "between those two there is a third"),
+            (
+                "run-safety.md",
+                "`recommended_action` reads `proceed` there only when nothing "
+                "else blocks and nothing else is asking",
+            ),
+        ):
+            with self.subTest(document=document, phrase=phrase):
+                self.assertIn(
+                    phrase,
+                    {
+                        "SKILL.md": skill,
+                        "glossary.md": glossary,
+                        "README.md": readme,
+                        "run-safety.md": safety,
+                    }[document],
+                )
+        # The unconditional promise on the closing card is what this replaces.
+        self.assertNotIn(
+            "`status: ok` and `recommended_action: proceed` describe", safety
+        )
+
+    def test_nothing_still_claims_the_card_prints_a_wired_knob_count(self) -> None:
+        """`N of N wired knobs actually vary` is not a line this card has.
+
+        The agent evidence line was replaced by the size of the search space,
+        and the ledger records why: a count a reader can check is not an answer
+        they can act on. Two kinds of sentence in the scorer still mention the
+        old line. Measurements taken while it was live are history and stay -
+        they are what a later reader needs to believe the argument. One said
+        the card *asserts* it, in the present tense, about a card that prints
+        something else, and anyone auditing the near-miss guard against that
+        sentence was auditing it against output nobody produces.
+
+        Read off the renderer rather than off the sentence, so the claim is
+        checked against what the card says today.
+        """
+        rendered = READINESS.search_space_evidence(4, 4, 1, 12)
+        self.assertNotIn("wired knobs actually vary", rendered)
+        self.assertIn("distinct configurations", rendered)
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        for present_tense in ("makes the card assert", "makes the card print"):
+            with self.subTest(phrase=present_tense):
+                self.assertNotIn(
+                    present_tense,
+                    source,
+                    "a comment states in the present tense what the card "
+                    "asserts; the agent evidence line states the size of the "
+                    "search space, so describe the miscount by what it does to "
+                    "that line rather than by quoting the retired one",
+                )
+
+    def test_the_asking_tier_is_discharged_before_the_first_paid_call(self) -> None:
+        """The middle kind becomes a decision, at the one moment it is free.
+
+        A `recommended_action` string the customer never reads is not a remedy.
+        The baseline is the first thing in the run that costs money and the
+        last point at which changing what that money measures against costs
+        nothing, so the question rides on the approval that already stops
+        there: what the gap was, how it was filled, where the files are, the
+        two rows that show the range, what the method counts as correct, and a
+        straight proceed or fix.
+
+        Pinned as an addition to an existing approval rather than as a new
+        pause, because a generic review wait is what this package already
+        refuses - and pinned as firing before the run card that precedes the
+        paid calls, because after the spend the answer is worth nothing.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        plan = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn("### the pre-spend approval card", safety)
+        for phrase in (
+            "it adds no pause of its own",
+            "**the gap, and how it was filled**",
+            "**absolute paths**",
+            "**two rows: the easiest and the hardest.**",
+            "**what the evaluation method counts as correct.**",
+            "**where we are.** `stage 3/5 · baseline`",
+            "**proceed, or fix.** two named outcomes and no default",
+            "approving the spend is not approving the material, and silence is neither",
+            # the ladder, so an unlabelled pick is not passed off as measured
+            "pick the pair by the ladder in `references/evaluation-and-dataset.md`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety)
+        # Each bullet states the condition it fires under. The card has two
+        # unlike triggers - this run wrote something, or a cap asks - and the
+        # bullets were written for the first one only, so the asking-cap path
+        # told the assistant to name a gap that did not exist and to print a
+        # path for a file the run never created.
+        for degradation in (
+            "where this run generated or repaired the dataset or the evaluation method",
+            "where this run created and repaired nothing, drop the bullet",
+            "one for each file this run actually wrote",
+            "a run that wrote neither lists neither",
+        ):
+            with self.subTest(condition=degradation):
+                self.assertIn(degradation, safety)
+        # One question, one home. The only cap that asks on this branch already
+        # owns a complete quoted question that stage 4 routes it to by name, and
+        # the two disagreed about when it is put, what it says and what the
+        # answers are called - so answering it once was not enough.
+        for reconciliation in (
+            "**what an asking cap asked, and what was answered**",
+            "do not put the question a second time in different words",
+            "where the cap's route owns no question of its own, this card is "
+            "that one home and asks it here",
+            "discharging it means the customer meets its remedy at the moment "
+            "they are asked to pay - not that its question is put here a "
+            "second time",
+        ):
+            with self.subTest(reconciliation=reconciliation):
+                self.assertIn(reconciliation, safety)
+        # And the route that owns the question still names it, so the card's
+        # pointer is not aimed at a section somebody deleted.
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("a `no` is never a silent edit", evaluation)
+        self.assertIn("a `no` is never a silent edit", safety)
+        self.assertIn("a `no` is never a silent edit", skill)
+        # SKILL.md says when it fires and points at the owner; it does not
+        # restate the card.
+        for phrase in (
+            "when this run filled a gap for the walkthrough, or an active cap "
+            "asks rather than blocks, that same approval also carries the "
+            "pre-spend card in `references/run-safety.md`",
+            "it is content on the approval that already stops, never a second pause",
+        ):
+            with self.subTest(document="SKILL.md", phrase=phrase):
+                self.assertIn(phrase, skill)
+        self.assertIn("pre-spend material card's proceed/fix answer", plan)
+        # `find`, so a missing trigger is reported as the missing trigger and
+        # not as a bare ValueError raised inside the ordering check.
+        card = skill.find("pre-spend card in `references/run-safety.md`")
+        run_card = skill.find(
+            "immediately before the paid baseline, show a short run card"
+        )
+        self.assertNotEqual(card, -1, "SKILL.md never fires the pre-spend card")
+        self.assertNotEqual(run_card, -1)
+        self.assertLess(
+            card,
+            run_card,
+            "the material approval has to reach the user before the run card "
+            "that precedes the paid calls; asked afterwards it is a report",
+        )
+
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
@@ -10677,10 +10891,20 @@ class SkillPackageTests(unittest.TestCase):
         # not. Deliberately paired with the module: guidance that says
         # "advisory" over a scorer that blocks is the contradiction, not either
         # half alone.
+        # Three kinds, because the scorer has three. The two-way partition put
+        # every non-blocking cap in one bucket, and the bucket had no remedy -
+        # so a condition whose entire content is a question for the user came
+        # out of the guidance as "nothing to do".
         self.assertIn(
-            "a route asking for a creation or repair blocks the run; one that "
-            "only scopes what the result may claim is an advisory ceiling, "
-            "never a repair to route",
+            "a route asking for a creation or repair blocks the run, and so "
+            "does one asking for a first look at material nothing has read",
+            normalized,
+        )
+        self.assertIn(
+            "where the scope leaves a person something to settle, put it once "
+            "in the home that owns that question and carry the answer to the "
+            "pre-spend approval in stage 6; where it leaves nothing to do, the "
+            "ceiling is advisory and there is no repair to route",
             normalized,
         )
         blocking = {
@@ -10728,6 +10952,31 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
         sites = cap_construction_blocks(
             source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
+        # The universal claim this paragraph used to make - "a route that only
+        # scopes what the result may claim never blocks" - was false the day it
+        # was written, and SKILL.md contradicted it twenty-five lines later in
+        # two separate bullets that both say "the same condition blocks".
+        # Derived from the module instead of restated: any CLAIM_SCOPING
+        # condition whose construction sites do not all read `blocks=False` is
+        # a scoping route that blocks, and while one exists the guidance may
+        # not promise a reader that none does.
+        scoping_that_blocks = {
+            condition
+            for condition, category in READINESS.ROUTE_CATEGORY.items()
+            if category == READINESS.CLAIM_SCOPING and sites[condition] != {"False"}
+        }
+        self.assertTrue(
+            scoping_that_blocks,
+            "no scoping route can block any more, so the guidance may state "
+            "the simple rule again - and this guard should be removed with it "
+            "rather than left asserting a distinction that stopped existing",
+        )
+        self.assertNotIn(
+            "only scopes what the result may claim never blocks",
+            normalized,
+            f"SKILL.md promises that scoping routes never block, and "
+            f"{sorted(scoping_that_blocks)} do",
         )
         for condition in sorted(conditions):
             with self.subTest(cap=condition):

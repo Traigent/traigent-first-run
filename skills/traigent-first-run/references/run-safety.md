@@ -356,10 +356,12 @@ the closing score cannot exceed it.
 The ceiling is what stays binding there; `agent-no-varying-knobs` itself is advisory whenever no
 document reached the scorer, because the scorer cannot tell a document withheld before the search
 from one the search failed to produce - both are the same absent input. So on a closing card after
-a stopped, failed, or zero-trial search, `status: OK` and `recommended_action: proceed` describe
-only the evidence this cap was given, and are not a verdict that the search succeeded. Report that
-search's outcome from the run itself - trials executed, spend, the error it stopped on - and never
-let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried
+a stopped, failed, or zero-trial search, `status: OK` describes only the evidence this cap was
+given, and is not a verdict that the search succeeded. `recommended_action` reads `proceed` there
+only when nothing else blocks and nothing else is asking: an asking cap carries its own remedy into
+that field, so `proceed` on this card is the absence of every other finding rather than a statement
+about this one. Report that search's outcome from the run itself - trials executed, spend, the
+error it stopped on - and never let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried
 or paid for again is the approval question it always was, decided on that outcome, not on this
 score.
 
@@ -530,6 +532,63 @@ Before the provider-paid baseline, show only its immediate scope:
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
 - Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
   fixtures, limits, residual risk, and any external sandbox recipient.
+
+### The pre-spend approval card
+
+The baseline is the first thing in this run that costs money, and the last moment at which changing
+what that money is spent measuring against is free. So whenever this run generated or repaired the
+dataset or the evaluation method, or an active cap asks rather than blocks, the baseline approval
+above carries this card too. It adds no pause of its own - the approval already stops, and this is
+part of what it stops with.
+
+Each bullet carries its own condition, because the two triggers do not produce the same card. On the
+asking-cap path the customer's own dataset and evaluation method are the material under discussion
+and this run wrote nothing, so a bullet written for generated material describes a gap that does not
+exist and points at a file that was never created.
+
+- **The gap, and how it was filled** - where this run generated or repaired the dataset or the
+  evaluation method. Name the condition in the user's own words - no examples were
+  connected, the answer key was written by a model, no grading method existed - and then what this
+  run put there instead. Both halves: "a dataset was created", without the gap it answers, reads as
+  a feature rather than as a substitution for something they do not have. Where this run created and
+  repaired nothing, drop the bullet; there is no gap of ours to name, and describing the customer's
+  own material as one is the claim this card exists to avoid making.
+- **Absolute paths** - one for each file this run actually wrote: the generated or repaired dataset
+  when this run wrote or changed it, and the evaluation method when this run wrote one, each as a
+  full path they can open in another window while they read this. A relative path is not openable
+  from wherever their terminal happens to be. Two paths at most, not an inventory: every file this
+  run wrote is listed at the close, and `references/evaluation-and-dataset.md` owns that list. These
+  are here because they are what the decision below is about, so a run that wrote neither lists
+  neither.
+- **Two rows: the easiest and the hardest.** Not a random pair - the two that show the range, so the
+  reader sees what both ends of this dataset look like. Quote each row's input and its expected
+  answer from the file rather than describing them. When the rows carry no difficulty tags, pick the
+  pair by the ladder in `references/evaluation-and-dataset.md` and name the rung it came from, so an
+  unstratified pick is not read as a measured one.
+- **What the evaluation method counts as correct.** One or two plain sentences: what it compares,
+  what it accepts, what it rejects. This is the half a person can hold against their own idea of a
+  right answer, and it is where a generated method most often misses - one that grades wording where
+  the product cares about the number will rank every configuration on the wrong thing, and no later
+  check in this run would catch that.
+- **What an asking cap asked, and what was answered** - where one is active. A cap that asks has one
+  home for its question, and some of them own a quoted one already: `dataset-unsound-expected-outputs`
+  is put through "A `no` is never a silent edit" in `references/evaluation-and-dataset.md`, which
+  SKILL stage 4 routes it to by name, and it is settled there while a repair is still free. Restate
+  the finding, the answer taken, and what proceeding on that answer means for the money about to be
+  spent - do not put the question a second time in different words, with a different pair of exits.
+  Where the cap's route owns no question of its own, this card is that one home and asks it here.
+- **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
+  loose.
+- **Proceed, or fix.** Two named outcomes and no default. Proceeding approves this material as the
+  thing the run will be graded against; fixing returns to the repair route SKILL stage 4 owns and
+  re-runs its gate before anything is spent. Approving the spend is not approving the material, and
+  silence is neither.
+
+An asking cap is what this card exists to discharge, and discharging it means the customer meets its
+remedy at the moment they are asked to pay - not that its question is put here a second time. Its
+remedy is already in `recommended_action`, and a remedy the customer never sees is the defect this
+replaces: a ceiling printed with nothing a reader could act on. Bound, never block - the run is
+still worth making, and the question is what to settle before it rather than instead of it.
 
 After showing the baseline result, give the connected stage a preview and approval:
 

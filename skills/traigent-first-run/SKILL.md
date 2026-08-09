@@ -373,13 +373,19 @@ user-authored fix, or use a generated `🛠️` substitute for the walkthrough. 
 "continue as is" as permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
-`recommended_action`: the lowest-ceiling blocking remedy, else the remedy of a cap that only asks,
-else `proceed`.
+`recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
+lowest-ceiling asking one, otherwise `proceed`.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
-internal. A route asking for a creation or repair blocks the run; one that only
-scopes what the result may claim is an advisory ceiling, never a repair to route:
+internal. Three kinds, not two. A route asking for a creation or repair blocks the run, and so does
+one asking for a first look at material nothing has read - under either, nothing was measured. A
+route that only scopes what the result may claim lets the run proceed wherever there is a result to
+scope, and divides again: where the scope leaves a person something to settle, put it once in the
+home that owns that question and carry the answer to the pre-spend approval in stage 6; where it
+leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
+never by the kind - a scoping condition that finds nothing to compare at all blocks, and the bullets
+carrying both halves say so:
 
 - `dataset-absent` - enter the creation dependency matrix.
 - `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
@@ -495,6 +501,12 @@ Use the baseline checklist in `references/run-safety.md` for one concise baselin
 approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
 preserved baseline or generated twelve-row sweep. Say only that a separately previewed managed run may
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
+
+When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
+approval also carries the pre-spend card in `references/run-safety.md`: what the gap was and how it
+was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
+method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
+stops, never a second pause, and approving the spend is not approving the material.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
 its explicit values, one plain-language note per knob, and the total combination count. The

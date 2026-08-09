@@ -75,7 +75,10 @@ changing out of your project.
    external calibration remains inside the paid/data-egress approval.
 5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
    spend, a total execution stop target (`$5.00` by default), and data egress. That target is a
-   conservative control, not a guaranteed provider-billing cap.
+   conservative control, not a guaranteed provider-billing cap. When this run had to write the
+   dataset or the grading method, the same preview shows what it wrote - full paths, the easiest and
+   the hardest example, and what the method counts as correct - and asks you to proceed or fix
+   before anything is charged.
 6. Shows the baseline result, then explains and separately approves the broader managed
    optimization with additional meaningful knobs when the evaluator can distinguish configurations.
 7. Retains every experiment actually persisted and reports the result, limitations, artifacts, and
@@ -170,7 +173,7 @@ walkthrough dataset scoring `65/100 WORKABLE` while blocked is therefore the ord
 a self-contradiction: the score stands, and the line says how many things have to clear first,
 where each of them is marked, and what happens once they are cleared.
 
-The card labels the two kinds differently, and the label is the whole message.
+The card labels the kinds differently, and the label is the whole message.
 `FIX BEFORE PAID RUN` means the current components cannot yet support a trustworthy paid
 comparison and something has to be created or repaired first - no dataset, no expected answers, an
 evaluator that scores a wrong answer as well as a right one, a tuning set that shares examples with
@@ -179,10 +182,21 @@ evidence-gathering action first. `LIMITED TO 89` means the paid comparison can p
 bounds what the result may claim; it names the number so "why is this 89" has an answer on the
 same line.
 
-Generated data and a small comparison set land on the second side, not the first. A walkthrough
-dataset is what this guide writes for a user who has none, and a handful of rows is a wiring check -
-both are runs worth making, and both are things the result may not claim too much from. So they
-lower the ceiling and say why; they do not stop the run or ask you to fix anything.
+Between those two there is a third, and it is the only one that needs anything from you. Some
+conditions do not hold the run up and still leave a person something to agree with before the
+number means what it looks like - an answer key a model wrote end to end, or rows whose expected
+answer does not appear to match their own input. Each of those is put to you once, with the material
+to judge it on and a straight pair of exits - at the point the finding is made where that is still
+free to act on, otherwise inside the approval before the first paid call - and the approval shows
+you what you answered either way. Once, not twice: being asked the same thing again in different
+words at the till is the thing this is built to avoid. Stopping a paid run over the assistant's
+reading of your data would be wrong; showing you a
+ceiling with no way to act on it was the older mistake, and this is the fix for it.
+
+Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
+this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
+worth making, and both are things the result may not claim too much from. So they lower the ceiling
+and say why; they do not stop the run and they ask nothing of you.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - at or below every other ceiling, and at or below your average. Two conditions can carry the

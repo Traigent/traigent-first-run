@@ -5855,8 +5855,11 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # A misspelled name is a *string*, so the field's own type check lets it
     # through, and `score_agent` then intersects `wired` with the space and
     # drops it - a silent narrowing that raises the score and makes the card
-    # assert "1 of 1 wired knobs actually vary" about a document that declared
-    # two. A `bounds` name addresses knobs the same way and fails the same way:
+    # count a space one knob smaller than the document declares. It used to
+    # assert that in so many words, "1 of 1 wired knobs actually vary" against a
+    # document naming two; the evidence line now states the space rather than
+    # the knob count, so the miscount is quieter and no less wrong.
+    # A `bounds` name addresses knobs the same way and fails the same way:
     # the declared range never reaches the knob it was meant for, so the knob
     # is scored against the canonical range or on breadth alone, which can flip
     # it from "collapsed" to "varying" and clear the cap on a range the author

@@ -287,13 +287,22 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
-  Some caps block because something has to be created or repaired before a paid
-  comparison is worth making - a broken evaluator, no dataset, no expected
-  answers, nothing scoreable in the split the search would tune on. Others say
-  only that generated data, or a comparison set too small to settle a close
-  call, limits claim strength until real rows or completed paired outcomes
-  support more. That limits what the result may claim without saying anything is
-  wrong with your setup.
+  There are three kinds, and they differ in what they ask of you rather than in
+  how much they lower the number. Some caps block, because something has to be
+  created or repaired before a paid comparison is worth making - a broken
+  evaluator, no dataset, no expected answers, nothing scoreable in the split the
+  search would tune on. Some do not block and still put a question to you: the
+  run is worth making, and there is something for a person to read and agree
+  with before the number means what it looks like - a whole answer key a model
+  wrote, or rows whose expected answer does not seem to fit their own input. You
+  are asked each of those once, where answering it still costs nothing - when
+  the finding is made if a fix is free then, otherwise in the approval before
+  the first paid call - and that approval shows you the answer you gave rather
+  than asking again. And some only say that generated data, or a
+  comparison set too small to settle a close call, limits claim strength until
+  real rows or completed paired outcomes support more. That last kind limits what
+  the result may claim without saying anything is wrong with your setup and
+  without needing anything from you.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
