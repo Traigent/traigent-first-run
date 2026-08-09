@@ -81,11 +81,13 @@ is routinely stated in one sentence and sourced in the next:
   name nobody defined fails. Arguments, locals and dataclass fields are NOT
   symbols here: nearly every comment in these scripts names one of those in
   passing, and counting them would make this check pass everything;
-* a **stated fixture** - a `key: value` binding whose value is a literal, in a
-  code span, a bracketed literal, or an indented block. `max_trials: 12` is a
-  fixture; `not tuning: temperature, prompt_style` is not, because it states
-  no value - and that distinction is load-bearing, since the sentence that
-  claimed the unreachable 78 carried exactly that second shape;
+* a **stated fixture** - a `key: value` binding whose value is a NUMBER or a
+  bracketed list, in a code span, a bracketed literal, or an indented block.
+  `max_trials: 12` and `model: [a, b]` are fixtures; `not tuning: temperature,
+  prompt_style` is not, because it states no value - and that distinction is
+  load-bearing, since the sentence that claimed the unreachable 78 carried
+  exactly that second shape. A quoted string is not a value either: `dataset
+  score: "this run compares ..."` is a printed line being quoted;
 * a **code block** - a fence, which states the inputs by being them.
 
 Prose that describes the inputs without naming anything checkable - "measured
@@ -603,9 +605,11 @@ class MeasuredNumbersAreReDerivableTests(unittest.TestCase):
             [],
             "a number reported as measured, with nothing beside it that would "
             "let a reader take the measurement again. Name the space, the "
-            "document, or the function that produces it - a tracked path, a "
-            "backticked symbol that really exists, or a `key: value` fixture "
-            "in the same note. If it genuinely cannot be sourced from this "
+            "document, or the function that produces it, anywhere in the same "
+            "note: a tracked path, a backticked symbol that is really defined, "
+            "a `key: 12` or `key: [a, b]` fixture, or a code fence. Prose "
+            "describing the inputs does not count, and neither does a quoted "
+            "string. If the number genuinely cannot be taken again from this "
             "tree, add it to UNDERIVABLE with the sentence quoted and the "
             "reason.",
         )
