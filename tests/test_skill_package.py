@@ -1839,6 +1839,30 @@ class SkillPackageTests(unittest.TestCase):
             "a tracked file is not being read by the reference extractor, so "
             "every path written in it is outside the check below",
         )
+        # THE ANCHOR SET IS ITSELF A CORPUS, and it is derived from the tree -
+        # which is the same silent narrowing this whole check exists to refuse,
+        # one level further in. Every directory below is what makes a token a
+        # reference: delete or rename one, and every reference into it stops
+        # being anchored and is checked by nothing, quietly, exactly when the
+        # tree changed underneath the guidance that names it.
+        bundle, repository = reference_roots()[1][1], reference_roots()[0][1]
+        self.assertLessEqual(
+            {"references", "scripts", "assets", "agents"},
+            bundle,
+            "a directory the installed skill publishes is no longer anchored, "
+            "so references into it are no longer checked",
+        )
+        self.assertLessEqual(
+            {".github", "reports", "skills", "tests", "tools"},
+            repository,
+            "a directory this repository publishes is no longer anchored, so "
+            "references into it are no longer checked",
+        )
+        # And the artifacts the customer's run writes must NEVER become one:
+        # anchoring `traigent-runs/` would demand that every path the run
+        # creates already exist in this package, which is the false red this
+        # rule is shaped to avoid.
+        self.assertNotIn("traigent-runs", bundle | repository)
 
     def test_no_tracked_file_names_a_bundled_path_that_does_not_ship(self) -> None:
         """A reference into this package must resolve to a file that ships.
@@ -1860,17 +1884,22 @@ class SkillPackageTests(unittest.TestCase):
         # it is for. Named individually and asserted cited below, exactly as
         # `unshipped` is: a pattern exemption is how a rule quietly widens until
         # it holds nothing.
+        # Keyed by (FILE, path), not by path alone. An exemption scoped to the
+        # path would hold everywhere: the moment SKILL.md told a reader to open
+        # `agents/openai.yml`, the exemption this file needs for its own probe
+        # data would have covered that too, silently, in the document where it
+        # matters most. An escape hatch has to be narrower than the rule.
         illustrated = {
-            "agents/openai.yml": (
+            ("tests/test_skill_package.py", "agents/openai.yml"): (
                 "the extension probe proving `.yml` and `.yaml` are both read; "
                 "only the `.yaml` spelling ships"
             ),
-            "assets/glossary.md": (
+            ("tests/test_skill_package.py", "assets/glossary.md"): (
                 "the counter-example in `_resolves`: a basename fallback would "
                 "pass this for the glossary that lives in `references/`"
             ),
         }
-        cited: set[str] = set()
+        cited: set[tuple[str, str]] = set()
 
         def scan(corpus: dict[str, str]) -> list[str]:
             """Every anchored reference in `corpus` that resolves nowhere."""
@@ -1882,8 +1911,8 @@ class SkillPackageTests(unittest.TestCase):
                     )
                     if not anchored or resolved:
                         continue
-                    if token in illustrated:
-                        cited.add(token)
+                    if (name, token) in illustrated:
+                        cited.add((name, token))
                         continue
                     dangling.append(f"{name} names {token!r}, which nothing ships")
             return dangling
