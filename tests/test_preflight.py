@@ -726,7 +726,8 @@ class StaticPreflightTests(unittest.TestCase):
 
     @staticmethod
     def _pairwise_near_duplicates(
-        token_sets: list[set[str]], threshold: float = 0.9
+        token_sets: list[set[str]],
+        threshold: float = MODULE.NEAR_DUPLICATE_THRESHOLD,
     ) -> list[tuple[int, int]]:
         """The full O(n^2) scan, kept here as the oracle for the indexed join.
 
@@ -766,6 +767,185 @@ class StaticPreflightTests(unittest.TestCase):
                 sorted(self._pairwise_near_duplicates(token_sets)),
                 f"indexed join disagrees with the pairwise scan on {token_sets}",
             )
+
+    @staticmethod
+    def _similarity(left: str, right: str) -> float:
+        """The number this check actually decides on, for two raw inputs."""
+        first, second = MODULE.shingle_set(left), MODULE.shingle_set(right)
+        union = first | second
+        return len(first & second) / len(union) if union else 1.0
+
+    @staticmethod
+    def _word_set_similarity(left: str, right: str) -> float:
+        """What the check used to decide on. Kept to state the defect as a number."""
+        first = set(MODULE.normalized_text(left).split())
+        second = set(MODULE.normalized_text(right).split())
+        union = first | second
+        return len(first & second) / len(union) if union else 1.0
+
+    def test_a_reordered_sentence_is_not_a_repeat(self) -> None:
+        """The defect in traigent-first-run#170, asserted as both numbers.
+
+        "the cat sat on the mat" and "the mat sat on the cat" are the same six
+        words in a different order. To a word-set comparison they are the same
+        row - similarity exactly 1.0 - so a dataset that varies word order on
+        purpose read as duplicated. Comparing runs of consecutive words instead
+        scores them 0.143.
+
+        Both numbers are computed here rather than quoted, so this states the
+        change rather than restating a constant, and it fails if either metric
+        stops behaving the way the guidance says it does.
+        """
+        left, right = "the cat sat on the mat", "the mat sat on the cat"
+        self.assertEqual(self._word_set_similarity(left, right), 1.0)
+        self.assertLess(self._similarity(left, right), 0.2)
+        # And through the whole path, because a similarity function that is
+        # right on its own proves nothing about what the customer is told.
+        rows = [
+            {"id": "r1", "input": left, "output": "a", "source": "production"},
+            {"id": "r2", "input": right, "output": "b", "source": "production"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "reordered.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.PASS, near.detail)
+
+    def test_a_genuine_repeat_in_a_long_row_is_still_caught(self) -> None:
+        """The false-red direction: removing order-blindness must not go further.
+
+        One word changed in a long row is the case the check most has to keep.
+        Asserted through `check_dataset` on rows long enough to be past the
+        crossing length the glossary quotes, so this fails if the switch to
+        sequences quietly made the check inert instead of order-sensitive.
+        """
+        base = [f"word{index}" for index in range(30)]
+        changed = list(base)
+        changed[15] = "different"
+        rows = [
+            {
+                "id": "r1",
+                "input": " ".join(base),
+                "output": "a",
+                "source": "production",
+            },
+            {
+                "id": "r2",
+                "input": " ".join(changed),
+                "output": "b",
+                "source": "production",
+            },
+        ]
+        self.assertGreaterEqual(
+            self._similarity(rows[0]["input"], rows[1]["input"]),
+            MODULE.NEAR_DUPLICATE_THRESHOLD,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "near.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        near = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-near-duplicates"
+        )
+        self.assertEqual(near.status, MODULE.WARN, near.detail)
+        self.assertIn("(1, 2)", near.detail)
+
+    def test_rows_too_short_for_one_sequence_compare_whole(self) -> None:
+        """A row shorter than the sequence length still has to mean something.
+
+        There are no 3-word runs in a 2-word row, and both silent answers are
+        wrong: scoring 0 hides a two-word row repeated forty times, and scoring
+        1 makes every short row a duplicate of every other. Such a row
+        contributes itself as one whole sequence, so identical short rows score
+        1.0 and everything else scores 0.0 - which is the binary answer the
+        glossary tells the reader to expect below this length.
+        """
+        self.assertEqual(self._similarity("reset password", "reset password"), 1.0)
+        self.assertEqual(self._similarity("reset password", "change password"), 0.0)
+        # Order still counts below the sequence length, which is the same rule
+        # as above rather than an exception to it.
+        self.assertEqual(self._similarity("reset password", "password reset"), 0.0)
+        # And a short row is not silently a duplicate of a long one.
+        self.assertEqual(self._similarity("reset password", "how do i reset"), 0.0)
+        # Rows with no word characters at all keep their own handling: the join
+        # pairs them directly, because they have no sequence to be indexed under.
+        self.assertEqual(MODULE.shingle_set("???"), set())
+
+    def test_the_indexed_join_is_exact_over_sequence_sets(self) -> None:
+        """Exactness has to be re-proved on the sets the check now feeds it.
+
+        The join was already checked against a brute-force scan, but over
+        randomly sampled WORD sets. Sequence sets have a different shape - far
+        more members per row, far rarer members, and members that overlap each
+        other by construction - and the prefix filter's soundness is what the
+        whole switch rests on. So the same oracle runs again on real rows turned
+        into real sequence sets.
+        """
+        import random
+
+        random.seed(20260808)
+        vocabulary = [f"word{index}" for index in range(12)]
+        for _ in range(120):
+            rows = [
+                " ".join(random.choice(vocabulary) for _ in range(random.randint(0, 9)))
+                for _ in range(random.randint(0, 25))
+            ]
+            sets = [MODULE.shingle_set(row) for row in rows]
+            pairs, complete = MODULE.near_duplicate_pairs(sets)
+            self.assertTrue(complete)
+            self.assertEqual(
+                pairs,
+                sorted(self._pairwise_near_duplicates(sets)),
+                f"indexed join disagrees with the pairwise scan on {rows}",
+            )
+
+    def test_sequences_finish_the_scan_word_sets_ran_out_of_budget_on(self) -> None:
+        """The performance half of #170, asserted as an outcome and not a clock.
+
+        #158 bounded this loop in token operations because 2,000 rows of 300
+        words spent 1.03 billion of them. That shape did not merely run slowly -
+        it exhausted the budget and reported SKIP, which readiness reads as
+        UNCHECKED, so the dataset most likely to contain duplicates was the one
+        that got no answer.
+
+        Sequences are far rarer across rows than words are, so the index admits
+        far fewer candidates and the same rows finish. Measured at full size:
+        964M operations as word sets against 0 as sequences. Asserted here on a
+        smaller corpus of the same shape, so the suite pays about a second for
+        it, and on `complete` rather than on elapsed time, which would be flaky.
+        """
+        import random
+
+        random.seed(20260808)
+        vocabulary = [f"word{index}" for index in range(4000)]
+        rows = [
+            " ".join(random.choice(vocabulary) for _ in range(300)) for _ in range(400)
+        ]
+        _pairs, word_complete = MODULE.near_duplicate_pairs(
+            [set(MODULE.normalized_text(row).split()) for row in rows]
+        )
+        self.assertFalse(
+            word_complete,
+            "the word-set comparison is expected to exhaust the budget on this "
+            "shape; if it no longer does, this test has stopped covering the "
+            "regression it was written for",
+        )
+        pairs, complete = MODULE.near_duplicate_pairs(
+            [MODULE.shingle_set(row) for row in rows]
+        )
+        self.assertTrue(
+            complete,
+            "sequences must finish the scan that word sets could not, or the "
+            "check still answers UNCHECKED on the datasets that need it most",
+        )
+        self.assertEqual(pairs, [])
 
     def test_near_duplicates_are_still_checked_above_five_hundred_rows(self) -> None:
         """The check must not stop running as the dataset gets big.
@@ -930,11 +1110,15 @@ class StaticPreflightTests(unittest.TestCase):
         # And it must account for the wait, in terms of the dataset the reader
         # is holding. This is the one slow path in the script, so they have just
         # waited and are then told the check did not run; the detail has to name
-        # what causes it or the pause reads as a hang. It must name BOTH causes:
-        # the text used to name only a small vocabulary, and the slower way in
-        # is long rows with an entirely ordinary one.
-        self.assertIn("length of each one", near.detail)
-        self.assertIn("vocabulary", near.detail)
+        # what causes it or the pause reads as a hang.
+        #
+        # What it must name changed with the metric. Under word sets the causes
+        # were long rows and a small vocabulary; under sequences both measure 0
+        # operations, and the remaining cause is many rows phrased alike. A
+        # sentence that still sent the reader to split long inputs would be
+        # advice about a cost their file does not have.
+        self.assertIn("phrased alike", near.detail)
+        self.assertNotIn("small vocabulary", near.detail)
 
     def test_corrupted_row_count_and_percentage_are_reported(self) -> None:
         valid_rows = [

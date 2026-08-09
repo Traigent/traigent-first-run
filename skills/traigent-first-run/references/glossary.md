@@ -171,13 +171,16 @@ The lines under each pillar on the card
     range of difficulty        - whether the rows span easy to hard. If every
                                  row is easy, every configuration looks equally
                                  good.
-    repeated or dominant answers - whether the same input or the same expected
-                                 answer keeps recurring, which lets a lazy
-                                 configuration score well by guessing it. Rows
-                                 repeat when 90% or more of their words match,
-                                 identical rows included; charged once. 90% is
-                                 a chosen line, not a discovered one - 89%
-                                 alike is below it, not thereby far apart.
+    repeated or dominant answers - whether the same input recurs, or one answer
+                                 covers most rows, which lets a lazy
+                                 configuration score well by guessing it.
+                                 Reusing an answer is fine; one taking over is
+                                 not. Rows repeat when 70% or more of their
+                                 3-word runs match; charged once. Runs, so
+                                 reordered words are not a repeat, and under 3
+                                 words only identical rows count. 70% is
+                                 derived: one changed word still counts at 19
+                                 words.
     where the rows came from   - whether the data was collected or written by a
                                  model. Both are usable; only one is evidence
                                  about production.

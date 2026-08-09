@@ -2738,7 +2738,15 @@ def scores_without_a_reference(method: str | None) -> bool:
     return method in REFERENCE_FREE_METHODS
 
 
-NEAR_DUPLICATE_PERCENT = 90
+# The similarity line this card PRINTS. It has to equal the line
+# `preflight.NEAR_DUPLICATE_THRESHOLD` actually DECIDES on, and this module
+# cannot import that one - the two scripts are separately runnable and neither
+# depends on the other - so the equality is held by a test rather than by an
+# expression (`test_skill_package.py`, one home for what decides, what prints,
+# and what the customer reads). 70 and not 90 since #170 moved the check from
+# word sets to three-word sequences; the two numbers are not comparable as
+# numbers, and the reason 70 is the right one is recorded where it is derived.
+NEAR_DUPLICATE_PERCENT = 70
 
 
 @dataclass(frozen=True)
@@ -2777,12 +2785,13 @@ class DiversityCheck:
 # them being handled by a test the others did not get.
 #
 # ONE deduction for repetition, not two. `dataset-duplicates` (byte-identical
-# after normalization) and `dataset-near-duplicates` (Jaccard >= 0.9) both fire
-# on the same duplicated row, because two identical token sets have similarity
-# exactly 1.0 - so a single copied row used to cost 7 + 7 of the 20 diversity
-# points for one defect described twice. The owner's decision is that the
-# near-duplicate check subsumes the exact one for scoring: >= 90% similar is
-# already the finding, and 100% needs no second one (traigent-first-run#158).
+# after normalization) and `dataset-near-duplicates` (sequence similarity at or
+# above the near line) both fire on the same duplicated row, because two
+# identical rows have similarity exactly 1.0 under any of these metrics - so a
+# single copied row used to cost 7 + 7 of the 20 diversity points for one defect
+# described twice. The owner's decision is that the near-duplicate check
+# subsumes the exact one for scoring: at or above the near line is already the
+# finding, and 100% needs no second one (traigent-first-run#158).
 #
 # The exact check is kept as a DETECTOR rather than deleted, because it can
 # answer where the near scan cannot. It is a hash bucket - O(n), always
@@ -2790,7 +2799,7 @@ class DiversityCheck:
 # passes its comparison budget. On that dataset the exact check is the only
 # thing still able to raise repetition at all, so it feeds the same single
 # deduction. What it may never do is CLEAR the question: "no byte-identical
-# rows" is not "no rows 90% alike", so `certifier` is the near check alone.
+# rows" is not "nothing near the line", so `certifier` is the near check alone.
 DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
     DiversityCheck(
         detectors=("near_duplicate_status", "duplicate_status"),
@@ -2853,7 +2862,7 @@ def diversity_subscore(
     lets the exact-duplicate check keep earning its place after the
     near-duplicate check took over the scoring: on a dataset where the near
     scan ran out of budget, an exact duplicate is still a found problem, while
-    an exact PASS leaves the 90%-similarity question genuinely unasked.
+    an exact PASS leaves the near-similarity question genuinely unasked.
 
     So there are three outcomes, not two:
 

@@ -28,14 +28,40 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 SUPPORTED_TRAIGENT_VERSION = "0.25.0"
-# Jaccard similarity over normalized word sets. This is the only number the
-# repetition deduction now rests on (traigent-first-run#158), and nothing
-# derives it: it is order-blind, so a reordered sentence scores 1.0, and it is
-# length-sensitive, so one changed word clears 0.9 at 19 tokens and never does
-# below that. What it should be is an open owner question
-# (traigent-first-run#170); until it is answered the user-facing text calls it
-# a chosen line rather than a discovered one.
-NEAR_DUPLICATE_THRESHOLD = 0.9
+# How long a word sequence has to be before repeating it means anything.
+#
+# The comparison below is Jaccard over overlapping n-word sequences, not over
+# word sets. The set comparison this replaced was ORDER-BLIND, which is the
+# defect (traigent-first-run#170): "the cat sat on the mat" and "the mat sat on
+# the cat" have identical word sets and scored 1.000, so a corpus that varies
+# word order on purpose - a perfectly ordinary robustness set - read as
+# duplicated. As sequences that pair scores 0.143.
+#
+# 3 because it is the shortest n that actually removes the defect, measured on
+# that pair rather than cited as a default: n=2 scores it 0.667, which is still
+# a near-duplicate at any threshold this check could carry, and n=3 scores
+# 0.143. Larger n keeps working - n=4 scores 0.000 - and costs sensitivity
+# everywhere else, because one changed word destroys n sequences rather than 3,
+# so the shortest n that works is the one that gives up least.
+NEAR_DUPLICATE_SHINGLE = 3
+# DERIVED, and not the 0.9 it replaces. Under sequences this number controls
+# exactly one thing a reader can check for themselves: the shortest row at
+# which ONE changed word still counts as a repeat. Measured over the sweep -
+# 0.50 -> 11 words, 0.60 -> 14, 0.65 -> 17, 0.70 -> 19, 0.75 -> 23, 0.80 -> 29,
+# 0.90 -> 59 - against the shipped word-set 0.9, which crossed at 19.
+#
+# 0.7 is the value that HOLDS that crossing at 19 words. So the switch changes
+# what the check knows about word order without changing how sensitive it is to
+# edits, and the one behavioural change is the one that was decided. Inheriting
+# 0.9 would have moved the crossing to 59 words and made the check three times
+# more inert while looking like it had not moved at all.
+#
+# What it does NOT reach is template repetition - one frame with the entity
+# swapped, "...customers in France..." against "...in Germany..." - which
+# scores 0.333 at 8 words here and scored 0.778 as word sets. Neither metric
+# catches it and no threshold separates it from "what is 2 + 2" against "what
+# is 3 + 3"; #170 records that as a limit of word overlap, not of this number.
+NEAR_DUPLICATE_THRESHOLD = 0.7
 # How many near-duplicate pairs the scan will collect before it stops. A display
 # bound, not a limit on what is checked: the emit prints ten, and a dataset with
 # a thousand near-duplicate pairs has already answered the only question this
@@ -52,24 +78,35 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # dataset over 500 rows silently lost near-duplicate detection - precisely the
 # size at which duplicates become likely (traigent-first-run#151).
 #
-# COUNTED IN TOKEN OPERATIONS, and that is the correction. It used to count
+# COUNTED IN SEQUENCE OPERATIONS, and that is the correction. It used to count
 # distinct candidate PAIRS, which is not what the loop spends: a pair costs one
 # posting-list step to find and then a set union and intersection over both
-# rows' tokens, so a row of 300 tokens costs 600 units where a row of 12 costs
-# 24. Bounding the pair count therefore bounded nothing on exactly the datasets
-# that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M candidate
-# pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03 BILLION
-# token operations, which ran for 45 s with no output and no timeout and then
-# answered PASS. Trunk took 0.24 s on the same file.
+# rows' whole sets, so a row of 300 words costs 600 units where a row of 12
+# costs 24. Bounding the pair count therefore bounded nothing on exactly the
+# datasets that are slow. Measured on 2,000 RAG-shaped rows of 300 tokens: 1.7M
+# candidate pairs - 34% of a 5,000,000 pair budget, so it never fired - and 1.03
+# BILLION token operations, which ran for 45 s with no output and no timeout and
+# then answered PASS.
 #
-# The number is derived from wall clock and nothing else. This loop sustains
-# 15-22M token operations per second across the shapes measured (2,000x300 RAG
-# chunks, 5,000 rows over a 60-word vocabulary, 5,000 short rows), so 60M is
-# about three to four seconds - long enough that no ordinary dataset reaches it
-# and short enough that a user is not left watching a script that will not
-# answer. Re-derive it if the loop's inner work changes; do not move it because
-# a dataset wanted more.
-MAX_NEAR_DUPLICATE_WORK = 60_000_000
+# The number is derived from wall clock and nothing else, and it moved from 60M
+# because the unit under it changed. Word sets sustained 15-22M operations per
+# second; sequence sets sustain 4.0-9.5M across the shapes measured (2,000x300
+# with 20 repeated frames, 2,000x50, 3,000x120, 5,000 rows over a 60-word
+# vocabulary), because a set of sequences is larger than a set of words and each
+# member costs more to hash. At that rate 60M would have been six to fifteen
+# seconds - the old comment's "three to four" would have quietly become false
+# while the constant sat unchanged - and 15M is about two to four seconds.
+#
+# Lowering it costs no ordinary dataset anything, which is why the wall-clock
+# promise wins over the larger figure. Sequences are far rarer than words, so
+# the index admits far fewer candidates: 2,000x300 rows spend 964M operations as
+# word sets and reach this bound, and 0 as sequences. The shapes that DO spend
+# real work here are ones full of genuine repeats, and those reach
+# MAX_NEAR_DUPLICATE_PAIRS first.
+#
+# Re-derive it if the loop's inner work changes; do not move it because a
+# dataset wanted more.
+MAX_NEAR_DUPLICATE_WORK = 15_000_000
 DOMINANT_OUTCOME_RATIO = 0.9
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
@@ -496,8 +533,40 @@ def normalized_identity(value: Any) -> str:
     return text.strip().casefold()
 
 
-def token_set(value: Any) -> set[str]:
-    return set(normalized_text(value).split())
+def shingle_set(value: Any) -> set[str]:
+    """One row as the SET OF OVERLAPPING WORD SEQUENCES it contains.
+
+    A row of L words yields L - n + 1 sequences. Comparing these instead of the
+    row's word set is what makes the similarity below order-sensitive, and the
+    reasoning for n lives on `NEAR_DUPLICATE_SHINGLE`.
+
+    Joined on a space, which is unambiguous because `normalized_text` keeps only
+    runs of word characters, so no token can contain the separator. A joined
+    string rather than a tuple because it is cheaper in both: measured over
+    2,000 rows of 300 words, 71.8 MB peak against 104.4 MB and 6.96 s against
+    9.52 s for the identical 65.9M-operation join.
+
+    A row SHORTER than n has no n-word sequences, and the two obvious answers
+    are both wrong. Scoring it zero would make a repeated two-word row
+    invisible - and a two-word row repeated forty times is real repetition.
+    Falling back to its word set would make it comparable with nothing else: a
+    set of words and a set of sequences are drawn from different universes, so
+    every long row would score 0.0 against every short one whatever they say.
+
+    So a short row contributes ONE sequence: itself, whole. Two short rows then
+    score 1.0 when they are the same words in the same order and 0.0 otherwise.
+    That is deliberately a different KIND of answer from the graded one longer
+    rows get - below n words there is no "nearly", only "same" - and the
+    glossary says so rather than leaving a reader to assume a smooth scale that
+    silently stops.
+    """
+    tokens = normalized_text(value).split()
+    if len(tokens) < NEAR_DUPLICATE_SHINGLE:
+        return {" ".join(tokens)} if tokens else set()
+    return {
+        " ".join(tokens[start : start + NEAR_DUPLICATE_SHINGLE])
+        for start in range(len(tokens) - NEAR_DUPLICATE_SHINGLE + 1)
+    }
 
 
 def near_duplicate_prefix(
@@ -536,6 +605,13 @@ def near_duplicate_pairs(
     max_work: int | None = None,
 ) -> tuple[list[tuple[int, int]], bool]:
     """Find every pair of rows at or above `threshold` Jaccard similarity.
+
+    Deliberately agnostic about what a row's set CONTAINS - "token" here is the
+    prefix-filtering term for an indexed set member, not a claim that the
+    members are words. That is why switching the check from word sets to
+    sequence sets (`shingle_set`, traigent-first-run#170) needed no change in
+    here at all: the join is exact for Jaccard over any sets, so the metric
+    changed and the algorithm, its proof, and its bounds did not.
 
     Returns `(pairs, complete)` as 1-based row numbers. `complete` says whether
     the scan examined every candidate it needed to; it is the honest half of the
@@ -1247,7 +1323,7 @@ def check_dataset(
     ]
     # Both records describe repetition, and the readiness score deducts for it
     # once - `dataset-near-duplicates` is what it deducts on, because identical
-    # rows are 100% similar and so are already inside "at least 90% similar".
+    # rows score 1.0 and so are already inside whatever the near line is.
     # This one is kept because it is a hash bucket: O(n), always complete, and
     # therefore still able to report repetition on a dataset where the bounded
     # near-duplicate join gave up. It detects; it does not score twice.
@@ -1261,8 +1337,15 @@ def check_dataset(
         emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
 
     threshold_percent = f"{NEAR_DUPLICATE_THRESHOLD:.0%}"
+    # The INPUT, and only the input. Repeated inputs are the defect this check
+    # exists to find - the same question asked twice spends two trials learning
+    # one thing. Repeated expected ANSWERS are not a defect and are not read
+    # here: a closed-label task is supposed to reuse its labels, and 500 rows
+    # labelled yes/no would look like 500 duplicates to a check pointed at the
+    # output field. Whether one answer has taken over the dataset is a different
+    # question with its own record (`dataset-ceiling-risk`).
     near_pairs, near_complete = near_duplicate_pairs(
-        [token_set(row["input"]) for row in rows]
+        [shingle_set(row["input"]) for row in rows]
     )
     if near_pairs:
         # A truncated scan still answered the question - there ARE
@@ -1272,8 +1355,10 @@ def check_dataset(
         emit(
             "dataset-near-duplicates",
             FAIL if synthetic else WARN,
-            f"input pairs at least {threshold_percent} similar (shared words "
-            f"over total words), identical rows included: {near_pairs[:10]}{more}",
+            f"input pairs at least {threshold_percent} similar (shared runs of "
+            f"{NEAR_DUPLICATE_SHINGLE} consecutive words over total runs, so "
+            "the same words in a different order are not a repeat), identical "
+            f"rows included: {near_pairs[:10]}{more}",
         )
     elif near_complete:
         emit(
@@ -1291,22 +1376,27 @@ def check_dataset(
         # have just waited and are then told the check did not run; without the
         # second sentence that reads as the script having hung on their data.
         #
-        # The sentence that used to be here named only one of the two ways in -
-        # "a vocabulary small enough to make nearly every pair a candidate" -
-        # and a 2,000-row set of 300-word RAG chunks, which has an ordinary
-        # vocabulary, is the other and the slower one. A user reading the old
-        # text about their own file would have concluded it did not apply.
+        # The cause is not what it was, and the text moved with it. Under word
+        # sets the two ways in were long rows and a small vocabulary, and BOTH
+        # are now wrong: 2,000 rows of 300 words spend 964M operations as word
+        # sets and 0 as sequences, and 5,000 twelve-word rows over a 60-word
+        # vocabulary also spend 0, because sequences repeat across rows far less
+        # than words do. What is left is the one thing that still makes a
+        # sequence common - many rows genuinely phrased alike - so that is what
+        # this now names. A user reading the old sentence about their own file
+        # would have been sent to split inputs that were never the cause.
         emit(
             "dataset-near-duplicates",
             SKIP,
             "the near-duplicate scan reached its work budget before comparing "
             "every candidate pair, so this dataset is UNCHECKED for "
-            "near-duplicates - not clean. The exact check compares whole word "
-            "sets, so cost grows with both the number of rows and the length of "
-            "each one: long rows (documents, transcripts, retrieved chunks) "
-            "reach it soonest, and so do many short rows drawn from a small "
-            "vocabulary. Split long inputs, or scan a sample, if you need this "
-            "answered",
+            "near-duplicates - not clean. The exact check compares whole sets "
+            "of word runs, so it costs most when many rows are phrased alike: "
+            "shared boilerplate, one template filled in repeatedly, or the same "
+            "passage retrieved into many rows. Long rows make each of those "
+            "comparisons dearer, but length alone does not reach this budget. "
+            "De-duplicate the obvious repeats, or scan a sample, if you need "
+            "this answered",
         )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]

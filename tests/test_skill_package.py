@@ -7378,7 +7378,13 @@ class SkillPackageTests(unittest.TestCase):
         the chosen line - the customer told one number and scored on another.
 
         Asserted against the deciding constant, not beside it: a test that
-        restates 90 is a fourth home for the same drift.
+        restates 70 is a fourth home for the same drift.
+
+        The metric under the number changed in #170 - word sets became runs of
+        consecutive words - so the glossary now has to state WHICH comparison
+        the percentage is over, and that is checked here too. "70% of the words"
+        and "70% of the 3-word runs" are different promises to the person
+        agreeing to be scored, and only the second one is true.
         """
         threshold = preflight_constant("NEAR_DUPLICATE_THRESHOLD")
         percent = READINESS.NEAR_DUPLICATE_PERCENT
@@ -7399,8 +7405,54 @@ class SkillPackageTests(unittest.TestCase):
         glossary = " ".join(
             (SKILL_ROOT / "references" / "glossary.md").read_text().split()
         )
-        self.assertIn(f"repeat when {percent}% or more of their words match", glossary)
-        self.assertIn(f"{percent}% is a chosen line", glossary)
+        shingle = preflight_constant("NEAR_DUPLICATE_SHINGLE")
+        self.assertIn(
+            f"repeat when {percent}% or more of their {shingle}-word runs match",
+            glossary,
+        )
+        self.assertIn(f"under {shingle} words only identical rows count", glossary)
+        # And the SENTENCE THAT JUSTIFIES the number is checked by recomputing
+        # the number it quotes, which is the part that used to be a weld.
+        #
+        # The glossary used to say 90% was "a chosen line, not a discovered
+        # one", and this guard asserted that phrase verbatim. That is backwards:
+        # it froze the wording and proved nothing about the value, so it would
+        # have held just as green if the threshold had stopped matching the
+        # justification beside it. #170 replaced the chosen line with a derived
+        # one, so the guard derives it too.
+        #
+        # What the glossary claims is a length: the shortest row in which ONE
+        # changed word is still a repeat. That is a property of
+        # NEAR_DUPLICATE_THRESHOLD and NEAR_DUPLICATE_SHINGLE together, and it
+        # is computed here from the shipped `shingle_set` rather than restated -
+        # move either constant and this recomputes, disagrees with the sentence,
+        # and fails naming both numbers.
+        crossing = self._one_changed_word_crossing_length()
+        self.assertIn(f"one changed word still counts at {crossing} words", glossary)
+
+    def _one_changed_word_crossing_length(self) -> int:
+        """Shortest row where changing one word still reaches the threshold.
+
+        Measured through the shipped functions, on synthetic rows of distinct
+        words, so it is the check's own behaviour and not a formula that could
+        drift away from it.
+        """
+        threshold = PREFLIGHT.NEAR_DUPLICATE_THRESHOLD
+        for length in range(1, 400):
+            left = " ".join(f"word{index}" for index in range(length))
+            right = " ".join(
+                ("changed" if index == length // 2 else f"word{index}")
+                for index in range(length)
+            )
+            first, second = PREFLIGHT.shingle_set(left), PREFLIGHT.shingle_set(right)
+            union = first | second
+            similarity = len(first & second) / len(union) if union else 1.0
+            if similarity >= threshold:
+                return length
+        raise AssertionError(
+            "no row length up to 400 makes a one-word change reach "
+            f"{threshold} - the glossary's justification cannot be true"
+        )
 
     def test_no_document_states_the_similarity_line_as_its_own_number(
         self,
