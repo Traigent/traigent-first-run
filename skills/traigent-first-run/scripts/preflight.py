@@ -104,6 +104,18 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # real work here are ones full of genuine repeats, and those reach
 # MAX_NEAR_DUPLICATE_PAIRS first.
 #
+# What this bound does NOT cover, stated because the number above is a
+# wall-clock promise and would otherwise be read as the whole one. `work`
+# counts posting steps and pair comparisons. It does not count the fixed cost
+# of ranking every distinct sequence in the dataset and sorting each row's
+# prefix, which is roughly linear in total sequences and therefore in dataset
+# size. On 2,000 rows of 300 words that fixed cost is about 4 s with `work` at
+# 0, so the check takes about 6 s end to end there and this constant is not
+# what decided it. Linear, predictable and proportional to the file the user
+# handed over - which is why it is left uncounted rather than folded in at a
+# second, incompatible unit price. The quadratic half is the half that needs a
+# ceiling, and that is the half this counts.
+#
 # Re-derive it if the loop's inner work changes; do not move it because a
 # dataset wanted more.
 MAX_NEAR_DUPLICATE_WORK = 15_000_000
