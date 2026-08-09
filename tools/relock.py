@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 """Regenerate the behavior lock and the scenario fixture locks.
 
 Both locks are generated artifacts: the behavior lock hashes `GUIDE.md` plus

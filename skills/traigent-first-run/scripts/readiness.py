@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 """Plan and score a Traigent first run from Agent/Dataset/Evaluation evidence.
 
 Two related jobs live here.

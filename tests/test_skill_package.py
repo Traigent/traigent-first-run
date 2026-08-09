@@ -1408,7 +1408,7 @@ class SkillPackageTests(unittest.TestCase):
             for line in frontmatter.splitlines()
             if ":" in line
         }
-        self.assertEqual(keys, {"name", "description"})
+        self.assertEqual(keys, {"name", "description", "license"})
 
     def test_every_relative_markdown_link_in_skill_exists(self) -> None:
         text = SKILL.read_text()
@@ -2153,26 +2153,113 @@ class SkillPackageTests(unittest.TestCase):
             "release for any other reason is still a release nobody installs",
         )
 
-    def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
-        """This repository has no LICENSE, so it may not describe its own terms.
+    LICENSE_DELIVERY = ("LICENSE", "NOTICE", "PROJECT-ARTIFACTS.md")
 
-        `gh api repos/Traigent/traigent-first-run` returns `"license": null`
-        with `"visibility": "public"`, and no LICENSE file is tracked - which
-        is all-rights-reserved by default, while this same README tells the
-        reader to `npx skills add Traigent/traigent-first-run`. A sentence
-        saying the SDK notice "does not change the license terms for this
-        guide repository" asserts terms that do not exist. Choosing a license
-        is the owner's call; saying nothing is strictly better than saying
-        something false, so the sentence is gone and stays gone.
+    def test_the_installed_skill_carries_its_own_terms(self) -> None:
+        """The `npx` path copies `skills/traigent-first-run/`, and nothing else.
+
+        This check replaces one that asserted the opposite premise: that the
+        repository had no LICENSE at all and so could not describe its own
+        terms. A license was added at the root afterwards and that test kept
+        passing, because its assertions were three negative substrings that a
+        rewritten README simply avoided. It was guarding a fact that had
+        stopped being true, which is the failure mode this file exists to
+        catch.
+
+        What actually needed guarding is one directory down. `README.md` calls
+        the skill directory a self-contained package, and `npx skills add`
+        copies exactly that directory into someone else's repository - so a
+        license that lives only at the repository root reaches nobody who
+        installs it. Apache-2.0 section 4(a) puts a copy of the license in the
+        recipient's hands; here that is the difference between an installed
+        directory that states its terms and one that a license scanner reads
+        as unknown.
+
+        The texts must be identical to the root's, not merely present: two
+        copies that drift are worse than one, and a stale copy in the shipped
+        artifact is the one that travels.
         """
-        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
-        for phrase in (
-            "license terms for this guide repository",
-            "the license of this repository",
-            "this repository is licensed",
+        for name in self.LICENSE_DELIVERY:
+            with self.subTest(name=name):
+                shipped = SKILL_ROOT / name
+                self.assertTrue(
+                    shipped.is_file(),
+                    f"the installed skill ships without {name}; an install "
+                    "copies this directory and would carry no terms",
+                )
+                self.assertEqual(
+                    shipped.read_text(),
+                    (ROOT / name).read_text(),
+                    f"{name} differs between the repository root and the "
+                    "shipped skill; the shipped copy is the one recipients "
+                    "read",
+                )
+
+    def test_the_repository_license_is_the_one_it_claims(self) -> None:
+        """Apache-2.0, stated the same way everywhere it is stated.
+
+        The guide is acquisition material: it is cloned and copied into
+        proprietary repositories before any agreement exists, so it is
+        licensed permissively and separately from the AGPL-or-commercial SDK
+        it installs. That separation is the claim most easily lost in an edit,
+        and `traigent-skills` has already shipped the mistake of calling its
+        own Apache license "the same as the SDK".
+        """
+        license_text = (ROOT / "LICENSE").read_text()
+        self.assertIn("Apache License", license_text)
+        self.assertIn("Version 2.0, January 2004", license_text)
+        for section in (
+            "7. Disclaimer of Warranty",
+            "8. Limitation of Liability",
+            "9. Accepting Warranty or Additional Liability",
         ):
-            with self.subTest(phrase=phrase):
-                self.assertNotIn(phrase, readme)
+            with self.subTest(section=section):
+                self.assertIn(
+                    section,
+                    license_text,
+                    "the Apache text is abridged; a paraphrased warranty or "
+                    "liability section is not Apache-2.0",
+                )
+        self.assertNotIn("AFFERO", license_text.upper())
+
+        readme = " ".join((ROOT / "README.md").read_text().split())
+        self.assertIn("[Apache License 2.0](LICENSE)", readme)
+        self.assertIn("SPDX: `Apache-2.0`", readme)
+        self.assertIn(
+            "Apache-2.0 rights here grant no rights in the Traigent SDK",
+            readme,
+            "the README must keep the guide's license distinct from the "
+            "SDK's; conflating them is the sibling repository's live defect",
+        )
+
+    def test_shipped_code_files_carry_an_spdx_tag(self) -> None:
+        """A script lifted out of the directory still says what it is.
+
+        Scoped to code, and to code only. The guidance documents are governed
+        by the budget ledger in this file, and a per-file comment there spends
+        a resource reserved for what the assistant has to read; the
+        directory's LICENSE, NOTICE, and `SKILL.md` frontmatter carry the
+        terms for that material. `requirements-first-run.txt` is excluded on
+        the other side of the same reasoning: the check above it asserts that
+        file is exactly three pinned lines, because it is what the user
+        authorizes an install from, and a tag on three version pins is not
+        worth loosening that.
+        """
+        tagged = [
+            *sorted((SKILL_ROOT / "scripts").glob("*.py")),
+            *sorted((SKILL_ROOT / "agents").glob("*.yaml")),
+        ]
+        self.assertGreaterEqual(len(tagged), 4, "the shipped code set shrank")
+        for path in tagged:
+            with self.subTest(path=path.name):
+                head = "".join(path.read_text().splitlines(keepends=True)[:4])
+                self.assertIn("SPDX-License-Identifier: Apache-2.0", head)
+                self.assertIn("Copyright 2026 Traigent Ltd", head)
+
+    def test_skill_frontmatter_declares_the_license(self) -> None:
+        """The machine-readable half, matching the sibling skills repository."""
+        frontmatter = SKILL.read_text().split("---", 2)[1]
+        self.assertIn("license: Apache-2.0", frontmatter)
 
     def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())

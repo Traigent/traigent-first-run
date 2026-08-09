@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 interface:
   display_name: "Traigent Guided First Run"
   short_description: "Run an honest optimization from any starting point"

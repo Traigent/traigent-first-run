@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 """Static, zero-call preflight for a Traigent first run.
 
 This command reads local files and installed-package metadata only. It never imports

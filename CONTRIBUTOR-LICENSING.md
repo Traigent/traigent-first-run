@@ -1,38 +1,31 @@
-# Contributor Licensing and CLA Policy
+# Contributor Licensing
 
-Traigent uses dual licensing for the project:
+This repository is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
-- open-source releases are licensed under GNU Affero General Public License
-  v3.0 only (`AGPL-3.0-only`)
-- commercial licenses are available separately from Traigent
+## Inbound equals outbound
 
-To keep dual licensing viable, Traigent requires a signed Contributor License
-Agreement (CLA) before accepting non-trivial external contributions.
+Apache-2.0 supplies the grant. Under section 5, a contribution you deliberately submit for
+inclusion is licensed to Traigent under the same terms as the repository itself, unless you
+explicitly say otherwise. So a contribution here needs no separate agreement, and no signature
+gates a pull request.
 
-## Policy
+If you cannot make that grant - because your employer owns the work, or the code came from
+somewhere with its own terms - say so on the pull request before it is reviewed, rather than after.
 
-- External contributors must sign Traigent's current Individual CLA or
-  Corporate CLA before a pull request can be merged.
-- By opening a contribution, you confirm that you have the right to submit the
-  code and that it does not knowingly violate third-party rights.
-- Contributions accepted into the project may be distributed by Traigent under
-  the repository's open-source license and under separate commercial terms.
-- Traigent may decline or defer review of contributions until the CLA process is
-  complete.
+## What this replaces
 
-## Scope
+Until this file changed, the repository was AGPL-3.0-only or commercial, and it required a signed
+CLA so that dual licensing stayed possible: Traigent needed the right to relicense a contribution
+into the commercial branch. Apache-2.0 has no commercial branch to relicense into, so the CLA no
+longer buys anything and is gone.
 
-- This policy applies to pull requests and patch submissions from contributors
-  who are not acting under Traigent employment or a separate written services
-  agreement that already covers intellectual-property assignment or licensing.
-- Small corrections such as typo fixes may be handled case by case, but
-  Traigent reserves the right to require a CLA for any contribution.
+The Traigent SDK is a different repository under different terms, and its own contributor policy
+still applies there.
 
-## How To Proceed
+## Provenance
 
-- If you plan to contribute, contact `opensource@traigent.ai` to request the
-  current CLA paperwork.
-- If you are contributing on behalf of a company, indicate that up front so the
-  correct form can be provided.
+By opening a contribution you confirm you have the right to submit it and that it does not
+knowingly infringe third-party rights. Traigent may decline a contribution whose provenance is
+unclear.
 
-This file is a repository policy notice, not the CLA itself.
+Questions: `opensource@traigent.ai`.

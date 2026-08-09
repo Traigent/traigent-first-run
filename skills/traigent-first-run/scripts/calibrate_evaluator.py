@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 """Execute evaluator probes in an explicitly authorized child process.
 
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.

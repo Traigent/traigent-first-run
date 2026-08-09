@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Traigent Ltd
 """Classify every test in this repository by what it actually checks.
 
 The audit in traigent-first-run#214 rests on one table, and a table nobody can
