@@ -72,6 +72,30 @@ done the work. Do not soften that sentence, and do not oversell the other exit e
 is choosing between is a real demonstration on generated material today and a delay of unknown
 length. Proceeding is one keystroke, and it is what a user with nothing to point at should do.
 
+### When the gap is a shortfall
+
+Same question, same message, different sentence. What is short here is rows to compare on rather
+than a component, so name the count the score actually used, say where the offer stops, and say what
+accepting it costs:
+
+> Your dataset is here and I can run on it - 9 rows scored, so a difference between configurations
+> can come down to one lucky row. I can add generated examples up to 28 rows in total, the size this
+> walkthrough builds. That gives the search more to separate on, and it also makes most of the set
+> model-written, which lowers the ceiling on what the result may claim. Continue on the nine, add the
+> rest, or reply `I have it` with a path if there are rows I did not find.
+
+Three answers, not two, and the cost sits between the offer and them: a customer who is not told that
+a mostly-generated set claims less is being asked to agree to something they cannot weigh. Say it
+plainly and once - the dataset reference owns the arithmetic behind it.
+
+Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
+The wiring-check ceiling is the harder finding, and its sentence is the one above; the
+small-comparison-set ceiling is the softer, and its offer is put as a closer fit to real-world
+variety rather than a must-have, with continuing as is named first. The total goes in the sentence
+either way, as it does above. When the card stops asking there is nothing to offer, and a ceiling
+left standing over it is not a request. None of this applies while the card is blocked on an empty
+tuning split: the rows are there, the split is what is wrong, and more rows answer nothing.
+
 ### When a path arrives
 
 Read it before anything is built. Material the user points at is material this run did not create,

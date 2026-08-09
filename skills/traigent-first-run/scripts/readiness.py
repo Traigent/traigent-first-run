@@ -660,11 +660,32 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # Zero matched rows is the absence of that evidence, and the two conditions
     # already sit exactly on that line.
     "dataset-shape-unrecognised": "read-dataset",
-    "dataset-below-measurable-size": "get-data",
-    "dataset-coarse-resolution": "get-data",
+    # Not `get-data`, and the split is the whole of traigent-first-run#197.
+    # These two shared that slug with `dataset-absent`, and one remedy then
+    # meant "stop, there is nothing here" on one card and "carry on, this is
+    # narrow" on the next - measured on trunk `6de98918`, `get-data` blocked at
+    # `dataset-absent` and at zero comparable rows and proceeded at one through
+    # twenty-nine, so a consumer branching on `recommended_action` could not
+    # tell a project with no dataset from a project with a small one.
+    #
+    # They are not one instruction to a person either. "Go and collect
+    # examples" is a data-collection project; what these two want is a top-up,
+    # bounded at the walkthrough's own size, and this run can do it itself from
+    # material the project already has. `add-examples` is that instruction, and
+    # it never blocks, because every dataset that reaches it is one a real
+    # comparison can be made on.
+    "dataset-below-measurable-size": "add-examples",
+    "dataset-coarse-resolution": "add-examples",
     "dataset-no-expected-outputs": "label-data",
     "dataset-integrity-fail": "repair-dataset",
     "dataset-tune-holdout-overlap": "resplit-dataset",
+    # The other half of the #197 split, and the reason `add-examples` can be
+    # unconditional. Zero comparable rows was a second reading of
+    # `dataset-below-measurable-size`, distinguished only by a runtime flag; it
+    # is a different finding with a different remedy, so it is a different
+    # condition. `resplit-dataset` is the remedy because a declared split is
+    # the only way this state is reachable - see `power_ceiling`.
+    "dataset-tuning-split-empty": "resplit-dataset",
     "dataset-fully-synthetic": "connect-real-data",
     "dataset-mostly-synthetic": "connect-real-data",
     # Not `connect-real-data`. The dataset is *assumed* generated because no row
@@ -733,17 +754,24 @@ ROUTE_CATEGORY: dict[str, str] = {
     # remedy in the vocabulary that asks for an inspection rather than a
     # change.
     "dataset-shape-unrecognised": DIAGNOSTIC,
-    # Both route to `get-data` and they disagree about whether the run waits -
-    # `below-measurable-size` blocks and `coarse-resolution` does not. Both are
-    # classified by what the result IS (a real comparison, narrowly bounded)
-    # rather than by that disagreement, which is tracked separately: forcing
-    # the two into agreement breaks one side either way, and it is not this
-    # branch's call.
+    # Both scope a claim, and now both are advisory in every state they can be
+    # in, which they were not before #197. They used to share `get-data` with
+    # `dataset-absent` and `below-measurable-size` carried a second, blocking
+    # branch at zero comparable rows - so the category admitted both answers
+    # and the flag decided, which is the arrangement that let one remedy mean
+    # two things. The blocking branch is `dataset-tuning-split-empty` below
+    # now, and what is left here is one statement: a real comparison, narrowly
+    # bounded, whose ceiling is the whole of what it costs.
     "dataset-below-measurable-size": CLAIM_SCOPING,
     "dataset-coarse-resolution": CLAIM_SCOPING,
     "dataset-no-expected-outputs": CREATION_OR_REPAIR,
     "dataset-integrity-fail": CREATION_OR_REPAIR,
     "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
+    # A repair, and the same one its `resplit-dataset` sibling above names: the
+    # rows are fine and the line drawn through them is not, so the split is
+    # what is remade. Nothing was measured on the side the search compares on,
+    # which is why it may not scope a claim - there is no claim.
+    "dataset-tuning-split-empty": CREATION_OR_REPAIR,
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
@@ -896,11 +924,14 @@ ROUTE_CATEGORY: dict[str, str] = {
 # rise; #149 owns whether the run may proceed at all.
 #
 # Note for whoever revisits the values: `ACTION_FOR_CONDITION` does NOT give
-# this grouping for free, and it was checked. `get-data` is the remedy for
-# `dataset-absent` (20), `dataset-below-measurable-size` (74) and
-# `dataset-coarse-resolution` (89), which span the whole range - the remedy
-# vocabulary answers "what should the user do", not "how much of the result
-# survives", and those are different questions about the same condition.
+# this grouping for free, and it was checked. `add-examples` is the remedy for
+# `dataset-below-measurable-size` (74) and `dataset-coarse-resolution` (89),
+# and `resplit-dataset` for `dataset-tune-holdout-overlap` (50) and
+# `dataset-tuning-split-empty` (50) - the remedy vocabulary answers "what
+# should the user do", not "how much of the result survives", and those are
+# different questions about the same condition. #197 made every remedy agree
+# about whether the run WAITS; it did not make any of them predict a ceiling,
+# and the spread inside `add-examples` is why it never will.
 DATASET_ABSENT_CEILING = 20
 # Nothing was measured at all, so this is the floor of the scale: the lowest
 # ceiling any condition carries, and NOT READY however good the rest looks.
@@ -944,6 +975,20 @@ SPLIT_OVERLAP_CEILING = 50
 # Top of that band. Worse than the two above it because the result is not
 # merely absent or uninformative - it is flattered, and a believable wrong
 # number is the most expensive failure on this list.
+TUNING_SPLIT_EMPTY_CEILING = 50
+# Equal to the overlap it sits beside, and ranked after it, because the two are
+# the same defect read from opposite ends: a split that puts the same rows on
+# both sides, and a split that puts every scoreable row on one. Neither breaks
+# the material - the rows parse, they are labelled, and a disjoint line drawn
+# somewhere else through the same file is a run worth making.
+#
+# It belongs in this band and not the one below it, which is the placement
+# worth stating: nothing is missing and nothing is wrong. It clears
+# `evaluator-absent` (40) for that reason, and it does not reach
+# `fully-synthetic` (65) because a run that compares nothing is worse than one
+# that compares invented material. Before #197 this state was reported as
+# `dataset-below-measurable-size` at 74, in the "bounded claim" band, for a run
+# with no claim in it to bound.
 FULLY_SYNTHETIC_CEILING = 65
 # First of the "bounded claim" band. Nothing here was observed, so the run
 # measures the walkthrough; it clears 50 because the comparison it performs is
@@ -1045,6 +1090,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
+            ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
         ),
     ),
     (
@@ -1147,6 +1193,13 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-undeclared-provenance", "dataset-mostly-undeclared"),
     # Under ten comparable examples is also under thirty.
     ("dataset-below-measurable-size", "dataset-coarse-resolution"),
+    # Nothing scoreable on the tuning side is under ten and under thirty too,
+    # and it is what an absent, unreadable or unlabelled dataset leaves behind.
+    ("dataset-absent", "dataset-tuning-split-empty"),
+    ("dataset-shape-unrecognised", "dataset-tuning-split-empty"),
+    ("dataset-no-expected-outputs", "dataset-tuning-split-empty"),
+    ("dataset-tuning-split-empty", "dataset-below-measurable-size"),
+    ("dataset-tuning-split-empty", "dataset-coarse-resolution"),
 )
 
 # The other half of that declaration, and the half that was doing nothing.
@@ -1229,6 +1282,23 @@ class Cap:
     # "apply the walkthrough labeling rules", "scope the claim", "before a
     # correctness claim", and "call rankings exploratory". Those are sentences
     # about the claim, and a ceiling is how this module says them.
+    #
+    # THE RULE IS ONLY WORTH ANYTHING IF THE REMEDY PREDICTS IT, and until #197
+    # one did not. `get-data` was the route for three conditions and blocked in
+    # two of them, so the sentence above was a description of the table rather
+    # than a rule that generated it, and a consumer reading `recommended_action`
+    # was told to go and get data whether the run had stopped or not. What fixed
+    # it was splitting the remedy, not restating the rule: "there is no dataset"
+    # and "your dataset is small" are two instructions, and they are now two
+    # slugs. Every dataset remedy answers the waiting question the same way
+    # under all of its conditions, and a test reads this module to say so.
+    #
+    # One remedy is still both, and it is named rather than argued away:
+    # `vary-knobs`, where three caps report that the agent was looked at and
+    # holds nothing to search and a fourth reports that nothing about the agent
+    # reached this score at all. The reasoning for that pair is beside
+    # `NO_SEARCH_SPACE_ESTABLISHED_CAP`, and it is the agent pillar's question
+    # rather than this one's.
     blocks: bool = True
     # Whether the run proceeds AND the user is still asked something first.
     #
@@ -1246,11 +1316,25 @@ class Cap:
     # IS something to do first and doing it changes the answer key the run is
     # graded against.
     #
-    # Deliberately not set on every advisory ceiling. `dataset-coarse-
-    # resolution` bounds a claim and asks nothing: telling a customer with 25
-    # rows to `get-data` before their first run is the conflation `blocks` was
-    # added to end. This flag says the cap is a QUESTION, which is a property
-    # of `review-answer-key` and not of a size.
+    # Deliberately not set on every advisory ceiling: `dataset-fully-synthetic`
+    # bounds a claim and asks nothing, because a corpus that declares itself
+    # generated has already answered.
+    #
+    # A SIZE DOES ASK NOW, and this comment used to say the opposite - "this
+    # flag says the cap is a QUESTION, which is a property of `review-answer-
+    # key` and not of a size". That was true while the only thing to say about a
+    # small dataset was `get-data`, which is a data-collection project and not
+    # something a first run can offer to do. It is no longer what these caps
+    # say. `add-examples` is an offer this run can carry out itself, from
+    # material the project already has, bounded at `WALKTHROUGH_DATASET_ROWS` -
+    # and an offer with nobody asked is a substitution made on the customer's
+    # behalf, which is the thing the one ask at discovery exists to prevent.
+    #
+    # It is still a property of the remedy and not a preference per cap: both
+    # `add-examples` conditions declare the same expression, so the ask arrives
+    # exactly while the top-up has somewhere to go. Consent removes the stop and
+    # never the score - answering it changes what the dataset IS, and the rows
+    # it writes are scored as the generated rows they are.
     asks: bool = False
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -2076,8 +2160,61 @@ def knob_variation(
 WIRING_CHECK_EXAMPLES = 10
 COARSE_RESOLUTION_EXAMPLES = 30
 
+# The walkthrough's own dataset, as a number this module can compare against.
+#
+# NOT A THIRD THRESHOLD ON THE SAME LADDER. The two above decide what a result
+# may CLAIM, and they keep the planning bands `size_points` draws. This one
+# decides what this run may OFFER TO BUILD, and it is the one size the guide
+# already knows how to build: `references/evaluation-and-dataset.md` creates a
+# fully generated walkthrough at 18 tuning rows and 10 held back, and
+# `references/component-creation.md` reports it as prepared at that size. A
+# top-up that stopped anywhere else would be a number invented here for a
+# dataset the rest of the package builds to a different one.
+#
+# It is small on purpose and it is said out loud on the card for that reason. A
+# customer reading "this run can add examples" has to be able to see where the
+# adding stops, and the ceiling is 28 rows in total - not 28 more, not as many
+# as it takes, and nothing about the offer scales with the size of their
+# project. Above this count there is nothing to offer and the caps below stop
+# asking.
+#
+# The composition behind the two halves lives in the dataset reference, which
+# owns it; a test reads the numbers out of that document and asserts these
+# constants equal them, so the guide cannot restate the split and leave the
+# scorer offering a size nothing builds.
+WALKTHROUGH_TUNING_ROWS = 18
+WALKTHROUGH_HOLDOUT_ROWS = 10
+WALKTHROUGH_DATASET_ROWS = WALKTHROUGH_TUNING_ROWS + WALKTHROUGH_HOLDOUT_ROWS
 
-def power_ceiling(effective_n: int | None) -> Cap | None:
+
+def top_up_offer(effective_n: int) -> str:
+    """The one sentence both size caps end on, written once.
+
+    Two caps and one offer, so the wording cannot drift between the card a
+    customer with nine rows reads and the card a customer with twenty-five
+    reads. It names the total, both halves of it, and the fact that the total is
+    where it stops - the owner's constraint that this may not be read as an
+    open-ended offer to generate data.
+
+    Empty above the walkthrough's own size, because there is nothing left to
+    offer: a project with 28 comparable rows already has the split this guide
+    would build, and a card telling it that examples can be added to reach 28
+    is offering it what it is holding.
+    """
+    if effective_n >= WALKTHROUGH_DATASET_ROWS:
+        return ""
+    return (
+        f" This run can write generated examples up to {WALKTHROUGH_DATASET_ROWS} "
+        f"rows in total - {WALKTHROUGH_TUNING_ROWS} to tune on and "
+        f"{WALKTHROUGH_HOLDOUT_ROWS} held back, the size it builds for a project "
+        "with none - and stops there. It asks first, and rows it writes are "
+        "scored as generated."
+    )
+
+
+def power_ceiling(
+    effective_n: int | None, comparable_rows: int | None = None
+) -> Cap | None:
     """Bound claim strength using a pre-run sample-size planning band.
 
     Returns None outside the two small-set planning bands; that is not a claim
@@ -2085,42 +2222,79 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
     one, which is why #88 was blocked on #67: capping a number that under-states
     power for a reference-free judge would convert a soft under-claim into a
     hard, band-changing false verdict.
+
+    THE LADDER IS THE OWNER'S, and #197 is where it was written down: nothing to
+    compare stops the run, anything to compare does not, and below the size this
+    guide builds for itself the card offers to make up the difference. Three
+    conditions, three sentences, and each one is now the only thing its remedy
+    means.
+
+    TWO COUNTS, because the ceiling and the offer are about different things and
+    a single count got one of them wrong. `effective_n` is the tuning side - how
+    finely this comparison can resolve, which is what a ceiling bounds.
+    `comparable_rows` is the whole dataset, which is what an offer to write more
+    rows would add to, and the two differ exactly where a split is declared.
+    Asked of `effective_n`, the offer fired on the guide's own walkthrough
+    dataset: 28 rows split 18 to tune on and 10 held back has 18 on the tuning
+    side, so a project holding precisely what this run builds was offered rows
+    to reach a total it already had.
+
+    `comparable_rows` defaults to `effective_n` for a caller that has no wider
+    count to give, which is the honest reading of a dataset with no split: the
+    rows the comparison sees are the rows there are.
     """
     if effective_n is None:
         return None
+    comparable = effective_n if comparable_rows is None else comparable_rows
+    if effective_n == 0:
+        # Its own condition since #197, and not a second reading of the one
+        # below. Nothing can be compared at all, so there is no result to bound
+        # and no number a top-up would improve - the offer the other two carry
+        # would be answering a question this customer does not have.
+        #
+        # `resplit-dataset`, because a declared split is the only way to get
+        # here. Every other route to a zero is already named and routed
+        # elsewhere: no dataset is `dataset-absent`, no row matching the shape
+        # is `dataset-shape-unrecognised`, and no expected outputs anywhere is
+        # `dataset-no-expected-outputs`, which `score_dataset` suppresses this
+        # ceiling behind. What is left is a file whose rows parse and are
+        # labelled, cut so that the side the search compares on holds none of
+        # them.
+        return Cap(
+            "dataset-tuning-split-empty",
+            TUNING_SPLIT_EMPTY_CEILING,
+            "No row on the side of the split this run would compare on can be "
+            "scored, so there is nothing for the search to tell configurations "
+            "apart with. The rows are there; the line drawn through them is "
+            "what has to move.",
+        )
     if effective_n < WIRING_CHECK_EXAMPLES:
         return Cap(
             "dataset-below-measurable-size",
             WIRING_CHECK_CEILING,
             # The arithmetic IS the context. "Wiring check" told a reader
             # nothing; "one example is worth 17 points" tells them why a winner
-            # here may just have caught a lucky row. Guarded because a dataset
-            # can have rows and nothing scoreable, and 100/0 would take the
-            # scorer down on the one card that most needs to render.
-            (
-                f"only {effective_n} comparable example(s) - one example moves "
-                f"the score by about {100 / effective_n:.0f} points, so a "
-                "configuration can look better by winning a single row. Treat "
-                "any difference as a hint, not a result."
-                if effective_n
-                else "no example can be scored, so nothing can be compared."
-            ),
-            # The two reasons above are two different findings, and only one of
-            # them stops anything. With examples to compare on, this is the
-            # wiring check the guide itself sanctions - preflight WARNs rather
-            # than FAILs at this size, `size_points` calls it "a wiring check,
-            # not a score", and SKILL.md routes it to "call rankings
-            # exploratory, not stable comparisons". Blocking contradicted the
-            # cap's own last sentence on the same card: "treat any difference
-            # as a hint, not a result" is advice for a run that happens.
-            # Its 89-ceiling twin below already had this right.
-            #
-            # Zero scoreable examples is the other finding, and it keeps
-            # blocking: nothing can be compared at all, so there is no result
-            # to bound. That state is reachable with the aggregate label count
-            # non-zero - every label on one side of a declared split - where no
-            # other cap fires to stop it.
-            blocks=effective_n == 0,
+            # here may just have caught a lucky row.
+            f"only {effective_n} comparable example(s) - one example moves "
+            f"the score by about {100 / effective_n:.0f} points, so a "
+            "configuration can look better by winning a single row. Treat "
+            "any difference as a hint, not a result." + top_up_offer(comparable),
+            # Advisory in every state this condition can be in now. With
+            # examples to compare on, this is the wiring check the guide itself
+            # sanctions - preflight WARNs rather than FAILs at this size,
+            # `size_points` calls it "a wiring check, not a score", and SKILL.md
+            # routes it to "call rankings exploratory, not stable comparisons".
+            # Blocking contradicted the cap's own last sentence on the same
+            # card: "treat any difference as a hint, not a result" is advice for
+            # a run that happens. The zero it used to also cover is the branch
+            # above.
+            blocks=False,
+            # Nine rows is a run worth making and a long way from what the
+            # customer's traffic looks like, and both are true at once. The
+            # offer is what makes the second one actionable inside a first run,
+            # and it is put as a question because writing rows into someone's
+            # evaluation set without asking is a substitution.
+            asks=comparable < WALKTHROUGH_DATASET_ROWS,
         )
     if effective_n < COARSE_RESOLUTION_EXAMPLES:
         return Cap(
@@ -2132,9 +2306,15 @@ def power_ceiling(effective_n: int | None) -> Cap | None:
             # assistant reads - a card is glanced at, not studied.
             f"{effective_n} comparable examples is a small comparison set, so "
             "a small difference between configurations may be chance rather "
-            "than a real improvement.",
+            "than a real improvement." + top_up_offer(comparable),
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
+            # The same expression as its sibling above, deliberately: one
+            # remedy, one question, asked exactly while the top-up has room to
+            # go. Between the walkthrough's own size and thirty comparable rows
+            # this cap still bounds the claim and stops offering, because there
+            # is nothing left to add.
+            asks=comparable < WALKTHROUGH_DATASET_ROWS,
         )
     return None
 
@@ -3291,26 +3471,31 @@ def score_dataset(
             f"measured on the same rows the search used; {evidence}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
+    # The whole dataset, on the same scoreable footing the branches above use
+    # for their own side of a split. This is what a top-up would add to, and it
+    # is deliberately not the number the ceiling reads - see `power_ceiling`.
+    comparable_rows = scoreable(rows, labelled)
     # Deducting alone let the card say "a wiring check, not a score" and return
     # STRONG in the same breath (#88). The ceiling is what stops a result
     # presenting as trustworthy when nothing measurable was measured.
-    ceiling = power_ceiling(effective)
+    ceiling = power_ceiling(effective, comparable_rows)
     # A zero that the labels cap already owns is not a second finding.
     #
     # When rows exist and none carries an expected output, `effective` is zero
     # BECAUSE of that, and `dataset-no-expected-outputs` has already said so
     # and routed it to `label-data` - repair the rows the customer is holding.
-    # Appending the power ceiling here restated the same zero as
-    # `dataset-below-measurable-size`, whose remedy is `get-data`: the card
-    # carried two FIX lines for one fact, and the second told a customer with
-    # 50 perfectly good inputs to go and collect examples. That is the defect
-    # this file already fixed for `dataset-shape-unrecognised`, one condition
-    # over.
+    # Appending the power ceiling here restated the same zero as a second
+    # condition: the card carried two FIX lines for one fact, and the second
+    # told a customer with 50 perfectly good inputs to go and collect examples.
+    # That is the defect this file already fixed for
+    # `dataset-shape-unrecognised`, one condition over.
     #
-    # Suppressing it moves no number: 30 is below the 74 ceiling, so the labels
-    # cap is the operative one either way and the run stays blocked. When the
-    # zero has any other source - an empty side of a declared split - nothing
-    # else has named it, so the ceiling still fires.
+    # Suppressing it moves no number: 30 is below the 50 ceiling
+    # `dataset-tuning-split-empty` carries, so the labels cap is the operative
+    # one either way and the run stays blocked. When the zero has any other
+    # source - an empty side of a declared split, which since #197 is the only
+    # one left - nothing else has named it, so the ceiling still fires, and its
+    # remedy is the split rather than the rows.
     if ceiling is not None and not (effective == 0 and unlabelled_capped):
         caps.append(ceiling)
 

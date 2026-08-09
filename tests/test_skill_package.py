@@ -10965,7 +10965,11 @@ class SkillPackageTests(unittest.TestCase):
         # two.
         # #177 then added `dataset-unsound-expected-outputs`, the row-level
         # sanity check's one ceiling, which is the fourteenth.
-        self.assertEqual(len(conditions), 14)
+        # #197 added `dataset-tuning-split-empty` as the fifteenth: the state
+        # where no row on the tuning side can be scored, which used to travel
+        # as a runtime branch of the small-dataset cap and is a different
+        # finding with a different repair.
+        self.assertEqual(len(conditions), 15)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -11009,6 +11013,13 @@ class SkillPackageTests(unittest.TestCase):
             # bullets: #149 gave `below-measurable-size` a second, blocking
             # half that a merged bullet cannot carry, so `.index()` on one
             # shared phrase would find the earlier bullet for both.
+            # Its own bullet since #197, and it must say the two things the
+            # small-dataset bullet used to have to carry as a second half: the
+            # repair is the split, and nobody is sent for data.
+            (
+                "dataset-tuning-split-empty",
+                "the rows are fine and the split is not",
+            ),
             (
                 "dataset-below-measurable-size",
                 "more comparable examples is what lifts this",
@@ -11055,11 +11066,20 @@ class SkillPackageTests(unittest.TestCase):
             "ceiling is advisory and there is no repair to route",
             normalized,
         )
+        sites = cap_construction_blocks(
+            source, READINESS.Cap.__dataclass_fields__["blocks"].default
+        )
         blocking = {
             "dataset-absent",
             "dataset-no-expected-outputs",
             "dataset-integrity-fail",
             "dataset-tune-holdout-overlap",
+            # #197's fifteenth condition, and it belongs here rather than in
+            # `conditional` below because it has one reading only: no row on
+            # the compared side can be scored, so there is no result to bound
+            # and the repair is the split. It is what the small-dataset cap's
+            # blocking half became when the two findings were separated.
+            "dataset-tuning-split-empty",
         }
         scoping = {
             "dataset-fully-synthetic",
@@ -11083,6 +11103,11 @@ class SkillPackageTests(unittest.TestCase):
             # the run proceeds meanwhile.
             "dataset-mostly-generated-answer-key",
             "dataset-coarse-resolution",
+            # Moved out of `conditional` by #197. Its blocking half was the
+            # zero-comparable-rows state, which is now its own condition, and
+            # what is left scopes a claim in every reading: a real comparison
+            # on few rows, whose ceiling is the whole of what it costs.
+            "dataset-below-measurable-size",
             # #177's row-level sanity check. It scopes for the plainest reason
             # on this list: the finding is the assistant's own reading of the
             # customer's answer key, and an opinion that can be wrong may bound
@@ -11092,20 +11117,36 @@ class SkillPackageTests(unittest.TestCase):
             # "bounded, not stopped".
             "dataset-unsound-expected-outputs",
         }
-        # The third category, and the reason it has to exist: one condition
-        # decides at runtime. `dataset-below-measurable-size` is advisory with
-        # examples to compare on and blocks with none, so it belongs in neither
-        # set above, and the routing bullet has to carry both halves - the same
-        # shape `agent-no-varying-knobs` was given by the sibling test below.
-        conditional = {"dataset-below-measurable-size"}
+        # The third category, derived rather than listed, and empty since #197.
+        #
+        # It held `dataset-below-measurable-size`, which was advisory with
+        # examples to compare on and blocked with none - two verdicts from one
+        # bullet, which the reader had to classify per card. Separating the two
+        # findings into two conditions emptied it, and the emptiness is what
+        # this test now asserts rather than a name.
+        #
+        # Read off the module instead of written down, so the both-halves rule
+        # below is not dead code: a condition that acquires a runtime `blocks`
+        # again lands here by itself, and its bullet is held to carrying both
+        # readings the same day. `agent-no-varying-knobs` is the same shape and
+        # is checked by the sibling test below.
+        conditional = {
+            condition
+            for condition in conditions
+            if sites[condition] not in ({"True"}, {"False"})
+        }
+        self.assertEqual(
+            conditional,
+            set(),
+            f"{sorted(conditional)} decide whether the run waits at runtime, "
+            "so one bullet has to teach a reader both readings; #197 removed "
+            "the last of them by giving each finding its own condition",
+        )
         # #144's condition: the remedy is one look at the file, so it is
         # neither a repair nor a scope. It stops the run - nothing was
         # measured - but the card may not call the file broken.
         diagnostic = {"dataset-shape-unrecognised"}
         self.assertEqual(blocking | scoping | conditional | diagnostic, conditions)
-        sites = cap_construction_blocks(
-            source, READINESS.Cap.__dataclass_fields__["blocks"].default
-        )
         # The universal claim this paragraph used to make - "a route that only
         # scopes what the result may claim never blocks" - was false the day it
         # was written, and SKILL.md contradicted it twenty-five lines later in
@@ -15798,3 +15839,146 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
+    """A small dataset is a shortfall, and a shortfall is not a second question.
+
+    #213 folded every MISSING component into one question at discovery. #197
+    adds the other half - a dataset that exists and is too small to compare on -
+    and the whole risk is that it arrives as a prompt of its own. Two questions
+    in two turns are individually defensible and together are the form that ask
+    was introduced to abolish.
+
+    The other rule these keep is the owner's: say the total. An offer to write
+    more examples that names no number is read as an offer to generate without
+    end, and that is a worry about somebody's bill.
+    """
+
+    ASK = "#### One ask for every gap"
+    ASK_END = "### 3. Complete the system"
+
+    def _ask(self) -> str:
+        text = SKILL.read_text()
+        return text.split(self.ASK, 1)[1].split(self.ASK_END, 1)[0]
+
+    def test_the_shortfall_is_folded_into_the_question_already_being_asked(
+        self,
+    ) -> None:
+        section = self._ask()
+        normalized = " ".join(section.casefold().split())
+        # Still one question, which is the sibling class's rule and is the one
+        # this addition is most likely to break.
+        self.assertEqual(section.count("?"), 0)
+        self.assertIn("never as a second one", normalized)
+        self.assertIn("what it found too little of", normalized)
+        # And the answer is theirs: a decline is a named outcome rather than a
+        # thing the flow works around.
+        # The answer is theirs, and the third answer is named where the
+        # enumeration above it lists the other two.
+        self.assertIn("keeping what they brought is the third", normalized)
+
+    def test_the_total_is_stated_and_the_offer_ends_at_it(self) -> None:
+        normalized = " ".join(self._ask().casefold().split())
+        walkthrough = READINESS.WALKTHROUGH_DATASET_ROWS
+        self.assertIn(f"fewer rows than this run's own **{walkthrough}**", normalized)
+        self.assertIn("the bound is spoken", normalized)
+        # The reason the number is compulsory, stated where the number is, so
+        # an editor removing the figure meets the argument for it.
+        self.assertIn("generate without end", normalized)
+
+    def test_consent_is_told_what_it_does_not_buy(self) -> None:
+        """The rule established for provenance, applied to the same shape.
+
+        Agreeing removes the stop and not the score. The flow says so, and the
+        scorer is asked rather than quoted: the rows a top-up writes are
+        generated rows, and a generated row is worth strictly less than a
+        collected one wherever it came from.
+        """
+        normalized = " ".join(self._ask().casefold().split())
+        # Not "removes the stop": these caps never block, so there is no
+        # stop for an answer to remove, and the flow said otherwise while
+        # its own routing bullet three hundred lines down said the run is
+        # worth making. What consent does change is nothing.
+        self.assertNotIn("removes the stop", normalized)
+        self.assertIn("changes what the dataset is, never what it earns", normalized)
+        self.assertIn("score as the generated rows they are", normalized)
+        # And the half a customer cannot weigh without being told: a
+        # topped-up short dataset is mostly generated, so accepting the
+        # offer lowers the ceiling rather than raising the score.
+        self.assertIn("accepting lowers the ceiling", normalized)
+        self.assertLess(
+            READINESS.SYNTHESISED_ROW_POINTS, READINESS.COLLECTED_ROW_POINTS
+        )
+
+    def test_the_size_the_offer_stops_at_is_the_split_the_guide_builds(
+        self,
+    ) -> None:
+        """The scorer's number, read out of the document that owns the split.
+
+        `WALKTHROUGH_DATASET_ROWS` is a constant in a script and the split it
+        stands for is a decision in a reference. Greping the figure out of the
+        prose would only prove somebody wrote it; this reads the composition
+        the guide actually builds to and requires the module to agree with it,
+        so the two cannot drift into offering a size nothing constructs.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        generated = re.search(
+            r"create (\d+) examples by default: (\d+) tuning rows", dataset
+        )
+        self.assertIsNotNone(
+            generated,
+            "the walkthrough dataset's own size is no longer stated where the "
+            "reader meets it, so nothing here can check what the offer stops at",
+        )
+        total, tuning = (int(group) for group in generated.groups())
+        reserved = re.search(r"reserve (\d+) held-out rows", dataset)
+        self.assertIsNotNone(reserved)
+        holdout = int(reserved.group(1))
+        self.assertEqual(tuning + holdout, total, "the two halves do not sum")
+        self.assertEqual(READINESS.WALKTHROUGH_TUNING_ROWS, tuning)
+        self.assertEqual(READINESS.WALKTHROUGH_HOLDOUT_ROWS, holdout)
+        self.assertEqual(READINESS.WALKTHROUGH_DATASET_ROWS, total)
+
+    def test_the_wording_and_the_end_of_the_offer_live_in_one_reference(
+        self,
+    ) -> None:
+        """Depth where CLAUDE.md sends it, and the point above which it stops.
+
+        The flow states the mandate and the bound. How urgently each size is
+        put, and the size at which there is nothing left to offer, belong to
+        the reference that already owns the wording of the question they ride
+        on - stated once there rather than twice.
+        """
+        text = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        self.assertIn("### When the gap is a shortfall", text)
+        # Blockquote markers stripped per line, the way the sibling class reads
+        # the same file: the sentence a user hears is quoted, so a phrase that
+        # spans a wrapped quote line otherwise carries a `>` through it.
+        creation = " ".join(
+            " ".join(line.lstrip("> ") for line in text.casefold().splitlines()).split()
+        )
+        for clause in (
+            "can come down to one lucky row",
+            "lowers the ceiling on what the result may claim",
+            "three answers, not two",
+            "rather than a must-have",
+            "with continuing as is named first",
+            "the total goes in the sentence either way",
+            "when the card stops asking there is nothing to offer",
+            "a ceiling left standing over it is not a request",
+            "none of this applies while the card is blocked on an empty tuning split",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, creation)
+        # The urgency split is stated once. It was in the flow as well while
+        # this was drafted, which is a rule with two homes and about four
+        # hundred resident bytes.
+        self.assertNotIn(
+            "rather than a must-have", " ".join(SKILL.read_text().casefold().split())
+        )

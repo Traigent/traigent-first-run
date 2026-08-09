@@ -585,6 +585,15 @@ class DatasetScoringTests(unittest.TestCase):
         split. That removed the fixture's zero without removing the rule the
         fixture is about, so the zero moves to a split half that still sets
         the comparison's resolution.
+
+        #197 gave that zero a condition of its own. It travelled as a second
+        reading of `dataset-below-measurable-size`, told apart from the first
+        only by a runtime flag, which is what let one remedy mean both "stop"
+        and "carry on" about the same instruction. The finding this fixture
+        reaches is unchanged and so is the ceiling firing at all; what moved is
+        the name, the remedy, and the number - `resplit-dataset` at 50, because
+        the rows here are real, labelled and readable and it is the line drawn
+        through them that leaves nothing to compare on.
         """
         _, caps = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -597,7 +606,15 @@ class DatasetScoringTests(unittest.TestCase):
                 holdout_labelled_rows=30,
             )
         )
-        self.assertIn("dataset-below-measurable-size", [cap.condition for cap in caps])
+        raised = {cap.condition: cap for cap in caps}
+        self.assertIn("dataset-tuning-split-empty", raised)
+        cap = raised["dataset-tuning-split-empty"]
+        self.assertTrue(cap.blocks)
+        self.assertEqual(cap.action_kind, "resplit-dataset")
+        self.assertEqual(cap.ceiling, MODULE.TUNING_SPLIT_EMPTY_CEILING)
+        # And it does not also arrive as the small-dataset finding, which is
+        # the two-FIX-lines-for-one-fact defect this file already fixed once.
+        self.assertNotIn("dataset-below-measurable-size", raised)
 
     def test_fully_synthetic_dataset_is_capped_however_good(self) -> None:
         facts = MODULE.DatasetFacts(
@@ -4245,14 +4262,25 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         here. `FULLY_SYNTHETIC_CAP` takes its place, which keeps the pair the
         test was built to compare - two conditions with unrelated remedies,
         because a rule proven on one advisory cap is a rule about that cap.
+
+        The size fixture is 28 comparable rows and not 15, because #197 made a
+        size below that one ASK - it offers to write the difference up to the
+        walkthrough's own total - and a cap that asks is a cap the report is
+        supposed to route. That is the sibling case below. What is asserted
+        here is still the same rule on the same condition: a ceiling that
+        bounds a claim and asks for nothing prints no fix.
         """
         pillars = [
             MODULE.Pillar(name=name, score=95, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
-        for cap in (MODULE.FULLY_SYNTHETIC_CAP, MODULE.power_ceiling(15)):
+        for cap in (
+            MODULE.FULLY_SYNTHETIC_CAP,
+            MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS),
+        ):
             with self.subTest(cap=cap.condition):
                 self.assertFalse(cap.blocks)
+                self.assertFalse(cap.asks)
                 report = MODULE.render_markdown(
                     MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
                 )
@@ -5164,6 +5192,14 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 25: ["evaluator-invalid", "dataset-shape-unrecognised"],
                 40: ["evaluator-absent", "evaluator-unresolved"],
                 45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                # One split defect read from each end: the same rows on both
+                # sides, and every scoreable row on one. Neither breaks the
+                # material and both leave the run comparing nothing, so they
+                # bound the claim by the same amount. The overlap is ranked
+                # first because it is the older and broader finding - a leaky
+                # split is wrong wherever the rows fall - while the empty
+                # tuning side is one arrangement of the same line.
+                50: ["dataset-tune-holdout-overlap", "dataset-tuning-split-empty"],
                 # The declared/silent pair. Identical ceilings deliberately -
                 # the assumption IS "generated" either way - and the declared
                 # one is ranked first because what differs is the remedy, which
@@ -5583,7 +5619,12 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
             [("dataset-below-measurable-size", False)],
         )
         self.assertEqual(score.status, "OK")
-        self.assertEqual(score.recommended_action, "proceed")
+        # Bounded, not blocked - and since #197 routed, because at this size
+        # there is something this run can do about it that does not involve
+        # sending anyone away for data. 18 comparable rows is under the
+        # walkthrough's own total, so the payload carries the offer.
+        self.assertTrue(score.caps[0].asks)
+        self.assertEqual(score.recommended_action, "add-examples")
         self.assertEqual(score.overall, MODULE.WIRING_CHECK_CEILING)
 
     def test_a_split_with_nothing_scoreable_still_blocks(self) -> None:
@@ -5596,10 +5637,13 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         score = self._score(_clean_dataset(labelled_rows=120, tuning_labelled_rows=0))
         self.assertEqual(
             [(cap.condition, cap.blocks) for cap in score.caps],
-            [("dataset-below-measurable-size", True)],
+            [("dataset-tuning-split-empty", True)],
         )
         self.assertEqual(score.status, "BLOCKED")
-        self.assertEqual(score.recommended_action, "get-data")
+        # `resplit-dataset` since #197, and the remedy is the finding: the
+        # rows are there and labelled, so `get-data` was sending a customer
+        # holding 120 usable examples away to collect more.
+        self.assertEqual(score.recommended_action, "resplit-dataset")
 
     def test_a_condition_asking_for_a_creation_or_repair_still_blocks(self) -> None:
         """The other half of the rule, so this is a partition and not a purge.
@@ -5648,10 +5692,18 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         Both fixtures here are the third state: a ceiling that bounds a claim
         and asks the user for nothing. `dataset-fully-synthetic` routes to
         `connect-real-data`, which is a scope on the claim rather than an
-        errand, and `dataset-coarse-resolution` routes to `get-data`, which is
-        the case this test was written for - telling a customer with 30 rows to
-        go and get more before their first run is the conflation `blocks` was
-        added to end.
+        errand, and `dataset-coarse-resolution` routes to `add-examples`, which
+        is the case this test was written for - telling a customer with a
+        working dataset to go and get more before their first run is the
+        conflation `blocks` was added to end.
+
+        The size fixture holds 58 rows split 29 and 29, and both halves of that
+        matter. 29 keeps the comparison under thirty, so the resolution ceiling
+        still fires and there is a cap to assert about; and 58 comparable rows
+        is above the walkthrough's own total, so #197's offer to write the
+        difference has nothing to offer and this cap asks nothing. Below that
+        total the same condition asks, and the sibling test below is where that
+        belongs.
 
         `dataset-generated-answer-key` used to be a third fixture here and is
         not one any more; it moved to the sibling below when it began to ask.
@@ -5661,15 +5713,15 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
                 collected_rows=0, synthesised_rows=240, sources=("synthetic",)
             ),
             _clean_dataset(
-                rows=30,
-                labelled_rows=30,
-                tuning_rows=15,
-                holdout_rows=15,
-                tuning_labelled_rows=15,
-                holdout_labelled_rows=15,
-                difficulty_tagged_rows=30,
-                collected_rows=30,
-                answerable_rows=30,
+                rows=58,
+                labelled_rows=58,
+                tuning_rows=29,
+                holdout_rows=29,
+                tuning_labelled_rows=29,
+                holdout_labelled_rows=29,
+                difficulty_tagged_rows=58,
+                collected_rows=58,
+                answerable_rows=58,
             ),
         ):
             score = self._score(facts)
@@ -6296,8 +6348,12 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
                 pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS)
             ).recommended_action
 
-        advisory = MODULE.power_ceiling(15)
+        # At the walkthrough's own size: still the coarse-resolution ceiling,
+        # and since #197 no longer an offer to add rows, so it is the advisory
+        # cap this test needs - one that neither blocks nor asks.
+        advisory = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS)
         self.assertFalse(advisory.blocks)
+        self.assertFalse(advisory.asks)
         self.assertEqual(action_for([]), MODULE.PROCEED)
         self.assertEqual(action_for([advisory]), MODULE.PROCEED)
 
@@ -7410,16 +7466,23 @@ class RowLevelSanityTests(unittest.TestCase):
     def test_a_ceiling_that_asks_nothing_still_recommends_nothing(self) -> None:
         """The false-red direction, and the conflation this must not restore.
 
-        A small dataset is bounded and has no question behind it. Telling a
-        customer with 25 rows to go and get more before their first run is the
-        defect `blocks` was added to end, so an advisory ceiling that does not
-        ask keeps `proceed`.
+        A dataset the run cannot add to is bounded and has no question behind
+        it. Telling a customer to go and get more data before their first run
+        is the defect `blocks` was added to end, so an advisory ceiling that
+        does not ask keeps `proceed`.
+
+        The count is the walkthrough's own total. Below it #197 turns this cap
+        into an offer to write the difference, which is a question and is
+        routed as one by the sibling test; at it and above there is nothing to
+        offer, the ceiling still stands on the resolution, and this is the
+        false-red direction that must stay silent.
         """
         pillars = [
             MODULE.Pillar(name=name, score=90, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
-        advisory = MODULE.power_ceiling(25)
+        advisory = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS)
+        self.assertEqual(advisory.condition, "dataset-coarse-resolution")
         self.assertFalse(advisory.blocks)
         self.assertFalse(advisory.asks)
         score = MODULE.aggregate(pillars, [advisory], (), dict(MODULE.DEFAULT_WEIGHTS))
@@ -7958,3 +8021,208 @@ class AbsentAndConsentedIsNotTheSameAsBrokenTests(unittest.TestCase):
                     MODULE.recommended_action([found[condition]]),
                     found[condition].action_kind,
                 )
+
+
+class TheDatasetSizeLadderTests(unittest.TestCase):
+    """One remedy per verdict, and an offer bounded at the size we build (#197).
+
+    Three conditions used to emit `get-data`. Measured through `power_ceiling`
+    on trunk `6de98918`: it blocked for an absent dataset, blocked at zero
+    comparable rows, and proceeded from one row to twenty-nine. So a consumer
+    switching on `recommended_action` could not tell "there is no dataset" from
+    "your dataset is small", and a person reading the card got one instruction
+    whose meaning was decided by a field beside it.
+
+    The fix is the remedy, not a restatement of the rule: two instructions, two
+    slugs, and a third condition for the finding that was travelling inside the
+    first one as a runtime branch. What these assert is the owner's table -
+    nothing to compare stops, anything to compare does not, and below the size
+    this guide builds for a project with none the card offers the difference.
+    """
+
+    def test_the_ladder_is_the_one_the_owner_drew(self) -> None:
+        """Every rung, executed, with no declared split so the counts agree.
+
+        Written as the whole table rather than as a rung per test, because the
+        defect was never in one rung: it was in two rungs disagreeing, which
+        only a table can state.
+        """
+        walkthrough = MODULE.WALKTHROUGH_DATASET_ROWS
+        expected = {
+            0: ("dataset-tuning-split-empty", "resplit-dataset", True, False),
+            1: ("dataset-below-measurable-size", "add-examples", False, True),
+            9: ("dataset-below-measurable-size", "add-examples", False, True),
+            10: ("dataset-coarse-resolution", "add-examples", False, True),
+            walkthrough - 1: ("dataset-coarse-resolution", "add-examples", False, True),
+            walkthrough: ("dataset-coarse-resolution", "add-examples", False, False),
+            29: ("dataset-coarse-resolution", "add-examples", False, False),
+        }
+        for count, (condition, remedy, blocks, asks) in sorted(expected.items()):
+            with self.subTest(comparable=count):
+                cap = MODULE.power_ceiling(count)
+                self.assertIsNotNone(cap, "a size under thirty raises a ceiling")
+                self.assertEqual(
+                    (cap.condition, cap.action_kind, cap.blocks, cap.asks),
+                    (condition, remedy, blocks, asks),
+                )
+        # And the top of the ladder, where nothing is raised at all.
+        for count in (MODULE.COARSE_RESOLUTION_EXAMPLES, 200):
+            with self.subTest(comparable=count):
+                self.assertIsNone(MODULE.power_ceiling(count))
+
+    def test_every_dataset_remedy_gives_one_answer_about_waiting(self) -> None:
+        """The defect stated as the property that refuses it.
+
+        Read off the module rather than listed here: every condition that
+        shares a remedy is built and its `blocks` compared, so a fifteenth cap
+        added to an existing slug with the opposite verdict fails on arrival.
+
+        `vary-knobs` is excluded and named rather than quietly skipped. Three of
+        its caps report an agent that was looked at and holds nothing to search
+        and a fourth reports that nothing about the agent reached the score at
+        all; that pair is the agent pillar's question and is recorded beside
+        `NO_SEARCH_SPACE_ESTABLISHED_CAP`, not settled here.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        declared = cap_construction_field(
+            source, "blocks", MODULE.Cap.__dataclass_fields__["blocks"].default
+        )
+        by_remedy: dict[str, dict[str, set]] = {}
+        for condition, values in declared.items():
+            if condition == "agent-no-varying-knobs":
+                continue
+            remedy = MODULE.ACTION_FOR_CONDITION[condition]
+            by_remedy.setdefault(remedy, {})[condition] = values
+        shared = {
+            remedy: group for remedy, group in by_remedy.items() if len(group) > 1
+        }
+        self.assertIn("add-examples", shared, "the split remedy lost a sibling")
+        self.assertIn("resplit-dataset", shared, "the blocking pair lost a sibling")
+        for remedy, group in sorted(shared.items()):
+            with self.subTest(remedy=remedy):
+                answers = {value for values in group.values() for value in values}
+                self.assertEqual(
+                    len(answers),
+                    1,
+                    f"the conditions routing to {remedy!r} disagree about "
+                    f"whether the run waits: "
+                    f"{ {c: sorted(v) for c, v in sorted(group.items())} } - one "
+                    "instruction that means stop on one card and carry on on "
+                    "the next is what #197 was filed about",
+                )
+        self.assertEqual(
+            {c for c, r in MODULE.ACTION_FOR_CONDITION.items() if r == "get-data"},
+            {"dataset-absent"},
+            "`get-data` carries a second condition again; it is the one remedy "
+            "that means the customer has to go and find data this run cannot "
+            "write, so anything a top-up would fix does not belong on it",
+        )
+
+    def test_the_offer_stops_at_the_size_this_guide_builds(self) -> None:
+        """The owner's messaging constraint, checked on the printed sentence.
+
+        The bound has to be a number on the card. An offer to add examples that
+        names no total reads as an offer to generate without end, which is the
+        one thing a customer must not be left imagining about their bill.
+        """
+        offered = MODULE.power_ceiling(9).reason
+        self.assertIn(f"{MODULE.WALKTHROUGH_DATASET_ROWS} rows in total", offered)
+        self.assertIn(f"{MODULE.WALKTHROUGH_TUNING_ROWS} to tune on", offered)
+        self.assertIn(f"{MODULE.WALKTHROUGH_HOLDOUT_ROWS} held back", offered)
+        self.assertIn("stops there", offered)
+        self.assertIn("asks first", offered)
+        # Nothing in it scales with the customer's project, and no phrasing
+        # leaves the total open. Both are checked on the words, because both
+        # are how a bounded offer is misread as an unbounded one.
+        for unbounded in ("as many", "more rows", "up to date", "each row"):
+            with self.subTest(phrase=unbounded):
+                self.assertNotIn(unbounded, offered)
+        # THE FALSE-RED DIRECTION. At and above that size there is nothing to
+        # offer, so the sentence is absent rather than reworded - a project
+        # holding what this run builds must not be offered it.
+        settled = MODULE.power_ceiling(MODULE.WALKTHROUGH_DATASET_ROWS).reason
+        self.assertNotIn("generated examples", settled)
+        self.assertNotIn("rows in total", settled)
+        # Not `assertNotIn("28")`: at exactly this size the sentence opens with
+        # the count, so the digits are in it for an unrelated reason and that
+        # assertion would have been a spelling check on the wrong string.
+        self.assertTrue(settled.startswith(f"{MODULE.WALKTHROUGH_DATASET_ROWS} "))
+
+    def test_the_ceiling_reads_the_split_and_the_offer_reads_the_dataset(
+        self,
+    ) -> None:
+        """Two counts, and the fixture that proved they cannot be one.
+
+        The guide's own walkthrough dataset is 28 rows cut 18 to tune on and 10
+        held back. Asked of the tuning side alone, the offer fired on it: a
+        project holding exactly what this run builds was offered rows to reach
+        a total it already had. The ceiling still reads the tuning side,
+        because resolution is a property of the comparison and not of the file.
+        """
+        cap = MODULE.power_ceiling(
+            MODULE.WALKTHROUGH_TUNING_ROWS, MODULE.WALKTHROUGH_DATASET_ROWS
+        )
+        self.assertEqual(cap.condition, "dataset-coarse-resolution")
+        self.assertFalse(cap.asks, "the walkthrough's own dataset was offered a top-up")
+        # And the reverse: a small dataset whose split leaves fewer rows on the
+        # tuning side is still one small dataset, so the offer fires once on
+        # what the file holds.
+        asked = MODULE.power_ceiling(9, 12)
+        self.assertTrue(asked.asks)
+        self.assertIn("only 9 comparable example(s)", asked.reason)
+
+    def test_a_split_with_nothing_scoreable_is_a_split_repair(self) -> None:
+        """Reached through `score_dataset`, so the branch is proved reachable.
+
+        The state is a real one and no other cap stops it: every label on one
+        side of a declared split, so the aggregate count is non-zero and
+        `dataset-no-expected-outputs` never fires. What #197 changes is that
+        the card names the split rather than asking a customer holding 120
+        labelled rows to go and collect examples.
+        """
+        _, caps = MODULE.score_dataset(
+            _clean_dataset(labelled_rows=120, tuning_labelled_rows=0)
+        )
+        raised = {cap.condition: cap for cap in caps}
+        self.assertIn("dataset-tuning-split-empty", raised)
+        cap = raised["dataset-tuning-split-empty"]
+        self.assertTrue(cap.blocks)
+        self.assertFalse(cap.asks)
+        self.assertEqual(cap.action_kind, "resplit-dataset")
+        self.assertEqual(cap.ceiling, MODULE.TUNING_SPLIT_EMPTY_CEILING)
+        self.assertEqual(
+            MODULE.ROUTE_CATEGORY["dataset-tuning-split-empty"],
+            MODULE.CREATION_OR_REPAIR,
+        )
+        # It is ranked below the sizes it implies and above the conditions that
+        # imply it, which is the ordering rule with a derivation behind it.
+        self.assertLess(cap.ceiling, MODULE.WIRING_CHECK_CEILING)
+        self.assertLess(cap.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
+        self.assertGreater(cap.ceiling, MODULE.DATASET_NO_EXPECTED_OUTPUTS_CEILING)
+        # THE FALSE-RED DIRECTION. Move the labels back onto the tuning side
+        # and nothing here fires: this cap is about an empty side, not about a
+        # declared split.
+        _, healthy = MODULE.score_dataset(_clean_dataset())
+        self.assertNotIn(
+            "dataset-tuning-split-empty", [cap.condition for cap in healthy]
+        )
+
+    def test_consent_removes_the_stop_and_never_the_score(self) -> None:
+        """The rule the ask is allowed to change, and the one it is not.
+
+        Structural, the way #213 asserted the same rule for provenance: the
+        scorer takes no consent input at all, so no answer at the ask can reach
+        the arithmetic. A topped-up dataset scores what its rows score.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        for word in ("consent", "agreed", "approval", "permission"):
+            with self.subTest(word=word):
+                self.assertNotIn(f'"--{word}', source)
+        # The rows a top-up writes are generated rows and are priced as such,
+        # so agreeing cannot pay: the credit for a synthesised row is below the
+        # credit for a collected one, and the generated ceiling still binds.
+        self.assertLess(MODULE.SYNTHESISED_ROW_POINTS, MODULE.COLLECTED_ROW_POINTS)
+        band, _limited = MODULE.band_for(MODULE.FULLY_SYNTHETIC_CEILING, 1.0, 1.0)
+        self.assertLess(
+            MODULE.BAND_ORDER.index(band), MODULE.BAND_ORDER.index("STRONG")
+        )
