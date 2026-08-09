@@ -2,7 +2,7 @@
 
 follows: 0023
 total-ceiling: 325_850
-total-measured: 325_774
+total-measured: 325_792
 
 The dominance line moved from a share of the rows to a distance above chance,
 and the glossary entry describing it did not survive the move. It spelled out
@@ -27,17 +27,22 @@ that it was skipped and not that it was cleared. Every other unmeasured result
 in this package says so out loud; a new one that stayed quiet would be the same
 defect wearing a newer rule.
 
-The figure was restated once, and the reason is worth recording because it is
-the same defect the passage exists to prevent. A first draft closed by saying
-free-text answers report as not checked, full stop. That is not what the check
-does: an answer covering nine rows in ten is a ceiling whoever wrote the rows,
-so it is still flagged there, and the sentence would have promised silence the
-card does not deliver. Two more lines buy the exception, and the alternative was
-a customer reading a rule that contradicts their own result.
+The figure was restated twice, and both reasons are worth recording because
+both are the defect the passage exists to prevent. A first draft closed by
+saying free-text answers report as not checked, full stop, which is not what the
+check does - an answer covering nine rows in ten is a ceiling whoever wrote the
+rows, and is still flagged there.
 
-325_774 measured with `assistant_facing_documents()` on this branch, against a
+The second restatement replaced the word free-text itself. Review found the
+underlying rule classifying the customer's task and then telling them the
+classification, wrongly, on ordinary label sets carrying rare labels. What the
+run can honestly say is narrower: your answers are used by fewer than two rows
+each, so their shares are a listing rather than a measurement. The sentence now
+says that, and covers the small-label-set case it never had a word for.
+
+325_792 measured with `assistant_facing_documents()` on this branch, against a
 ceiling of 325_850. Nothing else in the package changed size, so the whole rise
-is the passage above: 679 bytes for a boundary the previous wording made
+is the passage above: 697 bytes for a boundary the previous wording made
 unguessable, and for a skipped verdict that would otherwise read as a pass. If
 this lands in the same merge as another raise, the merged tree is what has to be
 measured - neither branch's figure describes a package anybody built.

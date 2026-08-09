@@ -1091,7 +1091,14 @@ class StaticPreflightTests(unittest.TestCase):
         INPUTS are a correct dataset - `a`/`b`/`c`/`d` labels, a bibliography
         that cites the same author twice - and the repetition checks scan the
         input, so nothing here may charge them for the answers repeating.
+
+        `RESULTS` is cleared here and not only in `setUp`. It is a module-level
+        accumulator, so a second call in one test method used to read back the
+        FIRST call's record - which passes silently whenever the first dataset
+        is clean, and turns the second assertion into a statement about the
+        wrong dataset the moment it is not.
         """
+        MODULE.RESULTS.clear()
         rows = []
         for answer, count in counts.items():
             for _ in range(count):
@@ -1113,13 +1120,21 @@ class StaticPreflightTests(unittest.TestCase):
         return None
 
     def test_balanced_binary_dataset_is_not_a_ceiling_risk(self) -> None:
-        """The headline false red, and the reason #216 exists.
+        """The false red this change must not create - not one it removes.
 
-        50% of the rows is the BEST a yes/no dataset can do, and a rule stated
-        as a share of the rows cannot tell that apart from 50% of an a/b/c/d
-        set, where it is twice what guessing gets. Both are 50%; only one is a
-        finding. Measured against chance the balanced set scores zero excess at
-        every label count, which is what makes one rule right for both.
+        Deliberately stated that way round, because the opposite is easy to
+        write and wrong: the shipped 0.9-of-rows rule was already silent here,
+        so this test PASSES on the old code and demonstrates no bug. #216 is an
+        under-reach, not a false red - nothing was broken, and the defect was a
+        false GREEN on the skewed four-way set below.
+
+        What it does guard is the direction a chance-relative rule could go
+        wrong. 50% of the rows is the BEST a yes/no dataset can do, and it is
+        also twice chance on an a/b/c/d set; both are 50%, only one is a
+        finding. A rule that reached the second by charging the first would have
+        traded an under-reach for a false red on the most ordinary dataset
+        there is. Balanced scores zero excess at every label count, which is
+        what makes one rule right for both.
         """
         self.assertIsNone(self._dominance_verdict({"yes": 100, "no": 100}))
 
@@ -1127,12 +1142,36 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIsNone(self._dominance_verdict({"a": 50, "b": 50, "c": 50, "d": 50}))
 
     def test_skewed_binary_dataset_is_a_ceiling_risk(self) -> None:
-        """Chance is 50% and one answer takes 95%, so guessing scores 95%."""
+        """95/5, which the shipped rule also flags - and by the same arm.
+
+        95% clears the absolute share, so this dataset never reaches the
+        chance-relative rule at all and the test would pass unchanged on the old
+        code. It is here as a non-regression guard and is labelled as one; the
+        case below is the one that exercises the new arm on a binary set.
+        """
         verdict = self._dominance_verdict({"yes": 190, "no": 10})
         self.assertIsNotNone(verdict)
         status, detail = verdict
         self.assertEqual(status, MODULE.WARN)
         self.assertIn("190/200", detail)
+        self.assertIn("needs no chance baseline", detail)
+
+    def test_a_binary_set_below_the_absolute_share_is_reached_by_chance(self) -> None:
+        """80/20: silent under the shipped rule, flagged by the new one.
+
+        The binary case that actually enters the chance-relative arm. 80% is
+        under the 90% absolute share, so the floor cannot answer it; against a
+        50% baseline it is 60% of the way from chance to a perfect score, well
+        past the line. Asserting the chance wording is what proves which arm
+        ran - without it this test passes on an implementation that only ever
+        compares shares.
+        """
+        verdict = self._dominance_verdict({"yes": 160, "no": 40})
+        self.assertIsNotNone(verdict, "an 80/20 binary set was not reached")
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("50.0% chance baseline", detail)
+        self.assertIn("60% of the", detail)
 
     def test_skewed_four_way_dataset_is_a_ceiling_risk(self) -> None:
         """The dataset the fixed share could not reach, and the shape that
@@ -1171,12 +1210,19 @@ class StaticPreflightTests(unittest.TestCase):
         )
 
     def test_free_text_answers_report_unchecked_and_never_clean(self) -> None:
-        """`1/k` is chance only when the k answers seen ARE the answer space.
+        """`1/k` is chance only when the answers repeat enough to have a share.
 
-        On free text they are not: k grows with the row count, so `1/k` is a
-        fact about how many rows were read. The check declines - and a check
-        that declines must say so. Reported as SKIP, which readiness.py scores
-        as unasked; reporting it as PASS is the defect #158 was filed for.
+        On free text they do not: every row is its own answer, so `k` climbs
+        with the row count and `1/k` is a fact about how many rows were read.
+        The check declines - and a check that declines must say so. Reported as
+        SKIP, which readiness.py scores as unasked; reporting it as PASS is the
+        defect #158 was filed for.
+
+        The message is asserted NOT to classify the task. An earlier revision
+        told this customer their answers were "a sample of an open-ended answer
+        space rather than a closed set of labels", which is a claim about their
+        data rather than about this run's evidence - and one it got wrong on
+        real label sets carrying rare labels.
         """
         counts = {"a shared sentence answer": 2}
         counts.update({f"a distinct sentence answer number {i}": 1 for i in range(64)})
@@ -1186,17 +1232,44 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(status, MODULE.SKIP)
         self.assertIn("UNCHECKED", detail)
         self.assertNotIn("chance baseline for", detail)
+        self.assertNotIn("open-ended", detail)
+        self.assertNotIn("closed set of labels", detail)
 
-    def test_free_text_gate_cannot_withdraw_a_finding_the_old_rule_made(self) -> None:
+    def test_a_long_tailed_label_set_is_measured_not_declined(self) -> None:
+        """The false red the first regime gate shipped, kept as a guard.
+
+        101 rows over 18 labels with 8 rare ones is an ordinary classification
+        dataset. The first gate here compared the Good-Turing estimate of unseen
+        answer mass against one label's fair share `1/k` - a test that tightens
+        as `k` grows, which is exactly where a real label set carries rare
+        labels - and declined on it, telling the customer their labels were an
+        open-ended answer space. It must be measured, and found clean: the top
+        label is on 30 of 101 rows against a 1-in-18 baseline.
+        """
+        counts = {"top": 30}
+        counts.update({f"middle {index}": 7 for index in range(9)})
+        counts.update({f"rare {index}": 1 for index in range(8)})
+        self.assertIsNone(
+            self._dominance_verdict(counts),
+            "a long-tailed label set was declined or flagged",
+        )
+
+    def test_declining_never_withdraws_a_finding_the_old_rule_made(self) -> None:
         """The regression an earlier revision of this branch actually had.
 
         100 rows: 90 identical answers and 10 one-off ones. The shipped
-        0.9-of-rows rule flags it. The chance-relative rule alone cannot run on
-        it - 10 singletons over 11 answers - so it reported UNCHECKED, and an
-        unmeasured diversity sub-score outscores a flagged one on 449 of 512
-        scored dataset shapes, by up to 6 points. Declining to answer must
-        never withdraw an answer already given, so the absolute share is tested
-        ahead of the gate and on both sides of it.
+        0.9-of-rows rule flags it. Under this branch's FIRST regime gate the
+        chance-relative rule could not run on it - 10 singletons over 11
+        answers - so it reported UNCHECKED, and an unmeasured diversity
+        sub-score outscores a flagged one on 449 of 512 scored dataset shapes,
+        by up to 6 points.
+
+        The gate that produced that has since been replaced, and the current one
+        measures this dataset rather than declining on it. The case is kept
+        because the property is not "the current gate happens to be safe" but
+        "declining can never withdraw an answer already given" - which is held
+        by testing the absolute share ahead of the gate, so it survives the next
+        time the gate moves.
         """
         counts = {"yes": 90}
         counts.update({f"a distinct one-off answer number {i}": 1 for i in range(10)})

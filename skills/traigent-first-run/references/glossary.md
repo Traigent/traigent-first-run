@@ -182,11 +182,11 @@ The lines under each pillar on the card
                                  already covers a third of the way from chance
                                  - 1 in however many answers your rows use - to
                                  a perfect score, so 50% is balanced for yes/no
-                                 and dominant for a/b/c/d. Free-text answers
-                                 have no chance to measure against, so only an
-                                 answer on 90% of the rows still counts there;
-                                 short of that the line reports as not checked,
-                                 never as clean.
+                                 and dominant for a/b/c/d. Answers used by fewer
+                                 than two rows each - free text, or too few rows
+                                 to fill your labels - have no chance to measure
+                                 against, and that line then reports as not
+                                 checked rather than as clean.
     where the rows came from   - whether the data was collected or written by a
                                  model. Both are usable; only one is evidence
                                  about production.
