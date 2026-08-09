@@ -1538,11 +1538,21 @@ def check_dataset(
         # one, and `readiness.py` reads preflight's records into a dict keyed by
         # check name, so two `dataset-ceiling-risk` records collapse to whichever
         # was emitted last. That was harmless while the only record was a
-        # finding; it is not harmless now that one of the outcomes is "did not
-        # run", because a SKIP landing after a WARN would delete the finding and
-        # a WARN landing after a SKIP would claim the skipped subject was
-        # examined. Choosing once, most severe first, removes the ordering from
-        # the answer entirely.
+        # finding; it stops being harmless once one of the outcomes is "did not
+        # run", because the loser of that collapse is a whole verdict.
+        #
+        # The reachable case today is a SKIP from the expected answers and a
+        # WARN from the outcome field - free-text answers carrying one dominant
+        # label - and it is emitted in that order, so the WARN has to be chosen
+        # rather than arrived at last. The opposite order is currently NOT
+        # reachable, and the reason is worth writing down because it is what
+        # this code must not quietly depend on: the outcome field is a component
+        # of the output, so the field repeats wherever the whole output repeats,
+        # which makes it dominant whenever the output is and established
+        # whenever the output is. Choosing most-severe-first means that argument
+        # does not have to keep holding - a second subject, a nested field read
+        # through `--outcome-field`, or any later branch that can also decline
+        # gets the same answer without anyone re-deriving it.
         dominance_findings: list[tuple[str, str]] = []
         placeholder_outputs = [
             row for row in scoreable_rows if not normalized_text(row["output"])

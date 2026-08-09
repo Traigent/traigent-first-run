@@ -1246,6 +1246,49 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(withdrawn[:5], [], f"{len(withdrawn)} findings withdrawn")
         self.assertGreater(newly_flagged, 0, "the chance-relative rule reaches nothing")
 
+    def test_a_declined_subject_cannot_delete_another_subject_s_finding(self) -> None:
+        """One `dataset-ceiling-risk` record, chosen by severity, not by order.
+
+        Two subjects can produce a dominance verdict - the expected answers and
+        a structured outcome field - and readiness reads preflight's records
+        into a dict keyed by check name, so two records collapse to whichever
+        was emitted last. Harmless while the only record was a finding; not
+        harmless once one outcome is "did not run", because the loser of the
+        collapse is a whole verdict.
+
+        This dataset reaches both: the outputs are dicts carrying a distinct
+        `reason` per row, so as whole answers they are free text and decline,
+        while the `label` inside them is on 19 of 20 rows. The WARN must
+        survive, and it must be the only ceiling-risk record on the run.
+        """
+        rows = [
+            {
+                "id": f"real-{index}",
+                "input": f"question {index} about topic {index}",
+                "output": {
+                    "label": "same" if index < 19 else "other",
+                    "reason": f"distinct reason {index}",
+                },
+            }
+            for index in range(20)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        risks = [
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-ceiling-risk"
+        ]
+        self.assertEqual(len(risks), 1, f"dominance spoke {len(risks)} times: {risks}")
+        self.assertEqual(
+            risks[0].status,
+            MODULE.WARN,
+            "the declining subject overwrote the subject that found something",
+        )
+        self.assertIn("output field 'label'", risks[0].detail)
+
     def test_dominance_excess_is_total_and_never_divides_by_zero(self) -> None:
         """`1/k` at k=1 is 100%, so the general expression divides by zero.
 
