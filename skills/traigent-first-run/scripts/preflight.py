@@ -20,6 +20,7 @@ import sys
 import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
+from fractions import Fraction
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Sequence
@@ -70,7 +71,74 @@ MAX_NEAR_DUPLICATE_PAIRS = 1000
 # answer. Re-derive it if the loop's inner work changes; do not move it because
 # a dataset wanted more.
 MAX_NEAR_DUPLICATE_WORK = 60_000_000
-DOMINANT_OUTCOME_RATIO = 0.9
+# Answer dominance is measured against CHANCE, never against a fixed share of
+# the rows. A fixed share cannot express what this check is for, because the
+# same share means opposite things at different label counts: a top answer
+# covering 50% of a yes/no set is perfectly balanced - the best a binary task
+# can do - while 50% of an a/b/c/d set is twice what guessing gets
+# (traigent-first-run#216). The quantity is therefore how far the
+# majority-only baseline has already moved from chance towards a perfect
+# score, for `k` distinct expected answers:
+#
+#     excess = (majority_share - 1/k) / (1 - 1/k)
+#
+# 0 for a balanced set at any `k`, 1 when one answer holds every row, and
+# comparable across label counts - which is exactly the property the fixed
+# share lacked. "Headroom", `1 - majority_share`, was considered and does not
+# work: it is the arithmetic complement of the old rule rather than a different
+# rule, and it hands balanced-binary and skewed-four-way the same 0.50.
+#
+# THE LINE IS RE-DERIVED, NOT PORTED ACROSS. 0.9 was a share of the rows and
+# this is an excess over chance; they are different quantities, and carrying
+# the number over is the mistake #216 was filed about. What 1/3 decides, in
+# terms a reader can check against their own file, is the majority share it
+# corresponds to at each label count:
+#
+#     k = 2   66.7%      k = 4   50.0%      k = 10   40.0%
+#     k = 3   55.6%      k = 5   46.7%      k -> inf 33.3%
+#
+# It is pinned by the dataset shape the owner named as the defect - a four-way
+# set whose top answer takes half the rows - and set at the LARGEST value that
+# still catches it, so the reach past today's behaviour is the smallest the
+# decision requires. It IS a reach: the old rule was silent on that dataset and
+# this one is not. The false-red direction does not constrain the choice.
+# Measured over 32 real onboarding datasets, the largest excess any of them
+# reaches is 0.071 (a 28-row binary set split 53.6/46.4), so the line sits
+# about 4.7x above the noisiest healthy data available to measure against.
+#
+# Held as a Fraction and compared against a Fraction built from row counts, so
+# the boundary is settled by the counts and never by float rounding. That is
+# load-bearing, not tidiness: swept over every integer shape with k = 2..20,
+# n = k..600 and every majority count, exact and float disagree on 200 of them,
+# all at k = 2 and all in the same direction - a binary set split exactly 2:1
+# (30/20, 300/200, 600/400) is ON the line, and float puts it at
+# 0.33333333333333326 and stays silent. The four-way 50/25/15/10 set that pins
+# the line is itself one of these boundary shapes.
+DOMINANCE_EXCESS_THRESHOLD = Fraction(1, 3)
+# The absolute share at which one answer is a ceiling risk whatever the answer
+# space looks like. This is the SHIPPED rule, kept at the value and in the units
+# it already had - a share of the rows, not an excess over chance - and demoted
+# from "the rule" to a floor underneath it.
+#
+# It is here because the chance-relative rule above cannot run on every dataset
+# (see `chance_baseline_is_established`), and a check that declines to answer
+# must not thereby silence a finding it already made. Measured: 100 rows, 90
+# identical answers and 10 one-off ones, is a WARN under the shipped rule; with
+# only the chance-relative rule it reported UNCHECKED, and across 512 scored
+# dataset shapes an unmeasured diversity sub-score scores HIGHER than a flagged
+# one on 449 of them, by up to 6 points of the DATASET pillar. So the gate would
+# have paid the owner of the most dominated dataset in the corpus.
+#
+# No baseline is needed to read it and none is claimed: 90% of the rows carrying
+# one answer means an agent that always says that answer scores 90%, at any `k`.
+#
+# It changes no closed-label verdict. The excess line corresponds to a share of
+# `1/3 + 2/(3k)`, which is at most 66.7% (at k = 2) and falls from there, so
+# wherever the chance baseline holds the rule above has already fired well
+# before this one. This is the only rule in force on the other side of the gate,
+# and it is a DETECTOR there and never a certifier - finding nothing at 90% is
+# not a finding of no dominance, so the caller still reports SKIP.
+DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
 WIRING_CHECK_EXAMPLES = 10
@@ -823,6 +891,144 @@ def structured_outcomes(
     return None
 
 
+def chance_baseline_is_established(counts: Counter[str]) -> bool:
+    """Whether `1/k` is a chance baseline here, or an artifact of the row count.
+
+    Dominance is measured against chance, and chance is `1/k` only when the `k`
+    answers observed ARE the answer space. That holds for a closed label set,
+    where the labels are fixed and every row picks one of them. It does not hold
+    for a free-text task: there `k` grows with the number of rows read, `1/k` is
+    a fact about the sample rather than about the task, and an excess computed
+    against it is arithmetic about nothing. This check exists for closed-label
+    tasks, so on the other shape it must decline to answer rather than answer
+    wrongly.
+
+    Two candidate ways to tell the shapes apart were tried and both were
+    dropped, by measurement rather than by taste.
+
+    Answer LENGTH does not separate them. Across 32 real onboarding datasets the
+    closed-label cases run from one-word labels to 18-word table rows and
+    overlap the free-text ones completely, and a length rule reverses the
+    verdict on a real shape: a 60-row set of four long SQL answers split
+    30/12/10/8 is dominant and is reported UNCHECKED by a five-word length gate.
+
+    A declared TASK KIND is the wrong KIND of evidence, and it is also not here.
+    `readiness.py` does take `--task-kind`, whose choices include `closed-label`
+    and `free-text` - but that is a declaration, scored as one (an undeclared
+    kind is `withheld`, never measured), and this script is a different process
+    that is never given it. Deciding whether a measurement runs from a
+    user-supplied label would let a dataset switch the check off by describing
+    itself, which is the opposite of what preflight is for.
+
+    What does separate them is whether the answers repeat, and the test is
+    Good-Turing. The share of rows carrying an answer that appears exactly once
+    estimates the mass of the answer space not yet seen. Require that estimate
+    to be smaller than one observed answer's fair share, `1/k`: the answers you
+    have not seen must weigh less than one of the answers you have. Written over
+    integers, `singletons * k < rows`, so it is exact at every size.
+
+    On those same 32 datasets every closed-label case carries zero singletons,
+    and every free-text-shaped one carries a once-only answer on 87-100% of its
+    rows. Nothing real lands in between, so the corpus confirms both sides of
+    the rule and cannot locate a line inside the gap - the line above comes from
+    what `1/k` has to mean, not from where the measured cases happen to stop.
+
+    WHAT HAPPENS AT THE BOUNDARY, since a rule with two regimes has to say. One
+    added row can move a dataset across this line, so the two things that must
+    be true at the crossing are made true by construction rather than hoped for.
+
+    The crossing never withdraws a finding. `DOMINANT_OUTCOME_SHARE` is tested
+    ahead of this gate and on both sides of it, so every dataset the shipped
+    rule flags is still flagged after crossing. It was not so in an earlier
+    revision of this branch, and the cost was measured rather than reasoned
+    about: 100 rows carrying 90 identical answers and 10 one-off ones crossed
+    into "UNCHECKED", and an unmeasured diversity sub-score outscores a flagged
+    one on 449 of 512 scored dataset shapes, by up to 6 points.
+
+    The crossing is still a discontinuity in what is REPORTED, and that is
+    deliberate and not smoothed over: on one side the answer is a chance-
+    relative verdict, on the other it is SKIP, which `readiness.py` reads as
+    UNCHECKED and never as clean. So crossing can turn an answer into "no
+    answer" - which the card then says out loud - and it cannot turn a finding
+    into a pass.
+    """
+    rows = sum(counts.values())
+    labels = len(counts)
+    singletons = sum(1 for count in counts.values() if count == 1)
+    return singletons * labels < rows
+
+
+def dominance_excess(counts: Counter[str]) -> Fraction:
+    """How far the majority-only baseline sits above chance, on a 0-1 scale.
+
+    Exact rational arithmetic over the row counts, so a dataset sitting on the
+    line is decided by its counts rather than by a float that rounded the wrong
+    way. Undefined below two distinct answers, which the caller handles: one
+    answer holding every row is the maximum of this check and needs no baseline
+    to say so.
+    """
+    labels = len(counts)
+    chance = Fraction(1, labels)
+    share = Fraction(max(counts.values()), sum(counts.values()))
+    return (share - chance) / (1 - chance)
+
+
+def answer_dominance_finding(
+    counts: Counter[str], *, subject: str
+) -> tuple[str, str] | None:
+    """The dominance verdict for one set of answers, or `None` when clean.
+
+    Three outcomes, not two. `WARN` when the majority-only baseline is at or
+    past the line; `SKIP` when the answers are not a closed label set, so the
+    chance-relative question did not get answered and must not be read as having
+    passed; `None` when it ran and found nothing.
+
+    The absolute share is tested FIRST and outside the gate, so declining to
+    answer can never withdraw a finding: whatever the answer space is, one
+    answer on 90% of the rows is a ceiling.
+    """
+    rows = sum(counts.values())
+    labels = len(counts)
+    share = Fraction(max(counts.values()), rows)
+    if share >= DOMINANT_OUTCOME_SHARE:
+        return (
+            WARN,
+            f"the most common {subject} covers {max(counts.values())}/{rows} "
+            f"rows ({float(share):.1%}); always answering it already scores "
+            f"that well, so configurations have little left to tell them "
+            "apart. This one needs no chance baseline - a share that large is "
+            "a ceiling whatever the answers are drawn from",
+        )
+    if not chance_baseline_is_established(counts):
+        singletons = sum(1 for count in counts.values() if count == 1)
+        return (
+            SKIP,
+            f"answer dominance is UNCHECKED for every {subject}, not clean: "
+            f"{singletons}/{rows} rows carry an answer no other row uses, so "
+            f"the {labels} answers seen are a sample of an open-ended answer "
+            f"space rather than a closed set of labels, and 1 in {labels} is "
+            "not a chance baseline to measure dominance against. This check "
+            "answers only for tasks whose answers repeat as labels. No answer "
+            "here reaches 90% of the rows either, which is the one thing that "
+            "can be said without a baseline - and that is not the same as no "
+            "answer dominating",
+        )
+    excess = dominance_excess(counts)
+    if excess < DOMINANCE_EXCESS_THRESHOLD:
+        return None
+    dominant_count = max(counts.values())
+    return (
+        WARN,
+        f"the most common {subject} covers {dominant_count}/{rows} rows "
+        f"({dominant_count / rows:.1%}) against a {1 / labels:.1%} chance "
+        f"baseline for {labels} distinct answers - {float(excess):.0%} of the "
+        f"way from chance to a perfect score, at or past the "
+        f"{float(DOMINANCE_EXCESS_THRESHOLD):.0%} line. Always answering it "
+        "already scores that well, so configurations have little left to tell "
+        "them apart",
+    )
+
+
 def emit_dataset_provenance(
     present_rows: list[dict[str, Any]],
     *,
@@ -1318,6 +1524,17 @@ def check_dataset(
             f"{evaluator_method} is reference-free; expected outputs are not required",
         )
     else:
+        # Every dominance verdict this run reaches, emitted as ONE record below.
+        # Both the expected answers and a structured outcome field can produce
+        # one, and `readiness.py` reads preflight's records into a dict keyed by
+        # check name, so two `dataset-ceiling-risk` records collapse to whichever
+        # was emitted last. That was harmless while the only record was a
+        # finding; it is not harmless now that one of the outcomes is "did not
+        # run", because a SKIP landing after a WARN would delete the finding and
+        # a WARN landing after a SKIP would claim the skipped subject was
+        # examined. Choosing once, most severe first, removes the ordering from
+        # the answer entirely.
+        dominance_findings: list[tuple[str, str]] = []
         placeholder_outputs = [
             row for row in scoreable_rows if not normalized_text(row["output"])
         ]
@@ -1377,12 +1594,18 @@ def check_dataset(
             # A skipped check is not a passed check - and a check that ran and
             # found the worst possible answer must not read as one that never
             # ran.
-            emit(
-                "dataset-ceiling-risk",
-                WARN,
-                f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
-                "outputs (100.0%) are identical; a majority-only strategy "
-                "could hide meaningful failures",
+            #
+            # This one case is stated without a chance baseline, because it does
+            # not need one: one answer holding every row is the maximum of this
+            # check at any label count, and `1/k` at k=1 is 100%, a baseline
+            # that would divide by zero and say nothing if it did not.
+            dominance_findings.append(
+                (
+                    WARN,
+                    f"{len(scoreable_outputs)}/{len(scoreable_outputs)} expected "
+                    "outputs (100.0%) are identical; a majority-only strategy "
+                    "could hide meaningful failures",
+                )
             )
         else:
             emit(
@@ -1390,37 +1613,30 @@ def check_dataset(
                 PASS,
                 f"{len(output_counts)} distinct expected outputs",
             )
-            dominant_count = max(output_counts.values())
-            dominant_ratio = dominant_count / len(scoreable_outputs)
-            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
-                emit(
-                    "dataset-ceiling-risk",
-                    WARN,
-                    f"{dominant_count}/{len(scoreable_outputs)} expected outputs "
-                    f"({dominant_ratio:.1%}) are identical; a majority-only strategy "
-                    "could hide meaningful failures",
-                )
+            finding = answer_dominance_finding(output_counts, subject="expected output")
+            if finding:
+                dominance_findings.append(finding)
 
         structured = structured_outcomes(scoreable_rows, outcome_field)
         if structured:
             field, values = structured
             value_counts = Counter(normalized_identity(value) for value in values)
-            dominant_count = max(value_counts.values())
-            dominant_ratio = dominant_count / len(values)
-            if dominant_ratio >= DOMINANT_OUTCOME_RATIO:
-                emit(
-                    "dataset-ceiling-risk",
-                    WARN,
-                    f"{dominant_count}/{len(values)} values ({dominant_ratio:.1%}) in "
-                    f"output field '{field}' are identical; a majority-only strategy "
-                    "could hide meaningful failures",
-                )
-            else:
+            finding = answer_dominance_finding(
+                value_counts, subject=f"value in output field '{field}'"
+            )
+            if finding:
+                dominance_findings.append(finding)
+            if finding is None or finding[0] == SKIP:
                 emit(
                     "dataset-outcome-field",
                     PASS,
                     f"output field '{field}' has {len(value_counts)} distinct values",
                 )
+
+        if dominance_findings:
+            warned = [finding for finding in dominance_findings if finding[0] == WARN]
+            status, detail = (warned or dominance_findings)[0]
+            emit("dataset-ceiling-risk", status, detail)
 
     splits: dict[str, set[str]] = {}
     split_counts: Counter[str] = Counter()

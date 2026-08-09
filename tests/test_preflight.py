@@ -1078,6 +1078,197 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    # ---------------------------------------------------------------- #216
+    # Answer dominance is measured against chance, not against a fixed share
+    # of the rows. Every case below is a dataset shape whose verdict the fixed
+    # share got wrong, or one it got right that the new rule must not lose.
+
+    @staticmethod
+    def _dominance_verdict(counts: dict[str, int]) -> tuple[str, str] | None:
+        """Run the shipped check over a dataset with this answer distribution.
+
+        Inputs are deliberately all distinct. Repeated ANSWERS with distinct
+        INPUTS are a correct dataset - `a`/`b`/`c`/`d` labels, a bibliography
+        that cites the same author twice - and the repetition checks scan the
+        input, so nothing here may charge them for the answers repeating.
+        """
+        rows = []
+        for answer, count in counts.items():
+            for _ in range(count):
+                index = len(rows)
+                rows.append(
+                    {
+                        "id": f"real-{index}",
+                        "input": f"question {index} about topic {index}",
+                        "output": answer,
+                    }
+                )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        for result in MODULE.RESULTS:
+            if result.check == "dataset-ceiling-risk":
+                return result.status, result.detail
+        return None
+
+    def test_balanced_binary_dataset_is_not_a_ceiling_risk(self) -> None:
+        """The headline false red, and the reason #216 exists.
+
+        50% of the rows is the BEST a yes/no dataset can do, and a rule stated
+        as a share of the rows cannot tell that apart from 50% of an a/b/c/d
+        set, where it is twice what guessing gets. Both are 50%; only one is a
+        finding. Measured against chance the balanced set scores zero excess at
+        every label count, which is what makes one rule right for both.
+        """
+        self.assertIsNone(self._dominance_verdict({"yes": 100, "no": 100}))
+
+    def test_balanced_four_way_dataset_is_not_a_ceiling_risk(self) -> None:
+        self.assertIsNone(self._dominance_verdict({"a": 50, "b": 50, "c": 50, "d": 50}))
+
+    def test_skewed_binary_dataset_is_a_ceiling_risk(self) -> None:
+        """Chance is 50% and one answer takes 95%, so guessing scores 95%."""
+        verdict = self._dominance_verdict({"yes": 190, "no": 10})
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("190/200", detail)
+
+    def test_skewed_four_way_dataset_is_a_ceiling_risk(self) -> None:
+        """The dataset the fixed share could not reach, and the shape that
+        pins the line.
+
+        Chance is 25% and the top answer takes 50% - double chance, and a third
+        of the way from chance to a perfect score. The shipped 0.9 rule is
+        silent here. It sits EXACTLY on the line, which is why the comparison
+        is made in exact rationals: in float the same shape at k=2 lands at
+        0.33333333333333326 and falls the wrong side.
+        """
+        verdict = self._dominance_verdict({"a": 100, "b": 50, "c": 30, "d": 20})
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN)
+        self.assertIn("25.0% chance baseline", detail)
+        self.assertIn("4 distinct answers", detail)
+
+    def test_binary_set_exactly_on_the_line_is_flagged_not_rounded_away(self) -> None:
+        """A 2:1 binary split is one of the 200 shapes where float disagrees."""
+        verdict = self._dominance_verdict({"yes": 200, "no": 100})
+        self.assertIsNotNone(verdict, "a 2:1 binary split was rounded off the line")
+        self.assertEqual(verdict[0], MODULE.WARN)
+
+    def test_repeated_answers_with_distinct_inputs_are_not_a_fault(self) -> None:
+        """Two datasets that are CORRECT and must stay uncharged.
+
+        A closed-label task is supposed to reuse its labels, and a
+        bibliographic set is supposed to cite the same author more than once.
+        Near-duplicate detection is on the input; this check is about
+        concentration. Neither may imply that a repeated answer is a defect.
+        """
+        self.assertIsNone(self._dominance_verdict({"a": 15, "b": 15, "c": 15, "d": 15}))
+        self.assertIsNone(
+            self._dominance_verdict({f"author {name}": 5 for name in range(12)})
+        )
+
+    def test_free_text_answers_report_unchecked_and_never_clean(self) -> None:
+        """`1/k` is chance only when the k answers seen ARE the answer space.
+
+        On free text they are not: k grows with the row count, so `1/k` is a
+        fact about how many rows were read. The check declines - and a check
+        that declines must say so. Reported as SKIP, which readiness.py scores
+        as unasked; reporting it as PASS is the defect #158 was filed for.
+        """
+        counts = {"a shared sentence answer": 2}
+        counts.update({f"a distinct sentence answer number {i}": 1 for i in range(64)})
+        verdict = self._dominance_verdict(counts)
+        self.assertIsNotNone(verdict, "free text produced no dominance record at all")
+        status, detail = verdict
+        self.assertEqual(status, MODULE.SKIP)
+        self.assertIn("UNCHECKED", detail)
+        self.assertNotIn("chance baseline for", detail)
+
+    def test_free_text_gate_cannot_withdraw_a_finding_the_old_rule_made(self) -> None:
+        """The regression an earlier revision of this branch actually had.
+
+        100 rows: 90 identical answers and 10 one-off ones. The shipped
+        0.9-of-rows rule flags it. The chance-relative rule alone cannot run on
+        it - 10 singletons over 11 answers - so it reported UNCHECKED, and an
+        unmeasured diversity sub-score outscores a flagged one on 449 of 512
+        scored dataset shapes, by up to 6 points. Declining to answer must
+        never withdraw an answer already given, so the absolute share is tested
+        ahead of the gate and on both sides of it.
+        """
+        counts = {"yes": 90}
+        counts.update({f"a distinct one-off answer number {i}": 1 for i in range(10)})
+        verdict = self._dominance_verdict(counts)
+        self.assertIsNotNone(verdict)
+        status, detail = verdict
+        self.assertEqual(status, MODULE.WARN, "the gate silenced a shipped finding")
+        self.assertIn("90/100", detail)
+        self.assertIn("needs no chance baseline", detail)
+
+    def test_no_shipped_finding_is_withdrawn_at_any_dataset_shape(self) -> None:
+        """The case above, generalized: swept rather than sampled.
+
+        Every answer-count multiset up to 40 rows with two or more distinct
+        answers - 215,267 of them. Not one dataset that the 0.9-of-rows rule
+        flags loses its finding. The reach in the other direction is real and
+        deliberate: 23,032 shapes are newly flagged.
+        """
+
+        def partitions(total: int, largest: int) -> list[tuple[int, ...]]:
+            if total == 0:
+                return [()]
+            out = []
+            for first in range(min(total, largest), 0, -1):
+                for rest in partitions(total - first, first):
+                    out.append((first,) + rest)
+            return out
+
+        withdrawn = []
+        newly_flagged = 0
+        for rows in range(2, 41):
+            for shape in partitions(rows, rows):
+                if len(shape) < 2:
+                    continue
+                counts = MODULE.Counter(
+                    {f"a{index}": count for index, count in enumerate(shape)}
+                )
+                finding = MODULE.answer_dominance_finding(
+                    counts, subject="expected output"
+                )
+                status = finding[0] if finding else None
+                if max(shape) / rows >= 0.9:
+                    if status != MODULE.WARN:
+                        withdrawn.append((rows, shape, status))
+                elif status == MODULE.WARN:
+                    newly_flagged += 1
+        self.assertEqual(withdrawn[:5], [], f"{len(withdrawn)} findings withdrawn")
+        self.assertGreater(newly_flagged, 0, "the chance-relative rule reaches nothing")
+
+    def test_the_line_is_stated_in_shares_a_reader_can_check(self) -> None:
+        """What one third of the way from chance to perfect IS, per label count.
+
+        The number in the source is an excess, which nobody can check against
+        their own file. These are the majority shares it corresponds to, and
+        they are the reason one constant is right at every label count: 50% is
+        clean for yes/no and a finding for a/b/c/d.
+        """
+        total = 90_000
+        for labels, share in ((2, 0.667), (3, 0.556), (4, 0.500), (10, 0.400)):
+            majority = round(share * total)
+            counts = MODULE.Counter({"a0": majority})
+            spread = total - majority
+            for index in range(1, labels):
+                counts[f"a{index}"] = spread // (labels - 1)
+            excess = MODULE.dominance_excess(counts)
+            self.assertAlmostEqual(
+                float(excess),
+                float(MODULE.DOMINANCE_EXCESS_THRESHOLD),
+                places=2,
+                msg=f"at {labels} labels the line is not {share:.1%} of the rows",
+            )
+
     def test_explicit_nested_outcome_field_detects_nonstandard_schema(self) -> None:
         rows = [
             {

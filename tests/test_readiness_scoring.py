@@ -641,9 +641,9 @@ class DatasetScoringTests(unittest.TestCase):
     def test_a_skipped_check_is_never_scored_as_a_passed_check(self) -> None:
         """The rule, over every diversity check and every not-run spelling.
 
-        A check that did not run used to keep its full points and the sentence
-        "no repeated questions, and no single answer used by most rows" - a
-        clean result nobody established. Parameterised over all three checks so
+        A check that did not run used to keep its full points and a sentence
+        beginning "no repeated questions" - a clean result nobody established.
+        Parameterised over all three checks so
         a fourth cannot be added with the old behaviour, and over SKIP as well
         as an absent record because both mean the same thing.
         """

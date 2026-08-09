@@ -2923,7 +2923,13 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
         certifier="answer_dominance_status",
         found_label="one expected output dominates",
         looking_for_label="whether one expected output dominates",
-        clean_label="no single answer used by most rows",
+        # Not "no single answer used by most rows" any more. Since #216 the
+        # question is dominance against CHANCE, not a share of the rows, so a
+        # four-way set can be flagged at exactly half the rows and a ten-way one
+        # at 40% - neither of which is "most rows" - while a balanced yes/no set
+        # at 50% is clean. The old sentence would have been a clean bill of
+        # health phrased in the units of the rule it replaced.
+        clean_label="no answer that guessing alone would already score well on",
         points=6.0,
         # Under a reference-free judge there are no expected outputs, so this
         # question has no subject - it is not a check that did not run, it is a
@@ -5078,11 +5084,20 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
     """Say whether preflight actually examined the spread of expected answers.
 
     Preflight has no `dataset-answer-dominance` record: it emits
-    `dataset-ceiling-risk` only when one answer dominates, and stays silent
-    otherwise. So absence had to be read as "checked, nothing found" - which is
-    wrong whenever the check never ran at all, and it does not run under a
-    reference-free evaluator, where the whole expected-output branch is skipped
-    and `dataset-outputs` is SKIP.
+    `dataset-ceiling-risk` when one answer dominates and when it could not ask
+    the question at all, and stays silent when it asked and found nothing. So
+    absence had to be read as "checked, nothing found" - which is wrong whenever
+    the check never ran, and it does not run under a reference-free evaluator,
+    where the whole expected-output branch is skipped and `dataset-outputs` is
+    SKIP.
+
+    A second way it does not run arrived with #216: dominance is measured
+    against a chance baseline of `1/k`, which is only a baseline when the `k`
+    answers seen are a closed set of labels. On a free-text task they are not,
+    and preflight emits `dataset-ceiling-risk` as SKIP. That status is returned
+    here unchanged and lands outside `MEASURED_STATUSES`, so the sub-score
+    reports the question as unasked instead of clean - which is the whole point
+    of routing it through this record rather than through silence.
 
     The witness for "it ran" is therefore the PASS on the check that computes
     the distribution: `dataset-outputs` counts distinct expected answers and
