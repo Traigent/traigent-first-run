@@ -1034,7 +1034,9 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   traceback. Completed trials were already paid and written to the selected
   `TRAIGENT_RESULTS_FOLDER` - beneath `traigent-runs/` for the generated wrapper, or at the named
   preserved project path. Recover them and, for a connected run, upload the partial session with
-  `traigent sync <session_id>` before reporting - never present already-paid work as a total loss.
+  `TRAIGENT_RESULTS_FOLDER=<that same folder> traigent sync <session_id>` before reporting - the id
+  names a record in one store and `sync` is a separate process that picks its own, so without the
+  folder it reports the session as not found. Never present already-paid work as a total loss.
   A foreground command timeout (harnesses often kill at about five minutes) can kill
   `optimize_sync` mid-run without rolling back its spend, so run a long paid optimization detached
   and poll its log rather than letting the tool timeout abandon paid trials.

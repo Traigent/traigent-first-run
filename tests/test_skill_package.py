@@ -9180,6 +9180,35 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
+        # And every OTHER document that hands the reader this command, because
+        # pinning one file is what let the first version of this fix ship
+        # incomplete. `run-safety.md` carried a bare `traigent sync
+        # <session_id>` on the crash-recovery path - the highest-stakes
+        # instance, since those trials are already paid for - one sentence
+        # after naming TRAIGENT_RESULTS_FOLDER as where they were written.
+        # Reproduced: exit 1, "Session '...' not found in the local store".
+        #
+        # Derived from the corpus rather than listed, so a third document
+        # naming the command is covered on the day it is written.
+        # A command, not a mention: `traigent sync` followed by an argument is
+        # something the reader runs, while "`traigent sync` is a separate
+        # process" is prose about it. Only the first kind needs the folder, and
+        # reddening the second would push authors to stop explaining why.
+        command = re.compile(r"traigent sync\s+[\"'<$]")
+        for document in conversation_contract_documents():
+            body = " ".join(document.read_text().casefold().split())
+            for match in command.finditer(body):
+                window = body[max(0, match.start() - 120) : match.start()]
+                with self.subTest(document=document.name, at=match.start()):
+                    self.assertIn(
+                        "traigent_results_folder",
+                        window,
+                        f"{document.name} hands the reader a `traigent sync` "
+                        "command without naming the results folder. The id is "
+                        "store-relative and sync picks its own store, so the "
+                        "command rejects the id the run just returned.",
+                    )
+
     def test_local_baseline_checkpoint_states_exactly_what_is_known(self) -> None:
         normalized = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
