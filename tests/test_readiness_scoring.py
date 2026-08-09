@@ -8352,3 +8352,79 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "the read moved the search space, which is the thing it may not do",
         )
         self.assertGreater(both.score, document_only.score)
+
+
+class OneFactIsOneRemediationLineTests(unittest.TestCase):
+    """Found by reviewing the fix rather than the feature (#184).
+
+    The card already collapses several checks resting on one fact into one
+    line, and says why in its own comment: printing it per check "reads as
+    several findings" a customer must each act on. `collect_gaps` did not, so
+    widening the agent pillar turned one absent reading into four remediation
+    lines carrying the identical sentence - the same defect the card fixed, one
+    layer over, re-shipped by the change that made four checks possible.
+    """
+
+    def _gaps(self, document):
+        pillar, caps, knobs = MODULE.score_agent(
+            MODULE.agent_facts_from_discovery(document)
+        )
+        return MODULE.aggregate(
+            [MODULE.Pillar("dataset", 98, 1.0, ()), pillar],
+            caps,
+            knobs,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_one_absent_reading_is_one_line_naming_every_check_it_covers(
+        self,
+    ) -> None:
+        score = self._gaps(
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+        )
+        absent = [gap for gap in score.gaps if "could not be measured" in gap]
+        self.assertEqual(len(absent), 1, f"one fact, {len(absent)} lines: {absent}")
+        # Collapsed, not dropped: every check it stands for is still named, so
+        # the line says what it covers rather than hiding three of them.
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=check):
+                self.assertIn(check, absent[0])
+
+    def test_checks_resting_on_different_facts_stay_separate(self) -> None:
+        """The false-red direction: collapsing is keyed on the fact, not the
+        pillar. Two unmeasured checks with different reasons are two findings,
+        and merging them would hide one.
+        """
+        score = self._gaps(
+            {
+                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}},
+                "build": {
+                    "prompt": {
+                        "determined": False,
+                        "reason": "the prompt is fetched at runtime",
+                        "evidence": "a:2",
+                    },
+                    "output-contract": {"present": True, "evidence": "a:3"},
+                    "control-flow": {"loop": False, "evidence": "a:4"},
+                    "tools": {"used": False, "evidence": "a:5"},
+                },
+            }
+        )
+        absent = [gap for gap in score.gaps if "could not be measured" in gap]
+        self.assertEqual(len(absent), 2, absent)
+        self.assertTrue(any("fetched at runtime" in gap for gap in absent))
+        self.assertTrue(any("no tools" in gap for gap in absent))
+
+    def test_the_durable_report_says_what_the_pillar_does_not_cover(self) -> None:
+        """The card said it and the saved report did not.
+
+        The report is the artifact that outlives the terminal, and it is where
+        four agent checks most read as all of them.
+        """
+        score = self._gaps(
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+        )
+        report = MODULE.render_markdown(score)
+        self.assertIn(MODULE.AGENT_NOT_COVERED, report)
+        agent_block = report.split("## Agent", 1)[1].split("## ", 1)[0]
+        self.assertIn("not covered by this pillar", agent_block)

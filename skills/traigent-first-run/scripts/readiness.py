@@ -4521,13 +4521,31 @@ def collect_gaps(
             )
         )
     for pillar in pillars:
+        # Several checks in a pillar can rest on ONE fact, and listing it once
+        # per check reads as several findings a customer must each act on. The
+        # card already collapses that case; this list did not, so a run that
+        # supplied no reading of the agent produced four remediation lines all
+        # saying the same sentence. Collapsed on the evidence itself, which is
+        # what the card keys on too - and only for unmeasured checks, because a
+        # partial credit line carries its own number and is genuinely distinct.
+        shared: set[str] = set()
         for sub in pillar.subscores:
             if not sub.measured:
+                if sub.evidence in shared:
+                    continue
+                shared.add(sub.evidence)
+                named = ", ".join(
+                    sorted(
+                        other.name
+                        for other in pillar.subscores
+                        if not other.measured and other.evidence == sub.evidence
+                    )
+                )
                 gaps.append(
                     (
                         sub.maximum * 0.5,
                         unranked,
-                        f"{pillar.name}/{sub.name} could not be measured - "
+                        f"{pillar.name}/{named} could not be measured - "
                         f"{sub.evidence}",
                     )
                 )
@@ -5146,6 +5164,16 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
                 "unmeasured" if not sub.measured else f"{sub.value:g} / {sub.maximum:g}"
             )
             lines.append(f"| {sub.name} | {points} | {sub.evidence} |")
+        if pillar.name == "agent":
+            # The same sentence the card carries, in the artifact that outlives
+            # the terminal the card printed to. A reader who keeps the report
+            # and not the session would otherwise see four agent checks and
+            # nothing saying which of the pillar's questions were never asked -
+            # and this list is exactly where "four checks" reads as "all of
+            # them". Not a row in the table above, for the reason the card
+            # gives: a check that can never be measured would hold this
+            # pillar's confidence under the band gate forever.
+            lines.extend(["", f"_{AGENT_NOT_COVERED}_"])
         lines.append("")
     if score.knobs:
         lines.extend(
@@ -6840,10 +6868,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--agent-knobs",
         help=(
             "the coding assistant's own read of the agent's source (path or -): "
-            "which parameters it can already vary, each with the line that "
-            "shows it. Measures the search space at the opening gate, where no "
-            "config-space document exists; attests nothing about wiring, and is "
-            "ignored when --config-space is given"
+            "which parameters it can already vary and how it is put together, "
+            "each with the line that shows it. Measures the search space at the "
+            "opening gate, where no config-space document exists; attests "
+            "nothing about wiring. Its knob half is ignored when --config-space "
+            "is given, because that document decides the space; its build half "
+            "is read either way, because no config space describes how the "
+            "agent is built"
         ),
     )
     parser.add_argument(
