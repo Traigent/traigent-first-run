@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import hashlib
+from html import unescape
 import importlib.util
 import io
 import itertools
@@ -17,7 +18,9 @@ import sys
 import tempfile
 import tokenize
 import traceback
+import unicodedata
 import unittest
+from urllib.parse import unquote
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -5471,8 +5474,23 @@ class SkillPackageTests(unittest.TestCase):
         # The negative lookbehind keeps a longer hyphenated identifier such as
         # `LicenseRef-Traigent-Commercial` outside the repository-shaped token.
         hyphenated_repo_shape = re.compile(
-            r"(?<![\w-])traigent-[a-z0-9]+(?:-[a-z0-9]+)*", re.IGNORECASE
+            r"(?<![\w-])traigent-[a-z0-9][a-z0-9_.-]*", re.IGNORECASE
         )
+        json_unicode_escape = re.compile(r"\\u([0-9a-f]{4})", re.IGNORECASE)
+        long_unicode_escape = re.compile(r"\\U([0-9a-f]{8})", re.IGNORECASE)
+        hex_escape = re.compile(r"\\x([0-9a-f]{2})", re.IGNORECASE)
+        javascript_code_point_escape = re.compile(
+            r"\\u\{([0-9a-f]{1,6})\}", re.IGNORECASE
+        )
+        python_octal_escape = re.compile(r"\\([0-7]{1,3})")
+        python_named_unicode_escape = re.compile(r"\\N\{([^}]+)\}")
+        css_code_point_escape = re.compile(
+            r"\\(?:([0-9a-f]{6})|([0-9a-f]{1,5})(?:[ \t\r\n\f]|(?=[^0-9a-f]|$)))",
+            re.IGNORECASE,
+        )
+        css_simple_escape = re.compile(r"\\([^0-9a-f\r\n\f])", re.IGNORECASE)
+        markdown_escaped_hyphen = re.compile(r"\\-")
+        max_escape_normalization_passes = 8
         # These tokens already occur in this public tree and are not repository
         # names: they are generated directories, product phrases, or skills in
         # the public `traigent-skills` repository. Keep this separate from
@@ -5544,11 +5562,75 @@ class SkillPackageTests(unittest.TestCase):
 
         observed_hyphenated_term_counts: dict[str, int] = {}
 
+        def hexadecimal_character(match: re.Match[str]) -> str:
+            value = int(match.group(1) or match.group(2), 16)
+            return chr(value) if value <= 0x10FFFF else match.group(0)
+
+        def octal_character(match: re.Match[str]) -> str:
+            return chr(int(match.group(1), 8))
+
+        def named_unicode_character(match: re.Match[str]) -> str:
+            try:
+                return unicodedata.lookup(match.group(1))
+            except KeyError:
+                return match.group(0)
+
+        def decode_css_escapes(text: str) -> str:
+            return css_simple_escape.sub(
+                lambda match: match.group(1),
+                css_code_point_escape.sub(hexadecimal_character, text),
+            )
+
+        def decode_escaped_reference(text: str) -> tuple[str, bool, tuple[str, ...]]:
+            """Normalize URL and JSON escapes before applying disclosure rules.
+
+            A public link can percent-encode a repository delimiter, and a
+            serialized payload can encode it as a language, JSON, or Markdown
+            escape. Both forms still deliver the same repository name to a
+            consumer, so scanning only their source spelling would leave a
+            bypass. The transformations strictly shorten an escaped spelling.
+            Eight passes cover the normal consumer compositions; deeper nesting
+            fails closed rather than making this whole-tree guard unbounded.
+            """
+            css_candidates: set[str] = set()
+            for _ in range(max_escape_normalization_passes):
+                decoded_before_octal = unquote(
+                    unescape(
+                        markdown_escaped_hyphen.sub(
+                            "-",
+                            python_named_unicode_escape.sub(
+                                named_unicode_character,
+                                javascript_code_point_escape.sub(
+                                    hexadecimal_character,
+                                    hex_escape.sub(
+                                        hexadecimal_character,
+                                        json_unicode_escape.sub(
+                                            hexadecimal_character,
+                                            long_unicode_escape.sub(
+                                                hexadecimal_character,
+                                                text,
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                    )
+                )
+                if "\\" in decoded_before_octal:
+                    css_candidates.add(decoded_before_octal)
+                decoded = python_octal_escape.sub(octal_character, decoded_before_octal)
+                if decoded == text:
+                    return text, False, tuple(css_candidates)
+                text = decoded
+            return text, True, tuple(css_candidates)
+
         def scan(
             text: str,
             where: str,
             *,
             hyphen_shape: re.Pattern[str] = hyphenated_repo_shape,
+            css_normalization_passes: int = 0,
         ) -> list[str]:
             """Every rule, over one string - a filename as readily as a body.
 
@@ -5561,6 +5643,36 @@ class SkillPackageTests(unittest.TestCase):
             their bodies.
             """
             found: list[str] = []
+
+            def scan_css_variant(candidate: str) -> None:
+                if candidate == text:
+                    return
+                if css_normalization_passes >= max_escape_normalization_passes:
+                    found.append(
+                        f"{where}: exceeds the "
+                        f"{max_escape_normalization_passes}-pass CSS "
+                        "escape-normalization budget"
+                    )
+                else:
+                    found.extend(
+                        scan(
+                            candidate,
+                            where,
+                            hyphen_shape=hyphen_shape,
+                            css_normalization_passes=css_normalization_passes + 1,
+                        )
+                    )
+
+            text, escape_nesting_exhausted, css_candidates = decode_escaped_reference(
+                text
+            )
+            for css_candidate in css_candidates:
+                scan_css_variant(decode_css_escapes(css_candidate))
+            if escape_nesting_exhausted:
+                found.append(
+                    f"{where}: exceeds the {max_escape_normalization_passes}-pass "
+                    "escape-normalization budget"
+                )
             # Every window of every stored length, hashed and looked up. The
             # naming of the offender comes from the TEXT, not from the digest
             # set - which is the point: this message can only ever print a
@@ -5614,7 +5726,9 @@ class SkillPackageTests(unittest.TestCase):
                     "(add it to public_repos only if it really is public)"
                 )
             for hyphenated in hyphen_shape.findall(text):
-                token = hyphenated.casefold()
+                token = hyphenated.casefold().rstrip("._-")
+                if token.endswith(".git"):
+                    token = token[: -len(".git")]
                 observed_hyphenated_term_counts[token] = (
                     observed_hyphenated_term_counts.get(token, 0) + 1
                 )
@@ -5710,6 +5824,98 @@ class SkillPackageTests(unittest.TestCase):
                     "probe does not prove the hyphenated-shape boundary",
                 )
 
+        encoded_hyphen = "%{}".format("2D")
+        doubly_encoded_hyphen = "%{}{}".format("25", encoded_hyphen[1:])
+        json_hyphen = "{}{}".format(chr(92), "u002D")
+        json_percent_hyphen = "{}{}".format(chr(92), "u00252D")
+        html_hyphen = "&{};".format("#45")
+        hex_hyphen = "{}{}".format(chr(92), "x2D")
+        javascript_code_point_hyphen = "{}{}".format(chr(92), "u{2D}")
+        octal_hyphen = "{}{}".format(chr(92), "055")
+        named_unicode_hyphen = "{}{}".format(chr(92), "N{HYPHEN-MINUS}")
+        css_hyphen = "{}{} ".format(chr(92), "2d")
+        css_unspaced_hyphen = "{}{}".format(chr(92), "2d")
+        css_six_digit_hyphen = "{}{}".format(chr(92), "00002d")
+        css_escaped_g = "{}{}".format(chr(92), "69")
+        css_escaped_i = "{}{}".format(chr(92), "i")
+        percent_encoded_backslash = "%{}".format("5C")
+        json_backslash = "{}{}".format(chr(92), "u005c")
+        long_unicode_hyphen = "{}{}".format(chr(92), "U0000002D")
+        markdown_hyphen = "{}-".format(chr(92))
+        for probe in (
+            "https://github.com/{}{}encoded-name".format("traigent", encoded_hyphen),
+            "https://github.com/{}{}doubly-encoded-name".format(
+                "traigent", doubly_encoded_hyphen
+            ),
+            '{{"repository": "{}{}escaped-name"}}'.format("traigent", json_hyphen),
+            '{{"url": "https://github.com/{}{}json-url-name"}}'.format(
+                "traigent", json_percent_hyphen
+            ),
+            "https://github.com/{}{}html-name".format("traigent", html_hyphen),
+            "https://github.com/{}{}hex-name".format("traigent", hex_hyphen),
+            "https://github.com/{}{}code-point-name".format(
+                "traigent", javascript_code_point_hyphen
+            ),
+            "https://github.com/{}{}octal-name".format("traigent", octal_hyphen),
+            "https://github.com/{}{}named-unicode-name".format(
+                "traigent", named_unicode_hyphen
+            ),
+            "https://github.com/{}{}long-unicode-name".format(
+                "traigent", long_unicode_hyphen
+            ),
+            "a {{ background: url(https://github.com/{}{}css-name); }}".format(
+                "traigent", css_hyphen
+            ),
+            "a {{ background: url(https://github.com/{}{}style-unspaced); }}".format(
+                "traigent", css_unspaced_hyphen
+            ),
+            "a {{ background: url(https://github.com/{}{}0six-digit); }}".format(
+                "traigent", css_six_digit_hyphen
+            ),
+            "a {{ background: url(https://github.com/{}{}gent-private); }}".format(
+                "tra", css_escaped_g
+            ),
+            "a {{ background: url(https://github.com/tra{}gent-simple); }}".format(
+                css_escaped_i
+            ),
+            "https://github.com/{}{}{}percent-css".format(
+                "traigent", percent_encoded_backslash, css_unspaced_hyphen[1:]
+            ),
+            '{{"url": "https://github.com/{}{}{}json-css"}}'.format(
+                "traigent", json_backslash, css_unspaced_hyphen[1:]
+            ),
+            "[link](https://github.com/{}{}markdown-name)".format(
+                "traigent", markdown_hyphen
+            ),
+        ):
+            with self.subTest(probe=probe):
+                self.assertNotEqual(scan(probe, "probe"), [])
+                self.assertEqual(
+                    scan(
+                        probe,
+                        "probe",
+                        hyphen_shape=re.compile(r"(?!x)x"),
+                    ),
+                    [],
+                    "the escaped form is refused by another rule, so this "
+                    "probe does not prove the hyphenated-shape boundary",
+                )
+
+        too_deeply_escaped = encoded_hyphen
+        for _ in range(max_escape_normalization_passes):
+            too_deeply_escaped = "%25{}".format(too_deeply_escaped[1:])
+        normalized, exhausted, _ = decode_escaped_reference(
+            "{}{}too-deep".format("traigent", too_deeply_escaped)
+        )
+        self.assertTrue(exhausted)
+        self.assertIn(
+            "escape-normalization budget",
+            " ".join(
+                scan("{}{}too-deep".format("traigent", too_deeply_escaped), "probe")
+            ),
+        )
+        self.assertNotEqual(normalized, "{}-too-deep".format("traigent"))
+
         camel_probe = "Traigent{}".format("NotARealRepo")
         self.assertNotEqual(scan(camel_probe, "probe"), [])
 
@@ -5720,7 +5926,6 @@ class SkillPackageTests(unittest.TestCase):
             "agent-type",
             "n-gram",
             "getting-familiar",
-            *sorted(non_repository_hyphenated_terms),
             "SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial",
         ):
             with self.subTest(legitimate=legitimate):
