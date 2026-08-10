@@ -12535,8 +12535,8 @@ class SkillPackageTests(unittest.TestCase):
             "for an invalid evaluator, incompatible schema, corrupted required "
             "rows, or unverified call path, do not run paid optimization "
             "against it",
-            "offer to repair and revalidate it, pause for a user-authored fix, "
-            "or use a generated `🛠️` substitute for the walkthrough",
+            "offer one choice: repair and revalidate reversible copy, continue the walkthrough "
+            "with a clearly labelled `🛠️` replacement",
             'never treat "continue as is" as permission to optimize against a '
             "broken grading signal",
         ):
@@ -15732,8 +15732,7 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         )
         quoted = " ".join(quoted.split())
         self.assertIn(
-            "reply `i have it` with a path - `agent: <path>`, `dataset: <path>`, "
-            "`evaluation: <path>`",
+            "reply `i have it` with paths such as `dataset: <path>` and `evaluation: <path>`",
             quoted,
         )
         self.assertIn("### When a path arrives", creation)
@@ -16447,7 +16446,7 @@ class TheAskReportsTheSearchAndNotTheWorldTests(unittest.TestCase):
     def test_the_copy_states_the_search_rather_than_the_project(self) -> None:
         normalized = self._spoken()
         # The finding is scoped to the looking, in the sentence the user hears.
-        self.assertIn("searching this project i did not find", normalized)
+        self.assertIn("searching outward from it, i did not find", normalized)
         self.assertIn("they may well exist somewhere i did not look", normalized)
         # And the shape this replaces cannot come back by paraphrase: it is the
         # assertion of absence in the world that is refused, not one spelling.

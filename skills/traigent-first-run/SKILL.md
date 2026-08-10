@@ -172,8 +172,9 @@ Perform safe, read-only discovery without asking for approval:
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
-reached this way really grades the selected agent is settled by the compatibility contract in
+Only ask which agent to use if multiple credible candidates remain. If one is found, name its path
+and ask whether to use it. If the user selected an agent, including a dummy or walkthrough
+agent, accept it and do not ask again. Whether the evaluation method grades it is settled by the compatibility contract in
 `references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
@@ -445,13 +446,14 @@ Classify a structurally usable but evidence-limited real component as `limited`;
 Classify a component that cannot execute or measure the task as `invalid`.
 
 For a limited component, recommend repairing a copy under `traigent-runs/` and revalidating from
-the failed gate. Continuing unchanged is permitted only as an explicitly labeled workflow
-demonstration whose limitation appears before and beside the result.
+the failed gate. Once an agent is selected, keep using it. If dataset or evaluation material is
+missing, ask once: continue with clearly labeled walkthrough material, or provide paths to real
+material. Generated files stay `🛠️`, not production evidence.
 
 For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
-do not run paid optimization against it. Offer to repair and revalidate it, pause for a
-user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
-"continue as is" as permission to optimize against a broken grading signal.
+do not run paid optimization against it. Offer one choice: repair and revalidate reversible copy,
+continue the walkthrough with a clearly labelled `🛠️` replacement, or pause for corrected paths.
+Never treat "continue as is" as permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the

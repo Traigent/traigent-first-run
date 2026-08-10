@@ -47,15 +47,16 @@ like and what happens to the answer.
 
 Say it in their words, naming only what this run looked for and did not find:
 
-> Your agent is here and it runs. Searching this project I did not find any set of examples to
-> score it on, or anything that says what a right answer looks like - they may well exist somewhere
-> I did not look. I can write both from the agent itself - examples that exercise what it actually
-> does, and a grading method to match. Examples I write are weaker evidence than examples out of
-> your product: the score carries the generated-data ceiling because of it, so this run can show the
-> workflow working and cannot tell you how your product performs.
+> Your selected agent is here and it runs. Searching outward from it, I did not find any set of
+> examples to score it on, or anything that says what a right answer looks like--they may well
+> exist somewhere I did not look. I can continue this walkthrough with clearly labelled examples
+> and a
+> matching grading method derived from the selected agent, or you can point me to the real material.
+> Generated material is weaker evidence than examples from your product, so this run demonstrates
+> the workflow but cannot establish production performance.
 >
-> Shall I go ahead? Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`,
-> `evaluation: <path>` - and I will use yours.
+> Shall I continue with a `🛠️` walkthrough dataset/evaluator, or reply `I have it` with paths such as
+> `agent: <path>`, `dataset: <path>`, and `evaluation: <path>`? I will keep using the agent you selected.
 
 Never say the material does not exist. This run reads the project directory, and a dataset can be
 real, in use, and outside it - a shared mount, a sibling repo, a path configured somewhere this

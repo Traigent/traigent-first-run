@@ -34,12 +34,13 @@ The assistant performs the technical work and asks only when it needs:
   directory is about to change - and a repeat run does not re-ask about the environment the last
   one made.
 
-No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
-missing you are told before anything is written, in one question however many pieces are absent:
-what it did not find, that material it writes is weaker evidence than examples out of your product
-and what that costs the result, and two ways to answer - go ahead, or point it at yours. Only then
-does it prepare a coherent substitute around everything that already exists, and Traigent runs the
-managed optimization.
+No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
+agents are present, the assistant asks which one to use; if there is one, it names it and asks once
+whether to use it. If you already selected an agent--even a dummy or walkthrough agent--it keeps
+using that agent and does not ask again. When dataset or evaluator material is missing, one question
+offers either a clearly labelled `🛠️` walkthrough continuation derived from that agent or paths to
+the real material. Generated material is weaker evidence than examples from your product and can
+never be presented as production readiness.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
