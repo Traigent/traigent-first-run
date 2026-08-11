@@ -5745,6 +5745,35 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         self.assertEqual(score.recommended_action, "review-split")
         self.assertEqual(score.overall, MODULE.SPLIT_BY_TASK_FAMILY_CEILING)
 
+    def test_an_unlabelled_tuning_side_and_a_family_partition_are_two_findings(
+        self,
+    ) -> None:
+        """The co-occurrence `CAP_NO_IMPLICATION` cites, measured rather than assumed.
+
+        The first draft of that entry called these two mutually exclusive and
+        called the overlap pair possible - both backwards. Overlap really is
+        impossible beside this one, because preflight emits the family record
+        only on the disjoint branch; an unlabelled tuning side really does land
+        beside it, because rows being unlabelled says nothing about the words
+        they start with.
+
+        It matters beyond the comment: they share the ceiling 50 and disagree
+        about whether the run waits, so a reader who believed they could not
+        co-occur would never ask which verdict wins. The blocking one does.
+        """
+        score = self._score(
+            _clean_dataset(shared_families=0, labelled_rows=120, tuning_labelled_rows=0)
+        )
+        self.assertEqual(
+            sorted((cap.condition, cap.blocks) for cap in score.caps),
+            [
+                ("dataset-split-by-task-family", False),
+                ("dataset-tuning-split-empty", True),
+            ],
+        )
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "resplit-dataset")
+
     def test_a_family_count_that_is_not_a_count_is_refused(self) -> None:
         """`False == 0` is true in Python, so a raw read had a false red in it.
 

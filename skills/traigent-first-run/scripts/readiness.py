@@ -1411,17 +1411,28 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
     ),
-    # The neighbouring split conditions are the ones worth answering, and the
-    # answer is that none of the three implies another. Overlap needs a row on
-    # both sides and this needs every recurring form on one, so a dataset
-    # carrying both is a dataset whose overlapping rows share no leading form -
-    # possible, and neither condition follows from the other. An empty tuning
-    # side is mutually exclusive with it: preflight raises this check only where
-    # both sides hold rows to read.
+    # The two neighbouring split conditions are what this entry has to answer,
+    # and they answer differently - which is worth writing out, because the
+    # obvious guess is wrong in both directions.
+    #
+    # `dataset-tune-holdout-overlap` is MUTUALLY EXCLUSIVE with it, by
+    # construction rather than by argument: preflight emits `dataset-split-
+    # family` only on the branch where the two sides are disjoint, so a payload
+    # carrying an overlap carries no family record at all and this condition
+    # cannot be raised beside it.
+    #
+    # `dataset-tuning-split-empty` DOES co-occur, and that one is measured
+    # rather than reasoned: a family-partitioned split whose tuning rows are all
+    # unlabelled raises both, at their shared 50. Source:
+    # tests/test_readiness_scoring.py#ACapThatOnlyScopesAClaimDoesNotStopTheRunTests.test_an_unlabelled_tuning_side_and_a_family_partition_are_two_findings.
+    #
+    # Neither relation is an implication, which is what this table asks. Nothing
+    # about where the split line falls follows from rows being unlabelled, and
+    # nothing about labels follows from the leading forms.
     "dataset-split-by-task-family": (
-        "a split drawn along task families needs both sides populated and "
-        "disjoint, so it neither implies nor follows from the overlap or "
-        "empty-side conditions, and it can accompany any size or provenance"
+        "mutually exclusive with the overlap condition and independent of the "
+        "empty-tuning-side one, so it neither implies nor follows from either, "
+        "and it can accompany any size or provenance"
     ),
     # #177's cap, answered in #188's own words: it and the provenance
     # conditions "both belong to 'bounded claim' and neither implies the
