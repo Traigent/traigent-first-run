@@ -877,6 +877,37 @@ SPLIT_FAMILY_MINIMUM_ROWS = 2
 SPLIT_FAMILY_COVERAGE = 0.8
 
 
+# How many input forms a finding names before it stops listing them.
+#
+# FOUR, on the same reasoning `dataset-ids` prints ten row numbers and stops: a
+# reader checks a claim about their own data against examples, and a list long
+# enough to scroll is one nobody reads. Four is two per side at the smallest
+# split this check can fire on, which is the shape the sentence has to stay
+# readable at.
+SPLIT_FAMILY_FORMS_SHOWN = 4
+
+
+def _form_sample(forms: Iterable[str]) -> list[str]:
+    """The named forms a finding carries, ordered and bounded."""
+    return sorted(forms)[:SPLIT_FAMILY_FORMS_SHOWN]
+
+
+def _named_forms(forms: Iterable[str]) -> str:
+    """Name the forms rather than counting them.
+
+    "2 forms" is a number the reader cannot check against their own file;
+    `add two, find the` is a list they can, and disagreeing with it is the
+    whole point - this check reads leading words and never meaning, so the only
+    thing that settles whether two forms are one task is a person looking at
+    them. `discovered_space_evidence` in readiness.py names its parameters for
+    the identical reason.
+    """
+    shown = _form_sample(forms)
+    listed = ", ".join(f"'{form}'" for form in shown)
+    remaining = len(list(forms)) - len(shown)
+    return f"{listed} (+{remaining} more)" if remaining > 0 else listed
+
+
 def family_offset(values: Sequence[Any]) -> int:
     """How many leading words say the same thing on nearly every row.
 
@@ -1027,10 +1058,17 @@ def family_partition_finding(
     return (
         WARN,
         f"every one of the {len(recurring)} recurring input forms appears on one "
-        "side of the split only, so the held-out rows are a different kind of "
-        "work from the tuned ones and the held-out score does not measure the "
-        "task that was tuned",
-        {**metrics, "shared_families": 0},
+        f"side of the split only - tuned on {_named_forms(per_side['tuning'])}, "
+        f"measured on {_named_forms(per_side['holdout'])} - so the held-out "
+        "score may not measure the task that was tuned. Read off the leading "
+        "words alone and never from the meaning, so two wordings of one task "
+        "read as two here; the rows above are what to check",
+        {
+            **metrics,
+            "shared_families": 0,
+            "tuning_forms": _form_sample(per_side["tuning"]),
+            "holdout_forms": _form_sample(per_side["holdout"]),
+        },
     )
 
 

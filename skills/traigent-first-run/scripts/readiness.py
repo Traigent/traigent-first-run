@@ -1881,6 +1881,14 @@ class DatasetFacts:
     # unanswerable question as a clean split is the one reading this field
     # must not admit.
     shared_families: int | None = None
+    # The forms preflight read on each side, carried so the cap can name them.
+    #
+    # A count is a claim the customer cannot check against their own file; the
+    # forms are one they can, and disagreeing with them is the point - this
+    # reading is of leading words and not of meaning, so the only thing that
+    # settles whether two forms are one task is a person looking at them.
+    tuning_forms: tuple[str, ...] = ()
+    holdout_forms: tuple[str, ...] = ()
     integrity_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
@@ -2953,6 +2961,34 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
             "from the same version as this script"
         )
     return value
+
+
+def _quoted_forms(forms: Sequence[str]) -> str:
+    return ", ".join(f"'{form}'" for form in forms)
+
+
+def _family_forms(value: Any) -> tuple[str, ...]:
+    """The named forms from one side, refusing anything that is not a name.
+
+    Read with the same discipline `_shared_family_count` below applies to the
+    count beside it: this text is printed on the customer's card, so a payload
+    carrying a number or a nested object here would put `[1, 2]` in a sentence
+    about their dataset rather than fail. Absent is legitimate - a payload that
+    predates the names still carries the count, and the cap drops the naming
+    clause rather than the finding.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(form, str) and form.strip() for form in value
+    ):
+        raise PreflightInputError(
+            "dataset-split-family carries an unusable form list - the forms are "
+            "the leading words read off each side, so this preflight JSON was "
+            "edited or predates the current preflight.py; re-run preflight.py "
+            "--json from the same version as this script"
+        )
+    return tuple(form.strip() for form in value)
 
 
 def _shared_family_count(value: Any) -> int | None:
@@ -4070,16 +4106,36 @@ def score_dataset(
             )
         )
     if facts.shared_families == 0:
+        # The reason is built rather than a constant because it quotes the forms
+        # this run actually read, the same way the size caps quote their counts.
+        #
+        # It names them and it hedges, and both are the same instruction from
+        # the owner: this check reads the leading words of each input and never
+        # their meaning, so `refund request` and `refund claim` read as two
+        # kinds of work when a person would call them one. A finding that cannot
+        # be wrong would have to cost a model call, and preflight makes none. So
+        # the honest shape is a cheap observation that says it is cheap, names
+        # what it saw, and leaves the judgment where it belongs - a number the
+        # customer cannot check is worse than a guess they can correct.
+        detail = ""
+        if facts.tuning_forms and facts.holdout_forms:
+            detail = (
+                f" Tuned on {_quoted_forms(facts.tuning_forms)}; measured on "
+                f"{_quoted_forms(facts.holdout_forms)}."
+            )
         caps.append(
             Cap(
                 "dataset-split-by-task-family",
                 SPLIT_BY_TASK_FAMILY_CEILING,
                 "Every recurring kind of input in your dataset sits on one side "
-                "of the tuning/held-out line, so the held-out rows are a "
-                "different kind of work from the tuned ones and the held-out "
-                "score answers a question about transfer rather than about your "
-                "task. Confirm these are one task, or redraw the split so each "
-                "kind appears on both sides.",
+                "of the tuning/held-out line, so the held-out score may answer a "
+                "question about transfer rather than about your task."
+                + detail
+                + " This is a cheap check that reads the opening words and not "
+                "their meaning, so it can be wrong - two wordings of one task "
+                "look like two kinds here. Tell us they are one task and the "
+                "run carries on, or redraw the split so each kind appears on "
+                "both sides.",
                 blocks=False,
                 asks=True,
             )
@@ -6462,6 +6518,12 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         # count rather than comparing it to 0 and hoping.
         shared_families=_shared_family_count(
             metrics.get("dataset-split-family", {}).get("shared_families")
+        ),
+        tuning_forms=_family_forms(
+            metrics.get("dataset-split-family", {}).get("tuning_forms")
+        ),
+        holdout_forms=_family_forms(
+            metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
         synthetic=bool(provenance.get("synthetic")),

@@ -2037,8 +2037,50 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         # The consequence, not just the observation. "Four families do not
         # cross" is a fact about the file; what the reader has to act on is
         # that the number the run produces answers a different question.
-        self.assertIn("does not measure the task that was tuned", finding.detail)
-        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 0})
+        self.assertIn("may not measure the task that was tuned", finding.detail)
+        self.assertEqual(finding.metrics["families"], 4)
+        self.assertEqual(finding.metrics["shared_families"], 0)
+
+    def test_the_finding_names_its_guess_and_says_the_check_is_cheap(self) -> None:
+        """A number the customer cannot check is worse than a guess they can.
+
+        This reading is of leading words and never of meaning, so `refund
+        request` and `refund claim` come back as two kinds of work where a
+        person would say one. A finding that could not be wrong would have to
+        cost a model call, and preflight makes none - so the honest shape is to
+        say the check is cheap, name what it actually saw, and leave the
+        judgment with the only party who can make it.
+        """
+        finding = self._finding(
+            self._rows(
+                {
+                    "tuning": ["def add", "def max_of"],
+                    "holdout": ["def is_even", "def fib"],
+                }
+            )
+        )
+        for form in ("add case", "max_of case", "is_even case", "fib case"):
+            self.assertIn(form, finding.detail)
+        self.assertIn("never from the meaning", finding.detail)
+        self.assertEqual(finding.metrics["tuning_forms"], ["add case", "max_of case"])
+        self.assertEqual(finding.metrics["holdout_forms"], ["fib case", "is_even case"])
+
+    def test_a_long_form_list_is_bounded_rather_than_printed_whole(self) -> None:
+        """The same bound `dataset-ids` applies to the row numbers it prints.
+
+        A list long enough to scroll is one nobody reads, and the remainder is
+        counted rather than dropped so the sentence never understates what was
+        found.
+        """
+        tuning = [f"alpha{index} form" for index in range(6)]
+        finding = self._finding(
+            self._rows({"tuning": tuning, "holdout": ["beta one", "beta two"]})
+        )
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertEqual(
+            len(finding.metrics["tuning_forms"]), MODULE.SPLIT_FAMILY_FORMS_SHOWN
+        )
+        self.assertIn(f"(+{6 - MODULE.SPLIT_FAMILY_FORMS_SHOWN} more)", finding.detail)
 
     def test_the_same_rows_split_across_the_families_are_a_pass(self) -> None:
         """The identical material, redrawn - so the finding is the LINE, not the rows.
@@ -2118,7 +2160,8 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         ]
         finding = self._finding(rows)
         self.assertEqual(finding.status, MODULE.WARN)
-        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 0})
+        self.assertEqual(finding.metrics["families"], 4)
+        self.assertEqual(finding.metrics["shared_families"], 0)
 
     def test_one_template_and_a_counter_is_no_family_reading_at_all(self) -> None:
         """A corpus of `refund request number N` has no families to compare.
@@ -2194,7 +2237,12 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
             self._rows({"tuning": ["refund request"], "holdout": ["refund claim"]})
         )
         self.assertEqual(finding.status, MODULE.WARN)
-        self.assertEqual(finding.metrics, {"families": 2, "shared_families": 0})
+        self.assertEqual(finding.metrics["families"], 2)
+        self.assertEqual(finding.metrics["shared_families"], 0)
+        # And it names them, so the person who can settle it sees exactly what
+        # the check thought it saw.
+        self.assertEqual(finding.metrics["tuning_forms"], ["request case"])
+        self.assertEqual(finding.metrics["holdout_forms"], ["claim case"])
 
     def test_one_off_phrasings_are_skipped_rather_than_flagged(self) -> None:
         """The false red that would have fired on every ordinary dataset.
