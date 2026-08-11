@@ -321,7 +321,11 @@ When a material limitation is found, offer:
    evaluator calibration.
 2. **Continue as a workflow demonstration** - only when the component executes safely. Keep it
    `limited` and `❗`; state before and after the run that the result is not a credible performance
-   estimate.
+   estimate. Say what this route *does* - continue now, on material this run writes or keeps.
+   Never word it as a "replacement" or as continuing "once a valid one is available": a blinded
+   worker offered exactly that phrasing read it as a second way to pause, so all three routes it
+   presented were ways of stopping and the user was given no way to go on. This is the one route
+   whose whole purpose is that the run does not stall.
 3. **Pause for a user-authored fix** - provide the exact acceptance checks that the revision must
    pass.
 

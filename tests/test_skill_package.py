@@ -12740,8 +12740,13 @@ class SkillPackageTests(unittest.TestCase):
             "for an invalid evaluator, incompatible schema, corrupted required "
             "rows, or unverified call path, do not run paid optimization "
             "against it",
-            "offer to repair and revalidate it, pause for a user-authored fix, "
-            "or use a generated `🛠️` substitute for the walkthrough",
+            # All three routes, not two: an unpinned remedy is a remedy that can
+            # be dropped, and the middle one is phrased to say what it DOES,
+            # because "replacement" was read by a blinded worker as a second way
+            # to pause rather than a way to continue.
+            "offer three routes: repair and revalidate a reversible copy under "
+            "`traigent-runs/`, continue the walkthrough on a clearly labelled "
+            "`🛠️` substitute this run writes now, or pause for a user-authored fix",
             'never treat "continue as is" as permission to optimize against a '
             "broken grading signal",
         ):
@@ -16652,7 +16657,7 @@ class TheAskReportsTheSearchAndNotTheWorldTests(unittest.TestCase):
     def test_the_copy_states_the_search_rather_than_the_project(self) -> None:
         normalized = self._spoken()
         # The finding is scoped to the looking, in the sentence the user hears.
-        self.assertIn("searching this project i did not find", normalized)
+        self.assertIn("searching outward from it, i did not find", normalized)
         self.assertIn("they may well exist somewhere i did not look", normalized)
         # And the shape this replaces cannot come back by paraphrase: it is the
         # assertion of absence in the world that is refused, not one spelling.

@@ -47,9 +47,9 @@ like and what happens to the answer.
 
 Say it in their words, naming only what this run looked for and did not find:
 
-> Your agent is here and it runs. Searching this project I did not find any set of examples to
+> Your agent is here and it runs. Searching outward from it, I did not find any set of examples to
 > score it on, or anything that says what a right answer looks like - they may well exist somewhere
-> I did not look. I can write both from the agent itself - examples that exercise what it actually
+> I did not look. I can write both from the agent itself: examples that exercise what it actually
 > does, and a grading method to match. Examples I write are weaker evidence than examples out of
 > your product: the score carries the generated-data ceiling because of it, so this run can show the
 > workflow working and cannot tell you how your product performs.
@@ -65,6 +65,25 @@ wrong. It is also what makes `I have it` the natural next line rather than a cor
 being told they were wrong, they are being asked to point. `readiness.py` already speaks this way -
 its caps say a dataset was not provided *to this score* - so this is the wording catching up with
 the script.
+
+### Two answers, and an opening that says what they are choosing between
+
+The answers stay two. What varies is the first sentence, and it is not a third route: whether the
+run derives from something or from nothing is a fact this run already established, so offering both
+would be asking the user to pick a situation rather than an action.
+
+Name the anchor and what comes off it. `math_calc` that takes a question and returns a number is a
+grader and a set of arithmetic examples; a retrieval agent over a docs folder is questions its own
+corpus answers. Recorded request/response logs are a dataset source, not only an artifact to find -
+a project with no dataset often has the material for one, and saying so is the difference between
+"I will write examples" and "I will build them from your own traffic". The selected agent's name is
+the last anchor to fall: an agent that echoes its input anchors nothing, and that case is the
+matrix's all-missing row, which asks what the walkthrough should do rather than guessing it.
+
+Match the cost sentence to how much is derived. One generated piece around a real agent, real rows
+and a real ruler is not the same claim as a trio built from one sentence of intent, and
+`readiness.py` already scores them apart. One sentence for both tells the smaller case its result
+is worth less than it is, and the larger case that its result is worth more.
 
 Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
 hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already

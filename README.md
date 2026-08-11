@@ -24,7 +24,8 @@ Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 
 The assistant performs the technical work and asks only when it needs:
 
-- A choice that materially changes the task.
+- A choice that materially changes the task - which agent to optimize is the first of them, and
+  the only one asked before the walkthrough starts.
 - A key pasted into an owner-only local `.env` file, ignored when your project uses Git.
 - Approval before paid model calls or private-data egress.
 - Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
@@ -34,12 +35,15 @@ The assistant performs the technical work and asks only when it needs:
   directory is about to change - and a repeat run does not re-ask about the environment the last
   one made.
 
-No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
-missing you are told before anything is written, in one question however many pieces are absent:
-what it did not find, that material it writes is weaker evidence than examples out of your product
-and what that costs the result, and two ways to answer - go ahead, or point it at yours. Only then
-does it prepare a coherent substitute around everything that already exists, and Traigent runs the
-managed optimization.
+No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
+agents are present, the assistant asks which one to optimize; if there is exactly one, it names it
+and asks whether to run on it. Once you have chosen - a dummy or walkthrough agent counts as
+chosen - it keeps using that one and never asks again. When something is missing you are told
+before anything is written, in one question however many pieces are absent: what it did not find,
+that material it writes is weaker evidence than examples out of your product and what that costs
+the result, and two ways to answer - go ahead, or point it at yours. Only then does it prepare a
+coherent substitute around everything that already exists, and Traigent runs the managed
+optimization.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or

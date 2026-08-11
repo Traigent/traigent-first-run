@@ -163,8 +163,8 @@ Perform safe, read-only discovery without asking for approval:
   historical context but exclude it from this run's score and report.
 - Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
   contract and the product behavior being attempted. Finish this before the search below.
-- Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
-  and outcome checks, searching outward from that agent. What it does, the contract just inferred,
+- Then find datasets, fixtures, golden files, accepted traces, request/response logs,
+  tests, rubrics, scorers, evaluators, and outcome checks, searching outward from that agent. What it does, the contract just inferred,
   and the files its own call sites and tests reach are what tell its examples and its grading method
   apart from the first plausible ones in the tree - and a project holding two agents usually holds
   material belonging to each. Either of those two may be taken up first; what is load-bearing is
@@ -172,9 +172,11 @@ Perform safe, read-only discovery without asking for approval:
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Only ask which agent to use if multiple credible candidates remain. Whether the evaluation method
-reached this way really grades the selected agent is settled by the compatibility contract in
-`references/component-creation.md`.
+Ask which agent to use when multiple credible candidates remain. With exactly one, name its path
+inside the one ask below instead of halting for it separately; that reply accepts `agent:`. Where
+the ask does not fire, the pre-spend approval names the agent before any charge. Once selected,
+including a dummy or walkthrough agent, never ask again. Whether the evaluation method grades it
+is settled by the compatibility contract in `references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
@@ -445,13 +447,14 @@ Classify a structurally usable but evidence-limited real component as `limited`;
 Classify a component that cannot execute or measure the task as `invalid`.
 
 For a limited component, recommend repairing a copy under `traigent-runs/` and revalidating from
-the failed gate. Continuing unchanged is permitted only as an explicitly labeled workflow
-demonstration whose limitation appears before and beside the result.
+the failed gate. Continuing unchanged is permitted only as an explicitly labelled workflow
+demonstration; `references/evaluation-and-dataset.md` owns when that limitation is stated.
 
 For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
-do not run paid optimization against it. Offer to repair and revalidate it, pause for a
-user-authored fix, or use a generated `🛠️` substitute for the walkthrough. Never treat
-"continue as is" as permission to optimize against a broken grading signal.
+do not run paid optimization against it. Offer three routes: repair and revalidate a reversible
+copy under `traigent-runs/`, continue the walkthrough on a clearly labelled `🛠️` substitute this
+run writes now, or pause for a user-authored fix. Never treat "continue as is" as permission to
+optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
