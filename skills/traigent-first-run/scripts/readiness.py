@@ -2927,6 +2927,37 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
     return value
 
 
+def _shared_family_count(value: Any) -> int | None:
+    """Read the crossing-family count, refusing a value that is not one.
+
+    `_row_count` above states the rule this follows and the issue it comes from:
+    a guard that checks four counts and waves three through is the odd-one-out
+    (traigent-first-run#69). Reading this metric raw was exactly that, and the
+    failure is not hypothetical in Python - `False == 0` is true, so a boolean
+    in this field raises a cap saying the customer's split follows their task
+    families, on a payload that never said so. A quoted `"0"` fails the same
+    comparison the other way and drops a real cap in silence.
+
+    `None` is legitimate here and does NOT mean an older payload - `_row_count`
+    is right that this repository has published nothing to be compatible with.
+    It means the check did not answer, and the check is conditional by design:
+    preflight raises `dataset-split-family` only where both sides of a declared
+    split hold rows, and SKIPs where no recurring form can be read off them. So
+    absence is the same measured "nothing to say" that `dataset-output-
+    placeholders` carries, and is read the same way.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PreflightInputError(
+            "dataset-split-family carries no usable shared_families count - it "
+            "is a whole, non-negative number of input forms, so this preflight "
+            "JSON was edited or predates the current preflight.py; re-run "
+            "preflight.py --json from the same version as this script"
+        )
+    return value
+
+
 def score_provenance(
     facts: DatasetFacts, *, uses_expected_outputs: bool = True
 ) -> tuple[float, str, list[Cap]]:
@@ -6396,11 +6427,14 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         near_duplicate_status=statuses.get("dataset-near-duplicates"),
         answer_dominance_status=_answer_dominance_status(statuses),
         split_overlap=_failed(statuses, "dataset-split"),
-        # Read from the metric and not from the status, so a preflight that
-        # never emitted this check reaches the same `None` a SKIP does. Both
-        # mean "unanswered", and a missing record is how an older payload says
-        # it - the same reading `placeholder_rows` above already takes.
-        shared_families=metrics.get("dataset-split-family", {}).get("shared_families"),
+        # Read from the metric and not from the status, so a SKIP and a check
+        # that never fired reach the same `None`. Both mean the question was
+        # not answered, and the check is conditional by construction - see
+        # `_shared_family_count`, which also refuses a value that is not a
+        # count rather than comparing it to 0 and hoping.
+        shared_families=_shared_family_count(
+            metrics.get("dataset-split-family", {}).get("shared_families")
+        ),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),

@@ -3188,5 +3188,90 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
         )
 
 
+class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
+    """#238's flags, asserted where they are actually consumed.
+
+    Found by mutation-probing this branch rather than by reading it. The unit
+    tests beside `score_run` pass an origin into the fact set and the CLI test
+    beside them reads it back off `parse_args` - which is the producer agreeing
+    with itself, and neither touches the two lines in `run` that carry one to
+    the other. Deleting BOTH of those lines left the whole suite green.
+
+    That is the worst place for this branch to be blind. #238's decision that a
+    missing flag raises nothing rests entirely on the guided run always passing
+    one; a CLI that parses the flag and drops it scores every generated
+    component as the customer's own and says nothing, which is the exact defect
+    the change was written to remove.
+    """
+
+    def _rows(self) -> list[dict]:
+        return [
+            {
+                "id": f"row-{index}",
+                "input": f"Ticket {index}: the invoice total does not match the quote.",
+                "output": ("billing", "refund", "account", "technical")[index % 4],
+                "provenance": "collected",
+                "difficulty": ("easy", "medium", "hard", "very-hard")[index % 4],
+            }
+            for index in range(40)
+        ]
+
+    def _conditions(self, *origin_flags: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows())
+            score = _score(
+                dataset,
+                extra=("--evaluator-method", "normalized-exact", *origin_flags),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+        return sorted(cap["condition"] for cap in score["caps"])
+
+    def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
+        self.assertEqual(self._conditions(), ["agent-no-varying-knobs"])
+        self.assertEqual(
+            self._conditions(
+                "--evaluator-origin", "brought", "--agent-origin", "brought"
+            ),
+            ["agent-no-varying-knobs"],
+        )
+
+    def test_each_flag_reaches_the_payload_on_its_own(self) -> None:
+        """One at a time, so neither line can be carried by the other."""
+        self.assertEqual(
+            self._conditions("--evaluator-origin", "generated"),
+            ["agent-no-varying-knobs", "evaluator-generated"],
+        )
+        self.assertEqual(
+            self._conditions("--agent-origin", "generated"),
+            ["agent-generated", "agent-no-varying-knobs"],
+        )
+
+    def test_an_unknown_origin_is_refused_rather_than_ignored(self) -> None:
+        """A value outside the vocabulary must not read as "not declared".
+
+        Silently ignoring it would be the same silence the flag exists to end,
+        arriving through the flag itself.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows())
+            preflight_json = json.dumps(_preflight_records(dataset))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--json",
+                    "--agent-origin",
+                    "demo",
+                ],
+                input=preflight_json,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("invalid choice: 'demo'", process.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

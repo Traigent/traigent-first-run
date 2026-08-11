@@ -5745,6 +5745,32 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         self.assertEqual(score.recommended_action, "review-split")
         self.assertEqual(score.overall, MODULE.SPLIT_BY_TASK_FAMILY_CEILING)
 
+    def test_a_family_count_that_is_not_a_count_is_refused(self) -> None:
+        """`False == 0` is true in Python, so a raw read had a false red in it.
+
+        The adapter used to compare this metric to 0 with no check on what it
+        was. A boolean in the field then raised a cap saying the customer's
+        split follows their task families, on a payload that never said so, and
+        a quoted `"0"` dropped a real cap in silence. `_row_count` states the
+        rule this follows: a guard that checks four counts and waves one
+        through is the odd-one-out this file already has an issue open about.
+        """
+        records = [
+            {"check": "dataset-provenance", "status": "PASS", "metrics": {"rows": 40}},
+            {
+                "check": "dataset-split-family",
+                "status": "WARN",
+                "metrics": {"families": 4, "shared_families": False},
+            },
+        ]
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.dataset_facts_from_preflight(records)
+        self.assertIn("shared_families", str(caught.exception))
+        # Absent stays absent - the check is conditional, so a record that was
+        # never emitted is a measured "nothing to say" and not an error.
+        self.assertIsNone(MODULE._shared_family_count(None))
+        self.assertEqual(MODULE._shared_family_count(0), 0)
+
     def test_a_split_whose_families_cross_it_raises_nothing(self) -> None:
         """One shared form is enough, and an unread check is not a finding.
 
