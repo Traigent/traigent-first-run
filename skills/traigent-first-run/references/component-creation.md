@@ -223,9 +223,14 @@ one object and requires `knobs` at its root.
 What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
 the call, and how many worked examples ride with it; two is where examples start showing a pattern
 rather than illustrating one. **Output contract** is whether the answer's shape is pinned down
-anywhere - a parser, a schema, a response format, an instruction naming the format - because an
-answer of any shape is one an evaluator has to accept whole. **Control flow** is whether the agent
-ends and on what: no loop ends trivially and earns the check, a loop with a bound you can point at
+anywhere - a parser, a schema, a response format, an instruction naming the format, or the source
+itself fixing what comes back (a dict literal, a dataclass, a typed return) - because an answer of
+any shape is one an evaluator has to accept whole. That last form is the one readers miss:
+`return {"model": model, "config": config, "input": input_text}` pins the shape an evaluator reads,
+and earns the check in a stub that calls no model just as it does anywhere else. Pinned and
+performed are separate questions and this one asks only the first, so withholding the check from a
+stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
+ends trivially and earns the check, a loop with a bound you can point at
 earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
 is whether each declared tool can be found. `"used": false` removes only this wiring check; prompt,
 output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate

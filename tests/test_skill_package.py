@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import contextlib
 import hashlib
-from html import unescape
 import importlib.util
 import io
 import itertools
@@ -20,11 +19,12 @@ import tokenize
 import traceback
 import unicodedata
 import unittest
-from urllib.parse import unquote
+from html import unescape
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -16798,6 +16798,114 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, creation)
                 self.assertNotIn(clause.casefold(), stage)
+
+
+class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
+    """The build half named four ways to pin a shape and omitted the commonest.
+
+    Every form the text listed - a parser, a schema, a response format, an
+    instruction naming one - is a declaration standing OUTSIDE the function, and
+    the one worked example beside them showed a parser. A `return` statement
+    whose literal fixes the answer's keys was in neither, so a reader following
+    the guidance recorded "not pinned" for a function that leaves an evaluator
+    nothing to discover.
+
+    Measured, not supposed: a blinded run of the broken-evaluator case scored
+    the check absent and landed one point under the recorded derivation, and the
+    whole disagreement sat in this clause. The remedy that was NOT taken is
+    worth naming, because it is the cheap one - handing the next worker the
+    missing sentence in its briefing turns a defect in the guidance into a
+    permanently green run, since every later worker inherits the coaching and
+    the text stays wrong. It is the briefing-level twin of editing a worker's
+    evidence to make a snapshot match, which this package already refuses.
+
+    Pinned in BOTH homes on purpose. The reference owns the stage and the
+    glossary carries the line a reader consults while explaining the check, and
+    both had drifted to the same four-item list; widening one would leave two
+    answers to one question in a repository whose history is four contradictions
+    of exactly that shape.
+    """
+
+    # Matched as a SHAPE, not as the two sentences that happen to be there
+    # today. An allowlist of exact phrasings is the check whose coverage is the
+    # author's imagination on the day it was written: a later editor rewording
+    # the clause correctly would go red, learn to paste the accepted string
+    # rather than state the rule, and the guard would be training the prose
+    # instead of guarding it. The credential-file check beside this one is
+    # built the same way and for the same reason.
+    # Three concept groups that must co-occur in ONE sentence, in ANY order.
+    # An ordered alternation was the first attempt and the false-red probe below
+    # refused a correct rewording on its second run - "the shape a function
+    # returns is fixed by its own source" puts them in an order neither branch
+    # anticipated. `[^.]*` cannot cross a full stop, so all three lookaheads
+    # resolve inside the same sentence.
+    _SOURCE_FIXES_ITS_RETURN = re.compile(
+        r"(?=[^.]*\b(?:source|function)\b)"
+        r"(?=[^.]*\b(?:fix|fixes|fixed|fixing|pin|pins|pinned|pinning)\b)"
+        r"(?=[^.]*\b(?:return|returns|returned|returning|comes\s+back)\b)"
+    )
+
+    def test_the_source_fixing_its_own_return_is_a_named_form(self) -> None:
+        for name, path in (
+            ("reference", SKILL_ROOT / "references" / "component-creation.md"),
+            ("glossary", SKILL_ROOT / "references" / "glossary.md"),
+        ):
+            text = " ".join(path.read_text().casefold().split())
+            with self.subTest(document=name):
+                self.assertTrue(
+                    self._SOURCE_FIXES_ITS_RETURN.search(text),
+                    f"{name} no longer names the source-level return shape as a "
+                    "way an output contract is pinned - the omission this test "
+                    "exists for. Any wording will do; it has to be there.",
+                )
+
+    def test_the_shape_match_survives_a_rewording(self) -> None:
+        """The false-RED half, which the mutation probe cannot show.
+
+        Breaking the documents proves the check is not blind. It does not prove
+        the check is not obstructive, and that is the more corrosive failure
+        because nobody reports it as a bug - an editor who states the rule in
+        their own words and goes red learns to paste the accepted sentence.
+        These are phrasings a careful author might reasonably write instead.
+        """
+        for phrasing in (
+            "or the source itself fixing what comes back",
+            "or the source fixing what it returns",
+            "when the function pins the shape it returns",
+            "a returned dict literal, where the source fixes the shape",
+            "the shape a function returns is fixed by its own source",
+        ):
+            with self.subTest(phrasing=phrasing):
+                self.assertTrue(
+                    self._SOURCE_FIXES_ITS_RETURN.search(phrasing),
+                    f"a legitimate rewording is refused: {phrasing!r}",
+                )
+        # And it must still be capable of saying no.
+        for absent in (
+            "a parser, a schema, a response format, or an instruction naming one",
+            "whether the agent performs the task it was written for",
+        ):
+            with self.subTest(absent=absent):
+                self.assertIsNone(self._SOURCE_FIXES_ITS_RETURN.search(absent))
+
+    def test_pinning_a_shape_is_kept_apart_from_performing_the_task(self) -> None:
+        """The distinction the omission rested on, and the reason it recurred.
+
+        Without it the reading is available that a stub cannot have an output
+        contract BECAUSE it is a stub - which is an opinion about the agent's
+        quality, and the same paragraph forbids those from lowering a check.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("pinned and performed are separate questions", text)
+        # And the worked example that shows it, so the rule is not abstract.
+        self.assertIn(
+            'return {"model": model, "config": config, "input": input_text}', text
+        )
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):

@@ -219,9 +219,12 @@ The lines under each pillar on the card
                                  illustrates.
     whether the answer's shape is pinned down - whether anything makes the agent
                                  answer in a fixed shape: a parser, a schema, a
-                                 response format, or an instruction naming one.
-                                 Without it, an evaluator has to accept whatever
-                                 comes back.
+                                 response format, an instruction naming one, or
+                                 the source fixing what it returns. A stub
+                                 returning a dict literal pins the shape without
+                                 performing the task; only the shape is asked
+                                 about here. Without it, an evaluator has to
+                                 accept whatever comes back.
     whether it ends, and on what - whether the agent stops on something you can
                                  point at. One call per input stops trivially; a
                                  loop with a limit stops on the limit; a loop
