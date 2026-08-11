@@ -192,7 +192,8 @@ Declare who wrote the evaluator and the agent on every readiness call, as run-sc
 the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
 `generated` for one this run created. Nothing in a scoring function or an agent's source says who
 typed it, so this is the only way the score can carry what the card's `🛠️` marking already says,
-and it is you rather than the customer who knows - never ask. Update each the moment this run
+and it is you rather than the customer who knows - never ask. Omit a flag only where that component
+does not exist yet; nothing has an origin before it is there. Update each the moment this run
 creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
 one is not a neutral choice: it scores a generated component as if it were the customer's, which is
 the one thing the `🛠️`/`✅` separation exists to prevent. The dataset takes no such flag - its
@@ -214,7 +215,7 @@ omitting `--dataset` when none exists, then run `scripts/readiness.py` on that p
 any applicable calibration result. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
-scripts, and apply the run-scoped task-kind rule to readiness only.
+scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
@@ -530,7 +531,8 @@ the absent-evidence reading in the opening readiness gate and the creation depen
 create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
 rules and nothing else - carry the `🛠️` marking into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
-component on purpose, the run continues, and what the ceiling refuses is the claim, not the work. `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
+component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
+`evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
 being filled, before the baseline spends anything: before calibration starts, say what it does and
