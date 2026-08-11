@@ -901,10 +901,19 @@ def _named_forms(forms: Iterable[str]) -> str:
     thing that settles whether two forms are one task is a person looking at
     them. `discovered_space_evidence` in readiness.py names its parameters for
     the identical reason.
+
+    Materialized on the first line, and that is the bug this docstring exists
+    to keep fixed. Counting the total and taking the sample are two passes over
+    the argument; against a generator the first pass exhausts it, the second
+    counts zero, and the "+N more" clause disappears - so the sentence would
+    quietly claim the four it printed were all there was. A finding may run
+    short of room and may never understate what it found. Both call sites pass
+    a set today, which is exactly why this failed silently rather than loudly.
     """
-    shown = _form_sample(forms)
+    found = sorted(forms)
+    shown = _form_sample(found)
     listed = ", ".join(f"'{form}'" for form in shown)
-    remaining = len(list(forms)) - len(shown)
+    remaining = len(found) - len(shown)
     return f"{listed} (+{remaining} more)" if remaining > 0 else listed
 
 

@@ -2082,6 +2082,24 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         )
         self.assertIn(f"(+{6 - MODULE.SPLIT_FAMILY_FORMS_SHOWN} more)", finding.detail)
 
+    def test_the_remainder_is_counted_however_the_forms_arrive(self) -> None:
+        """A finding may run short of room; it may never understate what it found.
+
+        Naming the sample and counting the total are two passes over the same
+        argument. Against a generator the first exhausts it, the second counts
+        zero, and the "+N more" clause vanishes - so the sentence would claim
+        the four it printed were all there was. Both call sites pass a set
+        today, which is precisely why the defect was silent.
+        """
+        forms = {f"form{index} here" for index in range(6)}
+        expected = f"(+{6 - MODULE.SPLIT_FAMILY_FORMS_SHOWN} more)"
+        self.assertIn(expected, MODULE._named_forms(forms))
+        self.assertIn(expected, MODULE._named_forms(sorted(forms)))
+        self.assertIn(expected, MODULE._named_forms(form for form in forms))
+        # And it stays silent when there is nothing left over, rather than
+        # printing "+0 more".
+        self.assertNotIn("more", MODULE._named_forms({"only one"}))
+
     def test_the_same_rows_split_across_the_families_are_a_pass(self) -> None:
         """The identical material, redrawn - so the finding is the LINE, not the rows.
 

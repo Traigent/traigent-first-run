@@ -5800,6 +5800,31 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         self.assertIsNone(MODULE._shared_family_count(None))
         self.assertEqual(MODULE._shared_family_count(0), 0)
 
+    def test_a_form_list_that_is_not_a_list_of_forms_is_refused(self) -> None:
+        """The names are printed on the card, so an unusable list must not pass.
+
+        The sibling above guards the count and this one had no probe at all -
+        deleting its validation left the whole suite green, which is the same
+        hole one table over. What it lets through is not abstract: these strings
+        are quoted into a sentence about the customer's own dataset, so a
+        payload carrying numbers here would print `'1', '2'` as the kinds of
+        work their split separates.
+        """
+        for unusable in ([1, 2], "add two", [""], [None]):
+            with self.subTest(forms=unusable):
+                with self.assertRaises(MODULE.PreflightInputError) as caught:
+                    MODULE._family_forms(unusable)
+                self.assertIn("unusable form list", str(caught.exception))
+        # Absent is legitimate and drops the naming clause, never the finding:
+        # a payload predating the names still carries the count.
+        self.assertEqual(MODULE._family_forms(None), ())
+        self.assertEqual(MODULE._family_forms(["add two "]), ("add two",))
+        bare = self._score(_clean_dataset(shared_families=0))
+        self.assertEqual(
+            [cap.condition for cap in bare.caps], ["dataset-split-by-task-family"]
+        )
+        self.assertNotIn("Tuned on", bare.caps[0].reason)
+
     def test_a_split_whose_families_cross_it_raises_nothing(self) -> None:
         """One shared form is enough, and an unread check is not a finding.
 
