@@ -16908,6 +16908,66 @@ class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
         )
 
 
+class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
+    """The branch that had a rule and no words, so a reader used other words.
+
+    Two asks were written out as sentences a customer hears - material not
+    found, and too little of it. The third, material present and unusable, had
+    only a line in the flow naming its three routes. A reader reaching it finds
+    no words for it and renders the ones that are there, which belong to a
+    different situation. Observed on a blinded run: correct diagnosis, correct
+    stop, and a closing question offering to go ahead or hand over a path, with
+    no repair in it anywhere.
+
+    Repair is the route this branch owns and the gap branch cannot have. When
+    material is absent there is nothing to mend; when it is present and broken,
+    mending it is the one route on which the run still measures the customer's
+    own product. Leaving it implicit costs the outcome the exercise is for.
+    """
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_unusable_branch_speaks_its_three_routes(self) -> None:
+        creation = self._creation()
+        self.assertIn("when a component is present but unusable", creation)
+        for route in ("repair", "stand-in", "pause"):
+            with self.subTest(route=route):
+                self.assertIn(route, creation)
+
+    def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
+        """The rule that keeps three routes from reading as four ways to stop.
+
+        `I have it` answers where material lives, not what to do about the
+        material already here. Numbered beside the routes it becomes one choice
+        among four and pushes the pause into another, which is the shape a
+        blinded worker already produced once.
+        """
+        creation = self._creation()
+        self.assertIn("is not a fourth route and is never numbered as one", creation)
+        # And it still carries all three keys where it does appear.
+        self.assertIn(
+            "`i have it` with a path - `agent: <path>`, `dataset: <path>`, "
+            "`evaluation: <path>`",
+            creation,
+        )
+
+    def test_a_route_is_stated_by_what_it_does(self) -> None:
+        """The drift that produced the original defect, named so it cannot return.
+
+        "Continue once a valid evaluator is available" is a pause wearing the
+        substitute's number. A run offering it has offered no way to continue.
+        """
+        self.assertIn(
+            "say what each route does and never what it is called", self._creation()
+        )
+
+
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     """A ceiling is for a fact about the project, not about our reach.
 
