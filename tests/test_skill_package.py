@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import contextlib
 import hashlib
-from html import unescape
 import importlib.util
 import io
 import itertools
@@ -20,11 +19,12 @@ import tokenize
 import traceback
 import unicodedata
 import unittest
-from urllib.parse import unquote
+from html import unescape
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "traigent-first-run"
@@ -16798,6 +16798,66 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, creation)
                 self.assertNotIn(clause.casefold(), stage)
+
+
+class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
+    """The build half named four ways to pin a shape and omitted the commonest.
+
+    Every form the text listed - a parser, a schema, a response format, an
+    instruction naming one - is a declaration standing OUTSIDE the function, and
+    the one worked example beside them showed a parser. A `return` statement
+    whose literal fixes the answer's keys was in neither, so a reader following
+    the guidance recorded "not pinned" for a function that leaves an evaluator
+    nothing to discover.
+
+    Measured, not supposed: a blinded run of the broken-evaluator case scored
+    the check absent and landed one point under the recorded derivation, and the
+    whole disagreement sat in this clause. The remedy that was NOT taken is
+    worth naming, because it is the cheap one - handing the next worker the
+    missing sentence in its briefing turns a defect in the guidance into a
+    permanently green run, since every later worker inherits the coaching and
+    the text stays wrong. It is the briefing-level twin of editing a worker's
+    evidence to make a snapshot match, which this package already refuses.
+
+    Pinned in BOTH homes on purpose. The reference owns the stage and the
+    glossary carries the line a reader consults while explaining the check, and
+    both had drifted to the same four-item list; widening one would leave two
+    answers to one question in a repository whose history is four contradictions
+    of exactly that shape.
+    """
+
+    def test_the_source_fixing_its_own_return_is_a_named_form(self) -> None:
+        for name, path in (
+            ("reference", SKILL_ROOT / "references" / "component-creation.md"),
+            ("glossary", SKILL_ROOT / "references" / "glossary.md"),
+        ):
+            text = " ".join(path.read_text().casefold().split())
+            with self.subTest(document=name):
+                # The form itself, not merely the word "source".
+                self.assertTrue(
+                    "source itself fixing what comes back" in text
+                    or "the source fixing what it returns" in text,
+                    f"{name} no longer names the source-level return shape as a "
+                    "way an output contract is pinned - the omission this test "
+                    "exists for",
+                )
+
+    def test_pinning_a_shape_is_kept_apart_from_performing_the_task(self) -> None:
+        """The distinction the omission rested on, and the reason it recurred.
+
+        Without it the reading is available that a stub cannot have an output
+        contract BECAUSE it is a stub - which is an opinion about the agent's
+        quality, and the same paragraph forbids those from lowering a check.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("pinned and performed are separate questions", text)
+        # And the worked example that shows it, so the rule is not abstract.
+        self.assertIn('return {"model": model, "config": config, "input": text}', text)
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
