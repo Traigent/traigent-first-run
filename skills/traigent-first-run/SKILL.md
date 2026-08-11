@@ -163,8 +163,8 @@ Perform safe, read-only discovery without asking for approval:
   historical context but exclude it from this run's score and report.
 - Find LLM/model call sites and the smallest scoreable agent function, and infer its input/output
   contract and the product behavior being attempted. Finish this before the search below.
-- Then find datasets, fixtures, golden files, accepted traces, tests, rubrics, scorers, evaluators,
-  and outcome checks, searching outward from that agent. What it does, the contract just inferred,
+- Then find datasets, fixtures, golden files, accepted traces, request/response logs,
+  tests, rubrics, scorers, evaluators, and outcome checks, searching outward from that agent. What it does, the contract just inferred,
   and the files its own call sites and tests reach are what tell its examples and its grading method
   apart from the first plausible ones in the tree - and a project holding two agents usually holds
   material belonging to each. Either of those two may be taken up first; what is load-bearing is
@@ -172,10 +172,11 @@ Perform safe, read-only discovery without asking for approval:
 - Validate the apparent quality of real Dataset and Evaluation candidates, not only their
   existence. Record concrete evidence for Agent, Dataset, and Evaluation. Do not guess.
 
-Ask which agent to use when multiple credible candidates remain. When exactly one is found, name
-its path and ask whether to run on it - the one they mean may be elsewhere. Once selected,
-including a dummy or walkthrough agent, never ask again. Whether the evaluation method grades it is settled by the compatibility contract in
-`references/component-creation.md`.
+Ask which agent to use when multiple credible candidates remain. With exactly one, name its path
+inside the one ask below instead of halting for it separately; that reply accepts `agent:`. Where
+the ask does not fire, the pre-spend approval names the agent before any charge. Once selected,
+including a dummy or walkthrough agent, never ask again. Whether the evaluation method grades it
+is settled by the compatibility contract in `references/component-creation.md`.
 
 Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
 selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass

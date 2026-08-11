@@ -66,6 +66,25 @@ being told they were wrong, they are being asked to point. `readiness.py` alread
 its caps say a dataset was not provided *to this score* - so this is the wording catching up with
 the script.
 
+### Two answers, and an opening that says what they are choosing between
+
+The answers stay two. What varies is the first sentence, and it is not a third route: whether the
+run derives from something or from nothing is a fact this run already established, so offering both
+would be asking the user to pick a situation rather than an action.
+
+Name the anchor and what comes off it. `math_calc` that takes a question and returns a number is a
+grader and a set of arithmetic examples; a retrieval agent over a docs folder is questions its own
+corpus answers. Recorded request/response logs are a dataset source, not only an artifact to find -
+a project with no dataset often has the material for one, and saying so is the difference between
+"I will write examples" and "I will build them from your own traffic". The selected agent's name is
+the last anchor to fall: an agent that echoes its input anchors nothing, and that case is the
+matrix's all-missing row, which asks what the walkthrough should do rather than guessing it.
+
+Match the cost sentence to how much is derived. One generated piece around a real agent, real rows
+and a real ruler is not the same claim as a trio built from one sentence of intent, and
+`readiness.py` already scores them apart. A single sentence reused for both overstates the first
+and understates the second.
+
 Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
 hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already
 done the work. Do not soften that sentence, and do not oversell the other exit either: what the user
