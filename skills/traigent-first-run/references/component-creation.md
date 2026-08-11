@@ -115,6 +115,40 @@ either way, as it does above. When the card stops asking there is nothing to off
 left standing over it is not a request. None of this applies while the card is blocked on an empty
 tuning split: the rows are there, the split is what is wrong, and more rows answer nothing.
 
+### When a component is present but unusable
+
+The section above is for material this run could not find. This one is for material it found and
+cannot use: an evaluator that scores every answer the same, an agent that echoes its input instead
+of attempting the task, a schema that does not parse. Name the user's own file where you say this,
+by the path the inventory recorded; the shapes below are the situation, not the filenames. The distinction decides the question, because
+there is a route here that a gap does not have - the material exists, so it can be repaired, and a
+repair is the only answer that keeps the run about the user's own product.
+
+So this ask carries three routes, not two answers, and SKILL.md states them. What that sounds like,
+when the agent and the evaluator are both unusable and the dataset is real:
+
+> Your dataset is real and I can run on it. The agent here echoes its input back rather than
+> attempting what your rows describe, and the evaluator it would be graded by returns the same
+> score for every answer, so nothing can be graded yet. Three ways forward:
+>
+> A. I repair both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
+> and re-validate. This is the only route where the result can still be about your product.
+> B. I write clearly labelled `🛠️` stand-ins now. That shows the workflow working; it cannot tell
+> you how your product performs, and nothing from it may be promoted.
+> C. Pause, and I will give you the exact checks a corrected version has to pass.
+>
+> Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
+> I will use yours instead. I keep the agent I selected unless you point me elsewhere.
+
+`I have it` is not a fourth route and is never numbered as one. It answers a different question -
+where the material is, rather than what to do about the material here - and it rides on every ask in
+this document for that reason. Numbering it turns a standing exit into one option among four, and
+the pause beside it into another, which is how three routes become a list of ways to stop.
+
+Say what each route DOES and never what it is called. "Continue once a valid evaluator is
+available" is not route B, it is route C wearing B's number, and a run that offers it has offered
+the user no way to continue at all.
+
 ### When a path arrives
 
 Read it before anything is built. Material the user points at is material this run did not create,
