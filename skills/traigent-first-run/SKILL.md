@@ -483,6 +483,12 @@ paragraph below carries both halves:
 - `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
   labeled `🛠️` substitute.
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
+- `dataset-split-by-task-family` - disjoint and drawn in the wrong place: every recurring kind of
+  input sits on one side, so the held-out score measures transfer to unseen work rather than the
+  task that was tuned. Inferred from a leading form, so ask before repairing - name the two kinds in
+  the user's own words and take their answer on the one ask. One task, and the run continues with
+  the ceiling standing; two, and redraw the split so each kind appears on both sides. Do not enter
+  the creation dependency matrix and do not ask for more data.
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card

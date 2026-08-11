@@ -686,6 +686,28 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-no-expected-outputs": "label-data",
     "dataset-integrity-fail": "repair-dataset",
     "dataset-tune-holdout-overlap": "resplit-dataset",
+    # NOT `resplit-dataset`, and the split is the whole of #242.
+    #
+    # Its two siblings are told to redraw the line because the line is PROVEN
+    # wrong: rows on both sides, or nothing scoreable on one. Both are counted,
+    # and neither needs anybody's opinion first. This condition is inferred -
+    # preflight reads a leading form off the inputs and compares where those
+    # groups fall to where the split falls - and the customer is the only party
+    # who knows whether `add` and `fib` are one task or two. Where a deliberate
+    # out-of-distribution holdout is what they meant, redrawing the split is the
+    # wrong instruction and would destroy the thing they built.
+    #
+    # It also cannot share the slug under #197's rule. `resplit-dataset` blocks
+    # under both of its conditions, and this one may not: the rows are real, the
+    # tuning comparison is real, and an inference may bound a claim without
+    # cancelling a paid run. One instruction meaning "stop" on one card and
+    # "carry on" on the next is exactly what that split was filed about.
+    #
+    # `review-split` is the parallel of `review-answer-key` one axis over: a
+    # question put to the customer about material that may be perfectly good,
+    # where the answer decides what the number means rather than whether the
+    # file is broken.
+    "dataset-split-by-task-family": "review-split",
     # The other half of the #197 split, and the reason `add-examples` can be
     # unconditional. Zero comparable rows was a second reading of
     # `dataset-below-measurable-size`, distinguished only by a runtime flag; it
@@ -779,6 +801,14 @@ ROUTE_CATEGORY: dict[str, str] = {
     # what is remade. Nothing was measured on the side the search compares on,
     # which is why it may not scope a claim - there is no claim.
     "dataset-tuning-split-empty": CREATION_OR_REPAIR,
+    # The third split condition, and the only one of the three that scopes.
+    # Both sides hold real, labelled, disjoint rows and a comparison runs on
+    # them; what is bounded is what the held-out number may be said to be a
+    # measurement OF. `agent-no-varying-knobs` is the precedent for a scoping
+    # route inside the "answers the wrong question" band - the band is about
+    # what the condition destroys, and the route is about what the customer is
+    # asked, and those are different questions about the same cap.
+    "dataset-split-by-task-family": CLAIM_SCOPING,
     "dataset-fully-synthetic": CLAIM_SCOPING,
     "dataset-mostly-synthetic": CLAIM_SCOPING,
     # #165's two rungs, reached by silence rather than by a declaration. Same
@@ -996,6 +1026,28 @@ TUNING_SPLIT_EMPTY_CEILING = 50
 # that compares invented material. Before #197 this state was reported as
 # `dataset-below-measurable-size` at 74, in the "bounded claim" band, for a run
 # with no claim in it to bound.
+SPLIT_BY_TASK_FAMILY_CEILING = 50
+# The third reading of the defect the two ceilings above it already share, and
+# equal to them for that reason: `TUNING_SPLIT_EMPTY_CEILING` calls itself and
+# the overlap "the same defect read from opposite ends", and a split drawn along
+# task families is the third end - the rows are fine and the line drawn through
+# them is not. All three name a split that cannot support the claim the run
+# makes, so none of them may be the less capped.
+#
+# It stays in this band rather than reaching into "bounded claim" at 65, and the
+# band definition is why: every component is present and valid, and the run
+# still does not answer what was asked. That group already names "the set held
+# back to check the winner was already tuned on"; a set held back that is
+# different work from the tuned rows is the same sentence with the error running
+# the other way.
+#
+# RANKED LAST OF THE THREE at the shared 50, which is the tie the declaration
+# order exists to break. `mostly-synthetic` against `unsound-expected-outputs`
+# already settled the rule: where two conditions bound the claim by the same
+# amount, the counted one is the worse of the two, because a severity you
+# counted outranks a severity you inferred. Overlap and an empty tuning side are
+# read off row identities; this is read off a leading form the check itself
+# derives, and the customer may answer that the two kinds are one task.
 FULLY_SYNTHETIC_CEILING = 65
 # First of the "bounded claim" band. Nothing here was observed, so the run
 # measures the walkthrough; it clears 50 because the comparison it performs is
@@ -1098,6 +1150,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
+            ("dataset-split-by-task-family", SPLIT_BY_TASK_FAMILY_CEILING),
         ),
     ),
     (
@@ -1240,6 +1293,18 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     ),
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
+    ),
+    # The neighbouring split conditions are the ones worth answering, and the
+    # answer is that none of the three implies another. Overlap needs a row on
+    # both sides and this needs every recurring form on one, so a dataset
+    # carrying both is a dataset whose overlapping rows share no leading form -
+    # possible, and neither condition follows from the other. An empty tuning
+    # side is mutually exclusive with it: preflight raises this check only where
+    # both sides hold rows to read.
+    "dataset-split-by-task-family": (
+        "a split drawn along task families needs both sides populated and "
+        "disjoint, so it neither implies nor follows from the overlap or "
+        "empty-side conditions, and it can accompany any size or provenance"
     ),
     # #177's cap, answered in #188's own words: it and the provenance
     # conditions "both belong to 'bounded claim' and neither implies the
@@ -1660,6 +1725,17 @@ class DatasetFacts:
     # anything outside PASS/WARN/FAIL as exactly that.
     answer_dominance_status: str | None = None
     split_overlap: bool = False
+    # Whether the tuning/held-out line falls exactly on the task-family line,
+    # as a count of the recurring input forms that cross it - `0` is the
+    # finding, `None` is preflight never having answered.
+    #
+    # A count and not a boolean, for the reason `answer_dominance_status`
+    # above is a status: `False` would mean both "families cross the split"
+    # and "no family reading was available", and preflight SKIPs this check
+    # whenever the inputs carry no recurring form to read. Reporting an
+    # unanswerable question as a clean split is the one reading this field
+    # must not admit.
+    shared_families: int | None = None
     integrity_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
@@ -3740,6 +3816,21 @@ def score_dataset(
                 "The same examples appear in both the set the search tunes on "
                 "and the set held back to check it, so the final score is "
                 "flattered - a believable wrong number.",
+            )
+        )
+    if facts.shared_families == 0:
+        caps.append(
+            Cap(
+                "dataset-split-by-task-family",
+                SPLIT_BY_TASK_FAMILY_CEILING,
+                "Every recurring kind of input in your dataset sits on one side "
+                "of the tuning/held-out line, so the held-out rows are a "
+                "different kind of work from the tuned ones and the held-out "
+                "score answers a question about transfer rather than about your "
+                "task. Confirm these are one task, or redraw the split so each "
+                "kind appears on both sides.",
+                blocks=False,
+                asks=True,
             )
         )
     if facts.integrity_failed:
@@ -6086,6 +6177,13 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         near_duplicate_status=statuses.get("dataset-near-duplicates"),
         answer_dominance_status=_answer_dominance_status(statuses),
         split_overlap=_failed(statuses, "dataset-split"),
+        # Read from the metric and not from the status, so a preflight that
+        # never emitted this check reaches the same `None` a SKIP does. Both
+        # mean "unanswered", and a missing record is how an older payload says
+        # it - the same reading `placeholder_rows` above already takes.
+        shared_families=metrics.get("dataset-split-family", {}).get(
+            "shared_families"
+        ),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),

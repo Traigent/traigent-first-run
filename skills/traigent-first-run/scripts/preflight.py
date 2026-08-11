@@ -811,6 +811,155 @@ def normalized_identity(value: Any) -> str:
     return text.strip().casefold()
 
 
+# How many leading words of an input make up its task-family signature.
+#
+# TWO, and the number is the whole honesty of the check that reads it. One
+# token collapses every `def` in a code corpus into a single family and the
+# check can then never fire; three splits `def add(a, b)` from `def add(x, y)`
+# and every row becomes its own family, which is the same silence reached from
+# the other end. Two lands on the discriminating token in the shapes this guide
+# actually meets: `def add` against `def is_even`, `select count` against
+# `select name`, `translate to` against `summarise the`.
+#
+# It is a signature and not a classifier, and the difference is stated because
+# the check is only as honest as the thing it infers. Rows sharing these two
+# words are not proven to be one task; rows differing in them are not proven to
+# be two. What the signature CAN support is the one comparative question
+# `dataset-split-family` asks - does the tuning/held-out line fall exactly where
+# these groups do - and it answers that without naming any group a task.
+SPLIT_FAMILY_TOKENS = 2
+# A signature has to recur before it is read as a family at all.
+#
+# Two, because one is not a group. Without this floor every dataset whose rows
+# open differently - forty support tickets each starting with its own product
+# name - is a dataset of forty one-row families, every family sits on exactly
+# one side of any split by construction, and the check fires on every one of
+# them. That is the false red the whole design has to refuse, and it is refused
+# by requiring the grouping to exist before its boundary can be compared to
+# anything.
+SPLIT_FAMILY_MINIMUM_ROWS = 2
+# How much of each side recurring families must account for before the split
+# boundary is read against them.
+#
+# 0.8, and the argument is about what the remaining fifth may do rather than
+# about the number. Below this the reading is drawn from a minority of the rows
+# and the majority is one-off shapes the signature cannot speak for, so a "clean
+# partition" would be a statement about the part of the dataset that happened to
+# repeat. Requiring every row to belong would be the other error: one unusual
+# row would disable a check on a corpus that is otherwise four clean families.
+SPLIT_FAMILY_COVERAGE = 0.8
+
+
+def family_signature(value: Any) -> str:
+    """The leading form of one input, as the family signature it stands for.
+
+    Empty when the input holds no words at all - a row that cannot be given a
+    signature is left out of the reading rather than grouped with every other
+    row that could not either, which is how "unclassifiable" becomes a family.
+    """
+    tokens = normalized_text(value).split()[:SPLIT_FAMILY_TOKENS]
+    return " ".join(tokens)
+
+
+def family_partition_finding(
+    tuning: Sequence[Any], holdout: Sequence[Any]
+) -> tuple[str, str, dict[str, Any]]:
+    """Whether the tuning/held-out line falls exactly on the task-family line.
+
+    `dataset-split` answers whether the two sides share an input, and a split
+    drawn along task families passes it - being the STRONGEST form of disjoint
+    is precisely the failure. A search tuned on `add`/`max_of` and measured on
+    `is_even`/`fib` is not measuring generalization on the same task, and the
+    held-out number is the one the run exists to produce.
+
+    The neighbouring checks do not reach it either, and the gap is the shape of
+    this one: `dataset-near-duplicates` looks for rows that are too SIMILAR and
+    this defect is rows that are too DIFFERENT across a boundary, while
+    `dataset-difficulty-coverage` reads a declared tag rather than an inferred
+    form. The condition sits between "too alike" and "labelled unevenly".
+
+    CLEAN PARTITION IS THE TRIGGER, and uneven proportions are not. A random
+    split of a corpus with real recurring families essentially never partitions
+    cleanly - ten families of three rows under a 70/30 split leave every family
+    on one side with probability about 5e-5 - so the strong condition is what
+    keeps ordinary data out of it. Flagging skew instead would put a red on
+    every dataset whose families are not the same size, which is most of them.
+
+    Returns the emit triple. SKIP where no family reading is available, because
+    a check that stayed silent could not be told from one that passed, and
+    readiness reads a SKIP as unchecked rather than as a clean bill.
+
+    A count of families is deliberately NOT a precondition. One recurring form
+    covering both sides is a family that crosses the boundary, which is exactly
+    what PASS says - a genuinely single-family corpus is the case this check has
+    nothing against, and refusing to answer for it would report "unchecked" over
+    the cleanest evidence available. The two-family floor the WARN needs falls
+    out of the coverage rule instead of being asserted beside it: with both
+    sides accounted for and only one form recurring, that form is on both sides.
+    """
+    sides = {"tuning": tuning, "holdout": holdout}
+    signatures = {
+        name: [signature for signature in map(family_signature, values) if signature]
+        for name, values in sides.items()
+    }
+    counts: Counter[str] = Counter()
+    for values in signatures.values():
+        counts.update(values)
+    recurring = {
+        signature
+        for signature, count in counts.items()
+        if count >= SPLIT_FAMILY_MINIMUM_ROWS
+    }
+    metrics: dict[str, Any] = {"families": len(recurring)}
+    if not recurring:
+        return (
+            SKIP,
+            "no input form recurs, so no task family can be inferred to read "
+            "the split against",
+            metrics,
+        )
+    per_side = {
+        name: {signature for signature in values if signature in recurring}
+        for name, values in signatures.items()
+    }
+    covered = {
+        name: sum(1 for signature in values if signature in recurring)
+        for name, values in signatures.items()
+    }
+    thin = sorted(
+        name
+        for name, values in sides.items()
+        if not values or covered[name] < SPLIT_FAMILY_COVERAGE * len(values)
+    )
+    if thin:
+        named = " and ".join(f"{name} rows" for name in thin)
+        return (
+            SKIP,
+            f"recurring input forms account for under "
+            f"{SPLIT_FAMILY_COVERAGE:.0%} of the {named}, so most of what the "
+            "split separates has no form to read it against",
+            metrics,
+        )
+    shared = per_side["tuning"] & per_side["holdout"]
+    if shared:
+        forms = "form" if len(recurring) == 1 else "forms"
+        return (
+            PASS,
+            f"{len(shared)} of {len(recurring)} recurring input {forms} "
+            f"{'appears' if len(shared) == 1 else 'appear'} on both sides, so "
+            "the split does not follow the task families",
+            {**metrics, "shared_families": len(shared)},
+        )
+    return (
+        WARN,
+        f"every one of the {len(recurring)} recurring input forms appears on one "
+        "side of the split only, so the held-out rows are a different kind of "
+        "work from the tuned ones and the held-out score does not measure the "
+        "task that was tuned",
+        {**metrics, "shared_families": 0},
+    )
+
+
 def shingle_set(value: Any) -> set[str]:
     """One row as the SET OF OVERLAPPING WORD SEQUENCES it contains.
 
@@ -2124,6 +2273,17 @@ def check_dataset(
             "tuning and held-out inputs are disjoint",
             {"kind": "tuning-and-holdout"},
         )
+        # A second question about the SAME two sets `dataset-split` just
+        # compared, and a second record rather than a widened detail because
+        # readiness keys by check name. Disjointness and where the line falls
+        # are different findings, and answering both under one id would mean
+        # one overwriting the other.
+        #
+        # Only here. Under overlap the split is already condemned, and with one
+        # side missing there is no boundary to compare a family boundary with.
+        emit("dataset-split-family", *family_partition_finding(
+            sorted(tune_inputs), sorted(holdout_inputs)
+        ))
         tuning_count = sum(
             count for name, count in split_counts.items() if name in tune_names
         )

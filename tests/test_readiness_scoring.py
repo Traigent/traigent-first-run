@@ -5226,7 +5226,18 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # first because it is the older and broader finding - a leaky
                 # split is wrong wherever the rows fall - while the empty
                 # tuning side is one arrangement of the same line.
-                50: ["dataset-tune-holdout-overlap", "dataset-tuning-split-empty"],
+                # And a third end of the same defect (#242): a line drawn along
+                # the task families, so every recurring kind of input sits on
+                # one side. It ranks last of the three under the
+                # counted-before-inferred rule the 40 and 70 ties already
+                # apply - the other two are read off row identities, and this
+                # one off a leading form the check itself derives, which the
+                # customer may answer is one task after all.
+                50: [
+                    "dataset-tune-holdout-overlap",
+                    "dataset-tuning-split-empty",
+                    "dataset-split-by-task-family",
+                ],
                 # The declared/silent pair. Identical ceilings deliberately -
                 # the assumption IS "generated" either way - and the declared
                 # one is ranked first because what differs is the remedy, which
@@ -5696,6 +5707,42 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         # rows are there and labelled, so `get-data` was sending a customer
         # holding 120 usable examples away to collect more.
         self.assertEqual(score.recommended_action, "resplit-dataset")
+
+    def test_a_family_partitioned_split_is_bounded_and_asked_not_blocked(self) -> None:
+        """#242's third split condition, and the only one of the three that scopes.
+
+        Its two siblings block because the line is PROVEN wrong - the same rows
+        on both sides, or nothing scoreable on one - and both are read off row
+        identities. This one is inferred from a leading form, and a deliberate
+        out-of-distribution holdout produces it on purpose, so the customer is
+        the only party who can settle whether the two kinds are one task.
+
+        That is why it may not share `resplit-dataset`. Under #197 a remedy has
+        to give one answer about whether the run waits, and telling a customer
+        with real, labelled, disjoint rows to redraw their split before anything
+        may run is an instruction this evidence does not support.
+        """
+        score = self._score(_clean_dataset(shared_families=0))
+        self.assertEqual(
+            [(cap.condition, cap.blocks, cap.asks) for cap in score.caps],
+            [("dataset-split-by-task-family", False, True)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "review-split")
+        self.assertEqual(score.overall, MODULE.SPLIT_BY_TASK_FAMILY_CEILING)
+
+    def test_a_split_whose_families_cross_it_raises_nothing(self) -> None:
+        """One shared form is enough, and an unread check is not a finding.
+
+        `None` is preflight skipping the check or predating it, and both mean
+        the question was not answered. A cap raised on either would be a finding
+        about a customer's split that nothing established.
+        """
+        for label, shared in (("crossed", 4), ("unread", None)):
+            with self.subTest(families=label):
+                score = self._score(_clean_dataset(shared_families=shared))
+                self.assertEqual([cap.condition for cap in score.caps], [])
+                self.assertEqual(score.recommended_action, "proceed")
 
     def test_a_condition_asking_for_a_creation_or_repair_still_blocks(self) -> None:
         """The other half of the rule, so this is a partition and not a purge.

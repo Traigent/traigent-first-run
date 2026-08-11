@@ -1974,6 +1974,266 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertFalse(any(result.status == MODULE.FAIL for result in MODULE.RESULTS))
 
 
+class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
+    """#242: `dataset-split` asks whether the sides are disjoint, and they were.
+
+    A split whose tuning rows are all `def add`/`def max_of` and whose held-out
+    rows are all `def is_even`/`def fib` is the STRONGEST form of disjoint, and
+    that is the failure: the run tunes on one kind of work and reports its
+    headline number on another. `dataset-near-duplicates` looks for rows too
+    similar and this is rows too different across a boundary, so the condition
+    fell between the two checks that could have seen it.
+
+    The false-red direction is what most of these pin. The trigger is a CLEAN
+    partition, so ordinary data has to survive it: a corpus of one-off phrasings
+    with no recurring form, a corpus that really is one family, and one family
+    per difficulty band split across the bands must all come back without a
+    finding - and the two that cannot be answered must say so rather than pass.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _finding(self, rows: list[dict]) -> "MODULE.Result":
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        return next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-split-family"
+        )
+
+    @staticmethod
+    def _rows(families: dict[str, list[str]]) -> list[dict]:
+        """One row per case, `{split: [family stem, ...]}` repeated four times."""
+        rows: list[dict] = []
+        for split, stems in families.items():
+            for stem in stems:
+                for case in range(4):
+                    rows.append(
+                        {
+                            "id": f"{stem}-{case}".replace(" ", "-"),
+                            "input": f"{stem} case number {case}",
+                            "output": stem.split()[-1],
+                            "split": split,
+                            "difficulty": ("easy", "medium", "hard", "very-hard")[case],
+                        }
+                    )
+        return rows
+
+    def test_a_family_partitioned_split_is_named(self) -> None:
+        finding = self._finding(
+            self._rows(
+                {
+                    "tuning": ["def add", "def max_of"],
+                    "holdout": ["def is_even", "def fib"],
+                }
+            )
+        )
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertIn("appears on one side of the split only", finding.detail)
+        # The consequence, not just the observation. "Four families do not
+        # cross" is a fact about the file; what the reader has to act on is
+        # that the number the run produces answers a different question.
+        self.assertIn("does not measure the task that was tuned", finding.detail)
+        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 0})
+
+    def test_the_same_rows_split_across_the_families_are_a_pass(self) -> None:
+        """The identical material, redrawn - so the finding is the LINE, not the rows.
+
+        Same four families, same sixteen inputs, same sizes on each side. The
+        only difference is where the tuning/held-out line falls, and it is the
+        only difference the finding may turn on.
+        """
+        partitioned = self._rows(
+            {
+                "tuning": ["def add", "def max_of"],
+                "holdout": ["def is_even", "def fib"],
+            }
+        )
+        crossed = [
+            {**row, "split": "tuning" if int(row["id"][-1]) < 3 else "holdout"}
+            for row in partitioned
+        ]
+        self.assertEqual(
+            sorted(row["input"] for row in crossed),
+            sorted(row["input"] for row in partitioned),
+        )
+        finding = self._finding(crossed)
+        self.assertEqual(finding.status, MODULE.PASS)
+        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 4})
+
+    def test_one_family_per_difficulty_band_split_across_the_bands_passes(self) -> None:
+        """The false red the issue names first: families are not the defect."""
+        rows = []
+        bands = ("easy", "medium", "hard", "very-hard")
+        stems = (
+            "translate the phrase",
+            "summarise the paragraph",
+            "classify the ticket",
+            "extract the entity",
+        )
+        for band, stem in zip(bands, stems):
+            for case in range(8):
+                rows.append(
+                    {
+                        "id": f"{band}-{case}",
+                        "input": f"{stem} number {case} for the {band} case",
+                        "output": stem.split()[0],
+                        "difficulty": band,
+                        "split": "tuning" if case < 6 else "holdout",
+                    }
+                )
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.PASS)
+        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 4})
+        self.assertIn("does not follow the task families", finding.detail)
+
+    def test_a_genuinely_single_family_corpus_passes(self) -> None:
+        """One form on both sides IS a form that crosses the boundary.
+
+        Answered rather than skipped, and the count of families is deliberately
+        not a precondition: this is the cleanest evidence the check can have
+        that the split does not follow the families, and reporting it as
+        unchecked would put "we did not look" over the clearest look available.
+        """
+        rows = [
+            {
+                "id": f"refund-{case}",
+                "input": f"refund request number {case} for a returned order",
+                "output": "refund",
+                "split": "tuning" if case < 6 else "holdout",
+            }
+            for case in range(8)
+        ]
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.PASS)
+        self.assertEqual(finding.metrics, {"families": 1, "shared_families": 1})
+        self.assertIn("1 of 1 recurring input form appears", finding.detail)
+
+    def test_two_wordings_of_one_task_are_reported_and_the_user_decides(self) -> None:
+        """The limit of the inference, pinned rather than hidden.
+
+        `refund request` and `refund claim` are one task written two ways, and a
+        leading-form signature cannot know that. Split along them, the check
+        reports a clean partition - correctly, by what it measures, and wrongly
+        about the customer's work.
+
+        This is the whole reason the readiness cap it feeds asks instead of
+        blocking, and the reason the remedy is `review-split` rather than
+        `resplit-dataset`: the customer is the only party who can say whether
+        the two kinds are one task, and an inference may bound what a result
+        claims without cancelling a run their own rows would have earned.
+        """
+        finding = self._finding(
+            self._rows({"tuning": ["refund request"], "holdout": ["refund claim"]})
+        )
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertEqual(finding.metrics, {"families": 2, "shared_families": 0})
+
+    def test_one_off_phrasings_are_skipped_rather_than_flagged(self) -> None:
+        """The false red that would have fired on every ordinary dataset.
+
+        Twenty support tickets each opening with its own product name is twenty
+        one-row families, every one of which sits on exactly one side of any
+        split by construction. Without the recurrence floor this check would
+        find a clean partition in a file that has no families at all.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"Widget{index} will not sync after the latest update",
+                "output": "technical",
+                "split": "tuning" if index < 14 else "holdout",
+            }
+            for index in range(20)
+        ]
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.SKIP)
+        self.assertEqual(finding.metrics, {"families": 0})
+        self.assertIn("no input form recurs", finding.detail)
+
+    def test_a_reading_drawn_from_a_minority_of_the_rows_is_skipped(self) -> None:
+        """Two clean families inside twenty one-off rows is not a clean split.
+
+        The partition would be perfect over the four rows that recur and say
+        nothing about the twenty that do not, so the honest answer is that the
+        split was not read rather than that it partitions.
+        """
+        rows = [
+            {
+                "id": f"u{index}",
+                "input": f"Widget{index} will not sync after the latest update",
+                "output": "technical",
+                "split": "tuning" if index < 10 else "holdout",
+            }
+            for index in range(20)
+        ]
+        rows += [
+            {
+                "id": f"{stem}-{case}".replace(" ", "-"),
+                "input": f"{stem} case number {case}",
+                "output": "y",
+                "split": split,
+            }
+            for split, stem in (("tuning", "def add"), ("holdout", "def fib"))
+            for case in range(2)
+        ]
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.SKIP)
+        self.assertEqual(finding.metrics, {"families": 2})
+        self.assertIn("recurring input forms account for under 80%", finding.detail)
+
+    def test_the_check_is_not_raised_where_there_is_no_boundary_to_read(self) -> None:
+        """Overlap and a one-sided split answer a prior question.
+
+        Under overlap the split is already condemned by `dataset-split` itself,
+        and a tuning-only dataset has no held-out side for a family boundary to
+        coincide with. Emitting SKIP for either would put an unanswerable
+        question on the card beside the answer that matters.
+        """
+        for label, rows in (
+            (
+                "tuning-only",
+                self._rows({"tuning": ["def add", "def fib"]}),
+            ),
+            (
+                "overlapping",
+                self._rows({"tuning": ["def add"], "holdout": ["def add"]}),
+            ),
+        ):
+            with self.subTest(split=label):
+                MODULE.RESULTS.clear()
+                with tempfile.TemporaryDirectory() as directory:
+                    dataset = Path(directory) / "eval.jsonl"
+                    dataset.write_text(
+                        "\n".join(json.dumps(row) for row in rows) + "\n"
+                    )
+                    MODULE.check_dataset(dataset)
+                self.assertFalse(
+                    any(
+                        result.check == "dataset-split-family"
+                        for result in MODULE.RESULTS
+                    )
+                )
+
+    def test_the_signature_is_the_leading_pair_of_words(self) -> None:
+        """The inferred thing, stated - the check is only as honest as this.
+
+        One token collapses every `def` into one family and the check can never
+        fire; three separates `def add(a, b)` from `def add(x, y)` and every row
+        becomes its own family, which is the same silence from the other end.
+        """
+        self.assertEqual(MODULE.family_signature("def add(a, b):"), "def add")
+        self.assertEqual(MODULE.family_signature("def is_even(n):"), "def is_even")
+        self.assertEqual(MODULE.family_signature("SELECT count(*) FROM t"), "select count")
+        # No words at all is no signature, rather than a signature everything
+        # unreadable shares - "unclassifiable" must not become a family.
+        self.assertEqual(MODULE.family_signature("!!! ???"), "")
+
+
 class EvaluatorShapeCheckTests(unittest.TestCase):
     """traigent-first-run#133: a static, non-executing check on evaluator.py.
 

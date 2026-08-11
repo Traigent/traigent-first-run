@@ -12098,7 +12098,11 @@ class SkillPackageTests(unittest.TestCase):
         # where no row on the tuning side can be scored, which used to travel
         # as a runtime branch of the small-dataset cap and is a different
         # finding with a different repair.
-        self.assertEqual(len(conditions), 15)
+        # #242 added `dataset-split-by-task-family` as the sixteenth: a split
+        # that is disjoint and drawn in the wrong place, which is the third
+        # reading of the same "the line is wrong" defect and the only one of
+        # the three that scopes the claim rather than stopping the run.
+        self.assertEqual(len(conditions), 16)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -12245,6 +12249,14 @@ class SkillPackageTests(unittest.TestCase):
             # module - `blocks=False`, `asks=True` - and SKILL.md routes it as
             # "bounded, not stopped".
             "dataset-unsound-expected-outputs",
+            # #242's split condition, and it scopes for the reason the row-level
+            # check above does: the finding is inferred - the leading words of
+            # each input, grouped and compared to where the split falls - and
+            # the customer is the only party who can say whether two kinds are
+            # one task. Its two counted siblings block; this one carries
+            # `blocks=False`, `asks=True`, and SKILL.md routes it as "ask before
+            # repairing".
+            "dataset-split-by-task-family",
         }
         # The third category, derived rather than listed, and empty since #197.
         #
