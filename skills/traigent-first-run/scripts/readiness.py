@@ -1117,6 +1117,23 @@ AGENT_GENERATED_CEILING = 65
 # agent this run wrote may reach WORKABLE and may never present as STRONG, on
 # the same rule the dataset ladder states - synthesised material may be
 # workable, it may not be good.
+#
+# PUT TO THE OWNER AS AN OPEN QUESTION AND SETTLED HERE, so the equality is not
+# re-argued every time someone reads it as too generous. The objection was that
+# an invented agent should be capped harder than invented data, because the
+# winning configuration then belongs to a program nobody runs. The answer is
+# that a substitute is not built out of nothing: it is derived from whatever the
+# project DOES hold, so an agent written against real examples and a real
+# grading method is aimed at the customer's actual task rather than at an
+# invented one. Not real-world evidence, and pointed the right way - which is
+# what a single band, entered from either side, is for.
+#
+# The second half of the answer is what the score is FOR. A low number does not
+# stop this walkthrough and never has; it says what is missing so the run can go
+# and fix it, and a project holding nothing scores 0 and proceeds anyway. Grading
+# the two half-invented cases apart would spend a distinction on a difference
+# that changes no decision - both are WORKABLE, both carry the same instruction,
+# and both are fixed by connecting the real component.
 MOSTLY_SYNTHETIC_CEILING = 70
 # Above `fully-synthetic` because some of the data IS real - strictly less
 # invented, so strictly less capped. This pair is the clearest case of the

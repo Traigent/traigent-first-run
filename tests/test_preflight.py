@@ -2091,13 +2091,48 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         self.assertEqual(finding.metrics, {"families": 4, "shared_families": 4})
         self.assertIn("does not follow the task families", finding.detail)
 
-    def test_a_genuinely_single_family_corpus_passes(self) -> None:
-        """One form on both sides IS a form that crosses the boundary.
+    def test_a_shared_opening_does_not_hide_the_families_behind_it(self) -> None:
+        """The defect the offset exists for, and the reason it is not word zero.
 
-        Answered rather than skipped, and the count of families is deliberately
-        not a precondition: this is the cleanest evidence the check can have
-        that the split does not follow the families, and reporting it as
-        unchecked would put "we did not look" over the clearest look available.
+        Every row opens `Calculate this question:` and the families sit three
+        words later. Read from position zero the corpus has ONE signature, so
+        the check answered PASS - "the split does not follow the task
+        families" - over a split that partitions by family exactly. That is a
+        confident wrong answer rather than a silence, and an instruction prefix
+        is the ordinary shape of a real dataset, not a corner case.
+        """
+        stems = {
+            "tuning": ["add two numbers", "find the maximum"],
+            "holdout": ["check if even", "compute fibonacci"],
+        }
+        rows = [
+            {
+                "id": f"{split}-{stem}-{case}".replace(" ", "-"),
+                "input": f"Calculate this question: {stem} for input set {case}",
+                "output": "y",
+                "split": split,
+            }
+            for split, group in stems.items()
+            for stem in group
+            for case in range(8)
+        ]
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertEqual(finding.metrics, {"families": 4, "shared_families": 0})
+
+    def test_one_template_and_a_counter_is_no_family_reading_at_all(self) -> None:
+        """A corpus of `refund request number N` has no families to compare.
+
+        This answered PASS before the offset landed, on the strength of the one
+        signature the boilerplate produced - which was a statement about the
+        template, not about the customer's work. Past the shared opening there
+        is only a serial number, so nothing recurs and the honest answer is
+        that the split could not be read against families.
+
+        Worth pinning as its own case because the change that fixed the finding
+        above moved this one, and moving it was the point: PASS is a claim that
+        families exist AND cross the line, so it may not be reached by a corpus
+        that has no families.
         """
         rows = [
             {
@@ -2109,9 +2144,37 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
             for case in range(8)
         ]
         finding = self._finding(rows)
-        self.assertEqual(finding.status, MODULE.PASS)
-        self.assertEqual(finding.metrics, {"families": 1, "shared_families": 1})
-        self.assertIn("1 of 1 recurring input form appears", finding.detail)
+        self.assertEqual(finding.status, MODULE.SKIP)
+        self.assertEqual(finding.metrics, {"families": 0})
+        self.assertIn("no input form recurs", finding.detail)
+
+    def test_one_unusual_opening_does_not_slide_the_window_back(self) -> None:
+        """Why the boilerplate test is a share and not a strict common prefix.
+
+        Thirty-one rows open `Calculate this question` and one opens `Compute
+        this question`. Under `all()` the corpus shares no prefix at all, the
+        window returns to word zero, and the families three words later go
+        unread again - one row in thirty-two undoing the whole check.
+        """
+        stems = {
+            "tuning": ["add two numbers", "find the maximum"],
+            "holdout": ["check if even", "compute fibonacci"],
+        }
+        rows = [
+            {
+                "id": f"{split}-{stem}-{case}".replace(" ", "-"),
+                "input": f"Calculate this question: {stem} for input set {case}",
+                "output": "y",
+                "split": split,
+            }
+            for split, group in stems.items()
+            for stem in group
+            for case in range(8)
+        ]
+        rows[0]["input"] = rows[0]["input"].replace("Calculate", "Compute", 1)
+        finding = self._finding(rows)
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertEqual(finding.metrics["shared_families"], 0)
 
     def test_two_wordings_of_one_task_are_reported_and_the_user_decides(self) -> None:
         """The limit of the inference, pinned rather than hidden.
@@ -2234,6 +2297,43 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         # No words at all is no signature, rather than a signature everything
         # unreadable shares - "unclassifiable" must not become a family.
         self.assertEqual(MODULE.family_signature("!!! ???"), "")
+
+    def test_the_window_starts_where_the_rows_begin_to_differ(self) -> None:
+        """Two words, counted from the first word that tells rows apart.
+
+        The pair is the signature; where the pair starts is `family_offset`'s
+        decision, and separating the two is what let the fixed-position version
+        answer PASS over a boilerplate-prefixed corpus.
+        """
+        prefixed = [
+            "Calculate this question: add two numbers",
+            "Calculate this question: check if even",
+        ]
+        self.assertEqual(MODULE.family_offset(prefixed), 3)
+        self.assertEqual(MODULE.family_signature(prefixed[0], 3), "add two")
+        self.assertEqual(MODULE.family_signature(prefixed[1], 3), "check if")
+        # Rows that differ from their first word are read from their first
+        # word - there is no boilerplate to step over.
+        self.assertEqual(MODULE.family_offset(["alpha one", "beta two"]), 0)
+        # "Boilerplate" is relative to the corpus, which is worth pinning
+        # because it surprises: two rows that are BOTH `def add` agree at word
+        # one, so word one carries no information here and the window moves
+        # past it. Add a third form and it starts discriminating again.
+        self.assertEqual(MODULE.family_offset(["def add(a)", "def add(b)"]), 2)
+        self.assertEqual(
+            MODULE.family_offset(["def add a", "def add b", "def fib n", "def max q"]),
+            1,
+        )
+        # It stops at the first discriminating word rather than skipping every
+        # agreement it can find: `case` recurring later is a fact about the
+        # family, and stepping over it would read the row's serial number.
+        forms = ["def add case 1", "def add case 2", "def fib case 3", "def fib case 4"]
+        self.assertEqual(MODULE.family_offset(forms), 1)
+        self.assertEqual(MODULE.family_signature(forms[0], 1), "add case")
+        # Rows agreeing at every position have nothing to tell them apart, so
+        # the window stays at zero rather than running off the end.
+        self.assertEqual(MODULE.family_offset(["same words", "same words"]), 0)
+        self.assertEqual(MODULE.family_offset([]), 0)
 
 
 class EvaluatorShapeCheckTests(unittest.TestCase):

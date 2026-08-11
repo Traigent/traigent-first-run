@@ -811,7 +811,9 @@ def normalized_identity(value: Any) -> str:
     return text.strip().casefold()
 
 
-# How many leading words of an input make up its task-family signature.
+# How many words of an input make up its task-family signature, counted from
+# the first word that tells one row from another rather than from the first
+# word of the row.
 #
 # TWO, and the number is the whole honesty of the check that reads it. One
 # token collapses every `def` in a code corpus into a single family and the
@@ -821,6 +823,16 @@ def normalized_identity(value: Any) -> str:
 # actually meets: `def add` against `def is_even`, `select count` against
 # `select name`, `translate to` against `summarise the`.
 #
+# WHERE the window starts is a separate decision and it is `family_offset`'s,
+# because reading two words from position zero was wrong on the commonest shape
+# a real dataset has. A corpus whose rows all open `Calculate this question:`
+# has one signature for every row, so the check reported PASS - "the split does
+# not follow the task families" - over a split that partitioned by family
+# underneath the boilerplate. A confident wrong answer, not a silence, and the
+# instruction-prefixed corpus that produces it is the ordinary case rather than
+# a corner. Source:
+# tests/test_preflight.py#ASplitDrawnAlongTheTaskFamiliesTests.test_a_shared_opening_does_not_hide_the_families_behind_it.
+#
 # It is a signature and not a classifier, and the difference is stated because
 # the check is only as honest as the thing it infers. Rows sharing these two
 # words are not proven to be one task; rows differing in them are not proven to
@@ -828,6 +840,21 @@ def normalized_identity(value: Any) -> str:
 # `dataset-split-family` asks - does the tuning/held-out line fall exactly where
 # these groups do - and it answers that without naming any group a task.
 SPLIT_FAMILY_TOKENS = 2
+# How much of a corpus has to share a leading word before that position is read
+# as boilerplate and skipped.
+#
+# 0.9 rather than "every row", because a strict common prefix is decided by the
+# single most unusual row: ninety-nine rows opening `Calculate this question`
+# and one opening `Compute this question` share no prefix at all, and the whole
+# window slides back to zero for one row in a hundred. Templated openings are
+# templated by construction, and the mixed corpus is exactly the one this has to
+# survive.
+#
+# Not lower than that either. A word that only nine rows in ten share is
+# separating a tenth of the corpus, and a tenth is large enough to be a family
+# in its own right under the two-row recurrence floor below - skipping it would
+# discard the discrimination this check exists to find.
+SPLIT_FAMILY_BOILERPLATE_SHARE = 0.9
 # A signature has to recur before it is read as a family at all.
 #
 # Two, because one is not a group. Without this floor every dataset whose rows
@@ -850,14 +877,52 @@ SPLIT_FAMILY_MINIMUM_ROWS = 2
 SPLIT_FAMILY_COVERAGE = 0.8
 
 
-def family_signature(value: Any) -> str:
+def family_offset(values: Sequence[Any]) -> int:
+    """How many leading words say the same thing on nearly every row.
+
+    The window the signature reads has to start where the rows begin to differ,
+    not at word zero, and the reason is a corpus shape this guide meets
+    constantly: an instruction prefix. `Calculate this question: add two
+    numbers` and `Calculate this question: check if even` agree on their first
+    three words, so a window at position zero reads one family for the whole
+    file and the check answers PASS over a split that partitions by family
+    three words later.
+
+    Position by position, and it STOPS at the first word that discriminates
+    rather than skipping every uninformative word it can find. A later
+    agreement is a fact about that family - `case` recurring inside `def add
+    case 3` says the family has a shape - and stepping over it would read the
+    signature out of the row's serial number.
+
+    Tolerant rather than strict, per `SPLIT_FAMILY_BOILERPLATE_SHARE`: a common
+    prefix computed with `all()` is decided by the one row that opens
+    differently.
+    """
+    token_lists = [normalized_text(value).split() for value in values]
+    if not token_lists:
+        return 0
+    for position in range(max(len(tokens) for tokens in token_lists)):
+        present = [tokens[position] for tokens in token_lists if len(tokens) > position]
+        if not present:
+            break
+        _word, count = Counter(present).most_common(1)[0]
+        if count < SPLIT_FAMILY_BOILERPLATE_SHARE * len(token_lists):
+            return position
+    # Every position agreed, so there is nothing to tell these rows apart at
+    # all. Reading from zero is the honest answer: it produces one signature
+    # for the corpus, which is what a corpus of identical openings IS.
+    return 0
+
+
+def family_signature(value: Any, offset: int = 0) -> str:
     """The leading form of one input, as the family signature it stands for.
 
-    Empty when the input holds no words at all - a row that cannot be given a
-    signature is left out of the reading rather than grouped with every other
-    row that could not either, which is how "unclassifiable" becomes a family.
+    Empty when the input holds no words past `offset` - a row that cannot be
+    given a signature is left out of the reading rather than grouped with every
+    other row that could not either, which is how "unclassifiable" becomes a
+    family.
     """
-    tokens = normalized_text(value).split()[:SPLIT_FAMILY_TOKENS]
+    tokens = normalized_text(value).split()[offset : offset + SPLIT_FAMILY_TOKENS]
     return " ".join(tokens)
 
 
@@ -898,8 +963,17 @@ def family_partition_finding(
     sides accounted for and only one form recurring, that form is on both sides.
     """
     sides = {"tuning": tuning, "holdout": holdout}
+    # Over BOTH sides at once, and that is load-bearing rather than tidy. A
+    # window chosen per side would read the two halves at different positions,
+    # and the only question this function asks is whether their signatures
+    # coincide - which is meaningless once they are not the same measurement.
+    offset = family_offset([*tuning, *holdout])
     signatures = {
-        name: [signature for signature in map(family_signature, values) if signature]
+        name: [
+            signature
+            for signature in (family_signature(value, offset) for value in values)
+            if signature
+        ]
         for name, values in sides.items()
     }
     counts: Counter[str] = Counter()
