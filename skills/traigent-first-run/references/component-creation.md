@@ -240,8 +240,12 @@ user's project and pass it as `scripts/readiness.py --agent-knobs`.
 A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
 it genuinely accepts, a categorical one needs two or more options that exist. Anything else is
 reported with the reason it earned nothing, which is a line the user can read and correct - so a
-parameter you are unsure of is worth recording rather than dropping. `seed` and `max_tokens` earn
-nothing here, for the reasons the scorer already gives on the card.
+parameter you are unsure of is worth recording rather than dropping. Record it with its `evidence`
+and no `values` or `low`/`high`: that is how a knob says "seen in the agent, extent not
+established". A knob has no `determined` field - that answer belongs to the four `build` checks
+below, and inside `knobs` it is refused - because a parameter establishing no range contributes
+nothing a search can vary, which is what recording it without one already says.
+`seed` and `max_tokens` earn nothing here, for the reasons the scorer already gives on the card.
 
 A range counts as at least two distinct values and no more; a value list counts as its own length.
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of

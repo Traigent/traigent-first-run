@@ -8717,6 +8717,135 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         self.assertGreater(both.score, document_only.score)
 
 
+class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
+    """#241: the guidance said record it, and the first scoring call refused.
+
+    Two sentences send a reader at the `undetermined` shape - "a parameter you
+    are unsure of is worth recording rather than dropping" in the reference, and
+    SKILL.md's "answer a check you cannot settle as undetermined with the
+    reason, never as a no". That shape is a `build` check's, and written inside
+    `knobs` it exits 2 before the opening score exists. A blinded walkthrough
+    recovered by trial and error, and dropped the parameter.
+
+    The schema is not widened, and these pin why that is a resolution rather
+    than a shrug: the knob half already HAS the third state, spelled as a
+    parameter recorded with its evidence and no established extent. So what is
+    asserted here is that the spelling works, that it is now visible, and that
+    the error naming the accepted fields also names the remedy.
+    """
+
+    def _uncounted(self, **spec):
+        knobs = {
+            "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+            "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
+            "top_p": spec,
+        }
+        return MODULE.score_agent(_read(_build_document(), knobs=knobs))
+
+    def test_a_knob_recorded_with_evidence_alone_costs_nothing(self) -> None:
+        """The half of the promise that already held, pinned so it keeps holding.
+
+        Recording an unsettled parameter may not be punished, or the sentence
+        telling a reader to record it is asking them to lower their own score.
+        """
+        settled, _, _ = MODULE.score_agent(_read(_build_document()))
+        recorded, caps, _ = self._uncounted(
+            evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
+        )
+        self.assertEqual(recorded.score, settled.score)
+        self.assertEqual([cap.condition for cap in caps], [])
+
+    def test_a_knob_recorded_with_evidence_alone_is_reported(self) -> None:
+        """The half that did not hold, and the reason the reference could lie.
+
+        The refused list was printed only on the branch where NOTHING is
+        credited. Credit one knob and a recorded `top_p` appeared on no card and
+        in no payload, so a reader following the instruction could not tell
+        their record from a typo.
+        """
+        pillar, _, _ = self._uncounted(
+            evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
+        )
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn("top_p", space.evidence)
+        self.assertIn("Recorded and not counted", space.evidence)
+        # The reason travels with the name. "top_p was ignored" is not a line a
+        # user can correct; the reason it counts for nothing is.
+        self.assertIn("neither a list of options nor a low/high range", space.evidence)
+
+    def test_the_credited_reading_is_unchanged_by_the_recorded_one(self) -> None:
+        """A recorded parameter may not enter the space it establishes nothing about."""
+        settled, _, _ = MODULE.score_agent(_read(_build_document()))
+        recorded, _, _ = self._uncounted(evidence="agent.py:14 top_p from config")
+        for pillar in (settled, recorded):
+            space = next(s for s in pillar.subscores if s.name == "search-space")
+            self.assertIn("reaching at least 6 distinct configurations", space.evidence)
+
+    def test_the_build_shape_inside_knobs_is_refused_with_the_remedy(self) -> None:
+        """Naming the accepted fields is half a message.
+
+        The other half is what to write instead, and it is owed here rather than
+        only in the reference: the reader is mid-run, at a non-zero exit, and
+        the one thing they must not do is drop the parameter.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._uncounted(
+                determined=False,
+                reason="assembled at runtime from a file this read cannot reach",
+                evidence="agent.py:14 top_p=cfg['top_p']",
+            )
+        message = str(caught.exception)
+        self.assertIn("unknown field(s) determined, reason", message)
+        self.assertIn("answer a build check", message)
+        self.assertIn("no 'values' or 'low'/'high'", message)
+
+    def test_an_ordinary_typo_still_gets_the_short_message(self) -> None:
+        """The remedy is for the confusion it names, not for every misspelling.
+
+        `valeus` is a typo; appending the `determined` paragraph to it would
+        explain a shape the author never reached for.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._uncounted(valeus=["a", "b"], evidence="agent.py:14")
+        message = str(caught.exception)
+        self.assertIn("unknown field(s) valeus", message)
+        self.assertNotIn("answer a build check", message)
+
+    def test_the_build_half_still_accepts_the_shape_it_documents(self) -> None:
+        """The `undetermined` answer is untouched where it is real."""
+        facts = _read(
+            _build_document(
+                prompt={
+                    "determined": False,
+                    "reason": "assembled at runtime from a store this read cannot reach",
+                    "evidence": "agent.py:12 SYSTEM = load_prompt(name)",
+                }
+            )
+        )
+        prompt = next(signal for signal in facts.build or () if signal.name == "prompt")
+        self.assertFalse(prompt.measured)
+        self.assertIn("not established by this read", prompt.evidence)
+
+    def test_the_reference_states_the_shape_it_sends_the_reader_at(self) -> None:
+        """The disagreement was prose against schema, so the prose is pinned too.
+
+        Not a restatement of the mandate - SKILL.md keeps that. This is the
+        reference stating, where the reader is standing, which of the two halves
+        the `determined` answer belongs to.
+        """
+        guide = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text()
+        knob_half = guide.split("### The build half", 1)[0]
+        self.assertIn("worth recording rather than dropping", knob_half)
+        self.assertIn("no `values` or `low`/`high`", knob_half)
+        self.assertIn("A knob has no `determined` field", knob_half)
+
+
 class OneFactIsOneRemediationLineTests(unittest.TestCase):
     """Found by reviewing the fix rather than the feature (#184).
 

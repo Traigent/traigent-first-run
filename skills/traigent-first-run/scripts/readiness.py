@@ -4325,7 +4325,9 @@ def nothing_to_search_pillar(
 
 
 def discovered_space_evidence(
-    credited: Sequence[DiscoveredKnob], reachable: int
+    credited: Sequence[DiscoveredKnob],
+    reachable: int,
+    refused: Sequence[DiscoveredKnob] = (),
 ) -> str:
     """What the read of the agent found, as a floor the reader can check.
 
@@ -4338,14 +4340,36 @@ def discovered_space_evidence(
     reader cannot check against their own file; `model, temperature, top_p` is a
     list they can, and disagreeing with it is the point - this is a read of
     their code, and a read they can see is a read they can correct.
+
+    NAMES THE REFUSED ONES TOO, and #241 is why that half was missing rather
+    than declined. `component-creation.md` promises that a parameter earning
+    nothing "is reported with the reason it earned nothing, which is a line the
+    user can read and correct - so a parameter you are unsure of is worth
+    recording rather than dropping". That promise held on exactly one path: the
+    branch below where NO parameter is credited already lists every refusal.
+    Credit one knob and the sentence switched to the credited list alone, so a
+    `top_p` recorded with its evidence and no established range appeared on no
+    card and in no payload - `--json` did not mention the name. A reader
+    following the instruction could not tell their record from a typo, which is
+    the same silence `DISCOVERED_KNOB_FIELDS` refuses one function down.
+
+    Kept in one sentence rather than promoted to a sub-score. These parameters
+    establish no dimension, so they may not move the number; what they owe the
+    reader is the line that lets them disagree with a read of their own code.
     """
     named = ", ".join(knob.name for knob in credited)
     unit = "configuration" if reachable == 1 else "configurations"
-    return (
+    evidence = (
         f"read from your agent: {named} can vary, reaching at least {reachable} "
         f"distinct {unit}; no trial budget is declared yet, so this counts what "
         "the agent makes reachable rather than what a run would compare"
     )
+    if refused:
+        detail = "; ".join(
+            f"{knob.name}: {knob.uncredited_reason}" for knob in refused
+        )
+        evidence += f". Recorded and not counted - {detail}"
+    return evidence
 
 
 def score_discovered_agent(
@@ -4423,7 +4447,11 @@ def score_discovered_agent(
                     search_space_points(reachable, None),
                     SEARCH_SPACE_WEIGHT,
                     True,
-                    discovered_space_evidence(credited, reachable),
+                    discovered_space_evidence(
+                        credited,
+                        reachable,
+                        [knob for knob in facts.discovered if not knob.credited],
+                    ),
                 )
             ],
         ),
@@ -6726,6 +6754,29 @@ class AgentDiscoveryInputError(ValueError):
 # a parameter that silently earns nothing, and silence is how an author
 # concludes the tool ignored them rather than that they typed it wrong.
 DISCOVERED_KNOB_FIELDS = frozenset({"values", "low", "high", "evidence"})
+# The `build` half's answer for "the read could not settle this", named here so
+# a knob carrying it can be refused with the remedy rather than with a list.
+#
+# #241: the guidance tells a reader to record what they could not settle rather
+# than drop it, and the only shape it shows for saying so is
+# `{"determined": false, "reason": ...}` - which is a `build` check's answer.
+# Written inside `knobs` it hit the closed-field error above, on the FIRST
+# scoring call of a guided run, and the message named the four accepted fields
+# and no way forward. A blinded walkthrough recovered by trial and error and
+# dropped the parameter, which is the outcome the instruction exists to prevent.
+#
+# The knob half is not missing that third state; it spells it differently. A
+# parameter recorded with its `evidence` and no established `values` or
+# `low`/`high` is already read as "seen in the agent, extent not established" -
+# it earns no dimension, costs nothing, and is reported with its reason. So the
+# schema is not widened here. A second spelling for one state is the drift these
+# tables exist to remove, and `determined` in a knob would be that exactly: a
+# knob that establishes no range contributes nothing a search can vary, which is
+# the same arithmetic either spelling reaches.
+#
+# What was owed was the sentence, and it is owed at the error rather than only
+# in the reference - the reader is standing here, mid-run, with a non-zero exit.
+BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 
 
 def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
@@ -6752,10 +6803,21 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
         )
     unknown = sorted(set(spec) - DISCOVERED_KNOB_FIELDS)
     if unknown:
-        raise AgentDiscoveryInputError(
+        message = (
             f"knob {name!r} carries unknown field(s) {', '.join(unknown)}; the "
             f"fields read here are {', '.join(sorted(DISCOVERED_KNOB_FIELDS))}"
         )
+        if set(unknown) & BUILD_ONLY_KNOB_FIELDS:
+            # Half a message is what shipped: naming the accepted fields tells
+            # the reader what is wrong and not what to write instead, and the
+            # one thing they must not do is the thing they then did.
+            message += (
+                ". 'determined'/'reason' answer a build check; a parameter you "
+                "could not settle is recorded here with its evidence and no "
+                "'values' or 'low'/'high', which reports it with the reason it "
+                "counts for nothing rather than dropping it"
+            )
+        raise AgentDiscoveryInputError(message)
     evidence = spec.get("evidence")
     if not isinstance(evidence, str) or not evidence.strip():
         raise AgentDiscoveryInputError(
