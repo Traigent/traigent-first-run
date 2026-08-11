@@ -5226,12 +5226,33 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # first because it is the older and broader finding - a leaky
                 # split is wrong wherever the rows fall - while the empty
                 # tuning side is one arrangement of the same line.
-                50: ["dataset-tune-holdout-overlap", "dataset-tuning-split-empty"],
+                # And a third end of the same defect (#242): a line drawn along
+                # the task families, so every recurring kind of input sits on
+                # one side. It ranks last of the three under the
+                # counted-before-inferred rule the 40 and 70 ties already
+                # apply - the other two are read off row identities, and this
+                # one off a leading form the check itself derives, which the
+                # customer may answer is one task after all.
+                50: [
+                    "dataset-tune-holdout-overlap",
+                    "dataset-tuning-split-empty",
+                    "dataset-split-by-task-family",
+                ],
                 # The declared/silent pair. Identical ceilings deliberately -
                 # the assumption IS "generated" either way - and the declared
                 # one is ranked first because what differs is the remedy, which
                 # this table does not rank.
-                65: ["dataset-fully-synthetic", "dataset-undeclared-provenance"],
+                65: [
+                    "dataset-fully-synthetic",
+                    "dataset-undeclared-provenance",
+                    # #238's agent rung, equal because the two say the same
+                    # thing from opposite sides - a real agent tuned on
+                    # invented evidence, and an invented agent tuned on real
+                    # evidence - and ranked last because the dataset pair are
+                    # counted per row and this one is declared by the run about
+                    # its own work.
+                    "agent-generated",
+                ],
                 70: [
                     "dataset-mostly-synthetic",
                     # The silent counterpart of the count before it, ranked
@@ -5248,6 +5269,10 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                     "dataset-below-measurable-size",
                     "dataset-generated-answer-key",
                     "dataset-mostly-generated-answer-key",
+                    # #238's evaluator rung, on the same band edge and last for
+                    # the same reason the 65 tie puts its own rung last: the
+                    # three before it are counted, and this one is declared.
+                    "evaluator-generated",
                 ],
             },
             "a tie in the ceiling order is a decision; record it here with its "
@@ -5696,6 +5721,122 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         # rows are there and labelled, so `get-data` was sending a customer
         # holding 120 usable examples away to collect more.
         self.assertEqual(score.recommended_action, "resplit-dataset")
+
+    def test_a_family_partitioned_split_is_bounded_and_asked_not_blocked(self) -> None:
+        """#242's third split condition, and the only one of the three that scopes.
+
+        Its two siblings block because the line is PROVEN wrong - the same rows
+        on both sides, or nothing scoreable on one - and both are read off row
+        identities. This one is inferred from a leading form, and a deliberate
+        out-of-distribution holdout produces it on purpose, so the customer is
+        the only party who can settle whether the two kinds are one task.
+
+        That is why it may not share `resplit-dataset`. Under #197 a remedy has
+        to give one answer about whether the run waits, and telling a customer
+        with real, labelled, disjoint rows to redraw their split before anything
+        may run is an instruction this evidence does not support.
+        """
+        score = self._score(_clean_dataset(shared_families=0))
+        self.assertEqual(
+            [(cap.condition, cap.blocks, cap.asks) for cap in score.caps],
+            [("dataset-split-by-task-family", False, True)],
+        )
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(score.recommended_action, "review-split")
+        self.assertEqual(score.overall, MODULE.SPLIT_BY_TASK_FAMILY_CEILING)
+
+    def test_an_unlabelled_tuning_side_and_a_family_partition_are_two_findings(
+        self,
+    ) -> None:
+        """The co-occurrence `CAP_NO_IMPLICATION` cites, measured rather than assumed.
+
+        The first draft of that entry called these two mutually exclusive and
+        called the overlap pair possible - both backwards. Overlap really is
+        impossible beside this one, because preflight emits the family record
+        only on the disjoint branch; an unlabelled tuning side really does land
+        beside it, because rows being unlabelled says nothing about the words
+        they start with.
+
+        It matters beyond the comment: they share the ceiling 50 and disagree
+        about whether the run waits, so a reader who believed they could not
+        co-occur would never ask which verdict wins. The blocking one does.
+        """
+        score = self._score(
+            _clean_dataset(shared_families=0, labelled_rows=120, tuning_labelled_rows=0)
+        )
+        self.assertEqual(
+            sorted((cap.condition, cap.blocks) for cap in score.caps),
+            [
+                ("dataset-split-by-task-family", False),
+                ("dataset-tuning-split-empty", True),
+            ],
+        )
+        self.assertEqual(score.status, "BLOCKED")
+        self.assertEqual(score.recommended_action, "resplit-dataset")
+
+    def test_a_family_count_that_is_not_a_count_is_refused(self) -> None:
+        """`False == 0` is true in Python, so a raw read had a false red in it.
+
+        The adapter used to compare this metric to 0 with no check on what it
+        was. A boolean in the field then raised a cap saying the customer's
+        split follows their task families, on a payload that never said so, and
+        a quoted `"0"` dropped a real cap in silence. `_row_count` states the
+        rule this follows: a guard that checks four counts and waves one
+        through is the odd-one-out this file already has an issue open about.
+        """
+        records = [
+            {"check": "dataset-provenance", "status": "PASS", "metrics": {"rows": 40}},
+            {
+                "check": "dataset-split-family",
+                "status": "WARN",
+                "metrics": {"families": 4, "shared_families": False},
+            },
+        ]
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.dataset_facts_from_preflight(records)
+        self.assertIn("shared_families", str(caught.exception))
+        # Absent stays absent - the check is conditional, so a record that was
+        # never emitted is a measured "nothing to say" and not an error.
+        self.assertIsNone(MODULE._shared_family_count(None))
+        self.assertEqual(MODULE._shared_family_count(0), 0)
+
+    def test_a_form_list_that_is_not_a_list_of_forms_is_refused(self) -> None:
+        """The names are printed on the card, so an unusable list must not pass.
+
+        The sibling above guards the count and this one had no probe at all -
+        deleting its validation left the whole suite green, which is the same
+        hole one table over. What it lets through is not abstract: these strings
+        are quoted into a sentence about the customer's own dataset, so a
+        payload carrying numbers here would print `'1', '2'` as the kinds of
+        work their split separates.
+        """
+        for unusable in ([1, 2], "add two", [""], [None]):
+            with self.subTest(forms=unusable):
+                with self.assertRaises(MODULE.PreflightInputError) as caught:
+                    MODULE._family_forms(unusable)
+                self.assertIn("unusable form list", str(caught.exception))
+        # Absent is legitimate and drops the naming clause, never the finding:
+        # a payload predating the names still carries the count.
+        self.assertEqual(MODULE._family_forms(None), ())
+        self.assertEqual(MODULE._family_forms(["add two "]), ("add two",))
+        bare = self._score(_clean_dataset(shared_families=0))
+        self.assertEqual(
+            [cap.condition for cap in bare.caps], ["dataset-split-by-task-family"]
+        )
+        self.assertNotIn("Tuned on", bare.caps[0].reason)
+
+    def test_a_split_whose_families_cross_it_raises_nothing(self) -> None:
+        """One shared form is enough, and an unread check is not a finding.
+
+        `None` is preflight skipping the check or predating it, and both mean
+        the question was not answered. A cap raised on either would be a finding
+        about a customer's split that nothing established.
+        """
+        for label, shared in (("crossed", 4), ("unread", None)):
+            with self.subTest(families=label):
+                score = self._score(_clean_dataset(shared_families=shared))
+                self.assertEqual([cap.condition for cap in score.caps], [])
+                self.assertEqual(score.recommended_action, "proceed")
 
     def test_a_condition_asking_for_a_creation_or_repair_still_blocks(self) -> None:
         """The other half of the rule, so this is a partition and not a purge.
@@ -8717,6 +8858,135 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         self.assertGreater(both.score, document_only.score)
 
 
+class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
+    """#241: the guidance said record it, and the first scoring call refused.
+
+    Two sentences send a reader at the `undetermined` shape - "a parameter you
+    are unsure of is worth recording rather than dropping" in the reference, and
+    SKILL.md's "answer a check you cannot settle as undetermined with the
+    reason, never as a no". That shape is a `build` check's, and written inside
+    `knobs` it exits 2 before the opening score exists. A blinded walkthrough
+    recovered by trial and error, and dropped the parameter.
+
+    The schema is not widened, and these pin why that is a resolution rather
+    than a shrug: the knob half already HAS the third state, spelled as a
+    parameter recorded with its evidence and no established extent. So what is
+    asserted here is that the spelling works, that it is now visible, and that
+    the error naming the accepted fields also names the remedy.
+    """
+
+    def _uncounted(self, **spec):
+        knobs = {
+            "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+            "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
+            "top_p": spec,
+        }
+        return MODULE.score_agent(_read(_build_document(), knobs=knobs))
+
+    def test_a_knob_recorded_with_evidence_alone_costs_nothing(self) -> None:
+        """The half of the promise that already held, pinned so it keeps holding.
+
+        Recording an unsettled parameter may not be punished, or the sentence
+        telling a reader to record it is asking them to lower their own score.
+        """
+        settled, _, _ = MODULE.score_agent(_read(_build_document()))
+        recorded, caps, _ = self._uncounted(
+            evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
+        )
+        self.assertEqual(recorded.score, settled.score)
+        self.assertEqual([cap.condition for cap in caps], [])
+
+    def test_a_knob_recorded_with_evidence_alone_is_reported(self) -> None:
+        """The half that did not hold, and the reason the reference could lie.
+
+        The refused list was printed only on the branch where NOTHING is
+        credited. Credit one knob and a recorded `top_p` appeared on no card and
+        in no payload, so a reader following the instruction could not tell
+        their record from a typo.
+        """
+        pillar, _, _ = self._uncounted(
+            evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
+        )
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn("top_p", space.evidence)
+        self.assertIn("Recorded and not counted", space.evidence)
+        # The reason travels with the name. "top_p was ignored" is not a line a
+        # user can correct; the reason it counts for nothing is.
+        self.assertIn("neither a list of options nor a low/high range", space.evidence)
+
+    def test_the_credited_reading_is_unchanged_by_the_recorded_one(self) -> None:
+        """A recorded parameter may not enter the space it establishes nothing about."""
+        settled, _, _ = MODULE.score_agent(_read(_build_document()))
+        recorded, _, _ = self._uncounted(evidence="agent.py:14 top_p from config")
+        for pillar in (settled, recorded):
+            space = next(s for s in pillar.subscores if s.name == "search-space")
+            self.assertIn("reaching at least 6 distinct configurations", space.evidence)
+
+    def test_the_build_shape_inside_knobs_is_refused_with_the_remedy(self) -> None:
+        """Naming the accepted fields is half a message.
+
+        The other half is what to write instead, and it is owed here rather than
+        only in the reference: the reader is mid-run, at a non-zero exit, and
+        the one thing they must not do is drop the parameter.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._uncounted(
+                determined=False,
+                reason="assembled at runtime from a file this read cannot reach",
+                evidence="agent.py:14 top_p=cfg['top_p']",
+            )
+        message = str(caught.exception)
+        self.assertIn("unknown field(s) determined, reason", message)
+        self.assertIn("answer a build check", message)
+        self.assertIn("no 'values' or 'low'/'high'", message)
+
+    def test_an_ordinary_typo_still_gets_the_short_message(self) -> None:
+        """The remedy is for the confusion it names, not for every misspelling.
+
+        `valeus` is a typo; appending the `determined` paragraph to it would
+        explain a shape the author never reached for.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._uncounted(valeus=["a", "b"], evidence="agent.py:14")
+        message = str(caught.exception)
+        self.assertIn("unknown field(s) valeus", message)
+        self.assertNotIn("answer a build check", message)
+
+    def test_the_build_half_still_accepts_the_shape_it_documents(self) -> None:
+        """The `undetermined` answer is untouched where it is real."""
+        facts = _read(
+            _build_document(
+                prompt={
+                    "determined": False,
+                    "reason": "assembled at runtime from a store this read cannot reach",
+                    "evidence": "agent.py:12 SYSTEM = load_prompt(name)",
+                }
+            )
+        )
+        prompt = next(signal for signal in facts.build or () if signal.name == "prompt")
+        self.assertFalse(prompt.measured)
+        self.assertIn("not established by this read", prompt.evidence)
+
+    def test_the_reference_states_the_shape_it_sends_the_reader_at(self) -> None:
+        """The disagreement was prose against schema, so the prose is pinned too.
+
+        Not a restatement of the mandate - SKILL.md keeps that. This is the
+        reference stating, where the reader is standing, which of the two halves
+        the `determined` answer belongs to.
+        """
+        guide = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text()
+        knob_half = guide.split("### The build half", 1)[0]
+        self.assertIn("worth recording rather than dropping", knob_half)
+        self.assertIn("no `values` or `low`/`high`", knob_half)
+        self.assertIn("A knob has no `determined` field", knob_half)
+
+
 class OneFactIsOneRemediationLineTests(unittest.TestCase):
     """Found by reviewing the fix rather than the feature (#184).
 
@@ -8791,3 +9061,217 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         self.assertIn(MODULE.AGENT_NOT_COVERED, report)
         agent_block = report.split("## Agent", 1)[1].split("## ", 1)[0]
         self.assertIn("not covered by this pillar", agent_block)
+
+
+class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
+    """#238: provenance was graded for the rows and for nothing else.
+
+    Every origin condition the scorer carried was `dataset-`-prefixed, and the
+    four evaluator conditions that exist - absent, invalid, timeout,
+    unresolved - all grade BROKENNESS. So the reachable case was a real agent,
+    a real declared-collected corpus and an evaluator written by the run: the
+    substitute calibrates, the evaluation pillar scores on that calibration, and
+    nothing recorded that the grading signal was one this run invented.
+
+    Measured on trunk `b2b482eb` before this change, over 120 collected rows
+    with a read of a real agent: 93/100 EXCELLENT, no caps,
+    `recommended_action: proceed`, evaluation 100. The card renders the guide's
+    `🛠️` marker for a generated component; the score did not carry it, and the
+    score is the number a customer takes away.
+
+    The all-missing case was covered by accident and that is worth pinning
+    separately: a generated trio also has a generated dataset, so
+    `dataset-fully-synthetic` fires. Remove the dataset gap - the ordinary case
+    of a customer who has data and no evaluator - and the coverage went with it.
+    """
+
+    def _evaluation(self, origin=None) -> "MODULE.EvaluationFacts":
+        return MODULE.EvaluationFacts(
+            present=True,
+            method="normalized-exact",
+            task_kind="closed-label",
+            calibration_present=True,
+            calibration_supplied=True,
+            checks=({f"check-{index}": True for index in range(7)},),
+            probe_scores=((1.0, 0.0),),
+            origin=origin,
+        )
+
+    def _score(self, **origins) -> "MODULE.ReadinessScore":
+        """The whole reachable case: real agent, collected rows, one origin varied."""
+        return MODULE.score_run(
+            _brought(
+                120,
+                tuning_rows=84,
+                holdout_rows=36,
+                tuning_labelled_rows=84,
+                holdout_labelled_rows=36,
+            ),
+            self._evaluation(origins.get("evaluation")),
+            replace(_read(_build_document()), origin=origins.get("agent")),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(
+        self,
+    ) -> None:
+        undeclared = self._score()
+        generated = self._score(evaluation="generated")
+        # The measurement the module's own comment quotes, kept re-runnable:
+        # this is the card a project with real material and a run-written
+        # evaluator got before #238, and it is what a run that still declares
+        # nothing gets today.
+        self.assertEqual((undeclared.overall, undeclared.band), (93, "EXCELLENT"))
+        self.assertEqual(undeclared.recommended_action, "proceed")
+        self.assertEqual([cap.condition for cap in undeclared.caps], [])
+        self.assertEqual(
+            [cap.condition for cap in generated.caps], ["evaluator-generated"]
+        )
+        self.assertLess(generated.overall, undeclared.overall)
+
+    def test_a_run_written_ruler_may_be_workable_and_never_strong(self) -> None:
+        """The owner's rule, asked of the module rather than pinned as 74.
+
+        Asserting the literal would pass just as happily if the bands were
+        renumbered and 74 landed back inside STRONG, which is the defect the
+        answer-key ladder was already corrected for.
+        """
+        strong_floor = next(
+            edge for edge, band in MODULE.BAND_THRESHOLDS if band == "WORKABLE"
+        )
+        self.assertEqual(MODULE.EVALUATOR_GENERATED_CEILING, strong_floor - 1)
+        self.assertEqual(self._score(evaluation="generated").band, "WORKABLE")
+
+    def test_a_generated_agent_bounds_the_claim_further_than_a_generated_ruler(
+        self,
+    ) -> None:
+        """Whose subject, against whose reading - and the subject costs more.
+
+        A generated evaluator still measures the customer's own agent on the
+        customer's own rows, and only the reading is this run's. A generated
+        agent makes the thing under comparison this run's too, so the winning
+        configuration belongs to a program nobody runs.
+        """
+        self.assertLess(
+            MODULE.AGENT_GENERATED_CEILING, MODULE.EVALUATOR_GENERATED_CEILING
+        )
+        self.assertEqual(
+            MODULE.AGENT_GENERATED_CEILING,
+            MODULE.FULLY_SYNTHETIC_CEILING,
+            "a generated agent over real data and a real agent over generated "
+            "data are the same claim read from opposite sides",
+        )
+        self.assertLess(
+            self._score(agent="generated").overall,
+            self._score(evaluation="generated").overall,
+        )
+
+    def test_neither_stops_a_run_this_guide_creates_the_component_for(self) -> None:
+        """The walkthrough's own designed success may not be called a repair.
+
+        `tests/behavioral/scenarios/partial-missing-dataset` is the shape: a
+        project missing a component, which this run supplies. Blocking there
+        would demand the customer produce the one thing they came without.
+        """
+        score = self._score(evaluation="generated", agent="generated")
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(
+            sorted(cap.condition for cap in score.caps),
+            ["agent-generated", "evaluator-generated"],
+        )
+        self.assertFalse(any(cap.blocks for cap in score.caps))
+        # Asks nothing, for the reason `dataset-fully-synthetic` asks nothing:
+        # the run has already answered by declaring it.
+        self.assertFalse(any(cap.asks for cap in score.caps))
+        self.assertEqual(score.recommended_action, "proceed")
+
+    def test_brought_and_undeclared_are_scored_the_same_and_that_is_a_decision(
+        self,
+    ) -> None:
+        """`None` raises nothing, recorded here because it is the arguable half.
+
+        The dataset ladder charges silence - an undeclared corpus is capped
+        exactly as a declared-generated one is - and this deliberately does not.
+        The difference is what silence can mean: preflight READS every row, so
+        an undeclared corpus is a file that was examined and said nothing, while
+        an absent flag is equally a caller written before the flag existed. The
+        hole it leaves is closed in SKILL.md, which mandates both flags on every
+        scoring call, and the reasoning is recorded on `origin_cap`.
+        """
+        self.assertEqual(
+            self._score(evaluation="brought", agent="brought").overall,
+            self._score().overall,
+        )
+        self.assertIsNone(MODULE.origin_cap("evaluation", None))
+        self.assertIsNone(MODULE.origin_cap("agent", "brought"))
+
+    def test_an_absent_evaluator_has_no_origin_to_declare(self) -> None:
+        """Nothing is connected, so there is nothing whose authorship matters.
+
+        The absent condition already holds the score at 40, below anything this
+        ceiling could say, and two conditions about one missing file would read
+        as two problems.
+        """
+        _pillar, caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(present=False, origin="generated")
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-absent"])
+
+    def test_a_generated_evaluator_that_is_also_broken_says_both(self) -> None:
+        """Origin and brokenness are separate axes, which is the whole finding.
+
+        A substitute this run wrote can still be invalid, and the reader is owed
+        both facts - the lower ceiling decides the number either way.
+        """
+        _pillar, caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                calibration_present=True,
+                calibration_supplied=True,
+                checks=({"non_constant": False, "bad_fails": False},),
+                origin="generated",
+            )
+        )
+        conditions = sorted(cap.condition for cap in caps)
+        self.assertIn("evaluator-generated", conditions)
+        self.assertIn("evaluator-invalid", conditions)
+
+    def test_the_agent_ceiling_reaches_every_path_that_establishes_a_space(
+        self,
+    ) -> None:
+        """Four documents answer "what is there to search" and none answers this.
+
+        The cap is applied outside those branches for the reason `with_build`
+        is: whose agent this is has nothing to do with which document described
+        it, and four appends in four branches is four chances for a fifth
+        branch to forget.
+        """
+        for label, facts in (
+            ("read of the source", _read(_build_document())),
+            (
+                "config-space document",
+                MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=("model",)),
+            ),
+            ("document listing nothing", MODULE.AgentFacts(config_space_supplied=True)),
+            ("nothing at all", MODULE.AgentFacts()),
+        ):
+            with self.subTest(path=label):
+                _pillar, caps, _knobs = MODULE.score_agent(
+                    replace(facts, origin="generated")
+                )
+                self.assertIn("agent-generated", [cap.condition for cap in caps])
+
+    def test_the_flags_reach_the_score_from_the_command_line(self) -> None:
+        """The declaration is worth nothing if `run` drops it."""
+        for flag, condition in (
+            ("--evaluator-origin", "evaluator-generated"),
+            ("--agent-origin", "agent-generated"),
+        ):
+            with self.subTest(flag=flag):
+                arguments = MODULE.parse_args(["--preflight", "-", flag, "generated"])
+                self.assertEqual(
+                    getattr(arguments, flag.lstrip("-").replace("-", "_")),
+                    "generated",
+                )
+                self.assertIn(condition, MODULE.ACTION_FOR_CONDITION)

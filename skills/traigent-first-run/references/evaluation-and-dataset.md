@@ -488,6 +488,10 @@ Run quality checks:
 - Missing difficulty bands.
 - Repeated scenario tags that crowd out coverage.
 - Tuning/holdout overlap by ID and normalized input.
+- A tuning/holdout split drawn along the task families instead of across them - disjoint inputs, and
+  every recurring kind of input on one side only. `preflight.py` infers the kinds from the leading
+  words of each input and reports on its own line whether they cross the split; it skips rather than
+  passes where no form recurs, because a corpus of one-off phrasings gives it nothing to read.
 - Constant or empty expected outputs.
 - Agent/dataset contract consistency, confirmed later through the installed SDK's public
   validation or safe mock execution rather than a first-run reimplementation.

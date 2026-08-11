@@ -3003,13 +3003,19 @@ class RowReviewPipelineTests(unittest.TestCase):
             },
         )
         self.assertNotIn("FAIL", statuses.values())
-        # The one check that is not PASS is about how many rows were held back,
-        # which both files share. Nothing here reads a row's answer against its
-        # own question, which is why the broken file is invisible to all of it.
+        # Neither of the two non-PASS checks is a finding about these rows.
+        # One is about how many were held back, which both files share; the
+        # other could not run - every one of these twenty scenarios opens with
+        # its own words, so no input form recurs for `dataset-split-family` to
+        # read the split against, and it SKIPs rather than reporting a clean
+        # split it never established. Nothing here reads a row's answer against
+        # its own question, which is why the broken file is invisible to all
+        # of it.
         self.assertEqual(
             {check for check, status in statuses.items() if status != "PASS"},
-            {"dataset-holdout-resolution"},
+            {"dataset-holdout-resolution", "dataset-split-family"},
         )
+        self.assertEqual(statuses["dataset-split-family"], "SKIP")
 
     def test_a_clean_pipeline_run_scores_identically_with_and_without_a_review(
         self,
@@ -3087,6 +3093,184 @@ class RowReviewPipelineTests(unittest.TestCase):
             )
         self.assertEqual(process.returncode, 2)
         self.assertIn("--row-review needs --preflight", process.stderr)
+
+
+class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
+    """#242 end to end: the two scripts have to agree about the same file.
+
+    The unit halves are pinned either side of this - preflight's own reading in
+    `tests/test_preflight.py`, the cap's routing in
+    `tests/test_readiness_scoring.py` - and neither can see the seam. The
+    finding travels as a metric on a check readiness has to know to look for,
+    and a check whose record readiness never reads is a check that runs and
+    changes nothing.
+    """
+
+    @staticmethod
+    def _rows(partitioned: bool) -> list[dict]:
+        """The issue's own shape: `add`/`max_of` tuned, `is_even`/`fib` held back."""
+        stems = ("def add", "def max_of", "def is_even", "def fib")
+        rows = []
+        for index, stem in enumerate(stems):
+            for case in range(8):
+                rows.append(
+                    {
+                        "id": f"{stem}-{case}".replace(" ", "-"),
+                        "input": f"{stem}(value) case number {case}",
+                        "output": stem.split()[-1],
+                        "provenance": "collected",
+                        "difficulty": ("easy", "medium", "hard", "very-hard")[case % 4],
+                        "split": (
+                            ("tuning" if index < 2 else "holdout")
+                            if partitioned
+                            else ("tuning" if case < 6 else "holdout")
+                        ),
+                    }
+                )
+        return rows
+
+    def _score(self, partitioned: bool) -> dict:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(partitioned))
+            return _score(
+                dataset,
+                extra=("--evaluator-method", "normalized-exact"),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+
+    def test_the_split_still_passes_and_the_family_check_does_not(self) -> None:
+        """Disjointness was never the wrong answer - it was the wrong question."""
+        with tempfile.TemporaryDirectory() as raw:
+            records = _preflight_records(
+                _write_jsonl(Path(raw), "dataset.jsonl", self._rows(True))
+            )
+        statuses = {record["check"]: record["status"] for record in records}
+        self.assertEqual(statuses["dataset-split"], "PASS")
+        self.assertEqual(statuses["dataset-split-family"], "WARN")
+
+    def test_the_cap_reaches_the_card_and_the_run_is_not_stopped(self) -> None:
+        score = self._score(True)
+        cap = _cap(score, "dataset-split-by-task-family")
+        self.assertFalse(cap["blocks"])
+        self.assertTrue(cap["asks"])
+        self.assertEqual(cap["action_kind"], "review-split")
+        self.assertEqual(score["status"], "OK")
+        self.assertEqual(score["recommended_action"], "review-split")
+        self.assertLessEqual(score["overall"], cap["ceiling"])
+
+    def test_the_same_rows_split_across_the_families_reach_no_cap(self) -> None:
+        """The counterfactual, so the cap is pinned to the LINE and not the rows.
+
+        Compared on the CONDITIONS rather than on `overall`: neither run
+        supplies a calibration or a reading of an agent, so both are already
+        held at 45 by the advisory no-knobs condition, and an equal score there
+        would say nothing about the cap this test is for. Both also carry the
+        small-comparison ceiling, which is a fact about how many rows there are
+        and is identical on either side of the redraw - it is in the expected
+        list precisely so that the one condition that does move is the only
+        difference between them.
+        """
+
+        def conditions(score: dict) -> list[str]:
+            return sorted(cap["condition"] for cap in score["caps"])
+
+        self.assertEqual(
+            conditions(self._score(False)),
+            ["agent-no-varying-knobs", "dataset-coarse-resolution"],
+        )
+        self.assertEqual(
+            conditions(self._score(True)),
+            [
+                "agent-no-varying-knobs",
+                "dataset-coarse-resolution",
+                "dataset-split-by-task-family",
+            ],
+        )
+
+
+class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
+    """#238's flags, asserted where they are actually consumed.
+
+    Found by mutation-probing this branch rather than by reading it. The unit
+    tests beside `score_run` pass an origin into the fact set and the CLI test
+    beside them reads it back off `parse_args` - which is the producer agreeing
+    with itself, and neither touches the two lines in `run` that carry one to
+    the other. Deleting BOTH of those lines left the whole suite green.
+
+    That is the worst place for this branch to be blind. #238's decision that a
+    missing flag raises nothing rests entirely on the guided run always passing
+    one; a CLI that parses the flag and drops it scores every generated
+    component as the customer's own and says nothing, which is the exact defect
+    the change was written to remove.
+    """
+
+    def _rows(self) -> list[dict]:
+        return [
+            {
+                "id": f"row-{index}",
+                "input": f"Ticket {index}: the invoice total does not match the quote.",
+                "output": ("billing", "refund", "account", "technical")[index % 4],
+                "provenance": "collected",
+                "difficulty": ("easy", "medium", "hard", "very-hard")[index % 4],
+            }
+            for index in range(40)
+        ]
+
+    def _conditions(self, *origin_flags: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows())
+            score = _score(
+                dataset,
+                extra=("--evaluator-method", "normalized-exact", *origin_flags),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+        return sorted(cap["condition"] for cap in score["caps"])
+
+    def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
+        self.assertEqual(self._conditions(), ["agent-no-varying-knobs"])
+        self.assertEqual(
+            self._conditions(
+                "--evaluator-origin", "brought", "--agent-origin", "brought"
+            ),
+            ["agent-no-varying-knobs"],
+        )
+
+    def test_each_flag_reaches_the_payload_on_its_own(self) -> None:
+        """One at a time, so neither line can be carried by the other."""
+        self.assertEqual(
+            self._conditions("--evaluator-origin", "generated"),
+            ["agent-no-varying-knobs", "evaluator-generated"],
+        )
+        self.assertEqual(
+            self._conditions("--agent-origin", "generated"),
+            ["agent-generated", "agent-no-varying-knobs"],
+        )
+
+    def test_an_unknown_origin_is_refused_rather_than_ignored(self) -> None:
+        """A value outside the vocabulary must not read as "not declared".
+
+        Silently ignoring it would be the same silence the flag exists to end,
+        arriving through the flag itself.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows())
+            preflight_json = json.dumps(_preflight_records(dataset))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--json",
+                    "--agent-origin",
+                    "demo",
+                ],
+                input=preflight_json,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("invalid choice: 'demo'", process.stderr)
 
 
 if __name__ == "__main__":

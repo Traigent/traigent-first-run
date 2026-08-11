@@ -188,6 +188,18 @@ preflight's `--evaluator` for a static syntax check; this reports present-but-un
 
 Ground readiness task kind per the evaluation reference.
 
+Declare who wrote the evaluator and the agent on every readiness call, as run-scoped state beside
+the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
+`generated` for one this run created. Nothing in a scoring function or an agent's source says who
+typed it, so this is the only way the score can carry what the card's `🛠️` marking already says,
+and it is you rather than the customer who knows - never ask. Omit a flag only where that component
+does not exist yet; nothing has an origin before it is there. Update each the moment this run
+creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
+one is not a neutral choice: it scores a generated component as if it were the customer's, which is
+the one thing the `🛠️`/`✅` separation exists to prevent. The dataset takes no such flag - its
+origin is counted per row from declared provenance, and a second declaration beside a count is two
+answers to one question.
+
 #### Opening readiness gate
 
 Before any component creation or repair, choose from the recorded inventory. If there is exactly
@@ -203,7 +215,7 @@ omitting `--dataset` when none exists, then run `scripts/readiness.py` on that p
 any applicable calibration result. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
-scripts, and apply the run-scoped task-kind rule to readiness only.
+scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
@@ -483,6 +495,12 @@ paragraph below carries both halves:
 - `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
   labeled `🛠️` substitute.
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
+- `dataset-split-by-task-family` - disjoint and drawn in the wrong place: every recurring kind of
+  input sits on one side, so the held-out score measures transfer to unseen work rather than the
+  task that was tuned. Inferred from a leading form, so ask before repairing - name the two kinds in
+  the user's own words and take their answer on the one ask. One task, and the run continues with
+  the ceiling standing; two, and redraw the split so each kind appears on both sides. Do not enter
+  the creation dependency matrix and do not ask for more data.
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
@@ -510,7 +528,11 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
+create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
+rules and nothing else - carry the `🛠️` marking into the words as well as the card, and say the
+result measures the substitute rather than their product. Neither is a repair: this run created the
+component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
+`evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
 being filled, before the baseline spends anything: before calibration starts, say what it does and
