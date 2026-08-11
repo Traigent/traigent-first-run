@@ -188,6 +188,17 @@ preflight's `--evaluator` for a static syntax check; this reports present-but-un
 
 Ground readiness task kind per the evaluation reference.
 
+Declare who wrote the evaluator and the agent on every readiness call, as run-scoped state beside
+the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
+`generated` for one this run created. Nothing in a scoring function or an agent's source says who
+typed it, so this is the only way the score can carry what the card's `🛠️` marking already says,
+and it is you rather than the customer who knows - never ask. Update each the moment this run
+creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
+one is not a neutral choice: it scores a generated component as if it were the customer's, which is
+the one thing the `🛠️`/`✅` separation exists to prevent. The dataset takes no such flag - its
+origin is counted per row from declared provenance, and a second declaration beside a count is two
+answers to one question.
+
 #### Opening readiness gate
 
 Before any component creation or repair, choose from the recorded inventory. If there is exactly
@@ -516,7 +527,10 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
+create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
+rules and nothing else - carry the `🛠️` marking into the words as well as the card, and say the
+result measures the substitute rather than their product. Neither is a repair: this run created the
+component on purpose, the run continues, and what the ceiling refuses is the claim, not the work. `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
 being filled, before the baseline spends anything: before calibration starts, say what it does and

@@ -44,6 +44,32 @@ from typing import Any, Iterable, Literal, Sequence
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
 
+# Where a component CAME FROM, as a question separate from whether it works.
+#
+# #238: every provenance condition in the scorer was dataset-scoped, and the
+# evaluator conditions that exist - absent, invalid, timeout, unresolved - all
+# grade BROKENNESS. So the reachable case was a real agent, a real declared-
+# collected dataset, and an evaluator this run wrote: 120 collected rows scored
+# 93 EXCELLENT with no cap at all and `recommended_action: proceed`, on a ruler
+# nobody outside this run had ever seen. Source:
+# tests/test_readiness_scoring.py#WhoWroteItBoundsWhatItMayClaimTests.test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real,
+# whose undeclared half is that same fact set. The card renders the guide's
+# `🛠️` marker for a generated substitute; the score did not carry it.
+#
+# Two values and not the planner's five. `real/limited/demo/missing/invalid`
+# mixes origin with brokenness, which is the exact conflation this condition
+# exists to separate - `demo` would arrive meaning "ours" on one card and "ours
+# and thin" on the next. Origin answers one question, and brokenness is already
+# answered by four other conditions.
+#
+# The DATASET deliberately has no flag here. Its origin is counted per row by
+# preflight and graded on a ladder with four rungs; a declared origin beside
+# that would be a second source of truth for one fact, and the two would
+# disagree the first time a run declared `generated` over rows saying
+# `collected`.
+BROUGHT, GENERATED = "brought", "generated"
+COMPONENT_ORIGINS = (BROUGHT, GENERATED)
+
 
 @dataclass(frozen=True)
 class ReadinessPlan:
@@ -736,6 +762,14 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # spelling for one remedy is the drift this table exists to remove.
     "dataset-unsound-expected-outputs": "review-answer-key",
     "evaluator-absent": "connect-evaluator",
+    # NOT `connect-evaluator`, and the pair is the same shape as `get-data`
+    # against `connect-real-data` one table over. `connect-evaluator` means
+    # "there is nothing here, select or create one" and stops the run;
+    # this means "there is one, and this run wrote it", which stops nothing -
+    # the walkthrough substitute is what makes the run possible, and the guide
+    # creates it on purpose. One slug meaning both would be #197 again.
+    "evaluator-generated": "connect-real-evaluator",
+    "agent-generated": "connect-real-agent",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
     "evaluator-timeout": "bound-evaluator-cost",
@@ -876,6 +910,18 @@ ROUTE_CATEGORY: dict[str, str] = {
     # next cap from being added to one of these tables and not the other flag.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
+    # Both scope, for the reason the dataset provenance rungs do and for one
+    # more of their own. Nothing is broken: the substitute was created by this
+    # run on purpose, it calibrates, and the comparison it grades is a real one.
+    # What is bounded is whose ruler - or whose program - the number describes.
+    #
+    # A creation route would be the wrong reading twice over. There is nothing
+    # to create; the thing exists. And it would stop the walkthrough at exactly
+    # the state the walkthrough is FOR - a project missing a component this run
+    # supplies - which is the defect `dataset-fully-synthetic` was moved out of
+    # `CREATION_OR_REPAIR` for.
+    "evaluator-generated": CLAIM_SCOPING,
+    "agent-generated": CLAIM_SCOPING,
     # The sweep found a second one. A file is connected and no method could be
     # honestly declared for it without executing it - which on the ordinary
     # shape means nothing is wrong, only unnamed. It shares `repair-evaluator`
@@ -1052,6 +1098,25 @@ FULLY_SYNTHETIC_CEILING = 65
 # First of the "bounded claim" band. Nothing here was observed, so the run
 # measures the walkthrough; it clears 50 because the comparison it performs is
 # a real one, and it stays in WORKABLE because what it compares is invented.
+AGENT_GENERATED_CEILING = 65
+# EQUAL to `dataset-fully-synthetic`, and ranked after it, because the two say
+# the same thing about the run from opposite sides: half of what was compared is
+# this run's invention. A real agent tuned on generated rows learns the right
+# knobs from the wrong evidence; a generated agent tuned on real rows learns the
+# right evidence about the wrong program. Neither is the worse claim, and the
+# ladder already allows equal ceilings with different remedies -
+# `dataset-undeclared-provenance` sits on this number for that reason.
+#
+# It may not sit lower. The band below is "answers the wrong question", and this
+# run does answer what was asked: which configuration of the agent under
+# comparison scores best, measured on the customer's own data. The agent under
+# comparison is a stand-in, which is what the ceiling says and what the guide's
+# `🛠️` marker says beside it.
+#
+# It may not sit higher either, and that is the whole finding: a walkthrough
+# agent this run wrote may reach WORKABLE and may never present as STRONG, on
+# the same rule the dataset ladder states - synthesised material may be
+# workable, it may not be good.
 MOSTLY_SYNTHETIC_CEILING = 70
 # Above `fully-synthetic` because some of the data IS real - strictly less
 # invented, so strictly less capped. This pair is the clearest case of the
@@ -1124,6 +1189,29 @@ MOSTLY_GENERATED_ANSWER_KEY_CEILING = 74
 # stops the run until a person has looked; most of it bounds what the result
 # may claim and lets the run proceed, because the questions are all real and a
 # person did write part of the key.
+EVALUATOR_GENERATED_CEILING = 74
+# The answer-key ladder's argument, one level up, and the reason this rung sits
+# with those two rather than with the agent's at 65. There the questions and the
+# answers are the customer's and only the KEY was written by a model, so the
+# score reports agreement with that model; here the questions and the answers
+# are the customer's and only the RULE that compares them is this run's. Both
+# leave every row real and the grading signal ours.
+#
+# 74 rather than 75 for the identical reason `GENERATED_ANSWER_KEY_CEILING`
+# takes it: 75 IS the STRONG threshold, and a project whose entire ruler this
+# run invented may not present as STRONG. That is the one claim this ceiling
+# exists to refuse.
+#
+# Above the agent's 65 because strictly less of what the customer is buying is a
+# stand-in. A generated evaluator still measures the customer's own agent on the
+# customer's own data - the subject and the evidence are both theirs, and only
+# the reading is ours. A generated agent makes the subject ours too.
+#
+# Calibration does not lift it, and the temptation to let it is worth naming.
+# The probes prove this evaluator separates good answers from bad; they do not
+# prove it grades what the customer would grade, because this run wrote the
+# probes as well. A ruler checked against its own marks is checked, not
+# independent.
 COARSE_RESOLUTION_CEILING = 89
 # One below the EXCELLENT boundary at 90, derived the same way as 74: under
 # thirty comparable examples a small difference may be chance, so the result
@@ -1163,6 +1251,11 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             # data and never labelled it is asked to declare, not to go and
             # collect - and the remedy is not what this table ranks.
             ("dataset-undeclared-provenance", FULLY_SYNTHETIC_CEILING),
+            # #238's agent rung, on the same number and ranked after both: the
+            # dataset conditions are counted per row, this one is declared by
+            # the run about its own work, and the counted-before-inferred rule
+            # this table already applies puts the count first.
+            ("agent-generated", AGENT_GENERATED_CEILING),
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-unsound-expected-outputs", UNSOUND_ANSWER_CEILING),
@@ -1172,6 +1265,11 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
                 "dataset-mostly-generated-answer-key",
                 MOSTLY_GENERATED_ANSWER_KEY_CEILING,
             ),
+            # #238's evaluator rung. Last of the four at 74 under the same rule
+            # the pair above it follows: the three before it are counted - two
+            # sizes and a share of model-written answers - and this one is
+            # declared.
+            ("evaluator-generated", EVALUATOR_GENERATED_CEILING),
             ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
         ),
     ),
@@ -1281,6 +1379,25 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "condition and mutually exclusive with the other evaluator ones"
     ),
     "evaluator-absent": "nothing is connected; no other condition can be read off that",
+    # Origin against brokenness, which is the distinction #238 was filed on.
+    # An evaluator this run wrote can be valid or invalid, fast or slow, and a
+    # brought one can be any of those too - so no evaluator condition implies
+    # this and it implies none of them. It narrows no dataset condition either:
+    # whose ruler this is says nothing about where the rows came from, and a
+    # generated ruler over a fully collected corpus is the case that made the
+    # gap reachable.
+    "evaluator-generated": (
+        "origin, not brokenness - a generated evaluator can be valid or "
+        "invalid and says nothing about where the rows came from"
+    ),
+    # And the same on the agent side, with one pair worth naming rather than
+    # left to the general sentence: `agent-no-varying-knobs` is about how much
+    # there is to search, and this run writes walkthrough agents with several
+    # knobs on purpose, so neither condition follows from the other.
+    "agent-generated": (
+        "origin, not the size of the search space - a generated agent varies "
+        "whatever this run gave it, and a brought one may vary nothing"
+    ),
     "evaluator-unresolved": (
         "present-but-unnamed excludes absent, and no dataset condition follows "
         "from it"
@@ -1846,6 +1963,18 @@ class EvaluationFacts:
     # False narrows that same present-but-unresolved state to "the file is
     # not even valid Python" (traigent-first-run#133).
     parses: bool | None = None
+    # Whose evaluator this is - `generated` where this run wrote it, `brought`
+    # where the customer did, `None` where nobody said (#238).
+    #
+    # Declared rather than measured, because there is nothing here to measure:
+    # no property of a scoring function distinguishes one this run wrote from
+    # one the customer wrote, and inventing a heuristic for it would put a
+    # guess about authorship on somebody's card. The run that wrote the file is
+    # the one party that knows for certain, and the flag is how it says so.
+    #
+    # `None` raises nothing, which is a decision and not an oversight - see
+    # `origin_cap`.
+    origin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2026,6 +2155,10 @@ class AgentFacts:
     # space answers, so there is nothing here for the document to be talked
     # over about.
     build: tuple[BuildSignal, ...] | None = None
+    # Whose agent this is (#238), read exactly as `EvaluationFacts.origin` is
+    # and declared for the same reason: a walkthrough agent this run writes is
+    # ordinary Python, and nothing about its source says who typed it.
+    origin: str | None = None
 
 
 def round_half_up(value: float) -> int:
@@ -3153,6 +3286,65 @@ def run_rows(facts: DatasetFacts) -> int | None:
     return facts.tuning_rows + facts.holdout_rows
 
 
+ORIGIN_CAPS: dict[str, Cap] = {
+    "evaluation": Cap(
+        "evaluator-generated",
+        EVALUATOR_GENERATED_CEILING,
+        "This run wrote the evaluator, so the score reports agreement with a "
+        "ruler nobody outside this run has checked against your task. Your "
+        "rows and your answers are real; what grades them is a stand-in until "
+        "your own scoring is connected or a person confirms this one marks the "
+        "way you would.",
+        blocks=False,
+    ),
+    "agent": Cap(
+        "agent-generated",
+        AGENT_GENERATED_CEILING,
+        "This run wrote the agent, so the winning configuration belongs to a "
+        "walkthrough stand-in rather than to the program you run. The "
+        "comparison is real and it is not a measurement of your production "
+        "behavior.",
+        blocks=False,
+    ),
+}
+
+
+def origin_cap(pillar: str, origin: str | None) -> Cap | None:
+    """The ceiling a component's ORIGIN sets, where the run declared one (#238).
+
+    Fires only on `generated`. `brought` is the customer's own material and the
+    rest of the pillar already grades it; there is nothing for a ceiling to say.
+
+    AND `None` FIRES NOTHING, which is the decision this function exists to
+    record rather than to leave as an omission.
+
+    The alternative was the dataset's, and it is the obvious one to reach for:
+    silence there is a rung of its own (`dataset-undeclared-provenance`, capped
+    exactly as declared-generated is, differing only in the remedy), on the
+    module's own rule that omission must never outscore declaration. It is not
+    taken here, and the difference is what silence can MEAN. Preflight reads
+    every row and counts the ones that named no source, so an undeclared corpus
+    is a file that was examined and said nothing - positive evidence. An absent
+    flag is not evidence of anything: it is equally a run that withheld the
+    answer and a caller written before this flag existed, and this module
+    already refuses to punish a payload that predates a field rather than one
+    that dodged a question (see `DatasetFacts` on the provenance counts).
+
+    So the hole is closed where it is actually reachable rather than by charging
+    every caller for it. In a guided run the flag is not optional - SKILL.md
+    mandates both on every scoring call, because the run that created the
+    substitute is the one party that knows - and the guided run is the only path
+    this package ships. A caller scoring by hand and saying nothing gets the
+    behaviour it always got, with no cap invented about material nobody
+    described.
+
+    Re-open this if a hand-built caller ever becomes a supported path: the
+    argument above turns on the guide being the thing that passes these flags,
+    and it stops holding the moment something else is.
+    """
+    return ORIGIN_CAPS[pillar] if origin == GENERATED else None
+
+
 def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | None:
     """The one ceiling this judgement may set, and never a point of credit.
 
@@ -3848,6 +4040,17 @@ def score_dataset(
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
+
+    # Before the branches, and guarded on `present`, so it composes with every
+    # state an evaluator that EXISTS can be in - calibrated, unresolved,
+    # invalid, timed out. An evaluator this run wrote can be any of those, and
+    # origin is a separate question from all of them (#238). Where nothing is
+    # connected there is no origin to declare, and the absent cap at 40 already
+    # holds the score below everything this one could say.
+    if facts.present:
+        generated = origin_cap("evaluation", facts.origin)
+        if generated is not None:
+            caps.append(generated)
 
     if not facts.present:
         # Deliberately left as-is. The dataset pillar above earns its new
@@ -4620,6 +4823,24 @@ def with_build(pillar: Pillar, facts: AgentFacts) -> Pillar:
 
 
 def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
+    """The agent pillar, with the one ceiling its ORIGIN sets beside it (#238).
+
+    A wrapper for the same reason `with_build` is applied at every return
+    rather than inside one branch: whose agent this is has nothing to do with
+    which of the four paths established its search space, so none of those
+    paths may decide whether it is asked. Four `caps.append` calls in four
+    branches is four chances for the fifth branch to forget.
+    """
+    pillar, caps, knobs = score_agent_evidence(facts)
+    generated = origin_cap("agent", facts.origin)
+    if generated is not None:
+        caps.append(generated)
+    return pillar, caps, knobs
+
+
+def score_agent_evidence(
+    facts: AgentFacts,
+) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
 
@@ -6220,6 +6441,7 @@ def evaluation_facts_from_calibration(
     task_kind: str | None = None,
     evaluator_present: bool = False,
     evaluator_parses: bool | None = None,
+    origin: str | None = None,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -6236,6 +6458,7 @@ def evaluation_facts_from_calibration(
             method=method,
             task_kind=task_kind,
             parses=evaluator_parses,
+            origin=origin,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -6269,6 +6492,7 @@ def evaluation_facts_from_calibration(
         probe_scores=tuple(probes),
         timed_out=bool(payload.get("timed_out")),
         parses=evaluator_parses,
+        origin=origin,
     )
 
 
@@ -7335,6 +7559,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="declared evaluation method (recorded as declared, not measured)",
     )
     parser.add_argument(
+        "--evaluator-origin",
+        choices=COMPONENT_ORIGINS,
+        help=(
+            "who wrote the evaluator: 'brought' for the customer's own, "
+            "'generated' for one this run created. A generated ruler bounds "
+            "what the score may claim and never stops the run; there is nothing "
+            "here to measure, so it is declared"
+        ),
+    )
+    parser.add_argument(
+        "--agent-origin",
+        choices=COMPONENT_ORIGINS,
+        help="who wrote the agent, read exactly as --evaluator-origin is",
+    )
+    parser.add_argument(
         "--task-kind",
         choices=TASK_KINDS,
         help=(
@@ -7480,6 +7719,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             task_kind=args.task_kind,
             evaluator_present=evaluator_present,
             evaluator_parses=evaluator_parses,
+            origin=args.evaluator_origin,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,
@@ -7506,6 +7746,10 @@ def run(argv: Sequence[str] | None = None) -> int:
             agent_facts = agent_facts_from_discovery(load_json(args.agent_knobs))
         else:
             agent_facts = AgentFacts()
+        # Applied to whichever of the three the branches above built, because
+        # who wrote the agent is a fact about the project and not about which
+        # document described it (#238).
+        agent_facts = replace(agent_facts, origin=args.agent_origin)
         row_review = (
             row_review_from_document(load_json(args.row_review), dataset_facts)
             if args.row_review

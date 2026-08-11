@@ -5242,7 +5242,17 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # the assumption IS "generated" either way - and the declared
                 # one is ranked first because what differs is the remedy, which
                 # this table does not rank.
-                65: ["dataset-fully-synthetic", "dataset-undeclared-provenance"],
+                65: [
+                    "dataset-fully-synthetic",
+                    "dataset-undeclared-provenance",
+                    # #238's agent rung, equal because the two say the same
+                    # thing from opposite sides - a real agent tuned on
+                    # invented evidence, and an invented agent tuned on real
+                    # evidence - and ranked last because the dataset pair are
+                    # counted per row and this one is declared by the run about
+                    # its own work.
+                    "agent-generated",
+                ],
                 70: [
                     "dataset-mostly-synthetic",
                     # The silent counterpart of the count before it, ranked
@@ -5259,6 +5269,10 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                     "dataset-below-measurable-size",
                     "dataset-generated-answer-key",
                     "dataset-mostly-generated-answer-key",
+                    # #238's evaluator rung, on the same band edge and last for
+                    # the same reason the 65 tie puts its own rung last: the
+                    # three before it are counted, and this one is declared.
+                    "evaluator-generated",
                 ],
             },
             "a tie in the ceiling order is a decision; record it here with its "
@@ -8967,3 +8981,211 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         self.assertIn(MODULE.AGENT_NOT_COVERED, report)
         agent_block = report.split("## Agent", 1)[1].split("## ", 1)[0]
         self.assertIn("not covered by this pillar", agent_block)
+
+
+class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
+    """#238: provenance was graded for the rows and for nothing else.
+
+    Every origin condition the scorer carried was `dataset-`-prefixed, and the
+    four evaluator conditions that exist - absent, invalid, timeout,
+    unresolved - all grade BROKENNESS. So the reachable case was a real agent,
+    a real declared-collected corpus and an evaluator written by the run: the
+    substitute calibrates, the evaluation pillar scores on that calibration, and
+    nothing recorded that the grading signal was one this run invented.
+
+    Measured on trunk `b2b482eb` before this change, over 120 collected rows
+    with a read of a real agent: 93/100 EXCELLENT, no caps,
+    `recommended_action: proceed`, evaluation 100. The card renders the guide's
+    `🛠️` marker for a generated component; the score did not carry it, and the
+    score is the number a customer takes away.
+
+    The all-missing case was covered by accident and that is worth pinning
+    separately: a generated trio also has a generated dataset, so
+    `dataset-fully-synthetic` fires. Remove the dataset gap - the ordinary case
+    of a customer who has data and no evaluator - and the coverage went with it.
+    """
+
+    def _evaluation(self, origin=None) -> "MODULE.EvaluationFacts":
+        return MODULE.EvaluationFacts(
+            present=True,
+            method="normalized-exact",
+            task_kind="closed-label",
+            calibration_present=True,
+            calibration_supplied=True,
+            checks=({f"check-{index}": True for index in range(7)},),
+            probe_scores=((1.0, 0.0),),
+            origin=origin,
+        )
+
+    def _score(self, **origins) -> "MODULE.ReadinessScore":
+        """The whole reachable case: real agent, collected rows, one origin varied."""
+        return MODULE.score_run(
+            _brought(120, tuning_rows=84, holdout_rows=36,
+                     tuning_labelled_rows=84, holdout_labelled_rows=36),
+            self._evaluation(origins.get("evaluation")),
+            replace(_read(_build_document()), origin=origins.get("agent")),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(self) -> None:
+        undeclared = self._score()
+        generated = self._score(evaluation="generated")
+        # The measurement the module's own comment quotes, kept re-runnable:
+        # this is the card a project with real material and a run-written
+        # evaluator got before #238, and it is what a run that still declares
+        # nothing gets today.
+        self.assertEqual((undeclared.overall, undeclared.band), (93, "EXCELLENT"))
+        self.assertEqual(undeclared.recommended_action, "proceed")
+        self.assertEqual([cap.condition for cap in undeclared.caps], [])
+        self.assertEqual(
+            [cap.condition for cap in generated.caps], ["evaluator-generated"]
+        )
+        self.assertLess(generated.overall, undeclared.overall)
+
+    def test_a_run_written_ruler_may_be_workable_and_never_strong(self) -> None:
+        """The owner's rule, asked of the module rather than pinned as 74.
+
+        Asserting the literal would pass just as happily if the bands were
+        renumbered and 74 landed back inside STRONG, which is the defect the
+        answer-key ladder was already corrected for.
+        """
+        strong_floor = next(
+            edge for edge, band in MODULE.BAND_THRESHOLDS if band == "WORKABLE"
+        )
+        self.assertEqual(MODULE.EVALUATOR_GENERATED_CEILING, strong_floor - 1)
+        self.assertEqual(self._score(evaluation="generated").band, "WORKABLE")
+
+    def test_a_generated_agent_bounds_the_claim_further_than_a_generated_ruler(
+        self,
+    ) -> None:
+        """Whose subject, against whose reading - and the subject costs more.
+
+        A generated evaluator still measures the customer's own agent on the
+        customer's own rows, and only the reading is this run's. A generated
+        agent makes the thing under comparison this run's too, so the winning
+        configuration belongs to a program nobody runs.
+        """
+        self.assertLess(
+            MODULE.AGENT_GENERATED_CEILING, MODULE.EVALUATOR_GENERATED_CEILING
+        )
+        self.assertEqual(
+            MODULE.AGENT_GENERATED_CEILING, MODULE.FULLY_SYNTHETIC_CEILING,
+            "a generated agent over real data and a real agent over generated "
+            "data are the same claim read from opposite sides",
+        )
+        self.assertLess(
+            self._score(agent="generated").overall,
+            self._score(evaluation="generated").overall,
+        )
+
+    def test_neither_stops_a_run_this_guide_creates_the_component_for(self) -> None:
+        """The walkthrough's own designed success may not be called a repair.
+
+        `tests/behavioral/scenarios/partial-missing-dataset` is the shape: a
+        project missing a component, which this run supplies. Blocking there
+        would demand the customer produce the one thing they came without.
+        """
+        score = self._score(evaluation="generated", agent="generated")
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(
+            sorted(cap.condition for cap in score.caps),
+            ["agent-generated", "evaluator-generated"],
+        )
+        self.assertFalse(any(cap.blocks for cap in score.caps))
+        # Asks nothing, for the reason `dataset-fully-synthetic` asks nothing:
+        # the run has already answered by declaring it.
+        self.assertFalse(any(cap.asks for cap in score.caps))
+        self.assertEqual(score.recommended_action, "proceed")
+
+    def test_brought_and_undeclared_are_scored_the_same_and_that_is_a_decision(
+        self,
+    ) -> None:
+        """`None` raises nothing, recorded here because it is the arguable half.
+
+        The dataset ladder charges silence - an undeclared corpus is capped
+        exactly as a declared-generated one is - and this deliberately does not.
+        The difference is what silence can mean: preflight READS every row, so
+        an undeclared corpus is a file that was examined and said nothing, while
+        an absent flag is equally a caller written before the flag existed. The
+        hole it leaves is closed in SKILL.md, which mandates both flags on every
+        scoring call, and the reasoning is recorded on `origin_cap`.
+        """
+        self.assertEqual(
+            self._score(evaluation="brought", agent="brought").overall,
+            self._score().overall,
+        )
+        self.assertIsNone(MODULE.origin_cap("evaluation", None))
+        self.assertIsNone(MODULE.origin_cap("agent", "brought"))
+
+    def test_an_absent_evaluator_has_no_origin_to_declare(self) -> None:
+        """Nothing is connected, so there is nothing whose authorship matters.
+
+        The absent condition already holds the score at 40, below anything this
+        ceiling could say, and two conditions about one missing file would read
+        as two problems.
+        """
+        _pillar, caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(present=False, origin="generated")
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-absent"])
+
+    def test_a_generated_evaluator_that_is_also_broken_says_both(self) -> None:
+        """Origin and brokenness are separate axes, which is the whole finding.
+
+        A substitute this run wrote can still be invalid, and the reader is owed
+        both facts - the lower ceiling decides the number either way.
+        """
+        _pillar, caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                calibration_present=True,
+                calibration_supplied=True,
+                checks=({"non_constant": False, "bad_fails": False},),
+                origin="generated",
+            )
+        )
+        conditions = sorted(cap.condition for cap in caps)
+        self.assertIn("evaluator-generated", conditions)
+        self.assertIn("evaluator-invalid", conditions)
+
+    def test_the_agent_ceiling_reaches_every_path_that_establishes_a_space(
+        self,
+    ) -> None:
+        """Four documents answer "what is there to search" and none answers this.
+
+        The cap is applied outside those branches for the reason `with_build`
+        is: whose agent this is has nothing to do with which document described
+        it, and four appends in four branches is four chances for a fifth
+        branch to forget.
+        """
+        for label, facts in (
+            ("read of the source", _read(_build_document())),
+            (
+                "config-space document",
+                MODULE.AgentFacts(knobs={"model": ["a", "b"]}, wired=("model",)),
+            ),
+            ("document listing nothing", MODULE.AgentFacts(config_space_supplied=True)),
+            ("nothing at all", MODULE.AgentFacts()),
+        ):
+            with self.subTest(path=label):
+                _pillar, caps, _knobs = MODULE.score_agent(
+                    replace(facts, origin="generated")
+                )
+                self.assertIn("agent-generated", [cap.condition for cap in caps])
+
+    def test_the_flags_reach_the_score_from_the_command_line(self) -> None:
+        """The declaration is worth nothing if `run` drops it."""
+        for flag, condition in (
+            ("--evaluator-origin", "evaluator-generated"),
+            ("--agent-origin", "agent-generated"),
+        ):
+            with self.subTest(flag=flag):
+                arguments = MODULE.parse_args(
+                    ["--preflight", "-", flag, "generated"]
+                )
+                self.assertEqual(
+                    getattr(arguments, flag.lstrip("-").replace("-", "_")),
+                    "generated",
+                )
+                self.assertIn(condition, MODULE.ACTION_FOR_CONDITION)

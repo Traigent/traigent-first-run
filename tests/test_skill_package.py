@@ -11850,7 +11850,10 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("agent-")
         }
-        self.assertEqual(conditions, {"agent-no-varying-knobs"})
+        # #238 adds the second: whose agent this is, which is a different
+        # question from how much of it can vary, and needs a route of its own
+        # for the same reason the first one did.
+        self.assertEqual(conditions, {"agent-no-varying-knobs", "agent-generated"})
         normalized = " ".join(SKILL.read_text().casefold().split())
         # Split at the evaluator/agent sentence, not at the dataset one. This
         # branch also teaches the dataset intro the blocks-vs-advisory rule in
@@ -11863,6 +11866,10 @@ class SkillPackageTests(unittest.TestCase):
         )[1]
         for condition, branch in (
             ("agent-no-varying-knobs", "that run's own outcome to report"),
+            # #238: routed to the walkthrough labeling rules, which is the one
+            # place this guide already decides what may be said about material
+            # it wrote itself.
+            ("agent-generated", "walkthrough labeling"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(
@@ -12585,7 +12592,10 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        self.assertEqual(len(conditions), 4)
+        # #238 adds the fifth, and it is the one the other four could not
+        # express: those grade whether the evaluator WORKS, and this grades
+        # whose it is. A run that wrote the ruler had no condition to raise.
+        self.assertEqual(len(conditions), 5)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split(
             "evaluator and agent caps route through the rules that already own them", 1
@@ -12595,6 +12605,7 @@ class SkillPackageTests(unittest.TestCase):
             ("evaluator-invalid", "inspect, repair, or replace"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
+            ("evaluator-generated", "walkthrough labeling"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(condition, conditions)
