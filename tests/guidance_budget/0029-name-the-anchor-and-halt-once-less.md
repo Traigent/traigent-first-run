@@ -28,8 +28,9 @@ test.
 The closing clause pays for honesty about degree. One fabricated piece standing
 beside genuine rows, a genuine ruler and a genuine callable is a weaker claim
 than three pieces spun out of a single line of stated intent, and the scorer has
-separated those two since it was written. Reusing one sentence for both flattered
-the first and libelled the second.
+separated those two since it was written. One sentence covering both tells the
+smaller case its result is worth less than it is, and tells the larger case its
+result is worth more.
 
 76_711 and 347_996, measured on this branch with `assistant_facing_documents()`
 after the flow edit, the discovery line and the reference section were all in

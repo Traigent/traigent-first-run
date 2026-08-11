@@ -82,8 +82,8 @@ matrix's all-missing row, which asks what the walkthrough should do rather than 
 
 Match the cost sentence to how much is derived. One generated piece around a real agent, real rows
 and a real ruler is not the same claim as a trio built from one sentence of intent, and
-`readiness.py` already scores them apart. A single sentence reused for both overstates the first
-and understates the second.
+`readiness.py` already scores them apart. One sentence for both tells the smaller case its result
+is worth less than it is, and the larger case that its result is worth more.
 
 Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
 hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already
