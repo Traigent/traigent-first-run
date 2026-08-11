@@ -2281,9 +2281,10 @@ def check_dataset(
         #
         # Only here. Under overlap the split is already condemned, and with one
         # side missing there is no boundary to compare a family boundary with.
-        emit("dataset-split-family", *family_partition_finding(
-            sorted(tune_inputs), sorted(holdout_inputs)
-        ))
+        emit(
+            "dataset-split-family",
+            *family_partition_finding(sorted(tune_inputs), sorted(holdout_inputs)),
+        )
         tuning_count = sum(
             count for name, count in split_counts.items() if name in tune_names
         )

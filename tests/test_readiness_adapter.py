@@ -3131,9 +3131,7 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
 
     def _score(self, partitioned: bool) -> dict:
         with tempfile.TemporaryDirectory() as raw:
-            dataset = _write_jsonl(
-                Path(raw), "dataset.jsonl", self._rows(partitioned)
-            )
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(partitioned))
             return _score(
                 dataset,
                 extra=("--evaluator-method", "normalized-exact"),

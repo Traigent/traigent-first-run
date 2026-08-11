@@ -9020,14 +9020,21 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
     def _score(self, **origins) -> "MODULE.ReadinessScore":
         """The whole reachable case: real agent, collected rows, one origin varied."""
         return MODULE.score_run(
-            _brought(120, tuning_rows=84, holdout_rows=36,
-                     tuning_labelled_rows=84, holdout_labelled_rows=36),
+            _brought(
+                120,
+                tuning_rows=84,
+                holdout_rows=36,
+                tuning_labelled_rows=84,
+                holdout_labelled_rows=36,
+            ),
             self._evaluation(origins.get("evaluation")),
             replace(_read(_build_document()), origin=origins.get("agent")),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
 
-    def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(self) -> None:
+    def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(
+        self,
+    ) -> None:
         undeclared = self._score()
         generated = self._score(evaluation="generated")
         # The measurement the module's own comment quotes, kept re-runnable:
@@ -9069,7 +9076,8 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             MODULE.AGENT_GENERATED_CEILING, MODULE.EVALUATOR_GENERATED_CEILING
         )
         self.assertEqual(
-            MODULE.AGENT_GENERATED_CEILING, MODULE.FULLY_SYNTHETIC_CEILING,
+            MODULE.AGENT_GENERATED_CEILING,
+            MODULE.FULLY_SYNTHETIC_CEILING,
             "a generated agent over real data and a real agent over generated "
             "data are the same claim read from opposite sides",
         )
@@ -9181,9 +9189,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             ("--agent-origin", "agent-generated"),
         ):
             with self.subTest(flag=flag):
-                arguments = MODULE.parse_args(
-                    ["--preflight", "-", flag, "generated"]
-                )
+                arguments = MODULE.parse_args(["--preflight", "-", flag, "generated"])
                 self.assertEqual(
                     getattr(arguments, flag.lstrip("-").replace("-", "_")),
                     "generated",

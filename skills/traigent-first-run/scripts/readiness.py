@@ -4659,9 +4659,7 @@ def discovered_space_evidence(
         "the agent makes reachable rather than what a run would compare"
     )
     if refused:
-        detail = "; ".join(
-            f"{knob.name}: {knob.uncredited_reason}" for knob in refused
-        )
+        detail = "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
         evidence += f". Recorded and not counted - {detail}"
     return evidence
 
@@ -6402,9 +6400,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         # never emitted this check reaches the same `None` a SKIP does. Both
         # mean "unanswered", and a missing record is how an older payload says
         # it - the same reading `placeholder_rows` above already takes.
-        shared_families=metrics.get("dataset-split-family", {}).get(
-            "shared_families"
-        ),
+        shared_families=metrics.get("dataset-split-family", {}).get("shared_families"),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
         synthetic=bool(provenance.get("synthetic")),
         generated_outputs=bool(provenance.get("generated_outputs")),

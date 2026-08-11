@@ -2228,7 +2228,9 @@ class ASplitDrawnAlongTheTaskFamiliesTests(unittest.TestCase):
         """
         self.assertEqual(MODULE.family_signature("def add(a, b):"), "def add")
         self.assertEqual(MODULE.family_signature("def is_even(n):"), "def is_even")
-        self.assertEqual(MODULE.family_signature("SELECT count(*) FROM t"), "select count")
+        self.assertEqual(
+            MODULE.family_signature("SELECT count(*) FROM t"), "select count"
+        )
         # No words at all is no signature, rather than a signature everything
         # unreadable shares - "unclassifiable" must not become a family.
         self.assertEqual(MODULE.family_signature("!!! ???"), "")
