@@ -16903,7 +16903,9 @@ class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
         )
         self.assertIn("pinned and performed are separate questions", text)
         # And the worked example that shows it, so the rule is not abstract.
-        self.assertIn('return {"model": model, "config": config, "input": text}', text)
+        self.assertIn(
+            'return {"model": model, "config": config, "input": input_text}', text
+        )
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):

@@ -226,11 +226,11 @@ rather than illustrating one. **Output contract** is whether the answer's shape 
 anywhere - a parser, a schema, a response format, an instruction naming the format, or the source
 itself fixing what comes back (a dict literal, a dataclass, a typed return) - because an answer of
 any shape is one an evaluator has to accept whole. That last form is the one readers miss:
-`return {"model": model, "config": config, "input": text}` pins the shape an evaluator reads and
-earns the check, in a stub that calls no model as much as anywhere else. Pinned and performed are
-separate questions and this one asks only the first, so withholding the check from a stub answers a
-question nobody put. **Control flow** is whether the agent
-ends and on what: no loop ends trivially and earns the check, a loop with a bound you can point at
+`return {"model": model, "config": config, "input": input_text}` pins the shape an evaluator reads,
+and earns the check in a stub that calls no model just as it does anywhere else. Pinned and
+performed are separate questions and this one asks only the first, so withholding the check from a
+stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
+ends trivially and earns the check, a loop with a bound you can point at
 earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
 is whether each declared tool can be found. `"used": false` removes only this wiring check; prompt,
 output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
