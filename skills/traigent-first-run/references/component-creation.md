@@ -146,7 +146,7 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > attempting what your rows describe, and the evaluator it would be graded by returns the same
 > score for every answer, so nothing can be graded yet. Two ways forward:
 >
-> A. I build both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
+> A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours untouched,
 > and re-validate, then carry on with the walkthrough. Neither file has anything to mend - there is
 > no call path in one and no rubric in the other - so what comes out is `🛠️` material: it keeps
 > your rows and your task, not your code, and it shows the workflow working rather than telling you
@@ -163,6 +163,16 @@ an echo stub never had keeps nothing but their rows and their task, and it reads
 the two this is, in the sentence itself. A build that promises "your product" over material this run
 wrote is the `🛠️`/`✅` separation broken in the one place the customer is reading - and a build
 offered without saying which one it is asks them to spend on an unlabelled result.
+
+The build route carries the recommendation, and carries it visibly. Two routes with nothing marked
+is a menu, and this guide already holds that a menu offered instead of a recommendation is the same
+as no recommendation - the same reason the dataset reference marks its repair route. It is also the
+rule about silence, applied one section over: state it, so silence never has to be interpreted. A
+blinded run reaching an unmarked pair added "(recommended)" itself, which is what an unstated
+default looks like from the outside. Recommend the build route because pausing is always available
+and needs no push, while the run stopping is the outcome the walkthrough exists to avoid - and
+because the sentence beside it already says what the result will not be able to claim, so the
+recommendation cannot oversell.
 
 The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
 … and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the

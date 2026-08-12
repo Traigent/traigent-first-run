@@ -17263,6 +17263,21 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
             creation,
         )
 
+    def test_the_build_route_carries_a_visible_recommendation(self) -> None:
+        """Two routes with nothing marked is a menu, and this guide holds that a
+        menu offered instead of a recommendation is no recommendation.
+
+        A blinded run reaching an unmarked pair added "(recommended)" itself,
+        which is what an unstated default looks like from outside. Pinned with
+        the reason, because the reason is what stops it being read as a nudge:
+        the sentence beside it already says what the result cannot claim, so
+        recommending the route that keeps the run moving cannot oversell it.
+        """
+        creation = self._creation()
+        self.assertIn("i build both (recommended)", creation)
+        self.assertIn("the build route carries the recommendation", creation)
+        self.assertIn("so silence never has to be interpreted", creation)
+
     def test_the_build_route_is_unmistakably_a_way_to_continue(self) -> None:
         """The drift that produced the original defect, named so it cannot return.
 

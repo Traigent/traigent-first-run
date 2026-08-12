@@ -3,8 +3,8 @@
 follows: 0038
 resident-ceiling: 79_200
 resident-measured: 79_129
-total-ceiling: 360_800
-total-measured: 360_592
+total-ceiling: 361_600
+total-measured: 361_414
 
 The unusable branch offered three routes: repair the customer's files in a
 reversible copy, write clearly labelled stand-ins, or pause. The first two are one
@@ -40,6 +40,14 @@ dataset reference; an unusable one cannot be continued on at all, so the third
 route has nothing to be. Without that stated, the two documents read as a
 contradiction and the next reader repairs the wrong one.
 
-360_592 total and 79_129 resident, measured with `assistant_facing_documents()`
+The last bytes mark the recommendation. Two routes with nothing marked is a menu,
+and this guide already holds that a menu offered instead of a recommendation is
+no recommendation; the dataset reference marks its repair route for the same
+reason. A blinded run reaching the unmarked pair supplied "(recommended)" itself,
+which is what an unstated default looks like from outside, and the rule about
+stating a thing so silence never has to be interpreted is one section away.
+
+361_414 total and 79_129 resident, measured with `assistant_facing_documents()`
 on this branch. Resident rises 210 bytes: the flow states the count, and the
-sentence that made the old count wrong lived there too.
+sentence that made the old count wrong lived there too. Everything else is
+reference, which the run loads for this stage and drops.
