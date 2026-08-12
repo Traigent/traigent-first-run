@@ -191,6 +191,19 @@ The build route is the way to CONTINUE, and its wording has to make that unmista
 … and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
 pause wearing the build route's letter, and a run that offers it has offered no way forward at all.
 
+No route carries a decision of its own. Choosing a route is the answer; a route that also says
+"tell me whether to redraw the split" or "say which you would prefer" has asked a second question
+inside the first, and the customer cannot take the route without answering it. A blinded run did
+exactly this - a build route that also asked whether to redraw the tuning split - and the ask-ends
+rule below did not reach it, because the question was not after the standing line but inside route
+A. One ask means one decision in the whole message, not one decision after the last one.
+
+An advisory may explain a limitation and may recommend; it may not ask. If a limitation genuinely
+needs the customer to decide, it is either part of the one ask or it waits for the run record - and
+a limitation that changes what their numbers mean, like a split drawn along the task families, is
+named and left named. Saying "this is what your held-out number will measure" is the disclosure;
+"shall I change it" is a second ask wearing an advisory's clothes.
+
 `I have it` is never numbered as a route. It answers a different question - where the material is,
 rather than what to do about the material here - and it rides on every ask in this document for that
 reason. Every ask also ENDS on it: nothing follows the standing line, not a clarifying question, not

@@ -16923,6 +16923,31 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("offers three for a *material limitation*", creation)
         self.assertIn("the third route has nothing to be", creation)
 
+    def test_no_route_carries_a_decision_of_its_own(self) -> None:
+        """A blinded run put a second question inside route A.
+
+        Its build route also asked whether to redraw the tuning split, so the
+        customer could not take that route without answering something else.
+        The ask-ends rule did not reach it: the question was not after the
+        standing line, it was inside a route, and one ask has always meant one
+        decision in the whole message rather than one after the last one.
+        """
+        creation = self._creation()
+        self.assertIn("no route carries a decision of its own", creation)
+        self.assertIn("has asked a second question inside the first", creation)
+
+    def test_an_advisory_may_explain_but_may_not_ask(self) -> None:
+        """The same run's advisory is where the extra decision came from.
+
+        A limitation that changes what the customer's numbers mean is named and
+        left named; turning it into "shall I change it" is a second ask wearing
+        an advisory's clothes, which is how a one-ask run becomes a two-ask one
+        without anyone adding a question mark after the exit.
+        """
+        creation = self._creation()
+        self.assertIn("it may not ask", creation)
+        self.assertIn("a second ask wearing an advisory's clothes", creation)
+
     def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
         """`I have it` answers where material lives, not what to do with it."""
         creation = self._creation()
