@@ -120,9 +120,10 @@ tuning split: the rows are there, the split is what is wrong, and more rows answ
 The section above is for material this run could not find. This one is for material it found and
 cannot use: an evaluator that scores every answer the same, an agent that echoes its input instead
 of attempting the task, a schema that does not parse. Name the user's own file where you say this,
-by the path the inventory recorded; the shapes below are the situation, not the filenames. The distinction decides the question, because
-there is a route here that a gap does not have - the material exists, so it can be repaired, and a
-repair is the only answer that keeps the run about the user's own product.
+by the path the inventory recorded; the shapes below are the situation, not the filenames. The
+distinction decides the question, because there is a route a gap does not have: the material exists, so it can be repaired, and a
+repair is the only answer that can keep any of the customer's own material in the result - how much
+depends entirely on how much of it survives.
 
 So this ask carries three routes, not two answers, and SKILL.md states them. What that sounds like,
 when the agent and the evaluator are both unusable and the dataset is real:
@@ -132,17 +133,29 @@ when the agent and the evaluator are both unusable and the dataset is real:
 > score for every answer, so nothing can be graded yet. Three ways forward:
 >
 > A. I repair both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
-> and re-validate. This is the only route where the result can still be about your product.
-> B. I write clearly labelled `🛠️` stand-ins now. That shows the workflow working; it cannot tell
-> you how your product performs, and nothing from it may be promoted.
+> and re-validate. Here that means writing a call path and a grader neither file has yet, so what
+> comes out is `🛠️` walkthrough material too - it keeps your rows and your task, not your code.
+> B. I write clearly labelled `🛠️` stand-ins now, without touching either file. That shows the
+> workflow working; it cannot tell you how your product performs, and nothing from it may be
+> promoted.
 > C. Pause, and I will give you the exact checks a corrected version has to pass.
 >
 > Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
+How much of the result stays about the customer's product is what separates A from B, and it is a
+property of what SURVIVES the repair, never of the repair being reversible. Mending one broken line
+in a real scorer keeps their ruler; writing the call path an echo stub never had keeps nothing but
+their rows and their task. Say which of the two this is, in the sentence itself. A route that
+promises "your product" over material this run wrote is the `🛠️`/`✅` separation broken in the one
+place the customer is reading.
+
 `I have it` is not a fourth route and is never numbered as one. It answers a different question -
 where the material is, rather than what to do about the material here - and it rides on every ask in
-this document for that reason. Numbering it turns a standing exit into one option among four, and
+this document for that reason. Every ask also ENDS on it: nothing follows the standing line, not a
+clarifying question, not a "while you decide", not the advisory restated as its own query. Anything
+after it is a second decision, and one was the whole design - a question that is free to answer is
+still one the customer has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into one option among four, and
 the pause beside it into another, which is how three routes become a list of ways to stop.
 
 Say what each route DOES and never what it is called. "Continue once a valid evaluator is
