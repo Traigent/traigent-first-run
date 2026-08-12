@@ -1,8 +1,8 @@
-# 0035 - a flat result can point downward
+# 0036 - a flat result can point downward
 
-follows: 0034
-total-ceiling: 355_500
-total-measured: 355_212
+follows: 0035
+total-ceiling: 356_600
+total-measured: 356_289
 
 The close reads a flat comparison one way only. Its hypothesis list already
 names easy data, and every remedy under it looks upward - verify the references,
@@ -34,6 +34,9 @@ produces - so recommending a cheaper model on that evidence would be the
 synthetic-versus-real confusion the whole guide is built to prevent, arriving
 through a cost saving instead of an accuracy claim.
 
-355_212, measured with `assistant_facing_documents()` after the passage landed.
+356_289, measured with `assistant_facing_documents()` after the passage landed
+and after 0035, which raised the same budget for a different reason on a branch
+this one never saw. The figure recorded here first was 355_212, taken before
+those bytes existed - the arithmetic neither branch could do alone.
 Resident is untouched at 78_695 and its ceiling does not move: the close belongs
 to run-safety, and the flow already routes there.
