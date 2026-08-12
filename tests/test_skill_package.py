@@ -16816,6 +16816,52 @@ class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
         self.assertIn("no number derived from scoring one is reported", skill)
 
 
+class ACommentIsNotAKnobTests(unittest.TestCase):
+    """A stub's comment listed six settings and a run recorded them as knobs.
+
+    The names are real words in the file and the contract says knobs are "what
+    the agent can be told to do differently", which a comment naming six
+    settings satisfies on a charitable reading. Nothing said otherwise, so the
+    rule had to be derived - two blinded runs derived it correctly and wrote
+    the derivation down in prose, which is the tell that it was unstated, and a
+    third derived it wrongly.
+
+    Recording them reports a search space the project does not have. That is
+    the same false readiness a historical config-space file produces, arriving
+    through the one input that is supposed to be read fresh from the source -
+    so the guide guards one route into that error and left the other open.
+    """
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_a_name_only_in_prose_is_not_a_knob(self) -> None:
+        creation = self._creation()
+        self.assertIn(
+            "a name appearing only in a comment, docstring, todo, or example is not a knob",
+            creation,
+        )
+
+    def test_the_test_is_executable_code_reading_it(self) -> None:
+        """Stated as what QUALIFIES, so the rule decides an unseen case too."""
+        creation = self._creation()
+        self.assertIn(
+            "record one only where executable code reads it, passes it onward, "
+            "or selects behaviour from it",
+            creation,
+        )
+
+    def test_it_says_what_recording_them_would_report(self) -> None:
+        """The consequence is the reason, and the reason is what a reader keeps."""
+        creation = self._creation()
+        self.assertIn("reports a search space this project does not have", creation)
+
+
 class TheSubstituteMarkerIsOneGlyphEverywhereTests(unittest.TestCase):
     """The marker was changed in the guide and left behind in the entry point.
 
