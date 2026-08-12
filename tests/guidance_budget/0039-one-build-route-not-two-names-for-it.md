@@ -3,8 +3,8 @@
 follows: 0038
 resident-ceiling: 79_200
 resident-measured: 79_129
-total-ceiling: 361_600
-total-measured: 361_414
+total-ceiling: 363_000
+total-measured: 362_490
 
 The unusable branch offered three routes: repair the customer's files in a
 reversible copy, write clearly labelled stand-ins, or pause. The first two are one
@@ -47,7 +47,17 @@ reason. A blinded run reaching the unmarked pair supplied "(recommended)" itself
 which is what an unstated default looks like from outside, and the rule about
 stating a thing so silence never has to be interpreted is one section away.
 
-361_414 total and 79_129 resident, measured with `assistant_facing_documents()`
+The final bytes answer three things a reader supplied wrongly on their own. The
+marker is drawn as tools and means a generated substitute, so a customer decoding
+the glyph unaided reads "repaired" - the one thing it never means - and the ask
+now says it in words. "Your rows" is heard as all of them, and above 100 usable
+rows the paid run reads a bounded sample, so the count this project will really
+use is named rather than implied. And the first run is bounded whichever route is
+taken: pausing to fix their own components buys a better-grounded result, not a
+bigger one, and silence there sells the pause on a promise this walkthrough does
+not make.
+
+362_490 total and 79_129 resident, measured with `assistant_facing_documents()`
 on this branch. Resident rises 210 bytes: the flow states the count, and the
 sentence that made the old count wrong lived there too. Everything else is
 reference, which the run loads for this stage and drops.

@@ -17034,8 +17034,8 @@ class TheBuildRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         self.assertIn("how much survives is a fact this run established", creation)
         # And the worked example says which of the two this case is, where the
         # customer reads it - the whole point of disclosing rather than asking.
-        self.assertIn("what comes out is `\U0001f6e0️` material", creation)
-        self.assertIn("not your code", creation)
+        self.assertIn("a generated stand-in, marked", creation)
+        self.assertIn("cannot tell you how your own code performs", creation)
 
     def test_the_ask_ends_after_the_standing_line(self) -> None:
         """A blinded run appended a further question after the exit.
@@ -17277,6 +17277,43 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("i build both (recommended)", creation)
         self.assertIn("the build route carries the recommendation", creation)
         self.assertIn("so silence never has to be interpreted", creation)
+
+    def test_the_substitute_is_named_in_words_not_by_its_glyph(self) -> None:
+        """`\U0001f6e0️` is defined as a generated substitute and drawn as tools.
+
+        A customer reading the glyph unaided reads "repaired", which is the one
+        thing it never means - nothing of theirs was mended. The rendered card
+        already spells it out beside the marker; the ask has to as well, because
+        the ask is where they decide.
+        """
+        creation = self._creation()
+        self.assertIn("a generated stand-in, marked", creation)
+        self.assertIn("a substitute for it", creation)
+        self.assertIn("marked `\U0001f6e0️`: not a repair", creation)
+        self.assertIn('reads "repaired" - the one thing it never means', creation)
+
+    def test_it_says_which_rows_the_run_will_actually_read(self) -> None:
+        """ "Your rows" is heard as all of them, and often it is not all of them.
+
+        Above 100 usable rows the paid run takes a bounded sample, so a route
+        promising the result keeps "your rows" overstates what the customer gets
+        on exactly the datasets where the gap is largest.
+        """
+        creation = self._creation()
+        self.assertIn("is heard as all of them", creation)
+        self.assertIn("name the count this project will really use", creation)
+
+    def test_both_routes_lead_to_a_bounded_first_run(self) -> None:
+        """Pausing buys a better-grounded result, not a bigger one.
+
+        The customer learns the run is bounded at pricing, which is after they
+        have already chosen a route. Left unsaid at the ask, the pause reads as
+        the route to a full measurement, which this walkthrough never offers.
+        """
+        creation = self._creation()
+        self.assertIn("either way this first run is a bounded one", creation)
+        self.assertIn("a taste of the workflow, not a full search", creation)
+        self.assertIn("better-grounded result, not a bigger one", creation)
 
     def test_the_build_route_is_unmistakably_a_way_to_continue(self) -> None:
         """The drift that produced the original defect, named so it cannot return.

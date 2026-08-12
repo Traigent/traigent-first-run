@@ -146,15 +146,28 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > attempting what your rows describe, and the evaluator it would be graded by returns the same
 > score for every answer, so nothing can be graded yet. Two ways forward:
 >
-> A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours untouched,
-> and re-validate, then carry on with the walkthrough. Neither file has anything to mend - there is
-> no call path in one and no rubric in the other - so what comes out is `🛠️` material: it keeps
-> your rows and your task, not your code, and it shows the workflow working rather than telling you
-> how your product performs.
-> B. Pause, and I will give you the exact checks a corrected version has to pass.
+> A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours
+> untouched, and re-validate, then carry on. Neither file has anything to mend - no call path in
+> one, no rubric in the other - so what I write is a generated stand-in, marked `🛠️`: not a repair
+> of yours, a substitute for it. The run then measures my stand-ins against your 30 rows and your
+> task, so it shows the workflow end to end and cannot tell you how your own code performs.
+> B. Pause, and I will give you the exact checks a corrected version has to pass. Fix them and the
+> same first run measures your code instead of my stand-ins.
+>
+> Either way this first run is a bounded one - a small sample and a capped number of trials, priced
+> before it starts. It is a taste of the workflow, not a full search.
 >
 > Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
+
+Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
+Name the substitute in WORDS, not by its marker alone: `🛠️` is defined as a generated substitute and
+it is drawn as tools, so a customer reading the glyph unaided reads "repaired" - the one thing it
+never means. Say what the run will actually read: "your rows" is heard as all of them, and above 100
+usable rows the paid run takes a bounded sample, so name the count this project will really use.
+And say that the first run is bounded whichever route they pick - a customer choosing to pause and
+fix their own components is buying a better-grounded result, not a bigger one, and letting them
+believe otherwise sells the pause on a promise this walkthrough does not make.
 
 How much of the result stays about the customer's product belongs in that first route's sentence,
 and it is a property of what SURVIVES the build, never of the copy being reversible. Mending one
