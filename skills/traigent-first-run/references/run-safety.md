@@ -347,6 +347,21 @@ prove current wiring. Record its provenance and omit it from opening and stage-4
 those scores report the agent pillar from instead is the read of the agent's own source they are
 passed as `--agent-knobs`, never this file.
 
+The rule binds the run, not the invocation that reports. Omitting the document from the opening and
+stage-4 calls describes what those calls pass, and by itself leaves a second call free to score the
+same file to see what the number would have been. Nothing on disk changes, so that extra invocation
+reads as costless, and it is not: its output is evidence the moment it is written down, and a figure
+sitting beside the real one gets quoted - by a captain triaging, by a reviewer, by a later run
+citing prior evidence. So the document is not scored in this run in any invocation, and no number
+derived from scoring one appears in the report, the findings, or the bundle a reviewer is handed.
+Calling such a call internal is a claim about the card and not about those documents.
+
+That is the opening mirror of a rule this guide already keeps at the other end: a run does not close
+on a second number, and it does not open beside one either. It leaves no exploratory scoring at the
+opening gate. What would make a counterfactual worth knowing is a search that justifies it, and
+measuring the space that search received is the closing gate's job - not a figure set next to the
+score it contradicts.
+
 A scoreable file means one thing: *this is the space the search that just completed received*.
 The generated wrapper serializes the finalized space, removes any earlier file before the call, and
 writes `traigent-runs/config-space.json` only after the search returns nonzero trials. Only that

@@ -17041,6 +17041,60 @@ class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         self.assertIn('not a "while you decide"', creation)
 
 
+class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
+    """A blinded run honoured the omission and scored the file anyway.
+
+    The guide said to omit a pre-existing config-space document from the
+    opening and stage-4 calls, which is a statement about what those calls
+    pass. So the run passed it to a fifth call instead, labelled that one
+    "harness-side counterfactual only, never shown to the user", and quoted its
+    output in the findings: honouring the file scores the agent pillar 41
+    against 12, and the blocking cap disappears. The reported score stayed
+    correct at 33; what the run published was a second, higher number beside
+    it, derived from precisely the input the rule excludes.
+
+    "Never shown to the user" was true of the card and false of the bundle a
+    captain triages from. The omission rule exists to back one claim - that the
+    opening score reads this project as it is now - and an alternative number
+    printed next to it defeats that claim without touching the score.
+
+    The guide already keeps this rule at the other end of the run ("do not
+    close on a second number"), so the fix is the missing mirror rather than a
+    new principle.
+    """
+
+    def _safety(self) -> str:
+        return " ".join(RUN_SAFETY.read_text().casefold().split())
+
+    def test_the_rule_is_stated_over_the_run_not_over_one_call(self) -> None:
+        safety = self._safety()
+        self.assertIn("the rule binds the run, not the invocation that reports", safety)
+        self.assertIn("not scored in this run in any invocation", safety)
+
+    def test_no_number_derived_from_the_excluded_file_may_be_reported(self) -> None:
+        """The score was never wrong; the second number was the defect."""
+        safety = self._safety()
+        self.assertIn(
+            "no number derived from scoring one appears in the report", safety
+        )
+        # And the bundle is named, because the card was the run's own alibi.
+        self.assertIn("the bundle a reviewer is handed", safety)
+        self.assertIn("claim about the card", safety)
+
+    def test_the_opening_gate_permits_no_exploratory_scoring(self) -> None:
+        """An extra read-only call changes nothing on disk, so it reads free."""
+        safety = self._safety()
+        self.assertIn("no exploratory scoring at the opening gate", safety)
+        self.assertIn("evidence the moment it is written down", safety)
+
+    def test_it_is_carried_where_the_opening_gate_is_read(self) -> None:
+        """SKILL.md states the run-wide rule too - the fifth call was made by a
+        reader who never reached the reference."""
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("no invocation in this run scores it", skill)
+        self.assertIn("no number derived from scoring one is reported", skill)
+
+
 class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
     """The branch that had a rule and no words, so a reader used other words.
 
