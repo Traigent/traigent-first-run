@@ -1,8 +1,8 @@
-# 0036 - the omission rule binds the run, not one invocation
+# 0037 - the omission rule binds the run, not one invocation
 
-follows: 0035
-total-ceiling: 356_400
-total-measured: 356_228
+follows: 0036
+total-ceiling: 357_800
+total-measured: 357_575
 
 The rule excluding a pre-existing config-space document was phrased as something
 the opening and stage-4 calls do: omit the file here. A blinded walkthrough obeyed
@@ -34,7 +34,9 @@ the symmetric move at the other end of the run, where a close may not be deliver
 on a second number, so what is added here is the missing half of a rule this
 package keeps rather than a new demand on the reader.
 
-356_228, measured with `assistant_facing_documents()` on this branch. Resident
+357_575, measured with `assistant_facing_documents()` after merging 0036, whose
+bytes did not exist when this correction was written - the figure recorded here
+first was 356_228, and neither branch could reach the merged one alone. Resident
 rises 89 bytes to 78_784, under its unchanged 78_900 ceiling: that is the one
 clause carried into SKILL.md, and it is carried because the run that made the
 extra call was following the flow and never opened the reference owning the rule.
