@@ -253,7 +253,9 @@ established to nothing, and that fall reaches the customer as an honest change i
 The opening score is not skippable, always reports all three pillars, and is the score this run
 reports for the project. Show it before anything is created or repaired.
 
-Say that the score reads the project and changes nothing in it. Show its rendered card verbatim,
+Say that the score reads the project and changes nothing of the customer's - and, when rows exist,
+that it wrote its own `traigent-runs/row-review.json`. A claim of no writes is refuted by one `ls`.
+Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary.
 

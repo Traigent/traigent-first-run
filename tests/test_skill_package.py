@@ -17041,6 +17041,90 @@ class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         self.assertIn('not a "while you decide"', creation)
 
 
+class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
+    """A promise of no writes, made by the gate that writes a file.
+
+    The same opening gate requires the row-level review to be recorded in
+    `traigent-runs/row-review.json`, so on any project with rows the sentence
+    is refuted by one `ls` - and a blinded run produced exactly that: the file
+    was the only change it made, and it made it while saying it made none.
+
+    Two halves, one boundary. The claim is corrected here, and the file it
+    names is given the lifecycle it never had: a run that stops at the ask
+    leaves it as the only trace of the score, with the run plan - which would
+    record why it exists - explicitly held back until the ask is answered.
+
+    The narrower claim is the true one and loses nothing: what the customer
+    cares about is that their agent, dataset and evaluator are untouched, and
+    that is exactly what the score does.
+    """
+
+    def _dataset(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_opening_message_no_longer_claims_it_writes_nothing(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertNotIn("the score reads the project and changes nothing in it", skill)
+        self.assertIn("changes nothing of the customer's", skill)
+
+    def test_it_names_the_file_instead_of_the_absence_of_writes(self) -> None:
+        """Naming beats hedging: a reader can check the claim in one command."""
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("traigent-runs/row-review.json", skill)
+        self.assertIn("a claim of no writes is refuted by one `ls`", skill)
+
+    def test_the_file_it_leaves_is_superseded_rather_than_stranded(self) -> None:
+        dataset = self._dataset()
+        self.assertIn("every opening gate rewrites it whole", dataset)
+        # The case the blinded run hit: stopped at the ask, file left behind.
+        self.assertIn("a run that stops at the ask leaves it standing", dataset)
+
+
+class ABroughtSplitCountsAsDrawnTests(unittest.TestCase):
+    """`in_run` keyed on "once those rows are drawn", which never happens here.
+
+    A customer who brings their own split has settled which rows the run uses
+    without this run drawing anything, and the bounded subset is taken only
+    above 100 usable rows - so on a small brought split the literal reading
+    leaves the flag off for the entire run.
+
+    Both readings pass validation, which is what makes it a defect rather than
+    a preference: the card either reports how many flagged rows this run reads
+    or cannot say it at all, and nothing decided which. A blinded run had to
+    guess, and guessed correctly, on a 30-row split.
+    """
+
+    def _dataset(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_settled_is_the_test_rather_than_selected_by_this_run(self) -> None:
+        dataset = self._dataset()
+        self.assertIn("drawn means settled, not selected by this run", dataset)
+        self.assertIn("a split the customer brought is already settled", dataset)
+
+    def test_the_threshold_that_makes_the_literal_reading_fail_is_named(
+        self,
+    ) -> None:
+        """Without the 100-row fact the rule reads as a restatement."""
+        dataset = self._dataset()
+        self.assertIn("taken only above 100 usable rows", dataset)
+
+    def test_what_still_leaves_the_flag_off_is_stated(self) -> None:
+        """A rule that only widens is a rule that always sets the flag."""
+        dataset = self._dataset()
+        self.assertIn("no declared split, and no subset taken yet", dataset)
+
+
 class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
     """A blinded run honoured the omission and scored the file anyway.
 

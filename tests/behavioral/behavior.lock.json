@@ -1,13 +1,13 @@
 {
-  "digest": "1449182898c920c2193d9e88b8317fdadab0a2bdeeaa254ee3f82981d8cebc33",
+  "digest": "399ee20830afb4d4acf12d7e6fd9ee17f49054ad8eef424d58f87ee5a45a3e9e",
   "paths": [
     {"path": "GUIDE.md", "sha256": "cc86639fc862a2fd86bb53bb75580c02800f582559a330bead2258089c7d5962", "size": 8352},
-    {"path": "skills/traigent-first-run/SKILL.md", "sha256": "8d0b899e976d6a95ea4d083946da2d7b350b343c9c24db06769199689c1a2fa7", "size": 70432},
+    {"path": "skills/traigent-first-run/SKILL.md", "sha256": "42d6aa7776cb64ae053f9be111d2d42cd5e74c465c6f38728a4e84d98b297244", "size": 70567},
     {"path": "skills/traigent-first-run/agents/openai.yaml", "sha256": "87331cf2d8ccefc92ebb0501e4a52229ddef7667a1ee94dcaa13d1dfe7139bbc", "size": 249},
     {"path": "skills/traigent-first-run/assets/requirements-first-run.txt", "sha256": "231862a9d90df89a0d202a724eccf38f94762ed754a15d454338f0d8365228fd", "size": 54},
     {"path": "skills/traigent-first-run/assets/run-plan.md", "sha256": "ad1012dda23e21f48d05b2629f5084e6aa7f373ad470c1639bcbbf5283678921", "size": 2991},
     {"path": "skills/traigent-first-run/references/component-creation.md", "sha256": "dd38d3d14e2971fcbfd6d7a64be17fa3720a4d4a870eb8332c0cc17ec546d0f4", "size": 22720},
-    {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "6a507027fdb593b03247974db1126a77796bdc2dccfb8d687e0740327dcbee83", "size": 65520},
+    {"path": "skills/traigent-first-run/references/evaluation-and-dataset.md", "sha256": "0a8275346e2fa95fb5dd6f62092a7c82ad1e6c196fd2f637500a05ffee0f4970", "size": 66788},
     {"path": "skills/traigent-first-run/references/glossary.md", "sha256": "7de79da1d6daff26964c3eb458eec0c9dd192d4ce1b8430fb4bf693c669cfcc5", "size": 27156},
     {"path": "skills/traigent-first-run/references/run-safety.md", "sha256": "3da5fb6880a1c0a67c2330a01e3f9fde55122c4e205addf6078f1356f5f5cd40", "size": 83594},
     {"path": "skills/traigent-first-run/references/sdk-execution.md", "sha256": "66c5828a71cc56fcda7ecf46dddbb3d0aebdfd7789e4ab146412e9782d5ac89f", "size": 76810},

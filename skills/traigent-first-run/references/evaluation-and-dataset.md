@@ -627,6 +627,13 @@ So read each row and answer one question about it: **is this expected output a s
 this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence. Record the answers
 in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
 
+That file is this run's own read, not the customer's material, and it is the one thing a run leaves
+in their project - which is why the opening message names it instead of claiming the score wrote
+nothing. Every opening gate rewrites it whole. So a re-score after the ask is answered supersedes
+it, whether the answer keeps the dataset or points at a different one, and an earlier verdict never
+survives to be read as current. A run that stops at the ask leaves it standing as the record of the
+score it produced, which is the state it is written for rather than an accident of stopping early.
+
 ```json
 {
   "reviewer": "assistant",
@@ -686,6 +693,14 @@ the rows this run will actually use** - the 18 tuning rows and the held-out ten.
 difference between "your file has a bad row" and "the run is about to be tuned on a bad row", and
 only the second one changes what this run measures. Set `in_run` on every entry once those rows are
 drawn, so the readiness card says it too; leave it off every entry while they are not.
+
+Drawn means settled, not selected by this run. A split the customer brought is already settled, so
+`in_run` is set at the opening gate even though nothing was drawn - the bounded subset is taken only
+above 100 usable rows, so on a small brought split no draw ever happens and reading the rule
+literally would leave the flag off for the whole run. What leaves it off is rows whose membership is
+genuinely unsettled: no declared split, and no subset taken yet. The distinction has to be stated
+because both readings pass validation and the card differs - with the flag set it reports how many
+flagged rows this run reads, and without it that sentence cannot be said at all.
 
 Then take the answer, because tuning the agent over a correct dataset is what the run is for:
 
