@@ -16931,6 +16931,55 @@ class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
         )
 
 
+class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
+    """The route said "your product" over material this run would write.
+
+    Repairing an echo stub and a scorer that returns one number for every answer
+    means writing a call path and a grader neither file has. The result keeps the
+    customer's rows and their task and none of their code - `\U0001f6e0️` material,
+    which is exactly what the route claimed to be the alternative to. The claim
+    was true of a real component with a mendable defect and false of the case the
+    worked example showed, which is the case a reader reaches it with.
+
+    Read by somebody deciding where to spend, at the moment the run asks them to
+    choose, offering the thing they most want to hear. Every other sentence here
+    works to keep the `\U0001f6e0️`/`✅` marker honest; this one sold past it.
+    """
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_no_route_promises_the_customers_product_outright(self) -> None:
+        creation = self._creation()
+        for overclaim in (
+            "the only route where the result can still be about your product",
+            "the only answer that keeps the run about the user's own product",
+        ):
+            with self.subTest(overclaim=overclaim):
+                self.assertNotIn(overclaim, creation)
+
+    def test_what_separates_the_routes_is_what_survives(self) -> None:
+        """Stated as a property of the files, never of the copy being reversible."""
+        creation = self._creation()
+        self.assertIn("how much of it survives", creation)
+        self.assertIn("survives the repair", creation)
+        # And the worked example says so where the customer reads it.
+        self.assertIn("walkthrough material too", creation)
+
+    def test_the_ask_ends_after_the_standing_line(self) -> None:
+        """A blinded run appended a further question after the exit.
+
+        Free to answer, materially useful, and a second decision all the same -
+        which is the thing one ask exists to prevent.
+        """
+        self.assertIn("the ask ends here", self._creation())
+
+
 class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
     """The branch that had a rule and no words, so a reader used other words.
 
