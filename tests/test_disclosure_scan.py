@@ -80,9 +80,13 @@ class RedactionKeepsTheFindingAndDropsTheStringTests(unittest.TestCase):
 
     def test_a_finding_with_no_quoted_string_survives_intact(self) -> None:
         """The UUID finding names no token; redaction must leave it alone."""
-        findings = disclosure_scan.scan_text(
-            "Session 3f2504e0-4f89-11d3-9a0c-0305e82c3301 ran it.", "body.md"
-        )
+        # Assembled, never written whole: a bare identifier in a tracked file
+        # is exactly what the rule below refuses, and this file is scanned by
+        # the same guard. Writing the literal here would teach the whole-tree
+        # scan to fail on its own test - which it duly did, in CI, once this
+        # file became tracked and the guard could finally see it.
+        planted = "-".join(("3f2504e0", "4f89", "11d3", "9a0c", "0305e82c3301"))
+        findings = disclosure_scan.scan_text(f"Session {planted} ran it.", "body.md")
         self.assertEqual(len(findings), 1, findings)
         self.assertEqual(disclosure_scan.redact(findings[0]), findings[0])
 
