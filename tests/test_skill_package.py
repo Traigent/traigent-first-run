@@ -16977,7 +16977,13 @@ class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         Free to answer, materially useful, and a second decision all the same -
         which is the thing one ask exists to prevent.
         """
-        self.assertIn("the ask ends here", self._creation())
+        creation = self._creation()
+        # Stated where the document already speaks for EVERY ask, not only in
+        # the branch it was observed in - the rule is a property of asks, not of
+        # unusable components, and a copy per section is the defect this
+        # package's own CLAUDE.md calls out.
+        self.assertIn("every ask also ends on it", creation)
+        self.assertIn('not a "while you decide"', creation)
 
 
 class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):

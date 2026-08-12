@@ -120,8 +120,8 @@ tuning split: the rows are there, the split is what is wrong, and more rows answ
 The section above is for material this run could not find. This one is for material it found and
 cannot use: an evaluator that scores every answer the same, an agent that echoes its input instead
 of attempting the task, a schema that does not parse. Name the user's own file where you say this,
-by the path the inventory recorded; the shapes below are the situation, not the filenames. The distinction decides the question, because
-there is a route here that a gap does not have: the material exists, so it can be repaired, and a
+by the path the inventory recorded; the shapes below are the situation, not the filenames. The
+distinction decides the question, because there is a route a gap does not have: the material exists, so it can be repaired, and a
 repair is the only answer that can keep any of the customer's own material in the result - how much
 depends entirely on how much of it survives.
 
@@ -150,14 +150,12 @@ their rows and their task. Say which of the two this is, in the sentence itself.
 promises "your product" over material this run wrote is the `🛠️`/`✅` separation broken in the one
 place the customer is reading.
 
-The ask ends here. Nothing follows the standing line - not a clarifying question, not a "while you
-decide", not the advisory restated as its own query. Anything after it is a second decision, and one
-was the whole design; a question that is free to answer is still a question the customer has to
-notice, weigh and answer before the one that matters.
-
 `I have it` is not a fourth route and is never numbered as one. It answers a different question -
 where the material is, rather than what to do about the material here - and it rides on every ask in
-this document for that reason. Numbering it turns a standing exit into one option among four, and
+this document for that reason. Every ask also ENDS on it: nothing follows the standing line, not a
+clarifying question, not a "while you decide", not the advisory restated as its own query. Anything
+after it is a second decision, and one was the whole design - a question that is free to answer is
+still one the customer has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into one option among four, and
 the pause beside it into another, which is how three routes become a list of ways to stop.
 
 Say what each route DOES and never what it is called. "Continue once a valid evaluator is

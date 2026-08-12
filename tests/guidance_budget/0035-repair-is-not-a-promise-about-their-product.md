@@ -2,7 +2,7 @@
 
 follows: 0034
 total-ceiling: 355_100
-total-measured: 354_952
+total-measured: 354_942
 
 The repair route carried a sentence saying it was the only one where the result
 could still be about the customer's product, and the worked example beside it
@@ -36,6 +36,6 @@ weighed and answered before the one that matters. Saying the ask ends is cheaper
 than the paragraph that would otherwise be needed to explain which extra
 questions are allowed, and there is no such set.
 
-354_952, measured with `assistant_facing_documents()` on this branch. Resident is
+354_942, measured with `assistant_facing_documents()` on this branch. Resident is
 untouched at 78_695 and its ceiling does not move - the flow already names the
 three routes, and both corrections are in the reference that speaks them.
