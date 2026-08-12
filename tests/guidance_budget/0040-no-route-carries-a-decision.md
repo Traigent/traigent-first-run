@@ -2,7 +2,7 @@
 
 follows: 0039
 total-ceiling: 364_342
-total-measured: 363_942
+total-measured: 364_205
 
 A blinded run offered a build route that also asked whether to redraw the
 tuning/held-out split. Choosing that route meant answering a second question
@@ -22,8 +22,16 @@ limitation that changes what their numbers mean is the disclosure and is right;
 turning it into "shall I change it" is a second ask wearing an advisory's
 clothes, and it arrives without a question mark anywhere near the exit.
 
+The wording that shipped first said "an advisory may not ask", and reading the
+dataset reference end to end - which this repository's own notes require of a
+guidance change - found that it forbids a question that document mandates: the
+answer-key conversation puts flagged rows to the user and asks whether to fix
+them. That is a cap which ASKS. The rule is scoped to findings the card does not
+ask on, which is the distinction the card already carries and the one the failing
+run crossed.
+
 Resident does not move: both sentences live in the reference that owns the ask,
 and the flow already carries the one-ask mandate they narrow.
 
-363_942 total and 79_087 resident, measured with
+364_205 total and 79_087 resident, measured with
 `assistant_facing_documents()` on this branch.

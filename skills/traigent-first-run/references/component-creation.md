@@ -198,11 +198,15 @@ exactly this - a build route that also asked whether to redraw the tuning split 
 rule below did not reach it, because the question was not after the standing line but inside route
 A. One ask means one decision in the whole message, not one decision after the last one.
 
-An advisory may explain a limitation and may recommend; it may not ask. If a limitation genuinely
-needs the customer to decide, it is either part of the one ask or it waits for the run record - and
-a limitation that changes what their numbers mean, like a split drawn along the task families, is
-named and left named. Saying "this is what your held-out number will measure" is the disclosure;
-"shall I change it" is a second ask wearing an advisory's clothes.
+A finding the card does not ask on may explain and may recommend; it may not ask. The card's own
+`asks` flag decides which it is, and the rule above already says it: when the card stops asking there
+is nothing to offer. The answer-key conversation in `references/evaluation-and-dataset.md` is a
+question because its cap asks, not an exception to this - and the run that prompted this sentence
+attached its question to `dataset-coarse-resolution`, which does not.
+
+So a limitation that changes what their numbers mean, like a split drawn along the task families, is
+named and left named. "This is what your held-out number will measure" is the disclosure; "shall I
+change it" is a second ask wearing a disclosure's clothes.
 
 `I have it` is never numbered as a route. It answers a different question - where the material is,
 rather than what to do about the material here - and it rides on every ask in this document for that

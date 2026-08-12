@@ -16939,14 +16939,19 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
     def test_an_advisory_may_explain_but_may_not_ask(self) -> None:
         """The same run's advisory is where the extra decision came from.
 
-        A limitation that changes what the customer's numbers mean is named and
-        left named; turning it into "shall I change it" is a second ask wearing
-        an advisory's clothes, which is how a one-ask run becomes a two-ask one
-        without anyone adding a question mark after the exit.
+        Scoped to findings the card does NOT ask on, because the sibling
+        document mandates a question for the answer-key case and a rule phrased
+        over "advisories" would have forbidden it. Found by reading that
+        document end to end rather than by reading this diff - which is what
+        this repository's CLAUDE.md says to do, and why.
         """
         creation = self._creation()
-        self.assertIn("it may not ask", creation)
-        self.assertIn("a second ask wearing an advisory's clothes", creation)
+        self.assertIn("may explain and may recommend; it may not ask", creation)
+        self.assertIn("a second ask wearing a disclosure's clothes", creation)
+        # Tied to the mechanism the card already carries, so it cannot be read
+        # as forbidding the answer-key question, which an ASKING cap mandates.
+        self.assertIn("the card's own `asks` flag decides which it is", creation)
+        self.assertIn("is a question because its cap asks", creation)
 
     def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
         """`I have it` answers where material lives, not what to do with it."""
