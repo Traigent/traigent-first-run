@@ -14207,6 +14207,61 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         )
 
 
+class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
+    """#244: the close answered a flat comparison one way only.
+
+    Its candidate causes already name easy data, and every remedy under them
+    looks upward - verify the references, add a structural knob, then consider a
+    separately disclosed stronger model. That is right when the level is low and
+    wrong when the level is high, so a run whose configurations all scored near
+    the top of its own metric was pointed at more capability and more spend.
+
+    These pin the reading that was missing and the two bounds that keep it
+    honest, because both are the ways it could do damage: as a claim about
+    configurations nobody ran, or as a cost recommendation resting on rows this
+    run invented.
+    """
+
+    def close(self) -> str:
+        return " ".join(RUN_SAFETY.read_text(encoding="utf-8").split())
+
+    def test_the_high_flat_reading_is_stated_beside_the_low_one(self) -> None:
+        """A reader who has just been told to look harder will not infer it."""
+        text = self.close()
+        self.assertIn("Read a flat result at a HIGH score the other way round", text)
+        # The two escalations have to meet, or the second is a rule nobody
+        # reaches from the first.
+        self.assertLess(
+            text.index("consider a separately disclosed stronger-model comparison"),
+            text.index("a tier BELOW anything tested"),
+        )
+
+    def test_it_is_a_reading_and_never_a_switch_recommendation(self) -> None:
+        """The bound the whole close rests on: this run tested a handful.
+
+        A cheaper tier nobody ran is a hypothesis to carry at full scale, the
+        same way a cheaper tier that DID run and matched already is. Losing
+        that would make the newest sentence the one place the close claims
+        something about configurations it never reached.
+        """
+        text = self.close()
+        self.assertIn("never about the space", text)
+        self.assertIn("does not earn another paid round here", text)
+
+    def test_it_requires_collected_data(self) -> None:
+        """The failure this could otherwise cause, and the reason it is guarded.
+
+        On generated rows a high flat score measures material the run invented,
+        and an easy-looking task is the likeliest thing a walkthrough dataset
+        produces - so a cheaper-model reading drawn from it would be the
+        synthetic-versus-real confusion this package exists to prevent,
+        arriving through a cost saving rather than an accuracy claim.
+        """
+        text = self.close()
+        self.assertIn("only on collected data", text)
+        self.assertIn("on generated rows a high flat score measures material", text)
+
+
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     """Catch the failure this repo actually produces: two rules that disagree.
 

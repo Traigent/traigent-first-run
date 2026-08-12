@@ -976,6 +976,22 @@ relevant knobs on a small budget, so a flat result can simply be a normal first 
 fault. The honest next step is one deliberate iteration adding a single structural knob where the
 evidence points, not piling on knobs or spend to force a win.
 
+Read a flat result at a HIGH score the other way round, and only on collected data. The paragraphs
+above answer a flat result by looking harder - another structural knob, or a separately disclosed
+stronger model - which is right when the level is low. When the paired analysis detects no
+difference between configurations and the level sits near the top of the run's own metric, "nothing
+we tried separated them" is a finding about the task rather than a failure of the search: these
+configurations are not what limits this result. Then the cheapest point the run measured is not
+merely on the frontier, it is the answer, and the experiment worth running next is a tier BELOW
+anything tested rather than above it - which is the opposite escalation from the one above, and the
+reason this reading is written down rather than left to be inferred from a list of hypotheses.
+
+Two bounds it keeps, both already owned above. It is a statement about what this run tested and
+never about the space - a cheaper tier nobody ran is a hypothesis to test at full scale, exactly as
+a cheaper tier that did run and matched is - and it does not earn another paid round here. And it
+requires collected data: on generated rows a high flat score measures material this run invented,
+where an easy-looking task is the likeliest thing a walkthrough dataset produces.
+
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
 
