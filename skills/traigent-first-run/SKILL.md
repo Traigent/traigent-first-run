@@ -357,8 +357,8 @@ weakness are one decision about what this run will measure. That question carrie
 3. What that costs, in terms the score already uses: what this run writes stays `🧪` and never
    becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
    present as strong however good the rest is, and no configuration from the result may be promoted.
-4. Two answers where something is missing: proceed, or `I have it` and a path for each piece they
-   have. Where it is only short, keeping what they brought is the third.
+4. One answer where something is missing: proceed. Where it is only short, keeping what they
+   brought is a second. `I have it` with a path is never counted among them.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
@@ -471,7 +471,10 @@ under `traigent-runs/` - mending what survives and writing what does not, which 
 not two - or pause for a user-authored fix. Say in that same sentence how much of their material
 survives, because that is what decides whether the result reads `✅` or `🧪`, and it is a fact this
 run already established rather than a choice to hand over. Never treat "continue as is" as
-permission to optimize against a broken grading signal.
+permission to optimize against a broken grading signal. Letter the routes from `A` and mark the
+build one recommended; close with the unnumbered `I have it` line, which is never a route and always
+last. Nothing follows it, and no route carries a decision of its own.
+`references/component-creation.md` owns the wording.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the

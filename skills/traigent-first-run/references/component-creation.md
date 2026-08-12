@@ -66,10 +66,16 @@ being told they were wrong, they are being asked to point. `readiness.py` alread
 its caps say a dataset was not provided *to this score* - so this is the wording catching up with
 the script.
 
-### Two answers, and an opening that says what they are choosing between
+### What the ask offers, and the opening that says what they are choosing between
 
-The answers stay two. What varies is the first sentence, and it is not a third route: whether the
-run derives from something or from nothing is a fact this run already established, so offering both
+The offer is one where material is missing - write it - and two where it is only short: keep what
+they brought, or add. `I have it` is never among them. It rides on every ask, unnumbered and last,
+because it answers where the material is rather than what to do about the material here - and a
+document that counts it teaches a reader to number it. Two blinded runs put it in the middle of the
+list, and both had read a count that included it.
+
+What varies beyond that is the first sentence, and it is not a further route: whether the run
+derives from something or from nothing is a fact this run already established, so offering both
 would be asking the user to pick a situation rather than an action.
 
 Name the anchor and what comes off it. `math_calc` that takes a question and returns a number is a
