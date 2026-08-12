@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import hashlib
 import importlib.util
 import io
 import itertools
@@ -17,14 +16,11 @@ import sys
 import tempfile
 import tokenize
 import traceback
-import unicodedata
 import unittest
-from html import unescape
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
-from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -5355,7 +5351,6 @@ class SkillPackageTests(unittest.TestCase):
         # file". `disclosure_scan.py --stdin` is that scan.
         scan = disclosure_scan.scan_text
         observed_hyphenated_term_counts: dict[str, int] = {}
-        public_repos = disclosure_scan.public_repos
         non_repository_hyphenated_terms = (
             disclosure_scan.non_repository_hyphenated_terms
         )
