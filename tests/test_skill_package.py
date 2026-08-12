@@ -17190,6 +17190,54 @@ class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
         self.assertIn("no number derived from scoring one is reported", skill)
 
 
+class TheSubstituteMarkerIsOneGlyphEverywhereTests(unittest.TestCase):
+    """The marker was changed in the guide and left behind in the entry point.
+
+    `GUIDE.md` is where the three markers are DEFINED, so for one commit it
+    defined the substitute as tools while every document that uses it said
+    specimen. Nothing failed: no test pinned the definition, and the byte budget
+    does not care which glyph occupies the bytes.
+
+    The sweep that missed it covered `skills/` and `tests/` and never the
+    repository root - which is the whole lesson. A marker is a shared value
+    across documents, and this repository's own history says a rule stated in
+    two places is a rule that can be changed in one.
+    """
+
+    def _documents(self) -> list[Path]:
+        roots = [ROOT / "GUIDE.md", ROOT / "CLAUDE.md", SKILL]
+        roots += sorted((SKILL_ROOT / "references").glob("*.md"))
+        return [path for path in roots if path.is_file()]
+
+    def test_no_document_still_carries_the_retired_glyph(self) -> None:
+        """Pinned as an absence, because the old one read perfectly well."""
+        stale = [
+            path.name
+            for path in self._documents()
+            if "\U0001f6e0️" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(
+            stale,
+            [],
+            "the retired substitute marker survives in these documents; a "
+            "marker means one thing or it means nothing",
+        )
+
+    def test_the_entry_point_defines_the_one_in_use(self) -> None:
+        """GUIDE.md defines the markers; the definition is the thing to pin."""
+        guide = (ROOT / "GUIDE.md").read_text(encoding="utf-8")
+        self.assertIn("`\U0001f9ea` generated walkthrough substitute", guide)
+
+    def test_every_document_that_uses_it_agrees(self) -> None:
+        """A count, not a sample: one straggler is the whole defect."""
+        for path in self._documents():
+            text = path.read_text(encoding="utf-8")
+            if "generated" not in text and "substitute" not in text:
+                continue
+            with self.subTest(document=path.name):
+                self.assertNotIn("\U0001f6e0️", text)
+
+
 class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
     """The branch that had a rule and no words, so a reader used other words.
 
