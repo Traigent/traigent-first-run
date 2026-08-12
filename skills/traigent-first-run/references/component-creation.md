@@ -66,10 +66,16 @@ being told they were wrong, they are being asked to point. `readiness.py` alread
 its caps say a dataset was not provided *to this score* - so this is the wording catching up with
 the script.
 
-### Two answers, and an opening that says what they are choosing between
+### What the ask offers, and the opening that says what they are choosing between
 
-The answers stay two. What varies is the first sentence, and it is not a third route: whether the
-run derives from something or from nothing is a fact this run already established, so offering both
+The offer is one where material is missing - write it - and two where it is only short: keep what
+they brought, or add. `I have it` is never among them. It rides on every ask, unnumbered and last,
+because it answers where the material is rather than what to do about the material here - and a
+document that counts it teaches a reader to number it. Two blinded runs put it in the middle of the
+list, and both had read a count that included it.
+
+What varies beyond that is the first sentence, and it is not a further route: whether the run
+derives from something or from nothing is a fact this run already established, so offering both
 would be asking the user to pick a situation rather than an action.
 
 Name the anchor and what comes off it. `math_calc` that takes a question and returns a number is a
@@ -190,6 +196,23 @@ recommendation cannot oversell.
 The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
 … and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
 pause wearing the build route's letter, and a run that offers it has offered no way forward at all.
+
+No route carries a decision of its own. Choosing a route is the answer; a route that also says
+"tell me whether to redraw the split" or "say which you would prefer" has asked a second question
+inside the first, and the customer cannot take the route without answering it. A blinded run did
+exactly this - a build route that also asked whether to redraw the tuning split - and the ask-ends
+rule below did not reach it, because the question was not after the standing line but inside route
+A. One ask means one decision in the whole message, not one decision after the last one.
+
+A finding the card does not ask on may explain and may recommend; it may not ask. The card's own
+`asks` flag decides which it is, and the rule above already says it: when the card stops asking there
+is nothing to offer. The answer-key conversation in `references/evaluation-and-dataset.md` is a
+question because its cap asks, not an exception to this - and the run that prompted this sentence
+attached its question to `dataset-coarse-resolution`, which does not.
+
+So a limitation that changes what their numbers mean, like a split drawn along the task families, is
+named and left named. "This is what your held-out number will measure" is the disclosure; "shall I
+change it" is a second ask wearing a disclosure's clothes.
 
 `I have it` is never numbered as a route. It answers a different question - where the material is,
 rather than what to do about the material here - and it rides on every ask in this document for that

@@ -15635,7 +15635,10 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         question becomes two.
         """
         ask = " ".join(self._ask().casefold().split())
-        self.assertIn("`i have it` and a path", ask)
+        # Still offered and still first-class. The wording moved when the exit
+        # stopped being COUNTED as an answer - it is named here as the thing
+        # that is never counted, which offers it just as plainly.
+        self.assertIn("`i have it` with a path", ask)
         creation = (SKILL_ROOT / "references" / "component-creation.md").read_text()
         # An agent path is one of the three the form accepts. Without it, a
         # customer whose agent lives in a sibling repository - which the
@@ -16923,6 +16926,69 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("offers three for a *material limitation*", creation)
         self.assertIn("the third route has nothing to be", creation)
 
+    def test_no_route_carries_a_decision_of_its_own(self) -> None:
+        """A blinded run put a second question inside route A.
+
+        Its build route also asked whether to redraw the tuning split, so the
+        customer could not take that route without answering something else.
+        The ask-ends rule did not reach it: the question was not after the
+        standing line, it was inside a route, and one ask has always meant one
+        decision in the whole message rather than one after the last one.
+        """
+        creation = self._creation()
+        self.assertIn("no route carries a decision of its own", creation)
+        self.assertIn("has asked a second question inside the first", creation)
+
+    def test_an_advisory_may_explain_but_may_not_ask(self) -> None:
+        """The same run's advisory is where the extra decision came from.
+
+        Scoped to findings the card does NOT ask on, because the sibling
+        document mandates a question for the answer-key case and a rule phrased
+        over "advisories" would have forbidden it. Found by reading that
+        document end to end rather than by reading this diff - which is what
+        this repository's CLAUDE.md says to do, and why.
+        """
+        creation = self._creation()
+        self.assertIn("may explain and may recommend; it may not ask", creation)
+        self.assertIn("a second ask wearing a disclosure's clothes", creation)
+        # Tied to the mechanism the card already carries, so it cannot be read
+        # as forbidding the answer-key question, which an ASKING cap mandates.
+        self.assertIn("the card's own `asks` flag decides which it is", creation)
+        self.assertIn("is a question because its cap asks", creation)
+
+    def test_the_resident_flow_states_the_ask_s_shape(self) -> None:
+        """The rule that broke twice lived only where a reader may skim.
+
+        `I have it is never numbered` predates both runs that numbered it. Both
+        workers were following SKILL.md, which named the routes and said nothing
+        about the exit, the lettering, or what may not appear - so the shape had
+        to be inferred, and both inferred the same wrong one. This is the same
+        correction as the opening message's: a rule reaches the reader where the
+        reader already is.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("letter the routes from `a`", skill)
+        self.assertIn("close with the unnumbered `i have it` line", skill)
+        self.assertIn("no route carries a decision of its own", skill)
+
+    def test_the_standing_exit_is_never_counted_as_an_answer(self) -> None:
+        """The resident doc counted it, and the count is what taught the defect.
+
+        SKILL.md enumerated "two answers ... proceed, or `I have it` and a
+        path", so the exit WAS an answer where material is missing. The unusable
+        branch then offers two routes with the exit on top. A reader carrying
+        the first count into the second produces exactly build / I have it /
+        pause - which is what both failing runs produced.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        creation = self._creation()
+        self.assertNotIn("two answers where something is missing", skill)
+        self.assertIn("is never counted among them", skill)
+        self.assertIn("`i have it` is never among them", creation)
+        self.assertIn(
+            "a document that counts it teaches a reader to number it", creation
+        )
+
     def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
         """`I have it` answers where material lives, not what to do with it."""
         creation = self._creation()
@@ -17265,9 +17331,12 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         self.assertIn("what it found too little of", normalized)
         # And the answer is theirs: a decline is a named outcome rather than a
         # thing the flow works around.
-        # The answer is theirs, and the third answer is named where the
-        # enumeration above it lists the other two.
-        self.assertIn("keeping what they brought is the third", normalized)
+        # The answer is theirs, and it is named where the enumeration above it
+        # lists the other. It became the SECOND rather than the third when the
+        # standing exit stopped being counted as an answer: the exit rides on
+        # every ask and is never one of them, and counting it is what taught two
+        # blinded runs to number it in the middle of the list.
+        self.assertIn("keeping what they brought is a second", normalized)
 
     def test_the_total_is_stated_and_the_offer_ends_at_it(self) -> None:
         normalized = " ".join(self._ask().casefold().split())
