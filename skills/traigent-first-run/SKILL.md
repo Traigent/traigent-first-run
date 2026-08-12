@@ -466,10 +466,12 @@ the failed gate. Continuing unchanged is permitted only as an explicitly labelle
 demonstration; `references/evaluation-and-dataset.md` owns when that limitation is stated.
 
 For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
-do not run paid optimization against it. Offer three routes: repair and revalidate a reversible
-copy under `traigent-runs/`, continue the walkthrough on a clearly labelled `🛠️` substitute this
-run writes now, or pause for a user-authored fix. Never treat "continue as is" as permission to
-optimize against a broken grading signal.
+do not run paid optimization against it. Offer two routes: build and revalidate a reversible copy
+under `traigent-runs/` - mending what survives and writing what does not, which is one action and
+not two - or pause for a user-authored fix. Say in that same sentence how much of their material
+survives, because that is what decides whether the result reads `✅` or `🛠️`, and it is a fact this
+run already established rather than a choice to hand over. Never treat "continue as is" as
+permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the

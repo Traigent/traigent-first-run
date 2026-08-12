@@ -120,47 +120,62 @@ tuning split: the rows are there, the split is what is wrong, and more rows answ
 The section above is for material this run could not find. This one is for material it found and
 cannot use: an evaluator that scores every answer the same, an agent that echoes its input instead
 of attempting the task, a schema that does not parse. Name the user's own file where you say this,
-by the path the inventory recorded; the shapes below are the situation, not the filenames. The
-distinction decides the question, because there is a route a gap does not have: the material exists, so it can be repaired, and a
-repair is the only answer that can keep any of the customer's own material in the result - how much
-depends entirely on how much of it survives.
+by the path the inventory recorded; the shapes below are the situation, not the filenames. What the distinction changes is what a build YIELDS, not how many answers the ask carries. Material
+that exists can be mended, so some of the customer's own work can survive into the result - and how
+much survives is a fact this run established when it read the files, not a question for them.
 
-So this ask carries three routes, not two answers, and SKILL.md states them. What that sounds like,
-when the agent and the evaluator are both unusable and the dataset is real:
+**So the answers stay two here as well, for the same reason they stay two above.** Mending what
+survives and writing what does not is one action: the assistant opens their file either way, keeps
+whatever holds up, and supplies the rest. Splitting that into "repair" and "write a stand-in" offers
+a choice of method for identical work, and when nothing survives - an echo stub has no call path to
+mend, a scorer returning one number has no rubric to keep - the two produce the same artifact, in
+the same place, under the same marker. That is the situation-not-an-action mistake the section above
+refuses by name, and a reader who cannot find the difference is right that there is none.
+
+This is why `references/evaluation-and-dataset.md` offers three for a *material limitation* and this
+section offers two, and the two documents agree rather than disagree. A limited component still
+executes, so continuing on the customer's own material is an available action and earns its own
+route. An unusable one cannot be continued on at all - that is what makes it unusable - so the third
+route has nothing to be. The count follows from what the run can actually do with their files, never
+from a house style, and a route offered where the action does not exist is the ask asserting a
+choice the project cannot honour.
+
+What that sounds like, when the agent and the evaluator are both unusable and the dataset is real:
 
 > Your dataset is real and I can run on it. The agent here echoes its input back rather than
 > attempting what your rows describe, and the evaluator it would be graded by returns the same
-> score for every answer, so nothing can be graded yet. Three ways forward:
+> score for every answer, so nothing can be graded yet. Two ways forward:
 >
-> A. I repair both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
-> and re-validate. Here that means writing a call path and a grader neither file has yet, so what
-> comes out is `🛠️` walkthrough material too - it keeps your rows and your task, not your code.
-> B. I write clearly labelled `🛠️` stand-ins now, without touching either file. That shows the
-> workflow working; it cannot tell you how your product performs, and nothing from it may be
-> promoted.
-> C. Pause, and I will give you the exact checks a corrected version has to pass.
+> A. I build both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
+> and re-validate, then carry on with the walkthrough. Neither file has anything to mend - there is
+> no call path in one and no rubric in the other - so what comes out is `🛠️` material: it keeps
+> your rows and your task, not your code, and it shows the workflow working rather than telling you
+> how your product performs.
+> B. Pause, and I will give you the exact checks a corrected version has to pass.
 >
 > Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
-How much of the result stays about the customer's product is what separates A from B, and it is a
-property of what SURVIVES the repair, never of the repair being reversible. Mending one broken line
-in a real scorer keeps their ruler; writing the call path an echo stub never had keeps nothing but
-their rows and their task. Say which of the two this is, in the sentence itself. A route that
-promises "your product" over material this run wrote is the `🛠️`/`✅` separation broken in the one
-place the customer is reading.
+How much of the result stays about the customer's product belongs in that first route's sentence,
+and it is a property of what SURVIVES the build, never of the copy being reversible. Mending one
+broken line in a real scorer keeps their ruler, and the result may read `✅`; writing the call path
+an echo stub never had keeps nothing but their rows and their task, and it reads `🛠️`. Say which of
+the two this is, in the sentence itself. A build that promises "your product" over material this run
+wrote is the `🛠️`/`✅` separation broken in the one place the customer is reading - and a build
+offered without saying which one it is asks them to spend on an unlabelled result.
 
-`I have it` is not a fourth route and is never numbered as one. It answers a different question -
-where the material is, rather than what to do about the material here - and it rides on every ask in
-this document for that reason. Every ask also ENDS on it: nothing follows the standing line, not a
-clarifying question, not a "while you decide", not the advisory restated as its own query. Anything
-after it is a second decision, and one was the whole design - a question that is free to answer is
-still one the customer has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into one option among four, and
-the pause beside it into another, which is how three routes become a list of ways to stop.
+The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
+… and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
+pause wearing the build route's letter, and a run that offers it has offered no way forward at all.
 
-Say what each route DOES and never what it is called. "Continue once a valid evaluator is
-available" is not route B, it is route C wearing B's number, and a run that offers it has offered
-the user no way to continue at all.
+`I have it` is never numbered as a route. It answers a different question - where the material is,
+rather than what to do about the material here - and it rides on every ask in this document for that
+reason. Every ask also ENDS on it: nothing follows the standing line, not a clarifying question, not
+a "while you decide", not the advisory restated as its own query. Anything after it is a second
+decision, and one was the whole design - a question that is free to answer is still one the customer
+has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into
+one option among three, and the pause beside it into another, which is how a way forward and a way
+out become a list of ways to stop.
 
 ### When a path arrives
 

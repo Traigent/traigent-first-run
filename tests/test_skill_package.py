@@ -12763,13 +12763,16 @@ class SkillPackageTests(unittest.TestCase):
             "for an invalid evaluator, incompatible schema, corrupted required "
             "rows, or unverified call path, do not run paid optimization "
             "against it",
-            # All three routes, not two: an unpinned remedy is a remedy that can
-            # be dropped, and the middle one is phrased to say what it DOES,
+            # Both routes, and the build one phrased to say what it DOES,
             # because "replacement" was read by a blinded worker as a second way
-            # to pause rather than a way to continue.
-            "offer three routes: repair and revalidate a reversible copy under "
-            "`traigent-runs/`, continue the walkthrough on a clearly labelled "
-            "`🛠️` substitute this run writes now, or pause for a user-authored fix",
+            # to pause rather than a way to continue. There is no third: a
+            # stand-in offered beside a repair is the same action under two
+            # names, which two blinded workers collapsed before the wording did.
+            "offer two routes: build and revalidate a reversible copy under "
+            "`traigent-runs/` - mending what survives and writing what does "
+            "not, which is one action and not two - or pause for a "
+            "user-authored fix",
+            "how much of their material survives",
             'never treat "continue as is" as permission to optimize against a '
             "broken grading signal",
         ):
@@ -16986,7 +16989,7 @@ class ASourceThatFixesItsReturnPinsTheShapeTests(unittest.TestCase):
         )
 
 
-class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
+class TheBuildRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
     """The route said "your product" over material this run would write.
 
     Repairing an echo stub and a scorer that returns one number for every answer
@@ -17019,12 +17022,20 @@ class TheRepairRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
                 self.assertNotIn(overclaim, creation)
 
     def test_what_separates_the_routes_is_what_survives(self) -> None:
-        """Stated as a property of the files, never of the copy being reversible."""
+        """Stated as a property of the files, never of the copy being reversible.
+
+        This is what the route split used to carry badly and now carries
+        properly: survival is a consequence the run computes from the files it
+        read, so it belongs in the build route's sentence as a disclosure, not
+        in a menu the customer picks from.
+        """
         creation = self._creation()
-        self.assertIn("how much of it survives", creation)
-        self.assertIn("survives the repair", creation)
-        # And the worked example says so where the customer reads it.
-        self.assertIn("walkthrough material too", creation)
+        self.assertIn("survives the build", creation)
+        self.assertIn("how much survives is a fact this run established", creation)
+        # And the worked example says which of the two this case is, where the
+        # customer reads it - the whole point of disclosing rather than asking.
+        self.assertIn("what comes out is `\U0001f6e0️` material", creation)
+        self.assertIn("not your code", creation)
 
     def test_the_ask_ends_after_the_standing_line(self) -> None:
         """A blinded run appended a further question after the exit.
@@ -17184,16 +17195,20 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
 
     Two asks were written out as sentences a customer hears - material not
     found, and too little of it. The third, material present and unusable, had
-    only a line in the flow naming its three routes. A reader reaching it finds
-    no words for it and renders the ones that are there, which belong to a
+    only a line in the flow naming its routes. A reader reaching it finds no
+    words for it and renders the ones that are there, which belong to a
     different situation. Observed on a blinded run: correct diagnosis, correct
     stop, and a closing question offering to go ahead or hand over a path, with
-    no repair in it anywhere.
+    no build route in it anywhere.
 
-    Repair is the route this branch owns and the gap branch cannot have. When
-    material is absent there is nothing to mend; when it is present and broken,
-    mending it is the one route on which the run still measures the customer's
-    own product. Leaving it implicit costs the outcome the exercise is for.
+    The count is the second half, and it took two blinded runs to see. This
+    branch once carried THREE routes - repair, write a stand-in, pause - and
+    the first two are one action: the assistant opens their file either way,
+    keeps what holds up, writes the rest. Where nothing holds up they produce
+    the same artifact in the same place under the same marker, so the choice
+    was between two names for identical work, offered at the moment the
+    customer is deciding what to spend. Both workers collapsed it, and both
+    were right to.
     """
 
     def _creation(self) -> str:
@@ -17204,23 +17219,43 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
             .split()
         )
 
-    def test_the_unusable_branch_speaks_its_three_routes(self) -> None:
+    def test_the_unusable_branch_speaks_its_two_routes(self) -> None:
         creation = self._creation()
         self.assertIn("when a component is present but unusable", creation)
-        for route in ("repair", "stand-in", "pause"):
+        self.assertIn("the answers stay two here as well", creation)
+        for route in ("i build both", "pause"):
             with self.subTest(route=route):
                 self.assertIn(route, creation)
 
-    def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
-        """The rule that keeps three routes from reading as four ways to stop.
+    def test_the_split_it_replaced_cannot_come_back(self) -> None:
+        """The dead shape, pinned dead.
 
-        `I have it` answers where material lives, not what to do about the
-        material already here. Numbered beside the routes it becomes one choice
-        among four and pushes the pause into another, which is the shape a
-        blinded worker already produced once.
+        A stand-in route beside a repair route is the defect: identical work,
+        two names. Pinned as an absence because the wording that produced it
+        read perfectly well - which is why it survived two rounds of review.
         """
         creation = self._creation()
-        self.assertIn("is not a fourth route and is never numbered as one", creation)
+        self.assertNotIn("three ways forward", creation)
+        self.assertNotIn("i write clearly labelled", creation)
+        self.assertIn('splitting that into "repair" and "write a stand-in"', creation)
+
+    def test_the_count_follows_from_what_the_run_can_do(self) -> None:
+        """Two here and three for a limitation is agreement, not drift.
+
+        A limited component still executes, so continuing on the customer's own
+        material is a real action and earns a route. An unusable one cannot be
+        continued on - that is what unusable means - so the third route has
+        nothing to be. Without this stated, the two documents read as a
+        contradiction and the next reader "fixes" one of them.
+        """
+        creation = self._creation()
+        self.assertIn("offers three for a *material limitation*", creation)
+        self.assertIn("the third route has nothing to be", creation)
+
+    def test_the_escape_hatch_is_not_numbered_beside_them(self) -> None:
+        """`I have it` answers where material lives, not what to do with it."""
+        creation = self._creation()
+        self.assertIn("is never numbered as a route", creation)
         # And it still carries all three keys where it does appear.
         self.assertIn(
             "`i have it` with a path - `agent: <path>`, `dataset: <path>`, "
@@ -17228,15 +17263,15 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
             creation,
         )
 
-    def test_a_route_is_stated_by_what_it_does(self) -> None:
+    def test_the_build_route_is_unmistakably_a_way_to_continue(self) -> None:
         """The drift that produced the original defect, named so it cannot return.
 
         "Continue once a valid evaluator is available" is a pause wearing the
-        substitute's number. A run offering it has offered no way to continue.
+        build route's letter. A run offering it has offered no way to continue.
         """
-        self.assertIn(
-            "say what each route does and never what it is called", self._creation()
-        )
+        creation = self._creation()
+        self.assertIn("the build route is the way to continue", creation)
+        self.assertIn("re-validate, then carry on", creation)
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
