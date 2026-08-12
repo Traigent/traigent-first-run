@@ -2,9 +2,9 @@
 
 follows: 0038
 resident-ceiling: 79_200
-resident-measured: 79_129
+resident-measured: 79_093
 total-ceiling: 363_000
-total-measured: 362_490
+total-measured: 362_909
 
 The unusable branch offered three routes: repair the customer's files in a
 reversible copy, write clearly labelled stand-ins, or pause. The first two are one
@@ -57,7 +57,17 @@ taken: pausing to fix their own components buys a better-grounded result, not a
 bigger one, and silence there sells the pause on a promise this walkthrough does
 not make.
 
-362_490 total and 79_129 resident, measured with `assistant_facing_documents()`
-on this branch. Resident rises 210 bytes: the flow states the count, and the
-sentence that made the old count wrong lived there too. Everything else is
-reference, which the run loads for this stage and drops.
+362_909 total and 79_093 resident, measured with `assistant_facing_documents()`
+on this branch. Resident rises 174 bytes: the flow states the count, and the sentence that made
+the old count wrong lived there too. Everything else is reference, which the run
+loads for this stage and drops.
+
+The substitute marker changed with it, from tools to a specimen. It was drawn as
+tools and defined as a generated substitute, so the one reading the glyph invited
+was the one it never meant - a reader asked why a substitute wore a repair
+symbol, which is the question a customer asks silently while deciding what to
+spend. Thirty occurrences in this repository and none anywhere else: it reaches
+the rendered card only where a component was generated, and the opening gate runs
+before anything is, so no recorded case in the harness carries it. Past ledger
+entries keep the old glyph, because they record what was true when they were
+written.

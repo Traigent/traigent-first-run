@@ -9076,7 +9076,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
     Measured on trunk `b2b482eb` before this change, over 120 collected rows
     with a read of a real agent: 93/100 EXCELLENT, no caps,
     `recommended_action: proceed`, evaluation 100. The card renders the guide's
-    `🛠️` marker for a generated component; the score did not carry it, and the
+    `🧪` marker for a generated component; the score did not carry it, and the
     score is the number a customer takes away.
 
     The all-missing case was covered by accident and that is worth pinning

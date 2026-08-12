@@ -17278,19 +17278,26 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("the build route carries the recommendation", creation)
         self.assertIn("so silence never has to be interpreted", creation)
 
-    def test_the_substitute_is_named_in_words_not_by_its_glyph(self) -> None:
-        """`\U0001f6e0️` is defined as a generated substitute and drawn as tools.
+    def _glossary(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
+        )
 
-        A customer reading the glyph unaided reads "repaired", which is the one
-        thing it never means - nothing of theirs was mended. The rendered card
-        already spells it out beside the marker; the ask has to as well, because
-        the ask is where they decide.
+    def test_the_substitute_is_named_in_words_not_by_its_glyph(self) -> None:
+        """The mark tags the claim; it never carries it alone.
+
+        It was drawn as tools until a reader asked why a substitute wore a
+        repair symbol - nothing had been mended, and "repaired" is the one
+        reading the glyph invited and the one it never meant. It is a specimen
+        now, and the ask says the word anyway: a customer meets the mark beside
+        `✅` while deciding what to spend, and a pictogram is not where that
+        claim should live.
         """
         creation = self._creation()
         self.assertIn("a generated stand-in, marked", creation)
         self.assertIn("a substitute for it", creation)
-        self.assertIn("marked `\U0001f6e0️`: not a repair", creation)
-        self.assertIn('reads "repaired" - the one thing it never means', creation)
+        self.assertIn("marked `\U0001f9ea`: not a repair", creation)
+        self.assertIn("a specimen, not a tool", self._glossary())
 
     def test_it_says_which_rows_the_run_will_actually_read(self) -> None:
         """ "Your rows" is heard as all of them, and often it is not all of them.

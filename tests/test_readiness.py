@@ -43,7 +43,7 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(plan.create, ["evaluation"])
         rendered = MODULE.render_text(plan)
         self.assertIn("❗ Dataset", rendered)
-        self.assertIn("🛠️ Dataset", rendered)
+        self.assertIn("🧪 Dataset", rendered)
 
     def test_limited_component_is_usable_but_not_real_world_ready(self) -> None:
         plan = MODULE.build_plan("real", "limited", "real")
