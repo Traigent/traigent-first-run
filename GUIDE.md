@@ -128,9 +128,9 @@ Always report the component provenance:
 
 - `✅` real and validated.
 - `❗` missing, invalid, or evidence-limited real-world component.
-- `🛠️` generated walkthrough substitute.
+- `🧪` generated walkthrough substitute.
 
-If anything is `🛠️`, say before the numbers that the result demonstrates the workflow and is not
+If anything is `🧪`, say before the numbers that the result demonstrates the workflow and is not
 evidence of expected production performance. Any walkthrough-only substitute is still walkthrough
 evidence.
 
