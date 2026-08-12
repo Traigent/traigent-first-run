@@ -35,7 +35,8 @@ after the run, to measure the space it searched. Use
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
 the score. A config-space file found before this run's enhanced search is historical context, not
-current-run readiness evidence. Only after task intent is anchored, copy
+current-run readiness evidence: no invocation in this run scores it, and no number derived from
+scoring one is reported. Only after task intent is anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
