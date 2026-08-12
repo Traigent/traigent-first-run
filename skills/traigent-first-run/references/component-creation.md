@@ -36,7 +36,7 @@ Record in `traigent-runs/run-plan.md`:
 Resolve `limited` and `invalid` candidates before using the matrix. For `limited`, recommend
 repairing a working copy and revalidating it; if the user explicitly continues unchanged, preserve
 it as the real anchor in the matching `real` row but keep its readiness state `❗`. For `invalid`,
-repair it successfully or treat it as missing and create a clearly labeled `🛠️` substitute. A
+repair it successfully or treat it as missing and create a clearly labeled `🧪` substitute. A
 broken evaluator or incompatible dataset is not safe to continue unchanged.
 
 ## The one ask, and the path that answers it
@@ -120,47 +120,85 @@ tuning split: the rows are there, the split is what is wrong, and more rows answ
 The section above is for material this run could not find. This one is for material it found and
 cannot use: an evaluator that scores every answer the same, an agent that echoes its input instead
 of attempting the task, a schema that does not parse. Name the user's own file where you say this,
-by the path the inventory recorded; the shapes below are the situation, not the filenames. The
-distinction decides the question, because there is a route a gap does not have: the material exists, so it can be repaired, and a
-repair is the only answer that can keep any of the customer's own material in the result - how much
-depends entirely on how much of it survives.
+by the path the inventory recorded; the shapes below are the situation, not the filenames. What the distinction changes is what a build YIELDS, not how many answers the ask carries. Material
+that exists can be mended, so some of the customer's own work can survive into the result - and how
+much survives is a fact this run established when it read the files, not a question for them.
 
-So this ask carries three routes, not two answers, and SKILL.md states them. What that sounds like,
-when the agent and the evaluator are both unusable and the dataset is real:
+**So the answers stay two here as well, for the same reason they stay two above.** Mending what
+survives and writing what does not is one action: the assistant opens their file either way, keeps
+whatever holds up, and supplies the rest. Splitting that into "repair" and "write a stand-in" offers
+a choice of method for identical work, and when nothing survives - an echo stub has no call path to
+mend, a scorer returning one number has no rubric to keep - the two produce the same artifact, in
+the same place, under the same marker. That is the situation-not-an-action mistake the section above
+refuses by name, and a reader who cannot find the difference is right that there is none.
+
+This is why `references/evaluation-and-dataset.md` offers three for a *material limitation* and this
+section offers two, and the two documents agree rather than disagree. A limited component still
+executes, so continuing on the customer's own material is an available action and earns its own
+route. An unusable one cannot be continued on at all - that is what makes it unusable - so the third
+route has nothing to be. The count follows from what the run can actually do with their files, never
+from a house style, and a route offered where the action does not exist is the ask asserting a
+choice the project cannot honour.
+
+What that sounds like, when the agent and the evaluator are both unusable and the dataset is real:
 
 > Your dataset is real and I can run on it. The agent here echoes its input back rather than
 > attempting what your rows describe, and the evaluator it would be graded by returns the same
-> score for every answer, so nothing can be graded yet. Three ways forward:
+> score for every answer, so nothing can be graded yet. Two ways forward:
 >
-> A. I repair both in a reversible copy under `traigent-runs/`, leaving your originals untouched,
-> and re-validate. Here that means writing a call path and a grader neither file has yet, so what
-> comes out is `🛠️` walkthrough material too - it keeps your rows and your task, not your code.
-> B. I write clearly labelled `🛠️` stand-ins now, without touching either file. That shows the
-> workflow working; it cannot tell you how your product performs, and nothing from it may be
-> promoted.
-> C. Pause, and I will give you the exact checks a corrected version has to pass.
+> A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours
+> untouched, and re-validate, then carry on. Neither file has anything to mend - no call path in
+> one, no rubric in the other - so what I write is a generated stand-in, marked `🧪`: not a repair
+> of yours, a substitute for it. The run then measures my stand-ins against your 30 rows and your
+> task, so it shows the workflow end to end and cannot tell you how your own code performs.
+> B. Pause, and I will give you the exact checks a corrected version has to pass. Fix them and the
+> same first run measures your code instead of my stand-ins.
+>
+> Either way this first run is a bounded one - a small sample and a capped number of trials, priced
+> before it starts. It is a taste of the workflow, not a full search.
 >
 > Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
-How much of the result stays about the customer's product is what separates A from B, and it is a
-property of what SURVIVES the repair, never of the repair being reversible. Mending one broken line
-in a real scorer keeps their ruler; writing the call path an echo stub never had keeps nothing but
-their rows and their task. Say which of the two this is, in the sentence itself. A route that
-promises "your product" over material this run wrote is the `🛠️`/`✅` separation broken in the one
-place the customer is reading.
+Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
+Name the substitute in WORDS, not by its marker alone: `🧪` is defined as a generated substitute and
+it is drawn as tools, so a customer reading the glyph unaided reads "repaired" - the one thing it
+never means. Say what the run will actually read: "your rows" is heard as all of them, and above 100
+usable rows the paid run takes a bounded sample, so name the count this project will really use.
+And say that the first run is bounded whichever route they pick - a customer choosing to pause and
+fix their own components is buying a better-grounded result, not a bigger one, and letting them
+believe otherwise sells the pause on a promise this walkthrough does not make.
 
-`I have it` is not a fourth route and is never numbered as one. It answers a different question -
-where the material is, rather than what to do about the material here - and it rides on every ask in
-this document for that reason. Every ask also ENDS on it: nothing follows the standing line, not a
-clarifying question, not a "while you decide", not the advisory restated as its own query. Anything
-after it is a second decision, and one was the whole design - a question that is free to answer is
-still one the customer has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into one option among four, and
-the pause beside it into another, which is how three routes become a list of ways to stop.
+How much of the result stays about the customer's product belongs in that first route's sentence,
+and it is a property of what SURVIVES the build, never of the copy being reversible. Mending one
+broken line in a real scorer keeps their ruler, and the result may read `✅`; writing the call path
+an echo stub never had keeps nothing but their rows and their task, and it reads `🧪`. Say which of
+the two this is, in the sentence itself. A build that promises "your product" over material this run
+wrote is the `🧪`/`✅` separation broken in the one place the customer is reading - and a build
+offered without saying which one it is asks them to spend on an unlabelled result.
 
-Say what each route DOES and never what it is called. "Continue once a valid evaluator is
-available" is not route B, it is route C wearing B's number, and a run that offers it has offered
-the user no way to continue at all.
+The build route carries the recommendation, and carries it visibly. Two routes with nothing marked
+is a menu, and this guide already holds that a menu offered instead of a recommendation is the same
+as no recommendation - the same reason the dataset reference marks its repair route. It is also the
+rule about silence, applied one section over: state it, so silence never has to be interpreted. A
+blinded run reaching an unmarked pair added "(recommended)" itself, which is what an unstated
+default looks like from the outside. Recommend the build route because pausing is always available
+and needs no push, while the run stopping is the outcome the walkthrough exists to avoid - and
+because the sentence beside it already says what the result will not be able to claim, so the
+recommendation cannot oversell.
+
+The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
+… and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
+pause wearing the build route's letter, and a run that offers it has offered no way forward at all.
+
+`I have it` is never numbered as a route. It answers a different question - where the material is,
+rather than what to do about the material here - and it rides on every ask in this document for that
+reason. Every ask also ENDS on it: nothing follows the standing line, not a clarifying question, not
+a "while you decide", not the advisory restated as its own query. Anything after it is a second
+decision, and one was the whole design - a question that is free to answer is still one the customer
+has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into
+one option among three, and the pause beside it into another, which is how a way forward and a way
+out become a list of ways to stop.
 
 ### When a path arrives
 
@@ -221,7 +259,7 @@ easy to score deterministically and demonstrates optimization without paying for
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 
 If the real agent is not Python, keep Agent `❗` unless a thin Python adapter calls the unchanged
-real behavior and can be evaluated safely. A generated Python walkthrough agent is `🛠️`; it does
+real behavior and can be evaluated safely. A generated Python walkthrough agent is `🧪`; it does
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
 
@@ -319,7 +357,7 @@ Validate all of these before optimization:
 
 If compatibility fails, mark the affected real component `invalid` and `❗ needs one fix` or keep
 it missing. If compatibility passes but the evidence is too small, narrow, or easy to support a
-meaningful comparison, mark it `limited` and keep `❗`. A generated adapter is `🛠️`; it does not
+meaningful comparison, mark it `limited` and keep `❗`. A generated adapter is `🧪`; it does not
 silently convert an invalid real component into `✅`.
 
 ## Readiness transitions
@@ -328,12 +366,12 @@ Real-world readiness changes to `✅` only when concrete real evidence passes va
 an unresolved material limitation. After a repair, re-run the relevant validation and calibration
 before changing `limited` or `invalid` to `real`.
 
-Walkthrough setup changes to `🛠️` when a generated substitute passes compatibility. Preserve the
+Walkthrough setup changes to `🧪` when a generated substitute passes compatibility. Preserve the
 corresponding `❗` real-world gap until real material replaces it.
 
 The numeric readiness score follows the same rule. The opening score is computed before any
 creation or repair, the score is re-run after each revalidation as the gate on that repair, and a
-rise earned by a `🛠️` substitute is walkthrough setup, never real-world readiness. A
+rise earned by a `🧪` substitute is walkthrough setup, never real-world readiness. A
 `dataset-absent` cap on the opening score is what sends the run into the dependency matrix above.
 
 Examples:
@@ -342,8 +380,8 @@ Examples:
   - `✅ Agent - existing customer-support answer function validated.`
   - `❗ Dataset - no reviewed real examples connected.`
   - `❗ Evaluation - no product grading policy connected.`
-  - `🛠️ Walkthrough dataset - 18 varied synthetic cases prepared.`
-  - `🛠️ Walkthrough evaluation - normalized label scorer calibrated.`
+  - `🧪 Walkthrough dataset - 18 varied synthetic cases prepared.`
+  - `🧪 Walkthrough evaluation - normalized label scorer calibrated.`
 - Generated agent + real dataset/evaluator:
-  - Keep Agent `❗`; show the generated adapter/function as `🛠️`.
+  - Keep Agent `❗`; show the generated adapter/function as `🧪`.
   - Dataset and Evaluation may be `✅` after compatibility validation.

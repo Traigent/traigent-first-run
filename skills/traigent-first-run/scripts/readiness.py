@@ -54,7 +54,7 @@ COMPONENTS = ("agent", "dataset", "evaluation")
 # nobody outside this run had ever seen. Source:
 # tests/test_readiness_scoring.py#WhoWroteItBoundsWhatItMayClaimTests.test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real,
 # whose undeclared half is that same fact set. The card renders the guide's
-# `🛠️` marker for a generated substitute; the score did not carry it.
+# `🧪` marker for a generated substitute; the score did not carry it.
 #
 # Two values and not the planner's five. `real/limited/demo/missing/invalid`
 # mixes origin with brokenness, which is the exact conflation this condition
@@ -175,7 +175,7 @@ def render_text(plan: ReadinessPlan) -> str:
     if demo_components:
         lines.extend(("", "Walkthrough setup:"))
         for name in demo_components:
-            lines.append(f"🛠️ {name.title()}: generated walkthrough substitute")
+            lines.append(f"🧪 {name.title()}: generated walkthrough substitute")
 
     lines.append(f"Action: {plan.action}")
     return "\n".join(lines)
@@ -1111,7 +1111,7 @@ AGENT_GENERATED_CEILING = 65
 # run does answer what was asked: which configuration of the agent under
 # comparison scores best, measured on the customer's own data. The agent under
 # comparison is a stand-in, which is what the ceiling says and what the guide's
-# `🛠️` marker says beside it.
+# `🧪` marker says beside it.
 #
 # It may not sit higher either, and that is the whole finding: a walkthrough
 # agent this run wrote may reach WORKABLE and may never present as STRONG, on

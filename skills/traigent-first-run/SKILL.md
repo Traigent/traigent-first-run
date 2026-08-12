@@ -106,7 +106,7 @@ Use exactly these meanings:
 - `✅` - real component found and validated.
 - `❗` - real component is missing, failed validation, or exists with evidence too limited for a
   credible optimization claim.
-- `🛠️` - temporary walkthrough substitute created by the coding assistant.
+- `🧪` - temporary walkthrough substitute created by the coding assistant.
 
 Never mark synthetic material `✅`, never count it as real-world-ready, and never say "3/3 ready"
 when any component is synthetic.
@@ -130,8 +130,8 @@ Example when nothing exists:
 > walkthrough, then Traigent will optimize that system. The result will demonstrate the
 > optimization workflow, not expected production performance.
 
-After creation, keep the three `❗` lines and add three `🛠️` lines describing the substitutes.
-For mixed states, show real components as `✅` and only generated substitutes as `🛠️`.
+After creation, keep the three `❗` lines and add three `🧪` lines describing the substitutes.
+For mixed states, show real components as `✅` and only generated substitutes as `🧪`.
 
 ## Opening message
 
@@ -192,12 +192,12 @@ Ground readiness task kind per the evaluation reference.
 Declare who wrote the evaluator and the agent on every readiness call, as run-scoped state beside
 the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
 `generated` for one this run created. Nothing in a scoring function or an agent's source says who
-typed it, so this is the only way the score can carry what the card's `🛠️` marking already says,
+typed it, so this is the only way the score can carry what the card's `🧪` marking already says,
 and it is you rather than the customer who knows - never ask. Omit a flag only where that component
 does not exist yet; nothing has an origin before it is there. Update each the moment this run
 creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
 one is not a neutral choice: it scores a generated component as if it were the customer's, which is
-the one thing the `🛠️`/`✅` separation exists to prevent. The dataset takes no such flag - its
+the one thing the `🧪`/`✅` separation exists to prevent. The dataset takes no such flag - its
 origin is counted per row from declared provenance, and a second declaration beside a count is two
 answers to one question.
 
@@ -320,7 +320,7 @@ real-world readiness board after inspection. Show the rendered card beside that 
 State what the coding assistant will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
 them and offers to use theirs, which is the opposite of delegating them. Refresh only
-changed evidence after creation; retain unresolved `❗` lines and add the new `🛠️` substitutes
+changed evidence after creation; retain unresolved `❗` lines and add the new `🧪` substitutes
 instead of replacing the initial board with a green one.
 
 If real material exists but appears too weak to support a meaningful comparison, show a short
@@ -354,7 +354,7 @@ weakness are one decision about what this run will measure. That question carrie
    of to compare on.
 2. That this run can build each missing piece, and top up a short one, derived from whatever does
    exist.
-3. What that costs, in terms the score already uses: what this run writes stays `🛠️` and never
+3. What that costs, in terms the score already uses: what this run writes stays `🧪` and never
    becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
    present as strong however good the rest is, and no configuration from the result may be promoted.
 4. Two answers where something is missing: proceed, or `I have it` and a path for each piece they
@@ -466,10 +466,12 @@ the failed gate. Continuing unchanged is permitted only as an explicitly labelle
 demonstration; `references/evaluation-and-dataset.md` owns when that limitation is stated.
 
 For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
-do not run paid optimization against it. Offer three routes: repair and revalidate a reversible
-copy under `traigent-runs/`, continue the walkthrough on a clearly labelled `🛠️` substitute this
-run writes now, or pause for a user-authored fix. Never treat "continue as is" as permission to
-optimize against a broken grading signal.
+do not run paid optimization against it. Offer two routes: build and revalidate a reversible copy
+under `traigent-runs/` - mending what survives and writing what does not, which is one action and
+not two - or pause for a user-authored fix. Say in that same sentence how much of their material
+survives, because that is what decides whether the result reads `✅` or `🧪`, and it is a fact this
+run already established rather than a choice to hand over. Never treat "continue as is" as
+permission to optimize against a broken grading signal.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
@@ -496,7 +498,7 @@ paragraph below carries both halves:
   copy, with approval for judgment-dependent labels. Do not use unchanged input-only data with a
   reference-requiring evaluator; disclose a reference-free method's absent independent answer key.
 - `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
-  labeled `🛠️` substitute.
+  labeled `🧪` substitute.
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
 - `dataset-split-by-task-family` - disjoint and drawn in the wrong place: every recurring kind of
   input sits on one side, so the held-out score measures transfer to unseen work rather than the
@@ -532,7 +534,7 @@ connected file with no honestly declarable method) and `evaluator-invalid` route
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
 create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
-rules and nothing else - carry the `🛠️` marking into the words as well as the card, and say the
+rules and nothing else - carry the `🧪` marking into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
@@ -687,7 +689,7 @@ Immediately after it returns, show a **Local baseline checkpoint** before any Tr
 account request:
 
 - Start with the recorded target project and selected agent identity.
-- If any component is `🛠️`, put the provenance limitation before the numbers.
+- If any component is `🧪`, put the provenance limitation before the numbers.
 - State what ran: a local fixed grid, not Traigent choosing the trials.
 - Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
   executed and failed trial counts. Report cost or latency as `not measured` when the provider or
@@ -808,7 +810,7 @@ Include:
 - The recommended configuration's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
   portal links.
-- Which components were `✅` real and which were `🛠️` walkthrough substitutes.
+- Which components were `✅` real and which were `🧪` walkthrough substitutes.
 - What this run created or repaired, and what that costs the claim: examples it wrote are weaker
   evidence than examples collected from the product, and an evaluation method it wrote is a
   starting point rather than the product's grading policy - one a person may want to move in
