@@ -38,7 +38,8 @@ for the guide clone or treat an old result beside the guide as a result for the 
 Before showing readiness, a baseline, or an optimization result, identify the target in one line:
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
 run, compare that identity with the recorded artifact. If it differs, label the artifact
-**historical — different agent** and do not quote its scores as the current result.
+**historical — different agent** and do not quote its scores as the current result. A resumed
+session opens with where the run stands rather than the opening message.
 If none is credible, use `Agent: none discovered`; replace it before later results.
 
 An already-supplied local credential file is an availability inventory, not an agent selection.
