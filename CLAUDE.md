@@ -60,18 +60,21 @@ guide is ever edited faster than it is reviewed, which is the condition that wou
 
 For changes to this repository itself - no customer run ever runs these:
 
-Costs measured on a current checkout, so running everything is a known price, not a guess.
+Illustrative warm wall times observed on one developer checkout on 2026-08-13; hardware, load, and
+caches change them, and image pulls are excluded.
 
-| Check | Measured | Run it when |
+| Check | Observed warm | Run it when |
 | --- | --- | --- |
 | `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
 | `ruff check .` | 0.1 s | Always. |
-| `black --check .` | ≤3 s | Always. |
+| `black --check .` | ~0.2 s | Always. |
 | `python -m unittest discover -s tests` | ~4 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
+| [`offline-contract` Docker command](tests/behavioral/README.md#running-the-container-job-locally) | ~30 s after the image is available | Before pushing a change to `preflight.py`, `calibrate_evaluator.py`, or `readiness.py`; the image pull is separate and variable. |
 
-CI additionally executes the behavioral scenarios hermetically (the `offline-contract` job,
-~30 s) inside the network-none container `validate.yml` builds - no local row reproduces it, so
-it is met first in CI.
+The unit suite requires the pinned stack in
+`skills/traigent-first-run/assets/requirements-first-run.txt` for its no-spend socket tests; without
+it, a local run reports expected skips and is not the full CI-equivalent result. CI remains the
+authoritative pinned-image execution of the network-none, read-only `offline-contract` job.
 
 The full suite matters most for guidance edits, where it looks least relevant: much of it is a
 pin corpus holding settled decisions in place byte-for-byte, so a reworded sentence fails loudly
