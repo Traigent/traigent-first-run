@@ -1,5 +1,7 @@
 # First-Run Field Test — multi-agent onboarding QA
 
+> **Historical record (2026-06-30).** This report describes an earlier revision of the guide — the Step 1–9 flow — kept as it was written; the current flow differs.
+
 **What this is.** A field test of this repo's onboarding flow (README → `GUIDE.md` →
 `.env.example` → `templates/`, the flow as it stood when this test ran; `templates/` has since
 been deleted in favour of the files it pointed at) run the way a real user would: a coding assistant follows
