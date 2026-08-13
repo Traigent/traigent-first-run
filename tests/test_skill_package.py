@@ -16868,9 +16868,7 @@ class RowIdsHaveAFallbackWhenTheDatasetHasNoneTests(unittest.TestCase):
 
     def test_the_blank_line_skew_is_named(self) -> None:
         """preflight counts blank lines it does not score, so the two diverge."""
-        self.assertIn(
-            "one blank line makes `line-7` the sixth row", self._dataset()
-        )
+        self.assertIn("one blank line makes `line-7` the sixth row", self._dataset())
 
     def test_a_converted_dataset_carries_an_id_stamped_at_conversion(
         self,
