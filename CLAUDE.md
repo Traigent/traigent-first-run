@@ -55,3 +55,19 @@ Scheduled sweeps were considered instead and are weaker for this repository. A c
 contradiction some days after it lands, while a read at review time prevents it - and a periodic
 sweep with nothing to compare against tends to become a green tick. Re-open this decision if the
 guide is ever edited faster than it is reviewed, which is the condition that would invert it.
+
+## Checking a change
+
+Costs measured on a current checkout, so running everything is a known price, not a guess.
+
+| Check | Measured | Run it when |
+| --- | --- | --- |
+| `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
+| `ruff check .` | 0.1 s | Always. |
+| `black --check .` | 3 s | Always. |
+| `python -m unittest discover -s tests` | ~4 min (1066 tests) | Guidance, scripts, or tests changed. |
+
+The full suite matters most for guidance edits, where it looks least relevant: much of it is a
+pin corpus holding settled decisions in place byte-for-byte, so a reworded sentence fails loudly
+instead of quietly reopening a decision recorded above. A green suite is the floor, not the
+review - the review is the whole-document read described in "Editing the guidance".
