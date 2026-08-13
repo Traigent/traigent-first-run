@@ -261,11 +261,8 @@ Say that the score reads the project and changes nothing of the customer's - and
 that it wrote its own `traigent-runs/row-review.json`. A claim of no writes is refuted by one `ls`.
 Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
-unmeasured component as not yet measured. Presentation detail lives in the glossary.
-
-Use the readiness-score presentation in `references/glossary.md`: lead with
-`Stage 2/5 · Readiness - <score>/100 (<band>)`. Do not animate with invented progress or narrate
-every card line.
+unmeasured component as not yet measured. Presentation detail lives in the glossary:
+use its readiness-score presentation.
 
 The score grades measured evidence, not declared existence. Report an uncalibrated real evaluator
 and an agent without current-run wiring evidence as not yet measured, never as absent. Do not infer
