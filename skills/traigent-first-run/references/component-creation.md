@@ -166,6 +166,12 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`, `evaluation: <path>` - and
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
+Keep that closing structure literal when this branch applies: render the two lettered routes as
+`A.` and `B.`, then the unnumbered `I have it` line last. Do **not** compress them into a
+"Shall I go ahead?" yes/no question. A yes/no form hides the pause route, and putting `I have it`
+inside the choices turns a path into a third decision. No customer-facing sentence follows the
+standing path line.
+
 Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
 Name the substitute in WORDS. There is no mark for it, deliberately: a glyph is read for what it
 depicts, this one was drawn as tools and read as "repaired" - the one thing it never means - and
