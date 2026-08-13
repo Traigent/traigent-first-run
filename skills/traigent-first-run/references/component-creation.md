@@ -36,7 +36,7 @@ Record in `traigent-runs/run-plan.md`:
 Resolve `limited` and `invalid` candidates before using the matrix. For `limited`, recommend
 repairing a working copy and revalidating it; if the user explicitly continues unchanged, preserve
 it as the real anchor in the matching `real` row but keep its readiness state `❗`. For `invalid`,
-repair it successfully or treat it as missing and create a clearly labeled `🧪` substitute. A
+repair it successfully or treat it as missing and create a clearly labeled substitute. A
 broken evaluator or incompatible dataset is not safe to continue unchanged.
 
 ## The one ask, and the path that answers it
@@ -135,7 +135,7 @@ survives and writing what does not is one action: the assistant opens their file
 whatever holds up, and supplies the rest. Splitting that into "repair" and "write a stand-in" offers
 a choice of method for identical work, and when nothing survives - an echo stub has no call path to
 mend, a scorer returning one number has no rubric to keep - the two produce the same artifact, in
-the same place, under the same marker. That is the situation-not-an-action mistake the section above
+the same place, described in the same words. That is the situation-not-an-action mistake the section above
 refuses by name, and a reader who cannot find the difference is right that there is none.
 
 This is why `references/evaluation-and-dataset.md` offers three for a *material limitation* and this
@@ -154,7 +154,7 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 >
 > A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours
 > untouched, and re-validate, then carry on. Neither file has anything to mend - no call path in
-> one, no rubric in the other - so what I write is a generated stand-in, marked `🧪`: not a repair
+> one, no rubric in the other - so what I write is a generated stand-in: not a repair
 > of yours, a substitute for it. The run then measures my stand-ins against your 30 rows and your
 > task, so it shows the workflow end to end and cannot tell you how your own code performs.
 > B. Pause, and I will give you the exact checks a corrected version has to pass. Fix them and the
@@ -167,9 +167,9 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
 Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
-Name the substitute in WORDS, not by its marker alone: `🧪` is defined as a generated substitute and
-it is drawn as tools, so a customer reading the glyph unaided reads "repaired" - the one thing it
-never means. Say what the run will actually read: "your rows" is heard as all of them, and above 100
+Name the substitute in WORDS. There is no mark for it, deliberately: a glyph is read for what it
+depicts, this one was drawn as tools and read as "repaired" - the one thing it never means - and
+renaming it only moved the guess. The words were always required beside it, so they carry it now. Say what the run will actually read: "your rows" is heard as all of them, and above 100
 usable rows the paid run takes a bounded sample, so name the count this project will really use.
 And say that the first run is bounded whichever route they pick - a customer choosing to pause and
 fix their own components is buying a better-grounded result, not a bigger one, and letting them
@@ -178,9 +178,9 @@ believe otherwise sells the pause on a promise this walkthrough does not make.
 How much of the result stays about the customer's product belongs in that first route's sentence,
 and it is a property of what SURVIVES the build, never of the copy being reversible. Mending one
 broken line in a real scorer keeps their ruler, and the result may read `✅`; writing the call path
-an echo stub never had keeps nothing but their rows and their task, and it reads `🧪`. Say which of
+an echo stub never had keeps nothing but their rows and their task, and it reads as a substitute. Say which of
 the two this is, in the sentence itself. A build that promises "your product" over material this run
-wrote is the `🧪`/`✅` separation broken in the one place the customer is reading - and a build
+wrote is the real-world/walkthrough separation broken in the one place the customer is reading - and a build
 offered without saying which one it is asks them to spend on an unlabelled result.
 
 The build route carries the recommendation, and carries it visibly. Two routes with nothing marked
@@ -282,7 +282,7 @@ easy to score deterministically and demonstrates optimization without paying for
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 
 If the real agent is not Python, keep Agent `❗` unless a thin Python adapter calls the unchanged
-real behavior and can be evaluated safely. A generated Python walkthrough agent is `🧪`; it does
+real behavior and can be evaluated safely. A generated Python walkthrough agent is a substitute; it does
 not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
 provider calls are not intercepted automatically by Traigent mock mode.
 
@@ -388,7 +388,7 @@ Validate all of these before optimization:
 
 If compatibility fails, mark the affected real component `invalid` and `❗ needs one fix` or keep
 it missing. If compatibility passes but the evidence is too small, narrow, or easy to support a
-meaningful comparison, mark it `limited` and keep `❗`. A generated adapter is `🧪`; it does not
+meaningful comparison, mark it `limited` and keep `❗`. A generated adapter is a substitute; it does not
 silently convert an invalid real component into `✅`.
 
 ## Readiness transitions
@@ -397,12 +397,12 @@ Real-world readiness changes to `✅` only when concrete real evidence passes va
 an unresolved material limitation. After a repair, re-run the relevant validation and calibration
 before changing `limited` or `invalid` to `real`.
 
-Walkthrough setup changes to `🧪` when a generated substitute passes compatibility. Preserve the
+Walkthrough setup records a substitute once it passes compatibility. Preserve the
 corresponding `❗` real-world gap until real material replaces it.
 
 The numeric readiness score follows the same rule. The opening score is computed before any
 creation or repair, the score is re-run after each revalidation as the gate on that repair, and a
-rise earned by a `🧪` substitute is walkthrough setup, never real-world readiness. A
+rise earned by a generated substitute is walkthrough setup, never real-world readiness. A
 `dataset-absent` cap on the opening score is what sends the run into the dependency matrix above.
 
 Examples:
@@ -411,8 +411,8 @@ Examples:
   - `✅ Agent - existing customer-support answer function validated.`
   - `❗ Dataset - no reviewed real examples connected.`
   - `❗ Evaluation - no product grading policy connected.`
-  - `🧪 Walkthrough dataset - 18 varied synthetic cases prepared.`
-  - `🧪 Walkthrough evaluation - normalized label scorer calibrated.`
+  - Walkthrough setup: `Dataset - 18 varied synthetic cases prepared.`
+  - Walkthrough setup: `Evaluation - normalized label scorer calibrated.`
 - Generated agent + real dataset/evaluator:
-  - Keep Agent `❗`; show the generated adapter/function as `🧪`.
+  - Keep Agent `❗`; show the generated adapter/function under walkthrough setup.
   - Dataset and Evaluation may be `✅` after compatibility validation.

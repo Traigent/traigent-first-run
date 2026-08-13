@@ -43,7 +43,13 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(plan.create, ["evaluation"])
         rendered = MODULE.render_text(plan)
         self.assertIn("❗ Dataset", rendered)
-        self.assertIn("🧪 Dataset", rendered)
+        # The same component appears twice and means opposite things, so what
+        # separates the two lines is what this asserts. It used to be a glyph;
+        # it is now the heading plus the words on the line, which is what a
+        # customer reads either way and what a terminal without emoji keeps.
+        self.assertIn("Walkthrough setup:", rendered)
+        self.assertIn("Dataset: generated walkthrough substitute", rendered)
+        self.assertNotIn("🧪", rendered)
 
     def test_limited_component_is_usable_but_not_real_world_ready(self) -> None:
         plan = MODULE.build_plan("real", "limited", "real")
