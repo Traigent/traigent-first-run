@@ -1,8 +1,8 @@
 # 0043 - a row id the dataset does not have
 
 follows: 0042
-total-ceiling: 367_539
-total-measured: 367_139
+total-ceiling: 368_418
+total-measured: 368_018
 
 The row review requires a per-row id and `readiness.py` refuses an entry without
 one. This dataset carries none, and preflight says so in its own warning. So the
@@ -27,7 +27,7 @@ one the file has.
 Resident does not move: the row-review contract lives in the dataset reference,
 and the flow already mandates the read.
 
-367_139 total and 79_350 resident, measured with `assistant_facing_documents()` over the
+368_018 total and 79_350 resident, measured with `assistant_facing_documents()` over the
 merge of this change and 0042 rather than on either branch alone. Both were
 written against 0041 and both measured under the ceiling each then set, so
 each figure was honest and neither described the corpus that carries both.
@@ -38,3 +38,9 @@ customer's own file is one row per line, and this guide blesses converting a
 dataset to JSONL - so the blessed path is the one that breaks the reason the
 scheme was chosen for. Naming the fallback without naming that condition would
 be the defect this entry exists to close, committed by the fix for it.
+
+Re-measured again after review found the scoped rule unfollowable: it named the
+customer's row position as the id and nothing in the guide preserved that
+position across a conversion. The id is now stamped as the conversion happens,
+which is the only moment it is still known, so the bytes buy a rule a run can
+carry out rather than one it can only agree with.
