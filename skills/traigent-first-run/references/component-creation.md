@@ -289,8 +289,7 @@ provider calls are not intercepted automatically by Traigent mock mode.
 ## Reading the agent for the opening score
 
 SKILL.md's opening gate asks for this; the shape is here. One document, two halves: `knobs` is what
-the agent can be told to do differently, and `build` is how it is put together. Write it to a
-scratch path outside the user's project and pass it as `scripts/readiness.py --agent-knobs`.
+the agent can be told to do differently, and `build` is how it is put together.
 
 A name appearing only in a comment, docstring, TODO, or example is not a knob. Record one only where
 executable code reads it, passes it onward, or selects behaviour from it. A stub whose comment lists
@@ -298,7 +297,8 @@ the settings a real call *would* take is describing an agent that does not exist
 those names reports a search space this project does not have - which is the same false readiness a
 historical config-space file produces, arriving through the one input that is supposed to be read
 fresh from the source. Two blinded runs reasoned this out unaided and wrote the reasoning down; a
-third recorded six comment-only names. It is not a judgement call, so it does not stay unstated.
+third recorded six comment-only names. It is not a judgement call, so it does not stay unstated. Write it to a scratch path outside the
+user's project and pass it as `scripts/readiness.py --agent-knobs`.
 
 ```json
 {"source": "agent.py",
