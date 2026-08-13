@@ -38,8 +38,9 @@ intent to partially ready projects with material dataset or evaluator limitation
 pilot cases matched their expected readiness receipts exactly, each worker stopped at the
 intended customer decision point — a genuine question or repair choice, never an unauthorized
 action — and every project audit came back `UNCHANGED`. Per-case identifiers, expected scores,
-and expected receipts are deliberately not restated here: this repository is the customer-visible
-handoff a future blinded worker reads, so publishing them would contaminate the blinding.
+and expected receipts are withheld here: this repository is the customer-visible handoff a future
+blinded worker reads. Earlier public revisions carried these rows, so these pilot cases are
+treated as burned for future blinded runs.
 
 Valid pilot result: **3/3 matched receipts and safe stop behavior**.
 
@@ -51,7 +52,7 @@ Excluded attempts were retained instead of rewritten:
 
 - One attempt was excluded because the captain omitted the explicit no-extra-opening-arguments instruction and the worker added component-state flags.
 - One attempt was excluded because the worker obeyed the corrected argument boundary but the public CLI did not yet distinguish Python `code` from SQL `code-sql`.
-- One captain capture normalized JSON floats to integers and correctly failed exact grading; the raw stdout was recaptured without transformation and then matched.
+- One captain capture normalized JSON floats to integers and correctly failed exact grading; the raw stdout was recaptured without transformation and then matched (a grading artifact of a valid case, not an excluded attempt).
 
 ## Confirmed defects and fixes prepared
 
@@ -78,14 +79,14 @@ Excluded attempts were retained instead of rewritten:
 ## Remaining findings to track
 
 1. Add a hermetic regression that imports the pinned LiteLLM/Traigent mock path under a blocked/counting socket and asserts zero outbound attempts. Current package tests lock the guidance, while the independent environment test supplied the behavioral evidence.
-2. Detect superficial numbered/template variants or semantic-family concentration. Two pilot cases each received full diversity credit despite only six and four underlying behaviors respectively.
+2. Detect superficial numbered/template variants or semantic-family concentration. Two pilot cases received full diversity credit despite few underlying behaviors.
 3. Let opening readiness represent “evaluator exists but is statically invalid/unmeasured” rather than rendering it as absent when no honest evaluator method can be declared.
 4. Consolidated polish: decide a transitive dependency lock/hash policy; align held-back-set wording with the optional first-run validation policy; clarify undeclared-provenance PASS wording; label mock dollar columns as pricing metadata; and ask the owner to confirm a detached credential opener became visible.
 
 ## Verification evidence
 
 - Guide: `python3 -m unittest discover -s tests -q` — 418 tests, OK.
-- Guide behavior lock: `python3 tools/relock.py --check` — up to date.
+- Lock freshness: `python3 tools/relock.py --check` — up to date.
 - Harness: the canonical six-check bank gate — all six checks PASS.
 - Harness mutation suite: 51 deliberate corruptions detected, including evaluator-
   digest, output-contract-digest, and independent task-kind/evaluator-method mutations.
