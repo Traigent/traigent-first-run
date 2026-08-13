@@ -30,6 +30,6 @@ run-plan*.md
 # Coding-agent scratch worktrees. These are embedded git repositories other
 # sessions create; `git add -A` sweeps them into a commit, which has happened
 # twice, and their presence leaves the tree permanently dirty - which blocks
-# the fixture bank from recording a snapshot, since it refuses a guide checkout
-# whose provenance nobody can identify.
+# a downstream test bank from recording a snapshot of this guide, since it
+# refuses a checkout whose provenance nobody can identify.
 .claude/
