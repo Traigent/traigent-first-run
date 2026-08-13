@@ -16627,14 +16627,14 @@ class TheBuildRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
 
     Repairing an echo stub and a scorer that returns one number for every answer
     means writing a call path and a grader neither file has. The result keeps the
-    customer's rows and their task and none of their code - `\U0001f6e0️` material,
+    customer's rows and their task and none of their code - substitute material,
     which is exactly what the route claimed to be the alternative to. The claim
     was true of a real component with a mendable defect and false of the case the
     worked example showed, which is the case a reader reaches it with.
 
     Read by somebody deciding where to spend, at the moment the run asks them to
     choose, offering the thing they most want to hear. Every other sentence here
-    works to keep the `\U0001f6e0️`/`✅` marker honest; this one sold past it.
+    works to keep the real-world/walkthrough separation honest; this one sold past it.
     """
 
     def _creation(self) -> str:

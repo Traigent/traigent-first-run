@@ -2,9 +2,9 @@
 
 follows: 0042
 resident-ceiling: 80_100
-resident-measured: 79_633
+resident-measured: 79_634
 total-ceiling: 366_549
-total-measured: 366_149
+total-measured: 366_156
 
 The substitute marker is gone. Twenty-eight occurrences of a glyph became the
 words they always sat beside, and words are longer than a glyph, so a change
@@ -34,5 +34,5 @@ is it real and ready - and a substitute is not an answer to that question but a
 different kind of thing this run added, which is why it now sits under its own
 heading instead of competing for a third mark in the same column.
 
-79_633 resident and 366_149 total, measured with `assistant_facing_documents()`.
+79_634 resident and 366_156 total, measured with `assistant_facing_documents()`.
 Resident moves because both documents that define the marker are resident ones.

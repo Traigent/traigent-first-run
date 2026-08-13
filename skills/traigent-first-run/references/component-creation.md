@@ -135,7 +135,7 @@ survives and writing what does not is one action: the assistant opens their file
 whatever holds up, and supplies the rest. Splitting that into "repair" and "write a stand-in" offers
 a choice of method for identical work, and when nothing survives - an echo stub has no call path to
 mend, a scorer returning one number has no rubric to keep - the two produce the same artifact, in
-the same place, under the same marker. That is the situation-not-an-action mistake the section above
+the same place, described in the same words. That is the situation-not-an-action mistake the section above
 refuses by name, and a reader who cannot find the difference is right that there is none.
 
 This is why `references/evaluation-and-dataset.md` offers three for a *material limitation* and this

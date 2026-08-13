@@ -106,6 +106,7 @@ Use exactly these meanings:
 - `✅` - real component found and validated.
 - `❗` - real component is missing, failed validation, or exists with evidence too limited for a
   credible optimization claim.
+
 A substitute the assistant creates carries no mark: the two above answer whether the customer's
 own component is real and ready, and a substitute is not an answer to that. List it under
 walkthrough setup, named in words.
