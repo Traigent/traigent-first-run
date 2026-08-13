@@ -320,7 +320,7 @@ egress.
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
-| [`tests/`](tests/) | The guide's own quality gates — for example, proof the free path makes no network calls. They test the guide, not your project; you never need to run them |
+| [`tests/`](tests/) | The guide's own quality gates — for example, a hermetic check that the documented local mock path attempts no outbound sockets. They test the guide, not your project; you never need to run them |
 | [`tools/`](tools/) | Repo-maintenance guards run by CI |
 
 After the first result, the assistant can offer the advanced

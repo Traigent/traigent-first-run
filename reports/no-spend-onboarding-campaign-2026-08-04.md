@@ -6,9 +6,11 @@ This campaign tested `traigent-first-run` as a customer-facing assistant flow, u
 
 This is Phase A breadth plus a blinded fixture pilot. Phase B—the human-guided provider-backed optimization and portal result—was intentionally not run because the owner requested no spending. The flow is therefore not validated end to end.
 
-Guide baseline: `801df5cedaf25d674de8a7121fc205036416c9c5`. The test harness — an internal
-multi-agent test runner — was pinned to a single revision for the whole campaign; its identifiers
-live in its own history, not here.
+Guide baseline: `801df5cedaf25d674de8a7121fc205036416c9c5`. The internal multi-agent test
+runner began from a pinned baseline and changed while campaign defects were fixed and attempts
+were retried. This public report retains no per-attempt harness revision map, so it does not claim
+one revision reproduces every attempt; that missing map limits independent reproduction of the
+pilot receipts.
 
 ## Customer-environment matrix
 
