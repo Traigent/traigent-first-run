@@ -320,6 +320,40 @@ egress.
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
+| [`tests/`](tests/) | The checks below, including the guidance-budget ledger and the behaviour lock |
+| [`tools/`](tools/) | `relock.py`, which regenerates the behaviour lock |
+
+## Verifying a change
+
+Continuous integration runs exactly these, in this order. Running them locally first is the whole
+difference between one push and three:
+
+```bash
+python -m pip install -r skills/traigent-first-run/assets/requirements-first-run.txt
+ruff check .
+black --check .
+python -m unittest discover -s tests
+python tools/relock.py --check
+```
+
+`ruff` and `black` are pinned to exact versions in
+[`.github/workflows/`](.github/workflows/) - install the versions it names, since a different
+release of either reformats different code. The pins are deliberately not repeated here: a second
+copy is a second thing to forget.
+
+Two of them surprise people, so they are worth naming rather than leaving to be discovered from a
+red build.
+
+`tools/relock.py --check` compares a recorded lock against the guidance as it stands. Editing any
+assistant-facing document changes it, so run `python tools/relock.py` (no flag) to regenerate, and
+commit the result **in the same commit** as the edit that moved it - a lock regenerated but left
+unstaged fails the check while the working tree looks clean.
+
+The suite enforces a **byte budget** over the assistant-facing documents, and the ceiling is not a
+number in a test file. It is read from the newest entry in `tests/guidance_budget/`, one file per
+raise, each stating what it measured and why the addition earned it. Guidance that grows past the
+current ceiling needs a new entry, not a bigger constant - and if two branches each add one, the
+figure that matters is measured over the **merge**, not carried over from whichever landed first.
 
 After the first result, the assistant can offer the advanced
 [Traigent optimization skills](https://github.com/Traigent/traigent-skills) as optional next steps.
