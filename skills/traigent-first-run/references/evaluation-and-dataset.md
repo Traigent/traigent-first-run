@@ -633,7 +633,17 @@ over one dataset each invented their own, and two review documents written for t
 be compared unless the ids mean the same thing. The line number is chosen because it is the one
 identifier the file already has, and because preflight's own warning quotes source lines, so a user
 told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
-add stable ids, the next run uses theirs. Record the answers
+add stable ids, the next run uses theirs.
+
+That reason is also its whole scope, so state it rather than assuming it. A line number identifies a
+row only where the file the CUSTOMER has is one row per line: `preflight.py` reads JSONL and skips
+blank lines while still counting them, so a blank line makes `line-7` the sixth row, and a dataset
+converted to JSONL for this run numbers a file they never saw. Their CSV has a header, their export
+has no lines at all, and either way the mapping the scheme exists to avoid is back. So take the id
+from the source they hold: its own line where that is what they wrote, its 1-based row position
+otherwise, named as a position and not as a line. Where the two differ, say which one the ids follow -
+an id nobody can resolve against their own file is the mistake here, not the scheme used to build it.
+Record the answers
 in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
 
 That file is this run's own read, not the customer's material, and it is the one thing a run leaves
