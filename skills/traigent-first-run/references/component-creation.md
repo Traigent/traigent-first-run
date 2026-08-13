@@ -167,9 +167,11 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > I will use yours instead. I keep the agent I selected unless you point me elsewhere.
 
 Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
-Name the substitute in WORDS, not by its marker alone: `🧪` is defined as a generated substitute and
-it is drawn as tools, so a customer reading the glyph unaided reads "repaired" - the one thing it
-never means. Say what the run will actually read: "your rows" is heard as all of them, and above 100
+Name the substitute in WORDS, not by its marker alone: `🧪` is defined as a generated substitute, and
+a glyph read unaided carries only what it depicts. A test tube says experimental, which is not the
+part that has to land - it does not say WHOSE file this is, so a customer can take it for their own
+component under test rather than a stand-in written in place of it, and that is the one distinction
+the marker exists to draw. Say what the run will actually read: "your rows" is heard as all of them, and above 100
 usable rows the paid run takes a bounded sample, so name the count this project will really use.
 And say that the first run is bounded whichever route they pick - a customer choosing to pause and
 fix their own components is buying a better-grounded result, not a bigger one, and letting them
