@@ -102,7 +102,10 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   project explicitly opts into recording, the contract excludes user prompts/inputs, dataset
   contents and expected outputs, model responses, source code, and credentials from that backend
   transmission. This guide does not independently inspect network packets; stop if observed
-  runtime behavior contradicts that contract.
+  runtime behavior contradicts that contract. Privacy wording describes Traigent's documented
+  backend-payload contract, not an independent packet audit: where payload behavior cannot be
+  inspected, say the contract was followed rather than claiming network traffic was independently
+  audited.
 - Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
@@ -168,14 +171,13 @@ destination:
   them to `https://traigent.ai` as a clickable link. An expired code cannot be revived, and waiting
   will not deliver one that was never requested.
 
-Those four are exclusive on what the user holds: registered or not, and within each, holding the
-thing they need or not. They do not say how long ago; a run later refused for account or plan
-reasons is the spent access period below, not a wrong branch here. Ask which one applies; do not
-infer it from how far along they sound.
+Those four are exclusive on what the user holds, not on how long ago: a run later refused for
+account or plan reasons is the spent access period below, not a wrong branch here. Ask which one
+applies; do not infer it from how far along they sound.
 
 Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
-user in. Never hand the registration address to someone who does not have one yet - that page will
-refuse them, and the fix is to start at `https://traigent.ai`, not to retry the link.
+user in. Never hand the registration address to someone who does not have one yet; the fix is to
+start at `https://traigent.ai`.
 
 The confirmation code and the access code are credentials, not navigation. The first proves the
 mailbox and the second authorizes creating an account, so never ask the user to paste either one
@@ -348,19 +350,13 @@ those scores report the agent pillar from instead is the read of the agent's own
 passed as `--agent-knobs`, never this file.
 
 The rule binds the run, not the invocation that reports. Omitting the document from the opening and
-stage-4 calls describes what those calls pass, and by itself leaves a second call free to score the
-same file to see what the number would have been. Nothing on disk changes, so that extra invocation
-reads as costless, and it is not: its output is evidence the moment it is written down, and a figure
-sitting beside the real one gets quoted - by a captain triaging, by a reviewer, by a later run
-citing prior evidence. So the document is not scored in this run in any invocation, and no number
-derived from scoring one appears in the report, the findings, or the bundle a reviewer is handed.
-Calling such a call internal is a claim about the card and not about those documents.
-
-That is the opening mirror of a rule this guide already keeps at the other end: a run does not close
-on a second number, and it does not open beside one either. It leaves no exploratory scoring at the
-opening gate. What would make a counterfactual worth knowing is a search that justifies it, and
-measuring the space that search received is the closing gate's job - not a figure set next to the
-score it contradicts.
+stage-4 calls describes what those calls pass; a second call scoring the same file to see what the
+number would have been reads as costless, and it is not: its output is evidence the moment it is
+written down, and a figure sitting beside the real one gets quoted. So the document is not scored
+in this run in any invocation, and no number derived from scoring one appears in the report, the
+findings, or the bundle a reviewer is handed. Calling such a call internal is a claim about the
+card and not about those documents. A run does not close on a second number, and it does not open
+beside one either: it leaves no exploratory scoring at the opening gate.
 
 A scoreable file means one thing: *this is the space the search that just completed received*.
 The generated wrapper serializes the finalized space, removes any earlier file before the call, and
@@ -419,9 +415,9 @@ when they disagree. So a field is either declared there and validated, or it is 
 |---|---|---|---|
 | `knobs` | object: knob name to a non-empty list of scalar candidate values | one of the two | the preferred spelling; a non-empty `knobs` wins over `configuration_space`. A document declaring neither key says nothing about the space and is refused; `{"knobs": {}}` declares an empty one and scores 0 under the cap. Every entry's value must be a list, and a knob written as a bare scalar is **refused** - dropping it would shrink the space silently and often *raise* the score. A list with nothing in it is refused for the same reason: a knob with no candidate values is not a narrower space, and scoring it printed a wired-knob count and a combination count the document itself contradicts |
 | `configuration_space` | same shape | accepted alias | read only when `knobs` is absent or empty. Emit `knobs`; never both. Whichever key is present is type-checked, so a malformed alias cannot hide behind a well-formed preferred key |
-| `max_trials` | positive integer | no | the search-space sub-score is read against it: the score follows how many distinct configurations the run will actually try, and is damped when the declared space is more than twenty times the cap. Omitting it costs a step - a document that does not declare a budget does not establish that the run will compare the whole space, so the sub-score is held one step below full credit exactly as an oversized space is. **Emit it.** Deleting the field can never buy full credit, which is the property the earlier rule got backwards: with the damping skipped for an undeclared budget, one identical 10 000-configuration space scored 70 with `max_trials: 12` and 100 with the field removed. Deleting it can still raise the score from below, where the budget is the smaller number: on one 12-configuration space, `max_trials: 2` scores 35 and `max_trials: 1` scores 0, against the 70 the field's absence earns. A budget of one is a real statement that the run compares nothing; silence measures nothing. Any integral number is read, however JSON spelled it: `12` and `12.0` are the same budget, and an integer of any size is read as itself. A fractional value, zero, a negative, a boolean, or a non-number is refused |
+| `max_trials` | positive integer | no | the search-space sub-score is read against it: the score follows how many distinct configurations the run will actually try, and is damped when the declared space is more than twenty times the cap. Omitting it costs a step - a document that does not declare a budget does not establish that the run will compare the whole space, so the sub-score is held one step below full credit exactly as an oversized space is. **Emit it.** Deleting the field can never buy full credit. Deleting it can still raise the score from below, where the budget is the smaller number: on one 12-configuration space, `max_trials: 2` scores 35 and `max_trials: 1` scores 0, against the 70 the field's absence earns. A budget of one is a real statement that the run compares nothing; silence measures nothing. Any integral number is read, however JSON spelled it: `12` and `12.0` are the same budget, and an integer of any size is read as itself. A fractional value, zero, a negative, a boolean, or a non-number is refused |
 | `wired` | list of knob names | **yes - always emit it** | the names the agent actually consumes; only these are scored. Do not rely on omitting it or sending `[]`: a document that does not state what the agent consumes attests nothing, and the scorer treats that as nothing-to-search rather than as "all of them". Emitting the list is the whole point of the document. Every name must be a knob of the declared space - a misspelled one is **refused**, because it matches nothing, silently shrinks the scored set, and makes the card print a wired-knob count the document contradicts |
-| `bounds` | object: knob name to `{"low": number, "high": number}`, low below high | no | per-knob override of the scorer's canonical numeric ranges; an entry missing `low` or `high`, carrying a non-numeric or non-finite edge (`"inf"` or `"nan"`, either of which would collapse a genuinely sweeping knob), naming a knob absent from the space, declaring a range with no width (`low` above or equal to `high`), or declaring one whose width is unmeasurable even though both edges are finite and ordered, is refused. A zero-width range divides the span by zero and zeroes the noise floor, so two nearly-identical values read as a full sweep - and the two unmeasurable widths break the same noise floor and span in the same two directions: a width that overflows to infinity (`low: -1e308, high: 1e308`) makes the noise floor infinite, so a knob genuinely sweeping 1 to 50 collapses to nothing to search, and a width so small that the noise floor underflows to zero (`low: 0.0, high: 5e-324`) again reads two practically identical values as a genuine sweep. It sets the noise floor, span, and endpoint coverage - it does not add search values. A numeric string (`"5"`) is accepted for either edge |
+| `bounds` | object: knob name to `{"low": number, "high": number}`, low below high | no | per-knob override of the scorer's canonical numeric ranges; an entry missing `low` or `high`, carrying a non-numeric or non-finite edge (`"inf"` or `"nan"`, either of which would collapse a genuinely sweeping knob), naming a knob absent from the space, declaring a range with no width (`low` above or equal to `high`), or declaring one whose width is unmeasurable even though both edges are finite and ordered - overflowing to infinity (`low: -1e308, high: 1e308`) or underflowing the noise floor to zero (`low: 0.0, high: 5e-324`) - is refused. A zero-width or unmeasurable range breaks the noise floor and span a knob is measured against, so two nearly-identical values read as a full sweep, or a genuine sweep collapses to nothing to search. It sets the noise floor, span, and endpoint coverage - it does not add search values. A numeric string (`"5"`) is accepted for either edge |
 
 Candidate values are scalars: a string, a number, a boolean, or `null`. The scorer deduplicates,
 compares and counts them, so an object or an array inside a candidate list is refused rather than
@@ -490,33 +486,13 @@ Three honesty rules govern the file:
 
   State the probe's limits exactly, because they are narrow. Its exact claim is **request
   visibility, per model** - that changing the knob changes the request dict, under each model in
-  the space - and never provider *effect*: a provider that accepts a parameter and ignores it
-  yields two different requests and one behaviour. Only the run can show effect; the probe only
-  rules out the dimension that could not have one. It probes every model in the space rather than
-  one base, since request construction branches on the model. It probes
-  several representative inputs rather than one literal string, since a knob that acts only on some
-  inputs (a `sql_mode` applied when the message starts `SQL:`) is invisible under a single probe
-  string - which used to block a legitimately wired run before it started. Replace the wrapper's
-  `PROBE_INPUTS` placeholders with real inputs from the tuning dataset.
-
-  A `partial` verdict - visible under some models, never under others - is **information, not a
-  failure**, and the load continues. A knob can legitimately affect only the models that support
-  it: `reasoning_effort` on a reasoning model is a conditional dimension, and failing the load on it
-  blocked a valid run before it started. The wrapper prints which models honour such a knob, so the
-  asymmetry is in the run record and a reader can weigh it. Do not park a `partial` knob in
-  `WIRED_OUTSIDE_THE_REQUEST` either: that mapping is for knobs the probe cannot see at all, and a
-  `partial` knob demonstrably does act inside request construction.
-
-  Only an `invisible` verdict fails the load - a knob no model and no probed input ever moves, which
-  is the no-op the guard exists to catch. It is also the case
-  the probe genuinely cannot decide, because it cannot tell "acts outside request construction"
-  from "the agent ignores it". It says so rather than guessing either way: a knob that acts outside
-  request construction - a retrieval depth, a tool policy, a repair loop - is recorded in the
-  wrapper's `WIRED_OUTSIDE_THE_REQUEST` mapping of knob to *where it acts*, which the load prints as
-  an unverified claim for a reader to challenge rather than proving it. It is a mapping and not a
-  list of names precisely so that each entry states something reviewable; a bare list let
-  `WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silence the guard completely while still passing.
-  If you cannot say where such a knob acts, drop it from `wired`.
+  the space - and never provider *effect*: only the run can show effect; the probe only rules out
+  the dimension that could not have one. The verdict semantics live beside the code in
+  `references/sdk-execution.md` - why a `partial` knob is a conditional dimension that loads, why
+  only an `invisible` verdict fails, and how a knob acting outside request construction is
+  recorded in the `WIRED_OUTSIDE_THE_REQUEST` mapping of knob to *where it acts*, which the load
+  prints as an unverified claim for a reader to challenge rather than proving it. If you cannot
+  say where such a knob acts, drop it from `wired`.
 - `bounds` is likewise self-declared and unverified. It changes the noise floor and the span a knob
   is measured against, so a narrow declared range can turn two nearly-identical values into a
   "varying" knob and clear `agent-no-varying-knobs` on bounds alone. Declare the range the knob
@@ -616,10 +592,9 @@ exist and points at a file that was never created.
   silence is neither.
 
 An asking cap is what this card exists to discharge, and discharging it means the customer meets its
-remedy at the moment they are asked to pay - not that its question is put here a second time. Its
-remedy is already in `recommended_action`, and a remedy the customer never sees is the defect this
-replaces: a ceiling printed with nothing a reader could act on. Bound, never block - the run is
-still worth making, and the question is what to settle before it rather than instead of it.
+remedy at the moment they are asked to pay - not that its question is put here a second time.
+Bound, never block - the run is still worth making, and the question is what to settle before it
+rather than instead of it.
 
 After showing the baseline result, give the connected stage a preview and approval:
 
@@ -781,10 +756,6 @@ agents, add task-relevant non-model controls only to the enhanced space by defau
 format, retrieval depth, few-shot count, tool policy, or repair behavior; do not force the
 generated example's controls onto an unrelated task.
 
-This is a getting-familiar first run: a few of the most relevant knobs, never a wall of knobs added
-to manufacture a visible improvement. Present it that way too: a deliberately small enhancement for
-the first look, a small slice of what Traigent can drive rather than its full capability.
-
 A customer who brings ten wired knobs does not get all ten, and the reason is arithmetic. Ten knobs
 at two values each is 1024 configurations against a 12-trial cap - 1% of the space sampled - and
 the scorer damps the search-space points past 20x the cap, 240 configurations at that
@@ -803,17 +774,14 @@ A knob the baseline never varied is not a candidate: silence is not a null resul
 it varied off the space that actually ran rather than off a remembered list - a generated
 walkthrough's baseline axes follow the selected model rung, so it can rank only what it swept. The
 baseline's twelve trials across a knob's two values are six observations a side at most - enough to
-prefer one knob over another, never enough to prove one does nothing. Say `did not move the baseline`, never `does not
-matter`, and give a knob this baseline never ranked no verdict at all.
+prefer one knob over another, never enough to prove one does nothing. Say `did not move the
+baseline` or `the baseline's best combination used X`, never `does not matter` or `X is better`,
+and give a knob this baseline never ranked no verdict at all.
 
 Fill the freed slots from the failure-mode levers below, once the customer's evidenced knobs are
-seated: where the evidence ties, keep theirs - they know their agent. The connected-stage approval
-preview above is where that record reaches them, before they pay for a space that excluded it.
-
-Twelve trials split across a knob's two values is at most six observations a side, so state it as
-`the baseline's best combination used X` and never as `X is better`, and never as proof that a replaced
-knob does nothing. Where the evidence ties, the customer's own knob wins over one of this guide's
-suggestions.
+seated: where the evidence ties, the customer's own knob wins over one of this guide's suggestions
+- they know their agent. The connected-stage approval preview above is where that record reaches
+them, before they pay for a space that excluded it.
 
 The baseline can decide which customer-owned knobs fill the three slots; it does not narrow their
 values between runs. The generated walkthrough is simpler still: all three controls and all their
@@ -829,12 +797,12 @@ three-control choice reaches the enhanced run's approval card with that evidence
 the customer can object before paying for the selected space.
 
 Say plainly what that is and is not. The knobs are reduced to demonstrate the principle cheaply -
-a first run has to finish, cost little, and be readable - and Traigent knows tens of knobs it can
-recommend once the principle is shown. This is a demonstration, not the ceiling of what Traigent
-can do, and no result here should be read as the best the system could reach. Never present the
-smaller space as though the improvement were bought by shrinking the search.
+a first run has to finish, cost little, and be readable, never a wall of knobs added to
+manufacture a visible improvement - and Traigent knows tens of knobs it can recommend once the
+principle is shown. This is a demonstration, not the ceiling of what Traigent can do, and no
+result here should be read as the best the system could reach. Never present the smaller space as
+though the improvement were bought by shrinking the search.
 
-A knob that does not influence the agent code is not a real optimization variable.
 Native boolean knobs use `[True, False]`, never string encodings. A generated walkthrough fixes the
 one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search
 on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
@@ -998,8 +966,7 @@ difference between configurations and the level sits near the top of the run's o
 we tried separated them" is a finding about the task rather than a failure of the search: these
 configurations are not what limits this result. Then the cheapest point the run measured is not
 merely on the frontier, it is the answer, and the experiment worth running next is a tier BELOW
-anything tested rather than above it - which is the opposite escalation from the one above, and the
-reason this reading is written down rather than left to be inferred from a list of hypotheses.
+anything tested rather than above it.
 
 Two bounds it keeps, both already owned above. It is a statement about what this run tested and
 never about the space - a cheaper tier nobody ran is a hypothesis to test at full scale, exactly as
@@ -1062,10 +1029,8 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
   reason; do not replace it with a guessed explanation or claim portal success.
-- Tracking degraded to local-only during a connected run - missing `cloud_url`, a `rejected`
-  persistence state, HTTP 403 without the `experiment.write` scope, or a permanent HTTP 400: halt
-  further paid work at once, surface a sanitized backend reason, and report the degradation. Do not
-  keep spending on trials that no longer reach the portal.
+- Tracking degraded to local-only during a connected run: apply the Connected-run readiness halt -
+  stop paid work at once, surface a sanitized backend reason, and report the degradation.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
   the stop reason; do not report it as a failure or silently drop the paid trials.
@@ -1094,14 +1059,7 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 
-Keep assistant-created walkthrough artifacts under `traigent-runs/`. For generated wrappers, set
-the process-only SDK results folder to a child of `traigent-runs/` before importing Traigent so its
-local optimization logs and state remain inside the ignored walkthrough directory. If a preserved
-project already configures another SDK results folder, honor and record it instead. Store no
-secrets, raw private content in run names, or prompts/outputs in numeric telemetry.
-
-Privacy wording describes Traigent's documented backend-payload contract, not an independent
-packet audit. Keep metrics, metadata, experiment names, and errors content-free. Verify the
-installed SDK's privacy/offline and local-content-logging controls when available; if payload
-behavior cannot be inspected, say that the contract was followed rather than claiming network
-traffic was independently audited.
+For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
+before importing Traigent so its local optimization logs and state remain inside the ignored
+walkthrough directory. Store no secrets, raw private content in run names, or prompts/outputs in
+numeric telemetry.
