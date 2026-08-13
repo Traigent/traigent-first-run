@@ -58,14 +58,20 @@ guide is ever edited faster than it is reviewed, which is the condition that wou
 
 ## Checking a change
 
+For changes to this repository itself - no customer run ever runs these:
+
 Costs measured on a current checkout, so running everything is a known price, not a guess.
 
 | Check | Measured | Run it when |
 | --- | --- | --- |
 | `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
 | `ruff check .` | 0.1 s | Always. |
-| `black --check .` | 3 s | Always. |
-| `python -m unittest discover -s tests` | ~4 min (1066 tests) | Guidance, scripts, or tests changed. |
+| `black --check .` | ≤3 s | Always. |
+| `python -m unittest discover -s tests` | ~4 min (1066 tests) | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
+
+CI additionally executes the behavioral scenarios hermetically (the `offline-contract` job,
+~30 s) inside the network-none container `validate.yml` builds - no local row reproduces it, so
+it is met first in CI.
 
 The full suite matters most for guidance edits, where it looks least relevant: much of it is a
 pin corpus holding settled decisions in place byte-for-byte, so a reworded sentence fails loudly
