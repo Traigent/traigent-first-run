@@ -16,44 +16,6 @@ mark of its own. Do not describe synthetic results as representative of producti
 secret entry, paid/provider calls, private-data egress, judgment-dependent gold/rubric changes,
 destructive changes, or production-affecting changes.
 
-## Checking a change
-
-Run this once per clone, before anything else:
-
-```bash
-bash tools/install-hooks.sh
-```
-
-It points `core.hooksPath` at `.githooks/`, whose `pre-commit` regenerates the behaviour lock and
-stages it - or refuses, when `GUIDE.md` or `skills/` carry unstaged changes. `relock.py` reads the
-working tree, so regenerating while the tree holds edits the commit does not would write a lock
-describing content that commit lacks. Stage or stash them and commit again; the same applies to
-`git commit <path>`.
-
-**It does not cover `git rebase --continue`**, which runs no pre-commit hook - so a conflict
-resolved wrongly during a rebase still reaches a commit. CI's lock check is the backstop there. The
-gap is stated rather than left to be inferred, because a guard trusted past its edge is worse than a
-guard you know the shape of.
-
-The lock hashes `GUIDE.md` and everything under `skills/traigent-first-run/`, so it moves whenever
-the guidance does, and keeping it current used to be a rule to remember. Regenerating after staging
-produced a stale commit twice on one branch in one afternoon, which is why the ordering is now the
-hook's job and not yours.
-
-The four gates CI runs, and what each costs, because treating them as one unit is how the slow one
-gets run for changes that cannot affect it:
-
-| gate | cost | run it when |
-|---|---|---|
-| `python tools/relock.py --check` | ~5s | always - and it is CI's first step, before the installs |
-| `ruff check .` | <1s | always |
-| `black --check .` | ~3s | always |
-| `python -m unittest discover -s tests` | **~4 min** | guidance, scripts or tests changed |
-
-A lock-only or comment-only commit does not need the suite. One CI job is not reproducible by any
-of these: `offline-contract` runs the behavioural harness in a network-less container and gates
-`validate`, so all four can pass locally while CI does not.
-
 ## Editing the guidance
 
 Recorded once here so it is not re-decided per pull request.
