@@ -19,7 +19,7 @@
     "matched_receipts": 3,
     "unchanged_audits": 3,
     "excluded_attempts": 2,
-    "per_case_rows": "withheld from this manifest: case identifiers and their expected scores, bands, and receipts are the answer key a future blinded worker could read from this repository; earlier public revisions carried these rows, so these cases are treated as burned for future blinded runs"
+    "per_case_rows": "withheld from this manifest: case identifiers and their expected scores, bands, and receipts are the answer key a future blinded worker could read from this repository; earlier public revisions carried these rows, published only after these pilot runs completed, so these cases are treated as burned for future blinded runs; the exposure burns future runs, not these results"
   },
   "local_socket_probe": {
     "raw_log_published": false,

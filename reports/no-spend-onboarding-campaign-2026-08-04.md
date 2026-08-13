@@ -49,7 +49,7 @@ The sanitized evidence manifest records the aggregate pilot counts. Raw command 
 local, ephemeral observations and are not claimed as durable or independently reproducible
 evidence.
 
-Excluded attempts were retained instead of rewritten:
+Excluded attempts and one grading artifact were retained instead of rewritten:
 
 - One attempt was excluded because the captain omitted the explicit no-extra-opening-arguments instruction and the worker added component-state flags.
 - One attempt was excluded because the worker obeyed the corrected argument boundary but the public CLI did not yet distinguish Python `code` from SQL `code-sql`.
