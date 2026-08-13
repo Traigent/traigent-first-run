@@ -2,6 +2,20 @@
 
 The coding assistant maintains this record at `traigent-runs/run-plan.md`; the user does not fill it in.
 
+## Stage status
+
+`[x]` done · `[~]` in progress · `[ ]` not reached · append `skipped - <reason>` to a stage this run
+lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's rules; this block records only where the run is.
+
+- [ ] 1. Inspect quietly
+- [ ] 2. Show readiness once
+- [ ] 3. Complete the system
+- [ ] 4. Validate components locally
+- [ ] 5. Prepare the environment and finish free checks
+- [ ] 6. Approve and run the baseline
+- [ ] 7. Run the honest comparison
+- [ ] 8. Verify and report
+
 ## Objective and provenance
 
 - Target project and selected agent (absolute path plus function or command):

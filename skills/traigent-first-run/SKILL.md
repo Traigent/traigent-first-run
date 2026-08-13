@@ -41,6 +41,14 @@ scoring one is reported. Only after task intent is anchored, copy
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
+Keep its stage-status block current from the moment the record exists: at every stage boundary and
+before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
+next stage is always the first neither marked done nor skipped. A session that finds
+`traigent-runs/run-plan.md` recording a matching target and agent resumes rather than restarts:
+read the record top to bottom and continue at the first stage neither marked done nor skipped -
+recorded scores, approvals, spend, and paid results stand, and the recorded opening score is still
+the run's opening score. A record with every stage marked done or skipped is a finished run, not a
+resume point. The operating contract's mismatch rule says when the artifact is historical instead.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
 unversioned `traigent` package.
@@ -943,6 +951,7 @@ these are available whenever the user wants them rather than because their state
 
 The first run is complete only when:
 
+- The run record's stage-status block shows every stage done or skipped with its reason.
 - The starting state and provenance of all three components are recorded.
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.
