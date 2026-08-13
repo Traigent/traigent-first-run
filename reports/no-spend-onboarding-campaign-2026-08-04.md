@@ -6,9 +6,9 @@ This campaign tested `traigent-first-run` as a customer-facing assistant flow, u
 
 This is Phase A breadth plus a blinded fixture pilot. Phase B—the human-guided provider-backed optimization and portal result—was intentionally not run because the owner requested no spending. The flow is therefore not validated end to end.
 
-Guide baseline: `801df5cedaf25d674de8a7121fc205036416c9c5`.
-
-Test-harness baseline: `d742fbc1b8adbcd53c281a87fce5ceca1da5d792`.
+Guide baseline: `801df5cedaf25d674de8a7121fc205036416c9c5`. The test harness — an internal
+multi-agent test runner — was pinned to a single revision for the whole campaign; its identifiers
+live in its own history, not here.
 
 ## Customer-environment matrix
 
@@ -33,23 +33,25 @@ valid counts; its fresh retry explicitly confirmed it did not read outside its a
 
 The canonical six-check bank gate passed before workers ran. Cases ran sequentially in new neutral roots with fresh context-isolated workers.
 
-| Case | Opening | Receipt | Customer stop | Project audit |
-| --- | --- | --- | --- | --- |
-| 02 | 45/100 PARTIAL; `set-f1` + `structured` | `MATCHED SNAPSHOT` | Dataset repair / labeled demonstration / pause | `UNCHANGED` |
-| 06 | 0/100 NOT READY; no task-kind | `MATCHED SNAPSHOT` | Exact task-intent question | `UNCHANGED` |
-| 08 | 33/100 PARTIAL; task kind `code`, no method for constant-pass evaluator | `MATCHED SNAPSHOT` | Repair walkthrough copies or pause for production fixes | `UNCHANGED` |
+Three blinded cases ran, spanning the readiness range from a project with no discoverable task
+intent to partially ready projects with material dataset or evaluator limitations. All three
+pilot cases matched their expected readiness receipts exactly, each worker stopped at the
+intended customer decision point — a genuine question or repair choice, never an unauthorized
+action — and every project audit came back `UNCHANGED`. Per-case identifiers, expected scores,
+and expected receipts are deliberately not restated here: this repository is the customer-visible
+handoff a future blinded worker reads, so publishing them would contaminate the blinding.
 
 Valid pilot result: **3/3 matched receipts and safe stop behavior**.
 
-The sanitized evidence manifest records each case's opening score, receipt verdict, stop, and
-unchanged audit. Raw command transcripts were local, ephemeral observations and are not claimed as
-durable or independently reproducible evidence.
+The sanitized evidence manifest records the aggregate pilot counts. Raw command transcripts were
+local, ephemeral observations and are not claimed as durable or independently reproducible
+evidence.
 
 Excluded attempts were retained instead of rewritten:
 
 - One attempt was excluded because the captain omitted the explicit no-extra-opening-arguments instruction and the worker added component-state flags.
 - One attempt was excluded because the worker obeyed the corrected argument boundary but the public CLI did not yet distinguish Python `code` from SQL `code-sql`.
-- The first case-02 captain capture normalized JSON floats to integers and correctly failed exact grading; the raw stdout was recaptured without transformation and then matched.
+- One captain capture normalized JSON floats to integers and correctly failed exact grading; the raw stdout was recaptured without transformation and then matched.
 
 ## Confirmed defects and fixes prepared
 
@@ -64,8 +66,8 @@ Excluded attempts were retained instead of rewritten:
 
 ### Test harness
 
-1. Correct cases 02, 03, and 20 from stale `execution`/`code-sql` declarations to their implemented `set-f1`/`structured` contract.
-2. Correct case 08 so a constant-pass evaluator does not privately inherit `execution`; its opening method is absent and task kind is `code`.
+1. Correct the cases whose declared evaluator contracts had gone stale against the contract their fixtures actually implement.
+2. Stop a constant-pass evaluator from privately inheriting an evaluation method its fixture never demonstrates; declare its opening method as absent.
 3. Bind scorer and opening snapshots to the selected evaluator bytes with SHA-256 digests.
 4. Bind both snapshot profiles to evaluator bytes and a customer-visible output
    contract; add corruption probes proving evaluator-method and task-kind evidence
@@ -76,7 +78,7 @@ Excluded attempts were retained instead of rewritten:
 ## Remaining findings to track
 
 1. Add a hermetic regression that imports the pinned LiteLLM/Traigent mock path under a blocked/counting socket and asserts zero outbound attempts. Current package tests lock the guidance, while the independent environment test supplied the behavioral evidence.
-2. Detect superficial numbered/template variants or semantic-family concentration. Cases 02 and 08 each received full diversity credit despite only six and four underlying behaviors respectively.
+2. Detect superficial numbered/template variants or semantic-family concentration. Two pilot cases each received full diversity credit despite only six and four underlying behaviors respectively.
 3. Let opening readiness represent “evaluator exists but is statically invalid/unmeasured” rather than rendering it as absent when no honest evaluator method can be declared.
 4. Consolidated polish: decide a transitive dependency lock/hash policy; align held-back-set wording with the optional first-run validation policy; clarify undeclared-provenance PASS wording; label mock dollar columns as pricing metadata; and ask the owner to confirm a detached credential opener became visible.
 
@@ -84,10 +86,10 @@ Excluded attempts were retained instead of rewritten:
 
 - Guide: `python3 -m unittest discover -s tests -q` — 418 tests, OK.
 - Guide behavior lock: `python3 tools/relock.py --check` — up to date.
-- Harness: canonical `check_bank.py --guide-src ...` — all six checks PASS.
+- Harness: the canonical six-check bank gate — all six checks PASS.
 - Harness mutation suite: 51 deliberate corruptions detected, including evaluator-
   digest, output-contract-digest, and independent task-kind/evaluator-method mutations.
-- Harness package: repository and system `quick_validate.py` — valid.
+- Harness package: repository and system package validation — valid.
 - Python formatting/imports: Black, isort, and `py_compile` — clean.
 - Blinded pilot: three valid `MATCHED SNAPSHOT` verdicts and three `UNCHANGED` audits.
 

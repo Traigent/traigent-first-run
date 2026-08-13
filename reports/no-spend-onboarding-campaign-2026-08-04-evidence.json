@@ -19,11 +19,7 @@
     "matched_receipts": 3,
     "unchanged_audits": 3,
     "excluded_attempts": 2,
-    "cases": [
-      {"case": "02", "overall": 45, "band": "PARTIAL", "verdict": "MATCHED SNAPSHOT", "audit": "UNCHANGED"},
-      {"case": "06", "overall": 0, "band": "NOT READY", "verdict": "MATCHED SNAPSHOT", "audit": "UNCHANGED"},
-      {"case": "08", "overall": 33, "band": "PARTIAL", "verdict": "MATCHED SNAPSHOT", "audit": "UNCHANGED"}
-    ]
+    "per_case_rows": "deliberately not published: case identifiers and their expected scores, bands, and receipts would let a future blinded worker read its own answer key from this repository"
   },
   "local_socket_probe": {
     "raw_log_published": false,
