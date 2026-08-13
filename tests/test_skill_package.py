@@ -14047,7 +14047,14 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         ),
         (
             "who creates temporary walkthrough components",
-            ("temporary walkthrough substitute created by the coding assistant",),
+            (
+                "temporary walkthrough substitute created by the coding assistant",
+                # The marker went and this sentence lost its glyph with it. The
+                # settled answer is unchanged - the assistant creates them, not
+                # Traigent - so the registry records the new wording rather than
+                # dropping a check whose decision never moved.
+                "a substitute the assistant creates carries no mark",
+            ),
             (
                 "temporary walkthrough substitute created by traigent",
                 "traigent will create the coherent walkthrough substitutes",
@@ -16660,7 +16667,7 @@ class TheBuildRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         self.assertIn("how much survives is a fact this run established", creation)
         # And the worked example says which of the two this case is, where the
         # customer reads it - the whole point of disclosing rather than asking.
-        self.assertIn("a generated stand-in, marked", creation)
+        self.assertIn("what i write is a generated stand-in", creation)
         self.assertIn("cannot tell you how your own code performs", creation)
 
     def test_the_ask_ends_after_the_standing_line(self) -> None:
@@ -16862,52 +16869,63 @@ class ACommentIsNotAKnobTests(unittest.TestCase):
         self.assertIn("reports a search space this project does not have", creation)
 
 
-class TheSubstituteMarkerIsOneGlyphEverywhereTests(unittest.TestCase):
-    """The marker was changed in the guide and left behind in the entry point.
+class TheSubstituteHasNoMarkerAnywhereTests(unittest.TestCase):
+    """There is no substitute marker, and the absence is the thing to pin.
 
-    `GUIDE.md` is where the three markers are DEFINED, so for one commit it
-    defined the substitute as tools while every document that uses it said
-    specimen. Nothing failed: no test pinned the definition, and the byte budget
-    does not care which glyph occupies the bytes.
+    Two glyphs were tried. Tools was retired when a reader asked why a
+    substitute carried a repair symbol; the specimen that replaced it says
+    experimental, which is something the customer's own component can also be.
+    Each was read for what it depicted, and neither depiction was "the assistant
+    wrote this" - the one fact that has to land on the line where a customer
+    decides what to spend.
 
-    The sweep that missed it covered `skills/` and `tests/` and never the
-    repository root - which is the whole lesson. A marker is a shared value
-    across documents, and this repository's own history says a rule stated in
-    two places is a rule that can be changed in one.
+    Pinned as an absence for the same reason the retired glyph is: both read
+    perfectly well, so nothing fails when one comes back. `GUIDE.md` is where
+    the markers are DEFINED and the sweep that once missed it covered `skills/`
+    and `tests/` and never the repository root, which is why the document list
+    below starts there.
     """
+
+    RETIRED = ("\U0001f6e0\ufe0f", "\U0001f9ea")
 
     def _documents(self) -> list[Path]:
         roots = [ROOT / "GUIDE.md", ROOT / "CLAUDE.md", SKILL]
         roots += sorted((SKILL_ROOT / "references").glob("*.md"))
         return [path for path in roots if path.is_file()]
 
-    def test_no_document_still_carries_the_retired_glyph(self) -> None:
-        """Pinned as an absence, because the old one read perfectly well."""
-        stale = [
-            path.name
-            for path in self._documents()
-            if "\U0001f6e0️" in path.read_text(encoding="utf-8")
-        ]
-        self.assertEqual(
-            stale,
-            [],
-            "the retired substitute marker survives in these documents; a "
-            "marker means one thing or it means nothing",
-        )
+    def test_no_document_carries_either_retired_glyph(self) -> None:
+        """Both are absences now: the tools one, and the specimen after it."""
+        for glyph in self.RETIRED:
+            stale = [
+                path.name
+                for path in self._documents()
+                if glyph in path.read_text(encoding="utf-8")
+            ]
+            with self.subTest(glyph=glyph):
+                self.assertEqual(
+                    stale,
+                    [],
+                    "a retired substitute marker survives in these documents; "
+                    "the words carry this claim, and a mark beside them is one "
+                    "more thing to read wrongly",
+                )
 
-    def test_the_entry_point_defines_the_one_in_use(self) -> None:
-        """GUIDE.md defines the markers; the definition is the thing to pin."""
+    def test_the_entry_point_says_a_substitute_carries_no_mark(self) -> None:
+        """GUIDE.md defines the markers, so it is where the absence is stated.
+
+        An omission nobody wrote down reads as an oversight, and the next
+        contributor supplies the missing third mark helpfully.
+        """
         guide = (ROOT / "GUIDE.md").read_text(encoding="utf-8")
-        self.assertIn("`\U0001f9ea` generated walkthrough substitute", guide)
+        self.assertIn("A substitute this run generated carries no mark", guide)
 
-    def test_every_document_that_uses_it_agrees(self) -> None:
-        """A count, not a sample: one straggler is the whole defect."""
-        for path in self._documents():
-            text = path.read_text(encoding="utf-8")
-            if "generated" not in text and "substitute" not in text:
-                continue
-            with self.subTest(document=path.name):
-                self.assertNotIn("\U0001f6e0️", text)
+    def test_the_script_prints_the_words_and_not_a_glyph(self) -> None:
+        """The renderer is where a marker actually reaches a customer."""
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text(encoding="utf-8")
+        for glyph in self.RETIRED:
+            with self.subTest(glyph=glyph):
+                self.assertNotIn(glyph, source)
+        self.assertIn("generated walkthrough substitute", source)
 
 
 class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
@@ -17066,21 +17084,21 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
             (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
         )
 
-    def test_the_substitute_is_named_in_words_not_by_its_glyph(self) -> None:
-        """The mark tags the claim; it never carries it alone.
+    def test_the_substitute_is_named_in_words_and_nothing_else(self) -> None:
+        """The words were always required; now they are all there is.
 
-        It was drawn as tools until a reader asked why a substitute wore a
-        repair symbol - nothing had been mended, and "repaired" is the one
-        reading the glyph invited and the one it never meant. It is a specimen
-        now, and the ask says the word anyway: a customer meets the mark beside
-        `✅` while deciding what to spend, and a pictogram is not where that
-        claim should live.
+        Drawn as tools until a reader asked why a substitute wore a repair
+        symbol, then as a specimen, which says experimental - something the
+        customer's own component can also be. Two depictions, two wrong
+        readings, and the same instruction under both. A customer meets this
+        line beside `✅` while deciding what to spend, and a pictogram is not
+        where that claim should live.
         """
         creation = self._creation()
-        self.assertIn("a generated stand-in, marked", creation)
+        self.assertIn("what i write is a generated stand-in", creation)
         self.assertIn("a substitute for it", creation)
-        self.assertIn("marked `\U0001f9ea`: not a repair", creation)
-        self.assertIn("a specimen, not a tool", self._glossary())
+        self.assertIn("a generated stand-in: not a repair", creation)
+        self.assertIn("there is no mark for a substitute", self._glossary())
 
     def test_it_says_which_rows_the_run_will_actually_read(self) -> None:
         """ "Your rows" is heard as all of them, and often it is not all of them.

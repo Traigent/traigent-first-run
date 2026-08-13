@@ -438,12 +438,14 @@ When the user's setup is ambiguous, do not guess silently and do not invent an
 ask/proceed rule from this file: the authorization table in `SKILL.md` owns
 those decisions. What this file adds is only the phrasing - when those rules
 say to ask, ask in the plain wording above, and when they say to proceed with a
-generated substitute, say so in one sentence and mark it `🧪`.
+generated substitute, say so in one sentence and list it under walkthrough setup.
 
-The mark is a specimen, not a tool. It was drawn as tools until a reader asked
-why a substitute carried a repair symbol - nothing had been mended, and the one
-reading the glyph invites is the one it never means. A customer meets it beside
-`✅` while deciding what to spend, so it has to say "made for this walkthrough,
-not your product" without a sentence to rescue it. Say the words anyway: the mark
-tags a claim the prose has already made, and it is never the only place the claim
-appears.
+There is no mark for a substitute, and that is a decision rather than an
+omission. It was drawn as tools until a reader asked why a substitute carried a
+repair symbol, and then as a specimen, which says experimental - something the
+customer's own component can also be. Each glyph was read for what it depicts,
+and each depiction was a guess at the one thing that has to land: who wrote
+this. A customer meets the line beside `✅` while deciding what to spend, so the
+line says "made for this walkthrough, not your product" in words. The mark never
+removed the need for that sentence; it only ever tagged a claim the prose had
+already made.
