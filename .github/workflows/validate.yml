@@ -118,10 +118,10 @@ jobs:
           python-version: "3.12"
 
       - name: Fail fast on a lock that was never regenerated
-        # `test_contracts.py` already fails on a stale lock, but only after the
+        # The scenario fixture locks are the only generated locks left.
+        # `test_contracts.py` already fails on a stale one, but only after the
         # installs, and only on parsed JSON. This runs first and compares the
         # rendered text, so a reflowed or hand-edited lock is caught too.
-        # Neither check makes the lock behavioural - it stores hashes (#147).
         run: python tools/relock.py --check
 
       - name: Install validation tools
