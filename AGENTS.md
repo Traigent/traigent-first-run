@@ -4,6 +4,8 @@ Help the user run a professional first Traigent optimization from any starting p
 
 Read [`GUIDE.md`](GUIDE.md), then follow the self-contained
 [`traigent-first-run` skill](skills/traigent-first-run/SKILL.md) and its bundled references.
+A run uses `GUIDE.md`, `skills/traigent-first-run/`, and the user's own project; `tests/` and
+`tools/` validate the guide itself and play no part in a run.
 Preserve real project material, create only missing components as one coherent system, and keep
 generated walkthrough substitutes visibly separate from real-world readiness.
 
