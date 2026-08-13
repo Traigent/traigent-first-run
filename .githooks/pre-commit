@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Regenerate the derived lock and stage it, so a commit cannot carry a stale one.
+#
+# The lock hashes GUIDE.md and everything under skills/traigent-first-run/, so it
+# moves whenever the guidance does. Keeping it current was a rule to remember,
+# and the failure it produced was silent in the one place it mattered:
+# `relock.py --check` reads the WORKING TREE and passes, while CI reads the
+# COMMIT and fails.
+#
+# That same asymmetry is why this hook REFUSES rather than regenerating when the
+# lock's inputs differ between the tree and the index. relock.py reads the tree.
+# If the tree carries edits this commit does not, the lock it produces describes
+# content the commit does not contain - a stale lock again, arriving through the
+# fix for stale locks, and dragging uncommitted work into a commit that never
+# asked for it. Refusing is the only sound answer a hook can give there.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Prefer python3, fall back to python: CI uses `python`, this repo's docs say
+# `python3`, and Git Bash on Windows usually ships only `python`.
+if command -v python3 >/dev/null 2>&1; then
+  interpreter=python3
+elif command -v python >/dev/null 2>&1; then
+  interpreter=python
+else
+  echo "pre-commit: no python3 or python on PATH; cannot regenerate the lock." >&2
+  exit 1
+fi
+
+# Everything the lock is computed from. Unstaged changes here mean the tree and
+# the commit disagree, and the lock can only describe one of them.
+if ! git diff --quiet -- GUIDE.md skills/traigent-first-run; then
+  echo "pre-commit: GUIDE.md or skills/traigent-first-run has unstaged changes." >&2
+  echo "  The lock is computed from the working tree, so regenerating it now" >&2
+  echo "  would commit a lock describing content this commit does not carry." >&2
+  echo "  Stage them (git add -u) or stash them, then commit again." >&2
+  echo "  This also applies to \`git commit <path>\`: stage instead." >&2
+  exit 1
+fi
+
+if ! "$interpreter" tools/relock.py >/dev/null; then
+  echo "pre-commit: tools/relock.py failed; the lock was NOT regenerated." >&2
+  exit 1
+fi
+
+# Only what relock.py writes, and only files that exist. A bare pathspec glob is
+# expanded by git itself, which stages DELETIONS for locks missing from the tree
+# - that is how an unrelated commit acquired four fixture-lock removals.
+git add -- tests/behavioral/behavior.lock.json
+for lock in tests/behavioral/scenarios/*/fixture.lock.json; do
+  [ -e "$lock" ] && git add -- "$lock"
+done

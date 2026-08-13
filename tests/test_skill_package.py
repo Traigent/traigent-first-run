@@ -16946,6 +16946,100 @@ class ACommentIsNotAKnobTests(unittest.TestCase):
         self.assertIn("reports a search space this project does not have", creation)
 
 
+class TheLockRegeneratesItselfTests(unittest.TestCase):
+    """The lock is derived, and keeping it current was a rule to remember.
+
+    `relock.py --check` reads the WORKING TREE and passes; CI reads the COMMIT
+    and fails. Regenerating after staging leaves the resolved copy in the index
+    and the regenerated one on disk, with every local check agreeing the tree is
+    clean. That shipped twice on one branch in one afternoon.
+
+    The hook is the fix, and review showed the first version was worse than the
+    problem: it regenerated from the tree unconditionally, so an unstaged edit
+    anywhere in the lock's inputs put a lock describing UNCOMMITTED content into
+    a commit - the same CI mismatch, arriving through the fix for it. These pin
+    the properties that make it sound rather than the text that describes it.
+    """
+
+    HOOK = ROOT / ".githooks" / "pre-commit"
+
+    def test_the_hook_exists_and_can_run(self) -> None:
+        self.assertTrue(self.HOOK.is_file(), f"{self.HOOK} is missing")
+        self.assertTrue(
+            os.access(self.HOOK, os.X_OK),
+            "the pre-commit hook is not executable, so git skips it silently "
+            "and the lock goes back to being a rule to remember",
+        )
+
+    def test_it_refuses_rather_than_locking_a_tree_the_commit_does_not_carry(
+        self,
+    ) -> None:
+        """The P1 review found, stated as the condition rather than the string.
+
+        relock.py reads the tree. If the tree holds edits this commit does not,
+        the lock it writes describes content the commit lacks - so the only
+        sound answer is to refuse.
+        """
+        body = self.HOOK.read_text(encoding="utf-8")
+        self.assertIn("git diff --quiet -- GUIDE.md skills/traigent-first-run", body)
+        self.assertIn("exit 1", body)
+
+    def test_it_stages_only_locks_that_exist(self) -> None:
+        """Two incidents in one line.
+
+        A bare pathspec glob is expanded by GIT, which stages DELETIONS for
+        locks missing from the tree - that is how an unrelated commit acquired
+        four fixture-lock removals. And `git add -A` sweeps whatever else is
+        there, which is how eight embedded worktrees once reached a commit.
+        """
+        body = self.HOOK.read_text(encoding="utf-8")
+        added = [
+            line.strip()
+            for line in body.splitlines()
+            if line.strip().startswith("git add")
+        ]
+        self.assertTrue(added, "the hook stages nothing, so it fixes nothing")
+        for line in added:
+            with self.subTest(line=line):
+                self.assertIn("lock.json", line)
+                self.assertNotIn("-A", line)
+                self.assertNotIn("--all", line)
+        self.assertIn('[ -e "$lock" ]', body)
+
+    def test_it_finds_an_interpreter_under_either_name(self) -> None:
+        """CI runs `python`; this repo's docs say `python3`; Git Bash has one."""
+        body = self.HOOK.read_text(encoding="utf-8")
+        self.assertIn("command -v python3", body)
+        self.assertIn("command -v python ", body)
+
+    def test_the_installer_is_named_where_a_reader_will_look(self) -> None:
+        """A hook nobody enables is a file, not a guard.
+
+        `.git/hooks` is not versioned, so `core.hooksPath` is the setting that
+        makes a checked-in hook run at all.
+        """
+        installer = ROOT / "tools" / "install-hooks.sh"
+        self.assertTrue(installer.is_file())
+        self.assertIn("core.hooksPath", installer.read_text(encoding="utf-8"))
+        self.assertIn(
+            "bash tools/install-hooks.sh",
+            (ROOT / "CLAUDE.md").read_text(encoding="utf-8"),
+        )
+
+    def test_the_rebase_gap_is_written_down(self) -> None:
+        """A guard with a hole is safe only if the hole is stated.
+
+        `git rebase --continue` runs no pre-commit hook, so the original failure
+        still reaches a commit through the workflow branches actually use. CI's
+        relock check is the backstop, and a reader has to be told that rather
+        than inferring a completeness the hook does not have.
+        """
+        self.assertIn(
+            "git rebase --continue",
+            (ROOT / "CLAUDE.md").read_text(encoding="utf-8"),
+        )
+
+
 class TheSubstituteHasNoMarkerAnywhereTests(unittest.TestCase):
     """There is no substitute marker, and the absence is the thing to pin.
 
