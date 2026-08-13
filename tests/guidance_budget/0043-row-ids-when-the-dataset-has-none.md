@@ -1,8 +1,8 @@
-# 0042 - a row id the dataset does not have
+# 0043 - a row id the dataset does not have
 
-follows: 0041
-total-ceiling: 366_043
-total-measured: 365_643
+follows: 0042
+total-ceiling: 366_739
+total-measured: 366_339
 
 The row review requires a per-row id and `readiness.py` refuses an entry without
 one. This dataset carries none, and preflight says so in its own warning. So the
@@ -27,5 +27,7 @@ one the file has.
 Resident does not move: the row-review contract lives in the dataset reference,
 and the flow already mandates the read.
 
-365_643 total and 79_350 resident, measured with
-`assistant_facing_documents()` on this branch.
+366_339 total and 79_350 resident, measured with `assistant_facing_documents()` over the
+merge of this change and 0042 rather than on either branch alone. Both were
+written against 0041 and both measured under the ceiling each then set, so
+each figure was honest and neither described the corpus that carries both.
