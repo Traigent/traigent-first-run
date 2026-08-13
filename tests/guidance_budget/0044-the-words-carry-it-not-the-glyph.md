@@ -1,10 +1,10 @@
-# 0043 - the words carry it, not the glyph
+# 0044 - the words carry it, not the glyph
 
-follows: 0042
-resident-ceiling: 80_100
+follows: 0043
+resident-ceiling: 80_034
 resident-measured: 79_634
-total-ceiling: 366_549
-total-measured: 366_156
+total-ceiling: 368_965
+total-measured: 368_565
 
 The substitute marker is gone. Twenty-eight occurrences of a glyph became the
 words they always sat beside, and words are longer than a glyph, so a change
@@ -34,5 +34,9 @@ is it real and ready - and a substitute is not an answer to that question but a
 different kind of thing this run added, which is why it now sits under its own
 heading instead of competing for a third mark in the same column.
 
-79_634 resident and 366_156 total, measured with `assistant_facing_documents()`.
+79_634 resident and 368_565 total, measured with `assistant_facing_documents()`.
 Resident moves because both documents that define the marker are resident ones.
+
+Renumbered from 0043 and re-measured when 0043 landed on trunk while this branch
+was open. Both entries were written against 0042 and neither described the
+corpus that carries both, which is the arithmetic this ledger exists to force.

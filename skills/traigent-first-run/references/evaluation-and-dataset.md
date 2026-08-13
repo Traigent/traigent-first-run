@@ -298,6 +298,15 @@ Then act on it: correct the shape, not the data - re-run preflight with the fiel
 actually uses, or convert a non-JSONL file into a JSONL working copy, then re-score. The data is at
 fault only when mapped rows still yield no input and expected answer, as a truncated line never can.
 
+A conversion that drops or reorders a row while the working copy is what everything downstream reads
+makes every later reference to "the third row" point somewhere the customer cannot follow. So when
+the rows carry no id of their own, stamp one as you convert: each row gets its 1-based position in
+the file the CUSTOMER holds, counting data rows only, as `row-<n>`. That is the stable-ID repair
+already permitted below, done at the moment the position is still known rather than reconstructed
+later from a working copy that no longer matches. If a row cannot be converted, keep its number
+spent - the ids record where a row came from, not how many survived - and say which numbers are
+missing and why.
+
 Do not infer "easy-only" from short inputs alone. Tie the explanation to the real task: show which
 decision boundaries, realistic noise, edge cases, or known failure modes are absent. If that
 cannot be established from project evidence, say difficulty is unverified rather than declaring
@@ -624,7 +633,30 @@ answer moves the reported number by ten points, which is larger than the gaps co
 ranked by.
 
 So read each row and answer one question about it: **is this expected output a sensible answer to
-this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence. Record the answers
+this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
+
+When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
+on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
+that the ids are positional. Any scheme satisfies the scorer, and that is the problem: four runs
+over one dataset each invented their own, and two review documents written for the same file cannot
+be compared unless the ids mean the same thing. The line number is chosen because it is the one
+identifier the file already has, and because preflight's own warning quotes source lines, so a user
+told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
+add stable ids, the next run uses theirs.
+
+That reason is also its whole scope, so state it rather than assuming it. A line number identifies a
+row only where the file the CUSTOMER holds is one row per line, and `preflight.py` skips blank lines
+while still counting them, so one blank line makes `line-7` the sixth row. Use `line-<n>` only for a
+JSONL file the customer wrote, and check the last number against the row count rather than assuming
+they agree.
+
+Anything else arrives here already carrying `row-<n>`, stamped as it was converted above, because
+that is the only moment the customer's own row position is still known. Read that id; do not
+re-derive one from the working copy, which no longer numbers what they hold. Two conventions and one
+rule: the id names a position in the customer's own file either way, and the run says which
+convention it used, because `line-` and `row-` count different things - an id nobody can resolve
+against their own file is the mistake here, not the scheme used to build it.
+Record the answers
 in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
 
 That file is this run's own read, not the customer's material, and it is the one thing a run leaves
