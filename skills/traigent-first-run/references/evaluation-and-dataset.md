@@ -678,7 +678,11 @@ score it produced, which is the state it is written for rather than an accident 
 }
 ```
 
-`origin` is the provenance class the row already declares, and the sentence is required on every
+`origin` is preflight's normalized class, not the row's literal word. A user-owned row declared
+`real`, including one written by hand, uses `collected`: it means not generated here, not
+event-log data. A walkthrough/model-generated row uses `synthesised`; an unrecognized declaration
+uses `undeclared`. In conversation keep the customer's word: "your real rows", not "your collected
+rows". The sentence is required on every
 verdict - it is what makes a reading inspectable instead of a tally. `in_run` says whether this run
 reads that row; set it on every entry or on none, because a file that answers it for some rows lets
 the silent ones read as "outside the run". Five rules govern what the answers may do.

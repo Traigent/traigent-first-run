@@ -7922,6 +7922,13 @@ class RowReviewInputTests(unittest.TestCase):
             self._read(self._rows(self._entry(origin="synthesised")))
         self.assertIn("re-judging its own output", str(raised.exception))
 
+    def test_only_normalized_review_origins_are_accepted(self) -> None:
+        review = self._read(self._rows(self._entry(origin="collected")))
+        self.assertEqual(review.reviewed_collected, 1)
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            self._read(self._rows(self._entry(origin="real")))
+        self.assertIn("provenance class preflight assigned", str(raised.exception))
+
     def test_every_verdict_carries_a_sentence(self) -> None:
         for note in (None, "", "   "):
             with self.subTest(note=note):
