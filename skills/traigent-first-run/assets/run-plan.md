@@ -44,7 +44,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 ## Baseline plan and approval
 
-- Current configuration/space and provider recipients:
+- Current configuration/space and provider recipients; pre-baseline comparison invariants after free validation - objective text, baseline model/value set, exact tuning and held-out row files/ids, and SHA-256 for every behavior/data-bearing file used by the agent/call adapter and evaluator/adapter (incomplete if the full local dependency set cannot be enumerated):
 - Calls, runtime, and spend:
 - Baseline approval - status/scope/ceiling, and the pre-spend material card's proceed/fix answer:
 
@@ -56,7 +56,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 ## Connected-stage plan and approval
 
-- Added dimensions, total combinations, configuration ceiling, and recipients:
+- Added dimensions, total combinations, configuration ceiling, and recipients; enhanced-space verification - every recorded baseline model/value retained, with only additions on the approved card:
 - Calls, including the winner's held-out scoring, runtime, and spend:
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:

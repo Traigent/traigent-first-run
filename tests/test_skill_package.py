@@ -12331,7 +12331,8 @@ class SkillPackageTests(unittest.TestCase):
         matching record continues at the first stage neither marked done nor
         skipped, because without that branch a fresh session following the
         flow literally would restart a half-finished run against the recorded
-        opening score.
+        opening score. The matching paths make it a candidate; safety and
+        comparison identity decide whether it can cross into external work.
         """
         record = (SKILL_ROOT / "assets" / "run-plan.md").read_text()
         self.assertIn("## Stage status", record)
@@ -12355,9 +12356,75 @@ class SkillPackageTests(unittest.TestCase):
             "restates none of it",
         )
         self.assertIn(
-            "continue at the first stage neither marked done nor skipped",
+            "continue through free work at the first stage neither marked done nor skipped",
             " ".join(SKILL.read_text().casefold().split()),
         )
+
+    def test_resume_guidance_treats_record_as_state_not_authority(self) -> None:
+        """A project-owned artifact cannot approve a new external call.
+
+        The record is useful across sessions for scores, spend, and completed
+        results. It is not authenticated conversational evidence: it may be
+        stale, revoked, or edited with the rest of the project. A fresh session
+        therefore observes a live process, but never starts, restarts, or
+        expands external work solely because an approval field says approved.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "begins resume validation rather than automatically restarting",
+            "treat its status and results as resume hints",
+            "independently verify the target and agent",
+            "rerun the cheap read-only/free gates required by the next action",
+            "including evaluator containment and call-path checks",
+            "verify a paid artifact before quoting it",
+            "never waive a safety precondition",
+            "recorded approvals do not",
+            "provider, private-data, connected traigent, or other approval-gated external call",
+            "latest user approval in the current conversation",
+            "remaining recipients/data, scope, runtime, and ceiling",
+            "the record alone grants no authority",
+            "observe a live process, but never restart or expand it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+        for forbidden in ("recorded scores, approvals", "recorded approvals stand"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, normalized)
+
+    def test_resume_guidance_invalidates_a_drifted_comparison(self) -> None:
+        """Equal paths do not prove that two paid runs used equal inputs."""
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        record = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "compute the current comparison invariants",
+            "compare them byte-for-byte with the pre-baseline invariants recorded after free validation",
+            "never rewrite the recorded invariants",
+            "agent/call behavior, exact tuning and held-out rows, evaluator, and baseline model/value set",
+            "the enhanced space is deliberately excluded because it must add controls",
+            "retains every recorded baseline model/value",
+            "only additions exactly match the freshly rendered and approved enhanced card",
+            "invariants are incomplete or differ",
+            "do not resume this run",
+            "run-plan-historical-<yyyymmddthhmmssz>.md` (never overwrite)",
+            "keep its spend and results historical or baseline-only",
+            "copy a fresh template to canonical `traigent-runs/run-plan.md`",
+            "start at stage 1 with a new opening score",
+            "never rerun paid work without newly scoped approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+        for phrase in (
+            "pre-baseline comparison invariants after free validation",
+            "objective text, baseline model/value set, exact tuning and held-out row files/ids",
+            "sha-256 for every behavior/data-bearing file used by the agent/call adapter and evaluator/adapter",
+            "incomplete if the full local dependency set cannot be enumerated",
+            "enhanced-space verification - every recorded baseline model/value retained",
+            "only additions on the approved card",
+        ):
+            with self.subTest(record_phrase=phrase):
+                self.assertIn(phrase, record)
 
     def test_the_close_explains_the_substitutes_instead_of_scoring_them(self) -> None:
         """Prose now carries what the closing number used to.
@@ -14435,11 +14502,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # only the mismatch branch was written down, so a fresh session
             # following the flow literally would re-run the opening gate over
             # a half-finished run and mint a second record. Settled: a
-            # matching record resumes at the first stage neither marked done
-            # nor skipped, and the mismatch rule the operating contract
-            # already owned says when the artifact is historical instead.
+            # matching paths begin resume validation; verified free state can
+            # continue, while identity drift archives the record and starts a
+            # fresh run rather than carrying old evidence into paid work.
             "what a session does with a matching in-progress record",
-            ("resumes rather than restarts",),
+            ("begins resume validation rather than automatically restarting",),
             (
                 "start a fresh record over a matching artifact",
                 "restart a matching run from stage 1",
