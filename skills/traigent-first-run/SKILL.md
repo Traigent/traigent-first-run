@@ -334,10 +334,8 @@ If real material exists but appears too weak to support a meaningful comparison,
 - Explain the optimization consequence in one sentence: unreliable ranking, no measurable
   headroom, misleading accuracy, or failure during evaluation.
 - Recommend: **"Repair a working copy and re-run validation"**.
-- Offer only these alternatives: repair now, continue as a clearly labeled workflow
-  demonstration when technically safe, or pause while the user edits it. Where the finding is a row
-  count rather than a defect, the bounded top-up takes the place of the repair - nothing is broken,
-  so nothing is being mended.
+- Offer repair now, a clearly labeled workflow demonstration when safe, or pause while the user
+  edits it. Where a row-count cap asks, the bounded top-up replaces repair: nothing is broken.
 
 Do not call a component weak merely from intuition. For judgment-based findings such as "all
 examples are easy," cite representative rows and the missing challenge/failure modes. For
@@ -356,8 +354,8 @@ weakness are one decision about what this run will measure. That question carrie
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
    not seen, never what the project does not have - and, on the same line, what it found too little
    of to compare on.
-2. That this run can build each missing piece, and top up a short one, derived from whatever does
-   exist.
+2. That this run can build each missing piece from what exists. Offer a dataset top-up only when
+   its cap has `asks: true`; otherwise name the limitation, but do not offer rows.
 3. What that costs, in terms the score already uses: what this run writes stays a substitute, never
    becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
    present as strong however good the rest is, and no configuration from the result may be promoted.
@@ -375,12 +373,12 @@ defect; broken
 material keeps every gate stage 4 already puts on it. `references/component-creation.md` owns the
 wording, what a supplied path is checked for, and where each way of not getting one lands.
 
-A dataset with fewer rows than this run's own **28** rides here too, on that same question and never
-as a second one: a gap and a shortfall are one decision about what this run will measure. Nothing is
-stopped either way, so the offer is bounded and the bound is spoken - an offer to add examples with
-no number on it reads as an offer to generate without end. Agreeing changes what the dataset is,
-never what it earns: rows this run writes score as the generated rows they are, which on a short
-dataset is most of it, so say before they answer that accepting lowers the ceiling.
+When a dataset below this run's **28** has an asking cap, its top-up rides on that same question
+and never as a second one: a gap and a shortfall are one decision about what this run will measure.
+The offer is bounded and its bound is spoken - an offer to add examples with no number on it reads
+as an offer to generate without end. Agreeing changes what the dataset is, never what it earns:
+rows this run writes score as the generated rows they are, which on a short dataset is most of it,
+so say before they answer that accepting lowers the ceiling.
 `references/component-creation.md` owns how each size is put, what that sentence says and where the
 offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
 ceiling that follows.

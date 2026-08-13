@@ -16900,6 +16900,42 @@ class RowIdsHaveAFallbackWhenTheDatasetHasNoneTests(unittest.TestCase):
         self.assertIn("the run says which convention it used", self._dataset())
 
 
+class RowReviewOriginsUsePreflightVocabularyTests(unittest.TestCase):
+    """A row declared `real` was rejected when copied into its review.
+
+    The dataset's declaration is customer-facing evidence; the review's origin
+    is the scorer's normalized category. Treating those as the same string
+    made the guide direct a worker to write a file readiness rejected.
+    """
+
+    def test_a_real_human_written_row_maps_to_collected(self) -> None:
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("`origin` is preflight's normalized class", dataset)
+        self.assertIn("a user-owned row declared `real`", dataset)
+        self.assertIn("including one written by hand, uses `collected`", dataset)
+        self.assertEqual(
+            PREFLIGHT.classify_provenance("real"),
+            (PREFLIGHT.PROVENANCE_COLLECTED, True),
+        )
+        self.assertIn(PREFLIGHT.PROVENANCE_COLLECTED, READINESS.ROW_REVIEW_ORIGINS)
+
+    def test_the_review_and_customer_words_stay_distinct(self) -> None:
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("walkthrough/model-generated row uses `synthesised`", dataset)
+        self.assertIn("unrecognized declaration uses `undeclared`", dataset)
+        self.assertIn('"your real rows", not "your collected rows"', dataset)
+
+
 class ACommentIsNotAKnobTests(unittest.TestCase):
     """A stub's comment listed six settings and a run recorded them as knobs.
 
@@ -17479,11 +17515,26 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         # blinded runs to number it in the middle of the list.
         self.assertIn("keeping what they brought is a second", normalized)
 
+    def test_a_non_asking_shortfall_is_disclosed_without_a_top_up_offer(self) -> None:
+        """A cap's `asks` value is the boundary, not a row-count guess."""
+        normalized = " ".join(self._ask().casefold().split())
+        self.assertIn("only when its cap has `asks: true`", normalized)
+        self.assertIn(
+            "otherwise name the limitation, but do not offer rows",
+            normalized,
+        )
+        cap = READINESS.power_ceiling(1, 1, available_rows=27)
+        self.assertIsNotNone(cap)
+        self.assertFalse(cap.asks)
+
     def test_the_total_is_stated_and_the_offer_ends_at_it(self) -> None:
         normalized = " ".join(self._ask().casefold().split())
         walkthrough = READINESS.WALKTHROUGH_DATASET_ROWS
-        self.assertIn(f"fewer rows than this run's own **{walkthrough}**", normalized)
-        self.assertIn("the bound is spoken", normalized)
+        self.assertIn(
+            f"dataset below this run's **{walkthrough}** has an asking cap",
+            normalized,
+        )
+        self.assertIn("its bound is spoken", normalized)
         # The reason the number is compulsory, stated where the number is, so
         # an editor removing the figure meets the argument for it.
         self.assertIn("generate without end", normalized)
