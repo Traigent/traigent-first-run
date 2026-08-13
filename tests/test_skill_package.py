@@ -16816,6 +16816,42 @@ class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
         self.assertIn("no number derived from scoring one is reported", skill)
 
 
+class RowIdsHaveAFallbackWhenTheDatasetHasNoneTests(unittest.TestCase):
+    """The review needs an id the dataset does not have.
+
+    `readiness.py` refuses a review entry without one, and preflight warns that
+    these rows carry none - so every run must invent a scheme, and four blinded
+    runs over the same dataset each invented one. They converged on source-line
+    numbering by luck rather than by rule, and two review documents written for
+    one file cannot be compared unless the ids mean the same thing.
+
+    The file's own line number is the fallback because it is the identifier the
+    file already has, and because preflight's warning quotes source lines - so a
+    user told `line-7` can find row 7 without being handed a mapping.
+    """
+
+    def _dataset(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_fallback_is_named_rather_than_left_to_each_run(self) -> None:
+        self.assertIn("use the 1-based source line as `line-<n>`", self._dataset())
+
+    def test_the_customer_is_told_the_ids_are_positional(self) -> None:
+        """An invented id quoted at a user who cannot find it is worse than none."""
+        self.assertIn(
+            "say in the conversation that the ids are positional", self._dataset()
+        )
+
+    def test_a_customer_owned_id_still_wins(self) -> None:
+        """A fallback, not a replacement for ids the customer actually owns."""
+        self.assertIn("the next run uses theirs", self._dataset())
+
+
 class TheSubstituteMarkerIsOneGlyphEverywhereTests(unittest.TestCase):
     """The marker was changed in the guide and left behind in the entry point.
 

@@ -624,7 +624,16 @@ answer moves the reported number by ten points, which is larger than the gaps co
 ranked by.
 
 So read each row and answer one question about it: **is this expected output a sensible answer to
-this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence. Record the answers
+this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
+
+When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
+on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
+that the ids are positional. Any scheme satisfies the scorer, and that is the problem: four runs
+over one dataset each invented their own, and two review documents written for the same file cannot
+be compared unless the ids mean the same thing. The line number is chosen because it is the one
+identifier the file already has, and because preflight's own warning quotes source lines, so a user
+told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
+add stable ids, the next run uses theirs. Record the answers
 in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
 
 That file is this run's own read, not the customer's material, and it is the one thing a run leaves
