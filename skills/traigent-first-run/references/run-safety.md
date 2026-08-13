@@ -1062,4 +1062,4 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored
 walkthrough directory. Store no secrets, raw private content in run names, or prompts/outputs in
-numeric telemetry.
+numeric telemetry, and keep error text and metadata recorded with the run content-free.
