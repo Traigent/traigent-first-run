@@ -39,8 +39,9 @@ pilot cases matched their expected readiness receipts exactly, each worker stopp
 intended customer decision point — a genuine question or repair choice, never an unauthorized
 action — and every project audit came back `UNCHANGED`. Per-case identifiers, expected scores,
 and expected receipts are withheld here: this repository is the customer-visible handoff a future
-blinded worker reads. Earlier public revisions carried these rows, so these pilot cases are
-treated as burned for future blinded runs.
+blinded worker reads. Earlier public revisions carried these rows, published only after these
+pilot runs completed, so these pilot cases are treated as burned for future blinded runs — the
+exposure burns future runs, not these results.
 
 Valid pilot result: **3/3 matched receipts and safe stop behavior**.
 
@@ -66,6 +67,8 @@ Excluded attempts were retained instead of rewritten:
 6. Preserve the existing one-compatible-project-environment rule while keeping the resident and total guidance budgets below their locked ceilings.
 
 ### Test harness
+
+The items below describe the internal test runner, not anything in this repository.
 
 1. Correct the cases whose declared evaluator contracts had gone stale against the contract their fixtures actually implement.
 2. Stop a constant-pass evaluator from privately inheriting an evaluation method its fixture never demonstrates; declare its opening method as absent.
