@@ -26,3 +26,10 @@ run-plan*.md
 # Local
 *.log
 .DS_Store
+
+# Coding-agent scratch worktrees. These are embedded git repositories other
+# sessions create; `git add -A` sweeps them into a commit, which has happened
+# twice, and their presence leaves the tree permanently dirty - which blocks
+# the fixture bank from recording a snapshot, since it refuses a guide checkout
+# whose provenance nobody can identify.
+.claude/
