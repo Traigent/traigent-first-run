@@ -41,6 +41,35 @@ scoring one is reported. Only after task intent is anchored, copy
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
+Keep its stage-status block current from the moment the record exists: at every stage boundary and
+before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
+next stage is always the first neither marked done nor skipped. A session finding
+`traigent-runs/run-plan.md` with a matching target and agent - target plus the recorded task answer
+when the agent line is `none discovered` - begins resume validation rather than automatically
+restarting: read it top to bottom and treat its status and results as resume hints. Independently
+verify the target and agent, rerun the cheap read-only/free gates required by the next action,
+including evaluator containment and call-path checks, and verify a paid artifact before quoting it.
+After that verification, continue through free work at the first stage neither marked done nor
+skipped. The record may avoid repeating paid work, never waive a safety precondition.
+Recorded scores, spend, completed paid results, and the opening score stand; recorded approvals do
+not. Open with where the run stands, not the opening message. Before a new or restarted provider,
+private-data, connected Traigent, or other approval-gated external call, re-ground in the latest
+user approval in the current conversation and confirm it covers the remaining recipients/data,
+scope, runtime, and ceiling. If absent, revoked, or insufficient, re-render that remaining-scope
+card and obtain explicit approval; the record alone grants no authority. Before that call, compute
+the current comparison invariants and compare them byte-for-byte with the pre-baseline invariants
+recorded after free validation; never rewrite the recorded invariants. They are the objective,
+agent/call behavior, exact tuning and held-out rows, evaluator, and baseline model/value set. The
+enhanced space is deliberately excluded because it must add controls; before a connected call,
+verify separately that it retains every recorded baseline model/value and that its only additions
+exactly match the freshly rendered and approved enhanced card. If the invariants are incomplete or
+differ, do not resume this run: rename the old record to the next unused
+`traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
+historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
+at stage 1 with a new opening score, and never rerun paid work without newly scoped approval.
+Observe a live process, but never restart or expand it from the record alone. A record with every
+stage done or skipped is finished, not a resume point. The operating contract owns the mismatch
+rule.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
 unversioned `traigent` package.
@@ -726,8 +755,8 @@ a ceiling effect remains a hypothesis. An accuracy-only search requires a workfl
 label. A cost objective may proceed at equal accuracy only when materially lower cost remains
 possible; report any gain as cost and still flag weak evidence.
 
-Only when this gate supports a measured opportunity, preview the connected step with the CTA and
-approval rules in `references/run-safety.md`.
+Only when this gate supports a measured opportunity, preview the connected step with the final
+reply-ready line and approval rules in `references/run-safety.md`.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
@@ -930,7 +959,8 @@ result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
-End with the CTA in `references/run-safety.md`; `continue` never bypasses approval.
+End with the final reply-ready line in `references/run-safety.md`; `continue` never bypasses
+approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,
 these are available whenever the user wants them rather than because their state calls for them:
@@ -952,6 +982,7 @@ these are available whenever the user wants them rather than because their state
 
 The first run is complete only when:
 
+- The run record's stage-status block shows every stage done or skipped with its reason.
 - The starting state and provenance of all three components are recorded.
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.

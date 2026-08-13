@@ -2,6 +2,20 @@
 
 The coding assistant maintains this record at `traigent-runs/run-plan.md`; the user does not fill it in.
 
+## Stage status
+
+`[x]` done · `[~]` in progress · `[ ]` not reached · append `skipped - <reason>` to a stage this run
+lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's rules; this block records only where the run is.
+
+- [ ] 1. Inspect quietly
+- [ ] 2. Show readiness once
+- [ ] 3. Complete the system
+- [ ] 4. Validate components locally
+- [ ] 5. Prepare the environment and finish free checks
+- [ ] 6. Approve and run the baseline
+- [ ] 7. Run the honest comparison
+- [ ] 8. Verify and report
+
 ## Objective and provenance
 
 - Target project and selected agent (absolute path plus function or command):
@@ -30,7 +44,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Baseline plan and approval
 
-- Current configuration/space and provider recipients:
+- Current configuration/space and provider recipients; pre-baseline comparison invariants after free validation - objective text, baseline model/value set, exact tuning and held-out row files/ids, and SHA-256 for every behavior/data-bearing file used by the agent/call adapter and evaluator/adapter (incomplete if the full local dependency set cannot be enumerated):
 - Calls, runtime, and spend:
 - Baseline approval - status/scope/ceiling, and the pre-spend material card's proceed/fix answer:
 
@@ -42,7 +56,7 @@ The coding assistant maintains this record at `traigent-runs/run-plan.md`; the u
 
 ## Connected-stage plan and approval
 
-- Added dimensions, total combinations, configuration ceiling, and recipients:
+- Added dimensions, total combinations, configuration ceiling, and recipients; enhanced-space verification - every recorded baseline model/value retained, with only additions on the approved card:
 - Calls, including the winner's held-out scoring, runtime, and spend:
 - Connected-stage approval - status/scope, spend, remaining ceiling:
 - Portal-tracking probe (zero-LLM): pass/fail and sanitized failure class/message if failed:

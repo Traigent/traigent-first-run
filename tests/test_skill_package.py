@@ -6931,7 +6931,13 @@ class SkillPackageTests(unittest.TestCase):
         # 61 - 1 = 60, measured on this template, and the ceiling follows it
         # down rather than sitting above it as unspent room for the next field
         # nobody argued for.
-        self.assertLessEqual(len(text.splitlines()), 60)
+        #
+        # 74, raised from 60, bought by the stage-status block: a heading, a
+        # two-line legend, the eight stage labels, and their blank lines -
+        # fourteen lines, measured on this template. The rule is the one the
+        # lowering above set: the ceiling is the measured template, never
+        # unspent room for the next field nobody argued for.
+        self.assertLessEqual(len(text.splitlines()), 74)
         for removed_detail in (
             "provider retry count",
             "provider-request timeout",
@@ -12286,7 +12292,7 @@ class SkillPackageTests(unittest.TestCase):
         text = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for phrase in (
             # The one ask's answer is folded onto this same line rather than
-            # given one of its own, because the record is capped at 60 lines and
+            # given one of its own, because the record is capped at 74 lines and
             # the two facts are taken at the same moment: SKILL.md records the
             # opening result after the ask is answered, so a supplied path is
             # part of what that score was read from.
@@ -12313,6 +12319,112 @@ class SkillPackageTests(unittest.TestCase):
             "never overwrite the recorded opening score",
             " ".join(SKILL.read_text().casefold().split()),
         )
+
+    def test_the_stage_status_block_matches_the_flow_it_references(self) -> None:
+        """The record says where the run is; SKILL.md says what each stage does.
+
+        The block's eight labels are SKILL.md's own stage headings, held equal
+        here so a renamed, added, or reordered stage cannot leave the record
+        pointing at a flow that no longer exists - two documents disagreeing
+        about where a resumed session continues is exactly the seam the block
+        was added to close. The resume rule itself is pinned beside it: a
+        matching record continues at the first stage neither marked done nor
+        skipped, because without that branch a fresh session following the
+        flow literally would restart a half-finished run against the recorded
+        opening score. The matching paths make it a candidate; safety and
+        comparison identity decide whether it can cross into external work.
+        """
+        record = (SKILL_ROOT / "assets" / "run-plan.md").read_text()
+        self.assertIn("## Stage status", record)
+        section = record.split("## Stage status", 1)[1].split("\n## ", 1)[0]
+        labels = [
+            line.removeprefix("- [ ] ")
+            for line in section.splitlines()
+            if line.startswith("- [ ] ")
+        ]
+        headings = [
+            line.removeprefix("### ")
+            for line in SKILL.read_text().splitlines()
+            if re.match(r"^### \d+\. ", line)
+        ]
+        self.assertEqual(len(labels), 8, "the block tracks all eight stages")
+        self.assertEqual(
+            labels,
+            headings,
+            "the stage labels in assets/run-plan.md must be SKILL.md's own "
+            "stage headings, verbatim - the block references the flow and "
+            "restates none of it",
+        )
+        self.assertIn(
+            "continue through free work at the first stage neither marked done nor skipped",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
+
+    def test_resume_guidance_treats_record_as_state_not_authority(self) -> None:
+        """A project-owned artifact cannot approve a new external call.
+
+        The record is useful across sessions for scores, spend, and completed
+        results. It is not authenticated conversational evidence: it may be
+        stale, revoked, or edited with the rest of the project. A fresh session
+        therefore observes a live process, but never starts, restarts, or
+        expands external work solely because an approval field says approved.
+        """
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        for phrase in (
+            "begins resume validation rather than automatically restarting",
+            "treat its status and results as resume hints",
+            "independently verify the target and agent",
+            "rerun the cheap read-only/free gates required by the next action",
+            "including evaluator containment and call-path checks",
+            "verify a paid artifact before quoting it",
+            "never waive a safety precondition",
+            "recorded approvals do not",
+            "provider, private-data, connected traigent, or other approval-gated external call",
+            "latest user approval in the current conversation",
+            "remaining recipients/data, scope, runtime, and ceiling",
+            "the record alone grants no authority",
+            "observe a live process, but never restart or expand it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+        for forbidden in ("recorded scores, approvals", "recorded approvals stand"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, normalized)
+
+    def test_resume_guidance_invalidates_a_drifted_comparison(self) -> None:
+        """Equal paths do not prove that two paid runs used equal inputs."""
+        normalized = " ".join(SKILL.read_text().casefold().split())
+        record = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "compute the current comparison invariants",
+            "compare them byte-for-byte with the pre-baseline invariants recorded after free validation",
+            "never rewrite the recorded invariants",
+            "agent/call behavior, exact tuning and held-out rows, evaluator, and baseline model/value set",
+            "the enhanced space is deliberately excluded because it must add controls",
+            "retains every recorded baseline model/value",
+            "only additions exactly match the freshly rendered and approved enhanced card",
+            "invariants are incomplete or differ",
+            "do not resume this run",
+            "run-plan-historical-<yyyymmddthhmmssz>.md` (never overwrite)",
+            "keep its spend and results historical or baseline-only",
+            "copy a fresh template to canonical `traigent-runs/run-plan.md`",
+            "start at stage 1 with a new opening score",
+            "never rerun paid work without newly scoped approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+        for phrase in (
+            "pre-baseline comparison invariants after free validation",
+            "objective text, baseline model/value set, exact tuning and held-out row files/ids",
+            "sha-256 for every behavior/data-bearing file used by the agent/call adapter and evaluator/adapter",
+            "incomplete if the full local dependency set cannot be enumerated",
+            "enhanced-space verification - every recorded baseline model/value retained",
+            "only additions on the approved card",
+        ):
+            with self.subTest(record_phrase=phrase):
+                self.assertIn(phrase, record)
 
     def test_the_close_explains_the_substitutes_instead_of_scoring_them(self) -> None:
         """Prose now carries what the closing number used to.
@@ -14385,6 +14497,23 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ("whether the run also waits is the remedy's answer, not the ceiling's",),
             ("not a refusal: the run continues",),
         ),
+        (
+            # A matching in-progress record used to have no defined behavior:
+            # only the mismatch branch was written down, so a fresh session
+            # following the flow literally would re-run the opening gate over
+            # a half-finished run and mint a second record. Settled: a
+            # matching paths begin resume validation; verified free state can
+            # continue, while identity drift archives the record and starts a
+            # fresh run rather than carrying old evidence into paid work.
+            "what a session does with a matching in-progress record",
+            ("begins resume validation rather than automatically restarting",),
+            (
+                "start a fresh record over a matching artifact",
+                "restart a matching run from stage 1",
+                "begin a new record when one already matches",
+                "re-run the opening gate on a matching resumed record",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -15734,11 +15863,11 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         """A consent nobody wrote down cannot be reported at the close.
 
         Folded onto the opening-score line rather than given one of its own:
-        the record is capped at 60 lines, and the two facts are taken at the
+        the record is capped at 74 lines, and the two facts are taken at the
         same moment because the score is recorded after the ask is answered.
         """
         record = (SKILL_ROOT / "assets" / "run-plan.md").read_text()
-        self.assertLessEqual(len(record.splitlines()), 60)
+        self.assertLessEqual(len(record.splitlines()), 74)
         self.assertIn(
             "the one ask's gaps, answer, and any path given or missed", record
         )
