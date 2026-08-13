@@ -325,16 +325,23 @@ egress.
 
 ## Verifying a change
 
-Continuous integration runs exactly these, in this order. Running them locally first is the whole
-difference between one push and three:
+These are the checks CI runs in its `validate` job, in the order it runs them. Running them locally
+first is the whole difference between one push and three:
 
 ```bash
+python tools/relock.py --check
 python -m pip install -r skills/traigent-first-run/assets/requirements-first-run.txt
+python -m unittest discover -s tests
 ruff check .
 black --check .
-python -m unittest discover -s tests
-python tools/relock.py --check
 ```
+
+The lock check is deliberately first, before the installs, so a lock that was never regenerated
+fails in seconds rather than after a full run. Reordering this list locally costs you that.
+
+One CI job is not in the list because it cannot be reproduced by a command: `offline-contract` runs
+the behavioural harness inside a network-less, read-only container, and `validate` does not start
+until it passes. Everything above can be green while that job is not.
 
 `ruff` and `black` are pinned to exact versions in
 [`.github/workflows/`](.github/workflows/) - install the versions it names, since a different
@@ -347,11 +354,13 @@ red build.
 `tools/relock.py --check` compares a recorded lock against the guidance as it stands. Editing any
 assistant-facing document changes it, so run `python tools/relock.py` (no flag) to regenerate, and
 commit the result **in the same commit** as the edit that moved it - a lock regenerated but left
-unstaged fails the check while the working tree looks clean.
+unstaged passes the check here and fails it in CI, which reads the commit rather than your
+working tree.
 
 The suite enforces a **byte budget** over the assistant-facing documents, and the ceiling is not a
-number in a test file. It is read from the newest entry in `tests/guidance_budget/`, one file per
-raise, each stating what it measured and why the addition earned it. Guidance that grows past the
+number in a test file. There are two ceilings, resident and total, and each is read from the newest entry along the
+ledger's `follows:` chain that declared THAT ceiling - `tests/guidance_budget/`, one file per raise,
+each stating what it measured and why the addition earned it. Guidance that grows past the
 current ceiling needs a new entry, not a bigger constant - and if two branches each add one, the
 figure that matters is measured over the **merge**, not carried over from whichever landed first.
 
