@@ -25,20 +25,29 @@ bash tools/install-hooks.sh
 ```
 
 It points `core.hooksPath` at `.githooks/`, whose `pre-commit` regenerates the behaviour lock and
-stages it. The lock hashes `GUIDE.md` and everything under `skills/traigent-first-run/`, so it
-moves whenever the guidance does, and keeping it current used to be a rule to remember. The failure
-was silent in the one place it mattered: `relock.py --check` reads the WORKING TREE and passes,
-while CI reads the COMMIT and fails. Regenerating after staging produced exactly that twice on one
-branch in one afternoon, which is why the ordering is now the hook's job and not yours.
+stages it - or refuses, when `GUIDE.md` or `skills/` carry unstaged changes. `relock.py` reads the
+working tree, so regenerating while the tree holds edits the commit does not would write a lock
+describing content that commit lacks. Stage or stash them and commit again; the same applies to
+`git commit <path>`.
+
+**It does not cover `git rebase --continue`**, which runs no pre-commit hook - so a conflict
+resolved wrongly during a rebase still reaches a commit. CI's lock check is the backstop there. The
+gap is stated rather than left to be inferred, because a guard trusted past its edge is worse than a
+guard you know the shape of.
+
+The lock hashes `GUIDE.md` and everything under `skills/traigent-first-run/`, so it moves whenever
+the guidance does, and keeping it current used to be a rule to remember. Regenerating after staging
+produced a stale commit twice on one branch in one afternoon, which is why the ordering is now the
+hook's job and not yours.
 
 The four gates CI runs, and what each costs, because treating them as one unit is how the slow one
 gets run for changes that cannot affect it:
 
 | gate | cost | run it when |
 |---|---|---|
-| `python tools/relock.py --check` | ~1s | always - and it is CI's first step, before the installs |
-| `ruff check .` | ~1s | always |
-| `black --check .` | ~1s | always |
+| `python tools/relock.py --check` | ~5s | always - and it is CI's first step, before the installs |
+| `ruff check .` | <1s | always |
+| `black --check .` | ~3s | always |
 | `python -m unittest discover -s tests` | **~4 min** | guidance, scripts or tests changed |
 
 A lock-only or comment-only commit does not need the suite. One CI job is not reproducible by any
