@@ -44,40 +44,18 @@ class BehavioralContractUnitTests(unittest.TestCase):
                 harness.validate_contract_shape(contract, scenario_dir)
                 harness.verify_fixture_lock(scenario_dir)
 
-    def test_current_behavior_package_matches_qualification_lock(self) -> None:
-        """The file-hash lock, kept for the one question it alone answers.
-
-        It is not a behaviour check and #153 is right that it never was: it
-        compares hashes to hashes and `tools/relock.py` can rewrite it. What it
-        still covers, and `outcome.lock.json` does not, is the behaviour-bearing
-        files no case exercises - `agents/openai.yaml`, `assets/run-plan.md`,
-        `references/glossary.md`, `references/component-creation.md`. Those
-        carry no derivable outcome, so dropping this lock would leave them
-        with nothing at all. Kept for that, and claiming only that.
-        """
-        lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
-        self.assertEqual(harness.behavior_manifest(ROOT), lock)
-
-    def test_recorded_outcomes_match_a_fresh_run_of_the_chain(self) -> None:
-        """The lock is a statement about behaviour, so it is checked by behaving.
-
-        Unlike the hash lock above, both sides of this equality are not the same
-        function: the left side runs `preflight.py | calibrate_evaluator.py |
-        readiness.py` over committed inputs, and the right side is what those
-        commands decided when the lock was written.
-        """
-        lock = json.loads(outcomes.OUTCOME_LOCK.read_text())
-        self.assertEqual(outcomes.outcome_manifest(), lock)
-
     def test_every_recorded_outcome_matches_its_hand_declared_expectation(
         self,
     ) -> None:
-        """The half `tools/relock.py` cannot rewrite - and the point of #153.
+        """The half no tool writes - and the point of #153.
 
-        `relock.py` regenerates `outcome.lock.json`. It never writes any
-        `case.json`. So a change that moves a band or a cap is still failing
-        here after a regeneration, which is precisely what the hash lock could
-        not do: there, one command made any failure disappear.
+        Both sides of this check are not the same function: one side runs
+        `preflight.py | calibrate_evaluator.py | readiness.py` over committed
+        inputs, and the other is the `expected` block a hand wrote in that
+        case's `case.json`. Nothing regenerates the declaration, so a change
+        that moves a band or a cap keeps failing here until someone edits it
+        on purpose - which is precisely what the retired hash lock could not
+        do: there, one command made any failure disappear.
         """
         problems = outcomes.declaration_mismatches(outcomes.outcome_manifest())
         self.assertEqual(
@@ -85,57 +63,60 @@ class BehavioralContractUnitTests(unittest.TestCase):
             [],
             "a recorded outcome no longer matches what its case declares. If "
             "the new outcome is correct, say so by editing that case.json and "
-            "explaining the change - regenerating the lock alone is not a "
-            "requalification and will not clear this.",
+            "explaining the change - there is nothing to regenerate that "
+            "would clear this.",
         )
 
-    def test_regenerating_the_lock_cannot_hide_a_changed_outcome(self) -> None:
-        """The executable form of the claim this whole change rests on.
+    def test_a_refreshed_manifest_cannot_hide_a_changed_band(self) -> None:
+        """The executable form of the claim retiring the hash lock rests on.
 
-        Simulate the defect #153 describes: behaviour changes, and the lock is
-        regenerated so it agrees with the new behaviour. Under the old hash lock
-        that was a green suite. Here the regenerated lock is exactly what
-        `declaration_mismatches` is given, and it still reports the change -
-        because the declaration did not move with it.
+        Simulate the defect #153 describes: behaviour changes, and every
+        generated record is refreshed so it agrees with the new behaviour.
+        Under the retired hash lock that was a green suite. Here the refreshed
+        manifest is exactly what `declaration_mismatches` is given, and it
+        still reports the change - because the declaration did not move with
+        it.
         """
         manifest = outcomes.outcome_manifest()
         self.assertEqual(outcomes.declaration_mismatches(manifest), [])
 
         identifier = sorted(manifest["cases"])[0]
-        regenerated = json.loads(json.dumps(manifest))
-        regenerated["cases"][identifier]["outcome"]["band"] = "EXCELLENT"
+        refreshed = json.loads(json.dumps(manifest))
+        refreshed["cases"][identifier]["outcome"]["band"] = "EXCELLENT"
 
-        problems = outcomes.declaration_mismatches(regenerated)
+        problems = outcomes.declaration_mismatches(refreshed)
         self.assertTrue(
             any(
                 identifier in problem and "band" in problem and "EXCELLENT" in problem
                 for problem in problems
             ),
-            f"a regenerated lock hid a changed band for {identifier}: {problems!r}",
+            f"a refreshed manifest hid a changed band for {identifier}: {problems!r}",
         )
 
-    def test_regenerating_the_lock_cannot_hide_a_changed_overall(self) -> None:
+    def test_a_refreshed_manifest_cannot_hide_a_changed_overall(self) -> None:
         manifest = outcomes.outcome_manifest()
         self.assertEqual(outcomes.declaration_mismatches(manifest), [])
 
         identifier = sorted(manifest["cases"])[0]
-        regenerated = json.loads(json.dumps(manifest))
-        regenerated["cases"][identifier]["outcome"]["overall"] += 1
+        refreshed = json.loads(json.dumps(manifest))
+        refreshed["cases"][identifier]["outcome"]["overall"] += 1
 
-        problems = outcomes.declaration_mismatches(regenerated)
+        problems = outcomes.declaration_mismatches(refreshed)
         self.assertTrue(
             any(identifier in problem and "overall" in problem for problem in problems),
-            f"a regenerated lock hid a changed overall for {identifier}: {problems!r}",
+            f"a refreshed manifest hid a changed overall for {identifier}: "
+            f"{problems!r}",
         )
 
     def test_a_wording_only_change_moves_hashes_and_leaves_outcomes_alone(
         self,
     ) -> None:
-        """The two classes have to be distinguishable, or the lock explains nothing.
+        """The two classes have to be distinguishable, or the digest explains nothing.
 
         A reviewer reading a green CI could not previously tell an edited
         sentence from an edited decision. Appending prose to a behaviour-bearing
-        document must move the hash lock and leave every recorded outcome
+        document must move the behaviour manifest - whose digest is stamped
+        into every evidence bundle - and leave every recorded outcome
         identical; a changed outcome is then unambiguously the other kind.
         """
         before_hashes = harness.behavior_manifest(ROOT)
@@ -148,7 +129,8 @@ class BehavioralContractUnitTests(unittest.TestCase):
             self.assertNotEqual(
                 harness.behavior_manifest(ROOT),
                 before_hashes,
-                "a changed behaviour-bearing document did not move the hash lock",
+                "a changed behaviour-bearing document did not move the "
+                "behaviour manifest",
             )
             self.assertEqual(
                 outcomes.outcome_manifest(),
@@ -158,38 +140,16 @@ class BehavioralContractUnitTests(unittest.TestCase):
         finally:
             document.write_bytes(original)
 
-    def test_the_committed_lock_hashes_every_path_exactly_once(self) -> None:
-        """A malformed lock must be named as malformed, not as a behaviour change.
-
-        `tools/relock.py` run on an unresolved merge index wrote 15 entries for
-        13 files, hashing `glossary.md` once per merge stage (#198). Nothing in
-        this suite said so: the equality check above fails on such a lock, but
-        it fails as "the package does not match the lock", which is what a real
-        behaviour change looks like - so the reader goes looking at the guide
-        rather than at the lock. This assertion is cheap and says which it is.
-        """
-        lock = json.loads((Path(__file__).parent / "behavior.lock.json").read_text())
-        duplicates = harness.duplicate_lock_paths(lock["paths"])
-        self.assertEqual(
-            duplicates,
-            [],
-            "the behaviour lock hashes these paths more than once: "
-            f"{duplicates} ({len(lock['paths'])} entries, "
-            f"{len({entry['path'] for entry in lock['paths']})} unique). A lock "
-            "written over an unresolved merge index hashes a conflicted path "
-            "once per stage; regenerate it from a resolved index with "
-            "`python tools/relock.py`.",
-        )
-
     def test_a_conflicted_index_cannot_hash_one_path_twice(self) -> None:
-        """The dedupe is structural, not a side effect of the tool's refusal.
+        """The dedupe is structural, not a side effect of the relock refusal.
 
         `git ls-files --cached` lists index *rows*: a path with unresolved merge
-        stages appears three times. `tools/relock.py` now refuses that index
-        outright, but `behavior_files` is also called directly by the tests, and
-        a lock that hashes one path twice is malformed whatever produced it - so
-        the guarantee is pinned where the list is built. The stage rows here are
-        the exact bytes git printed for the reproduction in #198.
+        stages appears three times. `tools/relock.py` refuses such an index
+        outright, but `behavior_files` also feeds the manifest whose digest is
+        stamped into every evidence bundle, and a manifest that hashes one path
+        twice is malformed whatever produced it - so the guarantee is pinned
+        where the list is built. The stage rows here are the exact bytes git
+        printed for the reproduction in #198.
         """
         conflicted = (
             "GUIDE.md\0"
@@ -211,13 +171,13 @@ class BehavioralContractUnitTests(unittest.TestCase):
                 ],
             )
 
-    def test_a_tool_cache_inside_the_skill_cannot_enter_the_lock(self) -> None:
-        """A linter run must not be able to corrupt the behaviour lock.
+    def test_a_tool_cache_inside_the_skill_cannot_enter_the_manifest(self) -> None:
+        """A linter run must not be able to corrupt the behaviour manifest.
 
         `behavior_manifest` used to walk the filesystem and skip a hand-written
         list of droppings (`__pycache__`, `*.pyc`). `ruff check skills/` writes
         `.ruff_cache/`, which was not on that list, so three untracked files
-        entered the lock and it matched only on the machine that wrote it -
+        entered the manifest and it matched only on the machine that wrote it -
         green locally, red in CI, on the same commit. Asking git instead makes
         the ignore rules the single source of truth.
         """
@@ -230,11 +190,12 @@ class BehavioralContractUnitTests(unittest.TestCase):
         finally:
             shutil.rmtree(cache.parent)
 
-    def test_an_unignored_new_file_does_enter_the_lock(self) -> None:
+    def test_an_unignored_new_file_does_enter_the_manifest(self) -> None:
         """The rule is git's ignore list, not "hide anything untracked".
 
         A reference added but not yet `git add`-ed is part of the package and
-        must be locked, or regenerating before staging would under-lock it.
+        must be hashed, or a digest stamped before staging would under-report
+        the package.
         """
         before = harness.behavior_manifest(ROOT)
         stray = ROOT / "skills" / "traigent-first-run" / "references" / "_probe.md"
@@ -245,13 +206,13 @@ class BehavioralContractUnitTests(unittest.TestCase):
             stray.unlink()
 
     def test_the_git_and_walk_file_lists_agree(self) -> None:
-        """The hermetic fallback must lock the same package git would.
+        """The hermetic fallback must hash the same package git would.
 
         The offline-contract job has no git, so it takes the walk. If the two
-        ever disagree the lock means one thing in CI and another locally, which
-        is the whole failure this pair was written to end - so they are compared
-        directly rather than trusted to stay in step. A new `.gitignore` rule
-        that matters to the skill tree fails here first.
+        ever disagree the digest means one thing in CI and another locally,
+        which is the whole failure this pair was written to end - so they are
+        compared directly rather than trusted to stay in step. A new
+        `.gitignore` rule that matters to the skill tree fails here first.
         """
         self.assertEqual(
             harness.behavior_files(ROOT),

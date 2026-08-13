@@ -10,9 +10,13 @@ That makes this a tool whose failure mode is silence, and the tests below pin
 the two halves of the fix separately, because they answer different questions:
 
 - the refusal is policy - *when* a lock may be written at all;
-- the dedupe in `harness.behavior_files` is structure - a lock must never hash
-  one path twice, whatever the index state. Tested in `behavioral/`, beside
-  the lock it protects.
+- the dedupe in `harness.behavior_files` is structure - a manifest must never
+  hash one path twice, whatever the index state. Tested in `behavioral/`,
+  beside the digest it protects.
+
+The tool now writes only the scenario fixture locks; the incident above
+happened to a since-retired lock, and the refusal is kept because the failure
+shape belongs to any generated lock written from a conflicted index.
 """
 
 from __future__ import annotations
@@ -164,6 +168,26 @@ class UnmergedFlagContractTests(unittest.TestCase):
         )
         self.assertEqual(process.returncode, 2)
         self.assertIn("--allow-unmerged applies to writing only", process.stderr)
+
+
+class FixtureLockFreshnessTests(unittest.TestCase):
+    def test_check_exits_zero_on_the_committed_tree(self) -> None:
+        """The fixture-lock path, driven through the tool itself.
+
+        `--check` renders every lock the way a write would and compares the
+        text, so this fails on a stale, reflowed, or hand-edited fixture lock
+        - and on a slimmed `targets()` that no longer reaches the scenarios at
+        all, which a refusal-only suite would miss.
+        """
+        process = subprocess.run(
+            [sys.executable, str(RELOCK), "--check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertIn("locks are up to date", process.stdout)
 
 
 if __name__ == "__main__":

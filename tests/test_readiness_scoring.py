@@ -2806,9 +2806,11 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         derived from the other or copied from it. Replacing
         `{spec.name for spec in CONFIG_SPACE_FIELDS}` with a hand-written set
         of the same six names fails nothing at all: measured, the whole suite
-        stays green apart from the behaviour lock, which is only stale because
-        the file's bytes changed. A guard whose mutation nothing catches is a
-        guard that documents an intention.
+        stayed green except the then-committed behaviour lock, stale only
+        because the file's bytes changed - and with that lock retired, today
+        the same mutation passes with nothing so much as flinching, which
+        makes this test MORE load-bearing, not less. A guard whose mutation
+        nothing catches is a guard that documents an intention.
 
         So the two sets are made to DIFFER here. A field is added to the
         declaration at runtime and the same document is refused before and
