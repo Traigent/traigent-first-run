@@ -44,11 +44,14 @@ Keep it concise and internal; do not ask the user to complete or review it.
 Keep its stage-status block current from the moment the record exists: at every stage boundary and
 before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
 next stage is always the first neither marked done nor skipped. A session that finds
-`traigent-runs/run-plan.md` recording a matching target and agent resumes rather than restarts:
-read the record top to bottom and continue at the first stage neither marked done nor skipped -
-recorded scores, approvals, spend, and paid results stand, and the recorded opening score is still
-the run's opening score. A record with every stage marked done or skipped is a finished run, not a
-resume point. The operating contract's mismatch rule says when the artifact is historical instead.
+`traigent-runs/run-plan.md` recording a matching target and agent - target plus the recorded task
+answer when the agent line is `none discovered` - resumes rather than restarts: read the record
+top to bottom and continue at the first stage neither marked done nor skipped - recorded scores,
+approvals, spend, and paid results stand, and the recorded opening score is still the run's
+opening score. A resumed session opens with where the run stands, not the opening message. An
+approval the record shows as pending is re-rendered from the record before `continue` can approve
+it. A record with every stage marked done or skipped is a finished run, not a resume point. The
+operating contract's mismatch rule says when the artifact is historical instead.
 When the project has no compatible exact SDK declaration, use the tested pins in
 [`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
 unversioned `traigent` package.
@@ -725,8 +728,8 @@ a ceiling effect remains a hypothesis. An accuracy-only search requires a workfl
 label. A cost objective may proceed at equal accuracy only when materially lower cost remains
 possible; report any gain as cost and still flag weak evidence.
 
-Only when this gate supports a measured opportunity, preview the connected step with the CTA and
-approval rules in `references/run-safety.md`.
+Only when this gate supports a measured opportunity, preview the connected step with the final
+reply-ready line and approval rules in `references/run-safety.md`.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
@@ -929,7 +932,8 @@ result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
-End with the CTA in `references/run-safety.md`; `continue` never bypasses approval.
+End with the final reply-ready line in `references/run-safety.md`; `continue` never bypasses
+approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,
 these are available whenever the user wants them rather than because their state calls for them:
