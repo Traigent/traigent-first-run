@@ -69,11 +69,12 @@ Never hand-edit a lock, and never resolve a lock merge conflict by taking a side
 stale hashes for the other's files. Take either version, **stage the resolution**, then re-run
 `tools/relock.py`.
 
-Staging is not a formality. `git ls-files` lists a conflicted path once per merge stage, so a lock
-written over an unresolved index hashes that path once per stage - 15 entries for 13 files, exit 0,
-`rewrote` (#198). The tool refuses an index with unresolved paths and names them. `--allow-unmerged`
-writes anyway and says in the output what it wrote over, for the deliberate case; it does not make
-the result a measurement.
+Staging is not a formality. Mid-merge, a conflicted file's working-tree content is the conflict
+markers, so a lock written over an unresolved index hashes the markers as if they were the fixture -
+exit 0, `rewrote`, and the corruption surfaces only on the next honest run, reading as "someone
+changed a fixture" (#198 was the retired behaviour lock's form of the same mistake). The tool
+refuses an index with unresolved paths and names them. `--allow-unmerged` writes anyway and says in
+the output what it wrote over, for the deliberate case; it does not make the result a measurement.
 
 The locks record only the permission bits git can reproduce on checkout, i.e. the owner-execute bit.
 Every other bit comes from the checking-out user's umask, so storing the full mode made the locks

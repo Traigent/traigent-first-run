@@ -27,11 +27,14 @@ regenerates bakes in their own umask (0664 under `umask 0002` against 0644 under
 `umask 022`) and the lock breaks for everyone else.
 
 A third error this tool removes: writing a lock over an unresolved merge
-index. `git ls-files` lists a conflicted path once per merge stage, so a lock
-written mid-merge gained one entry per stage and still exited 0 printing
-`rewrote` - 15 entries for 13 files, with `glossary.md` hashed three times
-(#198). The corruption does not surface until the *next* honest run, where it
-reads as "someone changed a fixture" rather than "the lock was written wrong".
+index. Mid-merge, a conflicted file's working-tree content is the conflict
+markers, so a lock written then hashes the markers as if they were the fixture
+and still exits 0 printing `rewrote`. The corruption does not surface until
+the *next* honest run, where it reads as "someone changed a fixture" rather
+than "the lock was written wrong". The retired behaviour lock hit the sibling
+form of this - `git ls-files` lists a conflicted path once per merge stage, so
+it gained one entry per stage, 15 entries for 13 files (#198) - and the
+refusal it earned stays, because the residual hazard has the same shape.
 
 Usage:
     python tools/relock.py                    # rewrite any stale lock
@@ -127,11 +130,10 @@ def unmerged_paths() -> list[str]:
     <stage>\\t<path>` - so a single content conflict appears three times. The
     paths are what a reader has to act on, so the stages are collapsed here.
 
-    Returns an empty list when git is absent, mirroring
-    `harness.behavior_files`: a checkout with no git has no index, so there is
-    no conflicted index to refuse. A git *error* is raised rather than read as
-    "clean", because a guard that answers "no conflicts" when it could not look
-    is worse than no guard.
+    Returns an empty list when git is absent: a checkout with no git has no
+    index, so there is no conflicted index to refuse. A git *error* is raised
+    rather than read as "clean", because a guard that answers "no conflicts"
+    when it could not look is worse than no guard.
     """
     try:
         result = subprocess.run(
@@ -187,12 +189,12 @@ def refuse_unmerged_index(allow: bool) -> str:
         return state
     print(
         f"{state} -- refusing to write a lock over an index that does not "
-        f"give one resolved content per path. Git lists a conflicted path once "
-        f"per merge stage, so the lock would hash it once per stage and then "
-        f"fail on the next honest run as if a fixture had changed. Resolve "
-        f"the conflict and stage it first. --allow-unmerged writes anyway for "
-        f"an explicit, deliberate regeneration; it never makes the result a "
-        f"measurement.",
+        f"give one resolved content per path. Mid-merge, a conflicted file's "
+        f"working-tree content is the conflict markers, so the lock would "
+        f"hash the markers as if they were the fixture and then fail on the "
+        f"next honest run as if a fixture had changed. Resolve the conflict "
+        f"and stage it first. --allow-unmerged writes anyway for an explicit, "
+        f"deliberate regeneration; it never makes the result a measurement.",
         file=sys.stderr,
     )
     raise SystemExit(2)
