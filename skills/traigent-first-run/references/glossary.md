@@ -38,9 +38,7 @@ from evidence instead:
   move on. That costs an experienced reader nothing and quietly carries
   everyone else.
 - Depth on request only: answer a "what does that mean?" with the plain and,
-  if asked further, the precise wording. Do not front-load teaching material,
-  and do not link educational resources during the active run (an operating-
-  contract rule in `SKILL.md`; it owns that decision).
+  if asked further, the precise wording. Do not front-load teaching material.
 
 ## Core terms
 
@@ -234,11 +232,10 @@ The lines under each pillar on the card
                                  found behind its name. An agent that calls no
                                  tools is not scored on this, because there is
                                  nothing here to be right or wrong about.
-    Four of the six things this pillar was asked to cover, and the card names the
-    other two rather than leaving them implied: whether your dataset and your
-    evaluation method are wired into the agent. This run builds that integration
-    and checks it against the installed SDK later, so at the opening score there
-    is nothing in your agent's own code to read it from.
+    The card also names this pillar's other two checks: whether your dataset
+    and your evaluation method are wired into the agent. This run builds that
+    integration and verifies it later against the installed SDK, so the
+    opening score cannot read it from your code.
   Words the evidence beside those lines uses:
     settings document          - the file listing which of your agent's settings
                                  the search may vary, and which of them the
@@ -259,17 +256,13 @@ The lines under each pillar on the card
                                  search fitted the examples it could see. With
                                  ten of them, it can show a winner still works
                                  outside the rows it was chosen on and cannot
-                                 measure by how much. It is
-                                 the train/test idea, except nothing is trained:
-                                 Traigent searches configurations rather than
-                                 fitting a model. Say "tuning set" and "held-out
-                                 set" to the user, and only that pair. The card's
-                                 own line prints them as "to tune on / held back"
-                                 and the guide's files name the second one the
-                                 holdout; "validation" and "test set" are the
-                                 reader's own words, borrowed only to bridge to
-                                 them. Same rows either way, always created by
-                                 default for generated data.
+                                 measure by how much. Say "tuning set" and
+                                 "held-out set" to the user, and only that pair.
+                                 The card's own line prints them as "to tune on
+                                 / held back" and the guide's files name the
+                                 second one the holdout; "validation" and "test
+                                 set" are the reader's own words - the
+                                 train/test idea, except nothing is trained.
     good-vs-bad examples       - answers already known to be right and known to
                                  be wrong, run through your evaluator to see how
                                  far apart it scores them. Near 1.00 it
@@ -285,13 +278,10 @@ The lines under each pillar on the card
                                  because a source nothing can verify cannot be
                                  read as a claim that the row is real. The card
                                  always says so on the "where the rows came
-                                 from" line. It also gives the score the same
-                                 rows would earn declared as collected -
-                                 whenever that is a different number. When
-                                 something else holds the run down to the same
-                                 score, the second number would repeat the
-                                 first, so the card omits it rather than
-                                 spending a line to say nothing changes.
+                                 from" line. When declaring them as collected
+                                 would change the score, the card shows that
+                                 second number too; when it would not, the
+                                 card omits it.
 
   Why two lines are blank at the start: they are "checked on known-good and
   known-bad" and "separates good answers from bad", which both come from
@@ -301,14 +291,12 @@ The lines under each pillar on the card
   check the run will do later keeps its weight, so the pillar reads under 100
   until calibration. That is why 2 of 4 measured is not 100.
 
-  The Agent pillar used to be the third blank and no longer is. Every
-  config-space file found before this run's search is omitted, so no settings
-  document ever reaches an opening score - but your agent is still there to
-  read, and the assistant reads it: which parameters it can already vary, and
-  the line of your code showing each. That is what the opening pillar is
-  scored from, and it says "at least N configurations" because nobody has
-  chosen the sweep yet. Two different states hold the card at 45 and they are
-  not the same finding about you. A reading that found nothing your agent can
+  Every config-space file found before this run's search is omitted, so no
+  settings document ever reaches an opening score - but your agent is still
+  there to read, and the assistant reads it: which parameters it can already
+  vary, and the line of your code showing each. That is what the opening
+  pillar is scored from, and it says "at least N configurations" because
+  nobody has chosen the sweep yet. A reading that found nothing your agent can
   vary is a measurement of your project - a search here would compare one
   configuration - so it blocks the paid run until something can vary. Nothing
   read and nothing supplied is a statement about what this score was given; it
@@ -346,15 +334,12 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   search would tune on. Some do not block and still put a question to you: the
   run is worth making, and there is something for a person to read and agree
   with before the number means what it looks like - a whole answer key a model
-  wrote, or rows whose expected answer does not seem to fit their own input. You
-  are asked each of those once, where answering it still costs nothing - when
-  the finding is made if a fix is free then, otherwise in the approval before
-  the first paid call - and that approval shows you the answer you gave rather
-  than asking again. And some only say that generated data, or a
-  comparison set too small to settle a close call, limits claim strength until
-  real rows or completed paired outcomes support more. That last kind limits what
-  the result may claim without saying anything is wrong with your setup and
-  without needing anything from you.
+  wrote, or rows whose expected answer does not seem to fit their own input.
+  And some only say that generated data, or a comparison set too small to
+  settle a close call, limits claim strength until real rows or completed
+  paired outcomes support more. That last kind limits what the result may
+  claim without saying anything is wrong with your setup and without needing
+  anything from you.
   Several can apply at once, and the score is the strictest of them together
   with the average - so a listed ceiling is not necessarily the one in force.
   The card marks the difference: "limited to" is the ceiling you are at, "would
@@ -384,9 +369,6 @@ Provider key vs Traigent portal key
   gates. The provider key (OpenAI, Anthropic, OpenRouter, ...) pays for the local
   baseline's model calls. Only after that result, the Traigent portal key (it
   starts with `uk_`) connects the managed run to your Traigent account.
-  Ask for the provider key before the local baseline. Ask for the Traigent key
-  only after the baseline checkpoint. Each is pasted into the file directly,
-  never into chat.
 
 Portal
   Plain: the Traigent portal site where your account lives - it generates your
@@ -407,11 +389,8 @@ Access code
   creates your account, and it cannot be used again afterwards. The registration
   link in that email is just the way to the page - it carries no credential, so
   the code has to be typed in rather than clicked through.
-  Note: because your address was already confirmed by the six-digit code,
-  registration will not ask you to confirm it a second time. Registering lands
-  you in the portal; you then create your full-access key yourself - the key
-  control in the top bar is the quickest way, and it is highlighted on your
-  first visit. The key is shown once, so save it there and then.
+  Note: `references/run-safety.md` owns the registration path and the key
+  creation that follows it.
 
 Portal access period
   Plain: the 10 days of Traigent portal access that start the moment you
@@ -441,11 +420,5 @@ say to ask, ask in the plain wording above, and when they say to proceed with a
 generated substitute, say so in one sentence and list it under walkthrough setup.
 
 There is no mark for a substitute, and that is a decision rather than an
-omission. It was drawn as tools until a reader asked why a substitute carried a
-repair symbol, and then as a specimen, which says experimental - something the
-customer's own component can also be. Each glyph was read for what it depicts,
-and each depiction was a guess at the one thing that has to land: who wrote
-this. A customer meets the line beside `✅` while deciding what to spend, so the
-line says "made for this walkthrough, not your product" in words. The mark never
-removed the need for that sentence; it only ever tagged a claim the prose had
-already made.
+omission: a customer meets the line beside `✅` while deciding what to spend, so
+the line says "made for this walkthrough, not your product" in words.
