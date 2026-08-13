@@ -7899,23 +7899,30 @@ class MeasuredOpeningInvocationTests(unittest.TestCase):
             code = MODULE.run(argv)
         return code, out.getvalue(), err.getvalue()
 
-    def test_preflight_evidence_refuses_declared_component_state_flags(self) -> None:
-        for flag, value in (
-            ("--agent", "invalid"),
-            ("--dataset", "real"),
-            ("--evaluation", "invalid"),
+    def test_scoring_evidence_refuses_declared_component_state_flags(self) -> None:
+        for evidence_flag, evidence_value in (
+            ("--preflight", "opening.json"),
+            ("--agent-knobs", "agent-read.json"),
+            ("--calibration", "calibration.json"),
+            ("--config-space", "config-space.json"),
         ):
-            with self.subTest(flag=flag):
-                code, stdout, stderr = self._run(
-                    ["--preflight", "opening.json", flag, value]
-                )
-                self.assertEqual(code, 2)
-                self.assertEqual(stdout, "")
-                self.assertIn(
-                    "cannot mix declared component state with --preflight evidence",
-                    stderr,
-                )
-                self.assertIn(flag, stderr)
+            for flag, value in (
+                ("--agent", "invalid"),
+                ("--dataset", "real"),
+                ("--evaluation", "invalid"),
+            ):
+                with self.subTest(evidence=evidence_flag, declaration=flag):
+                    code, stdout, stderr = self._run(
+                        [evidence_flag, evidence_value, flag, value]
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn(
+                        "cannot mix declared component state with scoring evidence",
+                        stderr,
+                    )
+                    self.assertIn(evidence_flag, stderr)
+                    self.assertIn(flag, stderr)
 
     def test_planning_still_accepts_the_three_declared_states_without_evidence(
         self,

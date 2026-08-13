@@ -276,12 +276,13 @@ Read-only preflight and readiness runs are static local validation; they authori
 write.
 
 **Opening invocation contract.** When the opening call supplies measured evidence - its
-`--preflight` JSON and any applicable `--agent-knobs` and `--row-review` documents - do **not** also
-pass `readiness.py --agent`, `--dataset`, or `--evaluation`. Those three flags are fallback
-declarations for material the score was not given; adding them beside measurements supplies two
-incompatible accounts of the same project, so `readiness.py` rejects the invocation. The opening readiness argv therefore contains only the measured inputs
-plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin flags that the rules
-above establish. Before running it, check the row-review mechanically against its documented
+`--preflight` JSON, applicable `--calibration`, and any applicable `--agent-knobs` and
+`--row-review` documents - do **not** also pass `readiness.py --agent`, `--dataset`, or
+`--evaluation`. Those three flags are fallback declarations for material the score was not given;
+adding them beside measurements supplies two incompatible accounts of the same project, so
+`readiness.py` rejects the invocation. The opening readiness argv therefore contains only the
+measured inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin
+flags that the rules above establish. Before running it, check the row-review mechanically against its documented
 shape: every reviewed row has `id`, normalized `origin`, `verdict`, one-sentence `note`, and the
 same explicit `in_run` boolean when membership is settled. Do not rely on a successful exit to
 prove an omitted review field was intentionally omitted.
