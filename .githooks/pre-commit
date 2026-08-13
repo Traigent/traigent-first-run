@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Regenerate the derived locks and stage them, so a commit cannot carry a stale
+# one.
+#
+# The lock hashes GUIDE.md and every file under skills/traigent-first-run/, so
+# it moves whenever the guidance does. Keeping it current was a rule people had
+# to remember, and the failure was silent in the one place it mattered:
+# `relock.py --check` reads the WORKING TREE and passes, while CI reads the
+# COMMIT and fails. Regenerating after staging - resolve, add, relock - produced
+# exactly that, twice on one branch in one afternoon.
+#
+# This makes the ordering structural. It stages ONLY the lock files: a hook that
+# ran `git add -A` would sweep whatever else is in the tree into the commit,
+# which is its own incident in this repository's history.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Nothing to regenerate from a conflicted index, and relock refuses one on
+# purpose (#198: it hashed a conflicted file once per stage and wrote a corrupt
+# lock). git will not complete this commit either, so say why and stop.
+if [ -n "$(git ls-files --unmerged)" ]; then
+  echo "pre-commit: unresolved merge paths; resolve them, then commit." >&2
+  exit 1
+fi
+
+if ! python3 tools/relock.py >/dev/null; then
+  echo "pre-commit: tools/relock.py failed; the lock was NOT regenerated." >&2
+  exit 1
+fi
+
+# Only what relock.py writes. Named explicitly rather than globbed so a new
+# generated file has to be added here deliberately.
+git add -- tests/behavioral/behavior.lock.json
+git add -- tests/behavioral/scenarios/*/fixture.lock.json 2>/dev/null || true

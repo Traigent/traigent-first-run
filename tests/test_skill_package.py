@@ -16946,6 +16946,66 @@ class ACommentIsNotAKnobTests(unittest.TestCase):
         self.assertIn("reports a search space this project does not have", creation)
 
 
+class TheLockRegeneratesItselfTests(unittest.TestCase):
+    """The lock is derived, and keeping it current was a rule to remember.
+
+    `relock.py --check` reads the WORKING TREE and passes; CI reads the COMMIT
+    and fails. So regenerating after staging - resolve, `git add`, relock -
+    leaves the resolved copy in the index and the regenerated one on disk, and
+    every local check agrees the tree is clean. That shipped twice on one branch
+    in one afternoon before the hook existed.
+
+    Pinned because the hook is the fix and an unexecutable or over-broad hook is
+    worse than none: one that cannot run restores the old failure silently, and
+    one that stages more than the lock is how eight embedded worktrees reached a
+    commit in this repository's history.
+    """
+
+    HOOK = ROOT / ".githooks" / "pre-commit"
+
+    def test_the_hook_exists_and_can_run(self) -> None:
+        self.assertTrue(self.HOOK.is_file(), f"{self.HOOK} is missing")
+        self.assertTrue(
+            os.access(self.HOOK, os.X_OK),
+            "the pre-commit hook is not executable, so git will skip it "
+            "silently and the lock goes back to being a rule to remember",
+        )
+
+    def test_the_hook_stages_only_the_generated_locks(self) -> None:
+        """`git add -A` in a hook sweeps whatever else is in the tree."""
+        body = self.HOOK.read_text(encoding="utf-8")
+        added = [
+            line.strip()
+            for line in body.splitlines()
+            if line.strip().startswith("git add")
+        ]
+        self.assertTrue(added, "the hook stages nothing, so it fixes nothing")
+        for line in added:
+            with self.subTest(line=line):
+                self.assertIn("lock.json", line)
+                self.assertNotIn("-A", line)
+                self.assertNotIn("--all", line)
+
+    def test_the_hook_refuses_a_conflicted_index(self) -> None:
+        """#198: relock hashed a conflicted file once per stage."""
+        body = self.HOOK.read_text(encoding="utf-8")
+        self.assertIn("ls-files --unmerged", body)
+
+    def test_the_installer_is_named_where_a_reader_will_look(self) -> None:
+        """A hook nobody enables is a file, not a guard.
+
+        `.git/hooks` is not versioned, so `core.hooksPath` is the setting that
+        makes a checked-in hook run at all.
+        """
+        installer = ROOT / "tools" / "install-hooks.sh"
+        self.assertTrue(installer.is_file())
+        self.assertIn("core.hooksPath", installer.read_text(encoding="utf-8"))
+        self.assertIn(
+            "bash tools/install-hooks.sh",
+            (ROOT / "CLAUDE.md").read_text(encoding="utf-8"),
+        )
+
+
 class TheSubstituteHasNoMarkerAnywhereTests(unittest.TestCase):
     """There is no substitute marker, and the absence is the thing to pin.
 

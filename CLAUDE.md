@@ -16,6 +16,35 @@ mark of its own. Do not describe synthetic results as representative of producti
 secret entry, paid/provider calls, private-data egress, judgment-dependent gold/rubric changes,
 destructive changes, or production-affecting changes.
 
+## Checking a change
+
+Run this once per clone, before anything else:
+
+```bash
+bash tools/install-hooks.sh
+```
+
+It points `core.hooksPath` at `.githooks/`, whose `pre-commit` regenerates the behaviour lock and
+stages it. The lock hashes `GUIDE.md` and everything under `skills/traigent-first-run/`, so it
+moves whenever the guidance does, and keeping it current used to be a rule to remember. The failure
+was silent in the one place it mattered: `relock.py --check` reads the WORKING TREE and passes,
+while CI reads the COMMIT and fails. Regenerating after staging produced exactly that twice on one
+branch in one afternoon, which is why the ordering is now the hook's job and not yours.
+
+The four gates CI runs, and what each costs, because treating them as one unit is how the slow one
+gets run for changes that cannot affect it:
+
+| gate | cost | run it when |
+|---|---|---|
+| `python tools/relock.py --check` | ~1s | always - and it is CI's first step, before the installs |
+| `ruff check .` | ~1s | always |
+| `black --check .` | ~1s | always |
+| `python -m unittest discover -s tests` | **~4 min** | guidance, scripts or tests changed |
+
+A lock-only or comment-only commit does not need the suite. One CI job is not reproducible by any
+of these: `offline-contract` runs the behavioural harness in a network-less container and gates
+`validate`, so all four can pass locally while CI does not.
+
 ## Editing the guidance
 
 Recorded once here so it is not re-decided per pull request.
