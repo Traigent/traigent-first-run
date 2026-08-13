@@ -16946,6 +16946,42 @@ class RowReviewOriginsUsePreflightVocabularyTests(unittest.TestCase):
         self.assertIn('"your real rows", not "your collected rows"', dataset)
 
 
+class OpeningMeasuredEvidenceContractTests(unittest.TestCase):
+    """The opening must not declare a state it has already measured.
+
+    A blinded Case 08 worker passed `--agent invalid --dataset real
+    --evaluation invalid` beside real preflight, agent-read, and row-review
+    inputs.  The command happened to yield the expected card, but the
+    declaration was an unverified second account of the project.  A passing
+    score must not make that contradiction look legitimate.
+    """
+
+    def _gate(self) -> str:
+        text = SKILL.read_text(encoding="utf-8")
+        gate = text.split("#### Opening readiness gate", 1)[1].split(
+            "#### Zero-anchor intent gate", 1
+        )[0]
+        return " ".join(gate.casefold().split())
+
+    def test_measurements_exclude_declared_component_state_flags(self) -> None:
+        gate = self._gate()
+        self.assertIn("opening invocation contract", gate)
+        self.assertIn(
+            "do **not** also pass `readiness.py --agent`, `--dataset`, or `--evaluation`",
+            gate,
+        )
+        self.assertIn(
+            "fallback declarations for material the score was not given", gate
+        )
+        self.assertIn("supplies two incompatible accounts of the same project", gate)
+        self.assertIn("`readiness.py` rejects the invocation", gate)
+
+    def test_settled_row_reviews_have_an_explicit_membership_field(self) -> None:
+        gate = self._gate()
+        self.assertIn("same explicit `in_run` boolean when membership is settled", gate)
+        self.assertIn("do not rely on a successful exit", gate)
+
+
 class ACommentIsNotAKnobTests(unittest.TestCase):
     """A stub's comment listed six settings and a run recorded them as knobs.
 
@@ -17157,6 +17193,23 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("letter the routes from `a`", skill)
         self.assertIn("close with the unnumbered `i have it` line", skill)
         self.assertIn("no route carries a decision of its own", skill)
+
+    def test_the_unusable_example_cannot_collapse_the_two_routes_to_yes_no(
+        self,
+    ) -> None:
+        """A worker kept the diagnosis but replaced A/B with “shall I?”.
+
+        That looks shorter, but it silently drops the pause route.  The
+        example is the closest wording a worker sees at the stop point, so it
+        must make the structural distinction explicit rather than relying on
+        the higher-level rule in SKILL.md.
+        """
+        creation = self._creation()
+        self.assertIn("render the two lettered routes as `a.` and `b.`", creation)
+        self.assertIn("do **not** compress them into a", creation)
+        self.assertIn('"shall i go ahead?" yes/no question', creation)
+        self.assertIn("no customer-facing sentence follows the", creation)
+        self.assertIn("standing path line", creation)
 
     def test_the_standing_exit_is_never_counted_as_an_answer(self) -> None:
         """The resident doc counted it, and the count is what taught the defect.

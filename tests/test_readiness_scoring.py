@@ -7884,6 +7884,49 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         self.assertNotIn("28 rows this run", cap.reason)
 
 
+class MeasuredOpeningInvocationTests(unittest.TestCase):
+    """A score gets one source of component state, not a declaration too.
+
+    This is deliberately a CLI-boundary test.  The former implementation
+    silently ignored the declarations, so testing the guide's prose could not
+    catch the exact command a fresh worker sent in Case 08.
+    """
+
+    @staticmethod
+    def _run(argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_preflight_evidence_refuses_declared_component_state_flags(self) -> None:
+        for flag, value in (
+            ("--agent", "invalid"),
+            ("--dataset", "real"),
+            ("--evaluation", "invalid"),
+        ):
+            with self.subTest(flag=flag):
+                code, stdout, stderr = self._run(
+                    ["--preflight", "opening.json", flag, value]
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn(
+                    "cannot mix declared component state with --preflight evidence",
+                    stderr,
+                )
+                self.assertIn(flag, stderr)
+
+    def test_planning_still_accepts_the_three_declared_states_without_evidence(
+        self,
+    ) -> None:
+        code, _stdout, stderr = self._run(
+            ["--agent", "invalid", "--dataset", "real", "--evaluation", "invalid"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+
+
 class RowReviewInputTests(unittest.TestCase):
     """What the scorer refuses to accept as a reading.
 

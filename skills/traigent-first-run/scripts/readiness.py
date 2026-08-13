@@ -7805,6 +7805,29 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    # The planner's three component-state flags are declarations for when the
+    # caller has no measured opening evidence.  A preflight receipt is that
+    # evidence for the project being scored, so accepting both would give one
+    # invocation two incompatible sources of truth.  These flags were once
+    # silently ignored on the scoring path, which let a plausible-looking
+    # opening command conceal that it had supplied a guessed state.
+    declared_component_states = {
+        "--agent": args.agent,
+        "--dataset": args.dataset,
+        "--evaluation": args.evaluation,
+    }
+    if args.preflight and any(declared_component_states.values()):
+        supplied = ", ".join(
+            flag for flag, value in declared_component_states.items() if value
+        )
+        print(
+            "cannot mix declared component state with --preflight evidence: "
+            f"remove {supplied}; the preflight, agent read, and row review "
+            "are the opening score's sources of truth",
+            file=sys.stderr,
+        )
+        return 2
+
     if not scoring_requested(args):
         if not all((args.agent, args.dataset, args.evaluation)):
             print(
