@@ -67,7 +67,7 @@ Costs measured on a current checkout, so running everything is a known price, no
 | `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
 | `ruff check .` | 0.1 s | Always. |
 | `black --check .` | ≤3 s | Always. |
-| `python -m unittest discover -s tests` | ~4 min (1066 tests) | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
+| `python -m unittest discover -s tests` | ~4 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
 
 CI additionally executes the behavioral scenarios hermetically (the `offline-contract` job,
 ~30 s) inside the network-none container `validate.yml` builds - no local row reproduces it, so
