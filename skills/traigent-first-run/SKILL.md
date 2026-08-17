@@ -262,8 +262,12 @@ fresh directory per scoring so a later one never reads an earlier one's. Never d
 directory to the user beside the card: they may want to keep, share, or remove it. Two halves, one pass, and
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
-the line that shows it. Read the same source for how the agent is built and answer all four checks
-the reference names: whether it carries a prompt and worked examples, whether anything pins down the
+the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
+A name only in a comment, docstring, TODO, or example is not a knob, and the list above is examples
+to search the source for, not a set to report. Same rule as `references/component-creation.md`, applied here because this
+gate is evaluated before that reference loads. Read the same source for how the agent is built and
+answer all four checks the reference names: whether it carries a prompt and worked examples,
+whether anything pins down the
 shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
 Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
 agent lacks the thing, and the two are different statements about somebody's code. Withholding the
