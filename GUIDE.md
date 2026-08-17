@@ -43,8 +43,7 @@ session opens with where the run stands rather than the opening message.
 If none is credible, use `Agent: none discovered`; replace it before later results.
 
 An already-supplied local credential file is an availability inventory, not an agent selection.
-Keep the agent, dataset, evaluator, and run artifacts in the chosen project, except the opening
-gate's own working files.
+Keep the agent, dataset, evaluator, and run artifacts in the chosen project.
 
 Use the bundled tools:
 
