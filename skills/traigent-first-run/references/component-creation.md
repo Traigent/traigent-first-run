@@ -303,8 +303,9 @@ the settings a real call *would* take is describing an agent that does not exist
 those names reports a search space this project does not have - which is the same false readiness a
 historical config-space file produces, arriving through the one input that is supposed to be read
 fresh from the source. Two blinded runs reasoned this out unaided and wrote the reasoning down; a
-third recorded six comment-only names. It is not a judgement call, so it does not stay unstated. Write it to a scratch path outside the
-user's project and pass it as `scripts/readiness.py --agent-knobs`.
+third recorded six comment-only names. It is not a judgement call, so it does not stay unstated. Pass
+it as `scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, and why a
+copy left inside becomes the historical file the paragraph above refuses to score.
 
 ```json
 {"source": "agent.py",

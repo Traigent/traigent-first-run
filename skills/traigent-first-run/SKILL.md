@@ -256,8 +256,10 @@ its provenance; a timestamp, hash, or non-empty `wired` list does not make it cu
 run does this, including a zero-anchor run.
 
 Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
-grades this project instead of reporting nothing. Two halves, one pass, and neither is optional
-where an agent was found. Read its own source for parameters it can already vary - model,
+grades this project instead of reporting nothing. Write that document to a scratch path outside the
+customer's project: the score measures what they brought, so producing it must not add a file to
+what is measured. `traigent-runs/` is its home from stage 3 on. Two halves, one pass, and
+neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
 the line that shows it. Read the same source for how the agent is built and answer all four checks
 the reference names: whether it carries a prompt and worked examples, whether anything pins down the
