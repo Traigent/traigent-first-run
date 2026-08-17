@@ -304,8 +304,9 @@ those names reports a search space this project does not have - which is the sam
 historical config-space file produces, arriving through the one input that is supposed to be read
 fresh from the source. Two blinded runs reasoned this out unaided and wrote the reasoning down; a
 third recorded six comment-only names. It is not a judgement call, so it does not stay unstated. Pass
-it as `scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, and why a
-copy left inside becomes the historical file the paragraph above refuses to score.
+it as `scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written. Each
+scoring gets its own directory there for the same reason this paragraph refuses a found file: a
+read is evidence about the source at the moment it was taken, never a document to be reused.
 
 ```json
 {"source": "agent.py",
