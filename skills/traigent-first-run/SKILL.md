@@ -282,7 +282,10 @@ name it and say what stopped the read, then offer to be pointed at source that c
 offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
 stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
 read found, and no read completed, so passing an empty one reports a finding about the customer's
-agent that nothing established. Proceed with what can be varied if nothing comes back. Never ask
+agent that nothing established. That case is the source defeating the read, never this document
+being refused: a rejected document is yours to correct and send again, and dropping the flag instead
+tells the user something about their agent that is true only of your own paperwork.
+Proceed with what can be varied if nothing comes back. Never ask
 for a config-space file here - the paragraph above omits
 every one of those found before this run's search, so it cannot answer this. The ceiling left
 standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
