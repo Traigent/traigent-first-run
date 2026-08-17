@@ -7689,6 +7689,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             + ", ".join(sorted(AGENT_KNOBS_DOCUMENT_FIELDS))
             + "; each knob reads "
             + ", ".join(sorted(DISCOVERED_KNOB_FIELDS))
+            + ". `knobs` maps each parameter's name to its entry rather than "
+            "listing entries: the name is the key, never a field inside one"
         ),
     )
     parser.add_argument(
