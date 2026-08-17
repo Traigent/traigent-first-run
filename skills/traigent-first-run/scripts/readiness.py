@@ -6319,6 +6319,24 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
 
 
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
+    # `preflight.py --json` emits a list of check records. Anything else is a
+    # different document handed to the wrong flag - which used to reach the
+    # reads below and fail as `'str' object has no attribute 'get'`, reported
+    # to the user as an internal defect in the check. It is not: it is a
+    # supplied input this function cannot score, so it refuses like one and
+    # names the document it actually received.
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+        raise PreflightInputError(
+            "--preflight expects the list of checks that `preflight.py --json` "
+            f"prints, and received {type(records).__name__}"
+        )
+    for record in records:
+        if not isinstance(record, dict):
+            raise PreflightInputError(
+                "--preflight expects the list of checks that `preflight.py "
+                "--json` prints, and one entry is "
+                f"{type(record).__name__}, not a check record"
+            )
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
     provenance = metrics.get("dataset-provenance", {})
@@ -7219,6 +7237,11 @@ DISCOVERED_KNOB_FIELDS = frozenset({"values", "low", "high", "evidence"})
 # What was owed was the sentence, and it is owed at the error rather than only
 # in the reference - the reader is standing here, mid-run, with a non-zero exit.
 BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
+# The document's own three halves, named for the same reason the knob fields
+# are: `--agent-knobs` states them in its help so a caller at the opening gate
+# has the shape without reaching the stage-3 reference, and a help text that
+# restates a literal is one that can go stale while reading as authoritative.
+AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
 def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
@@ -7565,7 +7588,7 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
             f"the agent-knobs document must be an object, not "
             f"{type(document).__name__}"
         )
-    unknown = sorted(set(document) - {"knobs", "source", "build"})
+    unknown = sorted(set(document) - AGENT_KNOBS_DOCUMENT_FIELDS)
     if unknown:
         raise AgentDiscoveryInputError(
             f"the agent-knobs document carries unknown field(s) "
@@ -7662,7 +7685,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "nothing about wiring. Its knob half is ignored when --config-space "
             "is given, because that document decides the space; its build half "
             "is read either way, because no config space describes how the "
-            "agent is built"
+            "agent is built. Reads "
+            + ", ".join(sorted(AGENT_KNOBS_DOCUMENT_FIELDS))
+            + "; each knob reads "
+            + ", ".join(sorted(DISCOVERED_KNOB_FIELDS))
         ),
     )
     parser.add_argument(
@@ -7801,6 +7827,32 @@ def run(argv: Sequence[str] | None = None) -> int:
             "cannot read scoring input: --row-review needs --preflight - its "
             "coverage is checked against the counted rows, and cannot be taken "
             "on trust",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Every document flag accepts `-`, and there is one stdin: the first read
+    # consumes it and the next sees an empty stream. The documents then land in
+    # the wrong variables and fail far from here, describing a shape the caller
+    # never passed. Refusing names the mistake where it was made, and says
+    # which flags collided rather than leaving the caller to guess.
+    piped = [
+        flag
+        for flag, value in (
+            ("--preflight", args.preflight),
+            ("--calibration", args.calibration),
+            ("--config-space", args.config_space),
+            ("--agent-knobs", args.agent_knobs),
+            ("--row-review", args.row_review),
+        )
+        if value == "-"
+    ]
+    if len(piped) > 1:
+        print(
+            "cannot read scoring input: "
+            + " and ".join((", ".join(piped[:-1]), piped[-1]))
+            + " each read stdin, and stdin can be read once. Pipe one document "
+            "and pass the others as paths.",
             file=sys.stderr,
         )
         return 2
