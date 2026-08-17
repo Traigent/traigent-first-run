@@ -7237,6 +7237,11 @@ DISCOVERED_KNOB_FIELDS = frozenset({"values", "low", "high", "evidence"})
 # What was owed was the sentence, and it is owed at the error rather than only
 # in the reference - the reader is standing here, mid-run, with a non-zero exit.
 BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
+# The document's own three halves, named for the same reason the knob fields
+# are: `--agent-knobs` states them in its help so a caller at the opening gate
+# has the shape without reaching the stage-3 reference, and a help text that
+# restates a literal is one that can go stale while reading as authoritative.
+AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
 def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
@@ -7583,7 +7588,7 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
             f"the agent-knobs document must be an object, not "
             f"{type(document).__name__}"
         )
-    unknown = sorted(set(document) - {"knobs", "source", "build"})
+    unknown = sorted(set(document) - AGENT_KNOBS_DOCUMENT_FIELDS)
     if unknown:
         raise AgentDiscoveryInputError(
             f"the agent-knobs document carries unknown field(s) "
@@ -7680,8 +7685,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "nothing about wiring. Its knob half is ignored when --config-space "
             "is given, because that document decides the space; its build half "
             "is read either way, because no config space describes how the "
-            "agent is built. Reads 'source', 'knobs' and 'build'; each knob "
-            "reads 'values', 'evidence', 'high' and 'low'"
+            "agent is built. Reads "
+            + ", ".join(sorted(AGENT_KNOBS_DOCUMENT_FIELDS))
+            + "; each knob reads "
+            + ", ".join(sorted(DISCOVERED_KNOB_FIELDS))
         ),
     )
     parser.add_argument(

@@ -3787,6 +3787,22 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertNotIn("each read stdin", stderr)
 
+    def test_the_help_text_names_the_fields_the_reader_actually_accepts(self) -> None:
+        """The help is where a caller at the opening gate looks for the shape.
+
+        A help text that restates the field names as a literal reads as
+        authoritative and goes stale in silence the first time either set
+        grows - which is the failure this addition exists to prevent, arriving
+        one layer over. Derived from the same constants the reader validates
+        against, so the two cannot disagree.
+        """
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            MODULE.parse_args(["--help"])
+        help_text = out.getvalue()
+        for field in MODULE.AGENT_KNOBS_DOCUMENT_FIELDS | MODULE.DISCOVERED_KNOB_FIELDS:
+            self.assertIn(field, help_text)
+
     def test_a_document_of_the_wrong_shape_is_refused_by_name(self) -> None:
         """`--preflight` reads a list of checks; a dict is a different document.
 
