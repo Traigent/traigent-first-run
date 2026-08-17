@@ -3747,6 +3747,65 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot read scoring input", stderr)
 
+    def test_two_documents_cannot_both_be_piped(self) -> None:
+        """Every document flag takes `-`, and there is one stdin.
+
+        The opening gate wants preflight output and a source read at once, so
+        piping both is the obvious move. The first read consumed stdin and the
+        second saw an empty stream, which surfaced far away as an
+        `AttributeError` about a shape nobody passed - reported to a first-time
+        user as a defect in the checker.
+        """
+        code, _stdout, stderr = self._run(
+            [
+                "--preflight",
+                "-",
+                "--agent-knobs",
+                "-",
+                "--task-kind",
+                "structured",
+                "--evaluator-method",
+                "set-f1",
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read scoring input", stderr)
+        self.assertIn("--preflight", stderr)
+        self.assertIn("--agent-knobs", stderr)
+        self.assertNotIn("internal error", stderr)
+
+    def test_one_piped_document_is_still_allowed(self) -> None:
+        """The refusal is about collision, not about `-`.
+
+        Pinned beside the refusal because the cheapest wrong fix - banning `-`
+        outright - passes the test above and removes the affordance the help
+        text promises on five flags.
+        """
+        code, _stdout, stderr = self._run(
+            ["--config-space", "/nonexistent.json", "--agent-knobs", "-"]
+        )
+        self.assertEqual(code, 2)
+        self.assertNotIn("each read stdin", stderr)
+
+    def test_a_document_of_the_wrong_shape_is_refused_by_name(self) -> None:
+        """`--preflight` reads a list of checks; a dict is a different document.
+
+        Handing one flag the other flag's document is a caller mistake, and it
+        reached the record loop as `'str' object has no attribute 'get'`. The
+        same input arriving by path rather than by pipe must refuse the same
+        way, so the fix cannot be the stdin guard alone.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            wrong = Path(directory) / "agent-knobs.json"
+            wrong.write_text(
+                json.dumps({"source": "agent.py", "knobs": {}, "build": {}})
+            )
+            code, _stdout, stderr = self._run(["--preflight", str(wrong)])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read scoring input", stderr)
+        self.assertIn("--preflight", stderr)
+        self.assertNotIn("internal error", stderr)
+
 
 class ThinPillarCannotPresentAsVerifiedTests(unittest.TestCase):
     """A pillar nobody measured must not carry a STRONG or EXCELLENT band.
