@@ -9480,3 +9480,109 @@ class TheRefusalMessageIsADocumentThatWorksTests(unittest.TestCase):
                 with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
                     MODULE.agent_facts_from_discovery(document)
                 self.assertIn(flag, str(caught.exception))
+
+
+class TheRowReviewRefusalPrintsADocumentThatWorksTests(unittest.TestCase):
+    """The sibling of the agent-knobs example, and it was found the hard way.
+
+    Once the agent-knobs contract stopped being a staircase, a blinded run
+    walked four refusals on THIS document instead - not an object with reviewer
+    and rows, then an entry with no id, then a verdict outside the vocabulary,
+    then an origin outside it. Fixing one hand-authored document at the opening
+    gate had moved the problem to the other one.
+    """
+
+    def test_the_block_the_refusal_prints_parses_as_printed(self) -> None:
+        printed = MODULE.row_review_shape()
+        start = printed.index("{")
+        end = printed.rindex("}") + 1
+        self.assertEqual(MODULE.ROW_REVIEW_EXAMPLE, json.loads(printed[start:end]))
+
+    def test_every_entry_carries_what_the_legend_says_it_does(self) -> None:
+        for index, entry in enumerate(MODULE.ROW_REVIEW_EXAMPLE["rows"]):
+            with self.subTest(entry=index):
+                self.assertEqual({"id", "verdict", "origin", "note"}, set(entry))
+                self.assertIn(entry["verdict"], MODULE.ROW_REVIEW_VERDICTS)
+                self.assertIn(entry["origin"], MODULE.ROW_REVIEW_ORIGINS)
+
+    def test_the_vocabularies_the_legend_prints_are_the_ones_enforced(
+        self,
+    ) -> None:
+        # This is a CONTRACT test, not a drift guard, and the difference was
+        # worth finding. The legend is rendered from the same constants the
+        # scorer enforces, so the two cannot disagree - a first version
+        # asserting "each constant appears in the printed text" was a
+        # tautology, and a second, behavioural one survived widening the
+        # vocabulary too, because adding a member keeps "every member is
+        # accepted" true. There is no drift to guard here.
+        #
+        # What it does prove is worth keeping: every verdict and origin the
+        # message prints is genuinely accepted, and one outside them is
+        # refused with the vocabulary named.
+        for verdict in MODULE.ROW_REVIEW_VERDICTS:
+            with self.subTest(verdict=verdict):
+                self.assertNotIn(verdict, _row_review_refusal(verdict=verdict))
+        self.assertIn("expected one of", _row_review_refusal(verdict="not-a-verdict"))
+        for origin in MODULE.ROW_REVIEW_ORIGINS:
+            with self.subTest(origin=origin):
+                self.assertNotIn(origin, _row_review_refusal(origin=origin))
+        self.assertIn("expected one of", _row_review_refusal(origin="not-an-origin"))
+
+
+def _row_review_refusal(
+    *, verdict: str | None = None, origin: str | None = None
+) -> str:
+    """Return the scorer's complaint about one edited example entry, or "".
+
+    Behavioural, because the legend is derived from the constants and so can
+    only ever agree with them.
+    """
+    document = json.loads(json.dumps(MODULE.ROW_REVIEW_EXAMPLE))
+    document["rows"] = document["rows"][:1]
+    entry = document["rows"][0]
+    if verdict is not None:
+        entry["verdict"] = verdict
+    if origin is not None:
+        entry["origin"] = origin
+    # The counts have to describe the same dataset the review claims to, so
+    # they follow the origin under test rather than being pinned to one.
+    declared = entry["origin"]
+    facts = MODULE.DatasetFacts(
+        exists=True,
+        dataset_supplied=True,
+        unreadable_rows=0,
+        unreadable_detail="",
+        rows=1,
+        labelled_rows=1,
+        tuning_rows=1,
+        holdout_rows=0,
+        tuning_labelled_rows=1,
+        holdout_labelled_rows=0,
+        difficulty_bands=(),
+        difficulty_tagged_rows=0,
+        duplicate_status="none",
+        near_duplicate_status="none",
+        answer_dominance_status="none",
+        split_overlap=0,
+        shared_families=0,
+        tuning_forms=1,
+        holdout_forms=1,
+        integrity_failed=False,
+        synthetic=False,
+        generated_outputs=0,
+        collected_rows=1 if declared == "collected" else 0,
+        synthesised_rows=0,
+        undeclared_rows=1 if declared == "undeclared" else 0,
+        answerable_rows=1,
+        generated_answer_rows=0,
+        placeholder_rows=0,
+        sources=(),
+        unrecognised_sources=(),
+    )
+    try:
+        MODULE.row_review_from_document(document, facts)
+    except MODULE.RowReviewInputError as error:
+        return str(error)
+    except TypeError:
+        raise
+    return ""

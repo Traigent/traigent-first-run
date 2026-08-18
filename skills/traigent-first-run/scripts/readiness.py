@@ -2915,6 +2915,57 @@ ROW_REVIEW_REVIEWER = "assistant"
 # Provenance classes a reviewed row may carry. `synthesised` is absent on
 # purpose and refused below: this run's own generated rows are out of scope.
 ROW_REVIEW_ORIGINS = ("collected", "undeclared")
+# A row review this scorer accepts, printed verbatim when one is refused.
+#
+# The sibling of `AGENT_KNOBS_EXAMPLE`, and it exists for the same measured
+# reason. Once the agent-knobs contract stopped being a staircase, a blinded
+# run walked FOUR refusals here instead - not an object with reviewer and
+# rows, then an entry with no id, then a verdict outside the vocabulary, then
+# an origin outside it - and the fix for one document had simply moved the
+# problem to the other hand-authored document at the same gate. Reaching this
+# example took five refusals by hand, which is the cost it removes.
+ROW_REVIEW_EXAMPLE: dict[str, Any] = {
+    "reviewer": ROW_REVIEW_REVIEWER,
+    "rows": [
+        {
+            "id": "row-1",
+            "verdict": ROW_REVIEW_VERDICTS[0],
+            "origin": ROW_REVIEW_ORIGINS[0],
+            "note": "the expected rows answer the question this input asks",
+        },
+        {
+            "id": "row-2",
+            "verdict": ROW_REVIEW_VERDICTS[1],
+            "origin": ROW_REVIEW_ORIGINS[0],
+            "note": "the expected output omits a row the question asks for",
+        },
+    ],
+}
+
+
+def row_review_shape() -> str:
+    """Print a row review that works, rather than describing one.
+
+    Same reasoning as `agent_knobs_shape`, and the same shape of evidence
+    behind it. The one rule an example cannot carry is the cross-check: the
+    origins counted here must reconcile with what the preflight counted over
+    the same rows, so the block below is a form to fill from the reader's own
+    dataset rather than values to keep.
+    """
+    document = json.dumps(ROW_REVIEW_EXAMPLE, indent=2)
+    return (
+        "a row review this accepts, complete - copy it and review your own rows:\n"
+        f"{document}\n"
+        'Every entry carries all four fields. "verdict" is one of '
+        + ", ".join(ROW_REVIEW_VERDICTS)
+        + '; "origin" is one of '
+        + ", ".join(ROW_REVIEW_ORIGINS)
+        + ".\n"
+        '"id" names the row this verdict is about and "note" says in one '
+        "sentence why, so a\nreader can trace the judgement back to a row. "
+        "Review the rows you actually read: the\norigins counted here have to "
+        "match what the preflight counted over the same rows."
+    )
 
 
 def _row_count(value: Any, name: str, *, required: bool = True) -> int:
@@ -8069,6 +8120,10 @@ def run(argv: Sequence[str] | None = None) -> int:
         RowReviewInputError,
     ) as error:
         detail = f"cannot read scoring input: {error}"
+        if isinstance(error, RowReviewInputError):
+            # The other hand-authored document at this gate, and it grew the
+            # same staircase the moment the first one stopped being one.
+            detail += "\n" + row_review_shape()
         if isinstance(error, AgentDiscoveryInputError):
             # This document is hand-authored against a nested contract, and a
             # refusal that names only the next problem costs a round trip per
