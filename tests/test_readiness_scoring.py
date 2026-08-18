@@ -9409,3 +9409,74 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                     "generated",
                 )
                 self.assertIn(condition, MODULE.ACTION_FOR_CONDITION)
+
+
+class TheRefusalMessageIsADocumentThatWorksTests(unittest.TestCase):
+    """The agent-knobs refusal prints an example; it has to be a real one.
+
+    Five successive attempts to DESCRIBE this contract in prose were wrong and
+    every one of them read correctly: "everything is optional", "any check
+    inside build is optional", "any field other than evidence answers the
+    question", then the undocumented conditionals, then the undocumented types.
+    A blinded run had already paid for that - eight refusals, then it dropped
+    the flag and told a customer their agent could not be read.
+
+    So the message stopped describing and started showing, and these tests are
+    what make showing safer than describing: the example goes through the real
+    parser, so a message that drifts from the code fails here rather than in
+    somebody's run.
+    """
+
+    def test_the_example_the_refusal_prints_is_accepted_by_the_parser(self) -> None:
+        facts = MODULE.agent_facts_from_discovery(MODULE.AGENT_KNOBS_EXAMPLE)
+        self.assertEqual(["model"], [knob.name for knob in facts.discovered])
+        self.assertTrue(facts.discovery_supplied)
+        self.assertEqual(
+            sorted(MODULE.BUILD_CHECK_ANSWER),
+            sorted(signal.name for signal in facts.build),
+        )
+
+    def test_the_block_the_refusal_prints_parses_and_validates_as_printed(
+        self,
+    ) -> None:
+        # Not "the constant is valid" - the PRINTED text is what a reader
+        # copies. An earlier version annotated each line with `# also reads:`,
+        # which is not JSON, so copying the block gave a parse error: the extra
+        # round trip this message exists to remove, reintroduced by it. Parse
+        # the rendered block and put it through the real parser.
+        printed = MODULE.agent_knobs_shape()
+        start = printed.index("{")
+        end = printed.rindex("}") + 1
+        document = json.loads(printed[start:end])
+        self.assertEqual(MODULE.AGENT_KNOBS_EXAMPLE, document)
+        facts = MODULE.agent_facts_from_discovery(document)
+        self.assertEqual(["model"], [knob.name for knob in facts.discovered])
+
+    def test_the_example_declares_no_value_its_own_evidence_does_not_show(
+        self,
+    ) -> None:
+        # SKILL.md forbids recording an option that was not read - "an omitted
+        # parameter costs a few points, an invented one makes the card wrong" -
+        # and three blinded runs over-claimed a search space anyway. An earlier
+        # example cited one default and declared two options, teaching the
+        # invention in the text an assistant is told to copy.
+        for name, spec in MODULE.AGENT_KNOBS_EXAMPLE["knobs"].items():
+            evidence = str(spec.get("evidence", ""))
+            for value in spec.get("values", []):
+                with self.subTest(knob=name, value=value):
+                    self.assertIn(str(value), evidence)
+
+    def test_every_check_is_refused_without_the_flag_the_example_answers(
+        self,
+    ) -> None:
+        # BUILD_CHECK_ANSWER mirrors the scorer's own `_build_flag` calls, and
+        # nothing structural keeps the two in step. This is that mechanism: if a
+        # check's required flag changes on one side only, the example stops
+        # matching the validator and this fails, naming the check.
+        for check, flag in MODULE.BUILD_CHECK_ANSWER.items():
+            with self.subTest(check=check):
+                document = json.loads(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+                del document["build"][check][flag]
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    MODULE.agent_facts_from_discovery(document)
+                self.assertIn(flag, str(caught.exception))
