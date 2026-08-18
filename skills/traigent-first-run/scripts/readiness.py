@@ -34,6 +34,7 @@ import difflib
 import json
 import math
 import os
+import re
 import sys
 import textwrap
 import traceback
@@ -7295,6 +7296,18 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
+def _value_is_evidenced(value: Any, evidence: str) -> bool:
+    """Does the line the author cited actually show this option?
+
+    Word-boundary, not substring, and the difference is the whole check:
+    across the blinded runs that invented an option, every one of them was a
+    model name nested inside the real one - `gpt-4o` and `gpt-4` both sit
+    inside `gpt-4o-mini`. A substring test read those as evidenced and would
+    have waved through every case it was written for.
+    """
+    return bool(re.search(rf"(?<![\w.-]){re.escape(str(value))}(?![\w.-])", evidence))
+
+
 def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
     """Read one discovered parameter, saying plainly why it earns nothing.
 
@@ -7357,6 +7370,27 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             raise AgentDiscoveryInputError(
                 f"knob {name!r} declares 'values' as {type(values).__name__}; "
                 "it is the list of options the agent can actually take"
+            )
+        unevidenced = [
+            str(value) for value in values if not _value_is_evidenced(value, evidence)
+        ]
+        if unevidenced:
+            # A finding, not a refusal, per this error class's own rule: a
+            # parameter that does not qualify is reported with its reason,
+            # and only a structurally unreadable document is refused. Nothing
+            # here is unreadable - the options simply are not in the line the
+            # author cited for them, so they earn nothing and the card says so.
+            return DiscoveredKnob(
+                name,
+                "categorical",
+                0,
+                evidence,
+                "declares "
+                + ", ".join(repr(value) for value in unevidenced)
+                + " which the evidence given for it does not show, so this "
+                "score has not seen them; the options a search varies get "
+                "added at the enhanced run, and this read records the ones "
+                "the source already has",
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:

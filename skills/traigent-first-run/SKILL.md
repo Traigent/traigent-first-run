@@ -274,7 +274,9 @@ agent lacks the thing, and the two are different statements about somebody's cod
 second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
 check does everywhere else in the score. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
-wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
+run is where settings get added, from a materially larger space than the agent has today, so the
+honest one-option read costs the user nothing they do not get back. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
 agent's language or on how the card would look without it - and the flag is left off only where the
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
@@ -297,7 +299,7 @@ The opening score is not skippable, always reports all three pillars, and is the
 reports for the project. Show it before anything is created or repaired.
 
 Say that the score reads the project and changes nothing of the customer's - and, when rows exist,
-that it wrote its own `traigent-runs/row-review.json`. A claim of no writes is refuted by one `ls`.
+that it wrote its own row review, naming where. A claim of no writes is refuted by one `ls`.
 Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary:

@@ -657,7 +657,8 @@ rule: the id names a position in the customer's own file either way, and the run
 convention it used, because `line-` and `row-` count different things - an id nobody can resolve
 against their own file is the mistake here, not the scheme used to build it.
 Record the answers
-in `traigent-runs/row-review.json` and pass that file to `scripts/readiness.py --row-review`:
+where `SKILL.md`'s opening gate places a scoring's own files, and pass that file to
+`scripts/readiness.py --row-review`:
 
 That file is this run's own read, not the customer's material, and it is the one thing a run leaves
 in their project - which is why the opening message names it instead of claiming the score wrote

@@ -3492,7 +3492,7 @@ class CliTests(unittest.TestCase):
                         "knobs": {
                             "model": {
                                 "values": ["gpt-4o-mini", "gpt-4o"],
-                                "evidence": "agent.py:8 model reaches the call",
+                                "evidence": "agent.py:8 model reaches the call showing gpt-4o-mini, gpt-4o",
                             },
                             "temperature": {
                                 "low": 0.0,
@@ -4075,7 +4075,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             model={
                 "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                "evidence": "agent.py:8 model=model reaches the provider call",
+                "evidence": "agent.py:8 model=model reaches the provider call showing gpt-4o-mini, gpt-4o, o3-mini",
             },
             temperature={
                 "low": 0.0,
@@ -4084,7 +4084,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             },
             style={
                 "values": ["direct", "structured"],
-                "evidence": "agent.py:11 STYLES[style] selects the system prompt",
+                "evidence": "agent.py:11 STYLES[style] selects the system prompt showing direct, structured",
             },
         )
         pillar, caps, knobs = score_space(facts)
@@ -4165,7 +4165,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             self._knob(
                 model={
                     "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                    "evidence": "agent.py:8 model reaches the provider call",
+                    "evidence": "agent.py:8 model reaches the provider call showing gpt-4o-mini, gpt-4o, o3-mini",
                 },
                 temperature={
                     "low": 0.0,
@@ -4179,7 +4179,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             self._knob(
                 model={
                     "values": ["gpt-4o-mini"],
-                    "evidence": "agent.py:8 model= is hard-coded to one id",
+                    "evidence": "agent.py:8 model= is hard-coded to one id showing gpt-4o-mini",
                 }
             )
         )
@@ -4215,7 +4215,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             model={
                 "values": ["gpt-4o-mini"],
-                "evidence": "agent.py:8 model= is hard-coded to one id",
+                "evidence": "agent.py:8 model= is hard-coded to one id showing gpt-4o-mini",
             },
             seed={
                 "low": 0,
@@ -4838,7 +4838,14 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
                 {"knobs": knobs, **rest},
             )
 
-        cited = "agent.py:8 the value reaches chat.completions.create"
+        # The line a real read would quote, so it SHOWS the options the
+        # fixtures below declare: a knob now earns nothing for an option
+        # its own evidence does not contain, and a fixture citing a bare
+        # line number stopped modelling a read that establishes anything.
+        cited = (
+            'agent.py:8 model in ("gpt-4o-mini", "gpt-4o") reaches '
+            "chat.completions.create"
+        )
         states: list[tuple[str, int, object]] = [
             ("no document and no read", 1, MODULE.AgentFacts()),
             ("read: nothing at all", 1, read()),
@@ -8626,7 +8633,10 @@ def _read(build=None, knobs=None):
     document = {
         "knobs": (
             {
-                "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+                "model": {
+                    "values": ["a", "b", "c"],
+                    "evidence": "agent.py:8 showing a, b, c",
+                },
                 "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
             }
             if knobs is None
@@ -9011,7 +9021,10 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
 
     def _uncounted(self, **spec):
         knobs = {
-            "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+            "model": {
+                "values": ["a", "b", "c"],
+                "evidence": "agent.py:8 showing a, b, c",
+            },
             "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
             "top_p": spec,
         }
@@ -9147,7 +9160,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         self,
     ) -> None:
         score = self._gaps(
-            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}}}
         )
         absent = [gap for gap in score.gaps if "could not be measured" in gap]
         self.assertEqual(len(absent), 1, f"one fact, {len(absent)} lines: {absent}")
@@ -9164,7 +9177,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         """
         score = self._gaps(
             {
-                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}},
+                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}},
                 "build": {
                     "prompt": {
                         "determined": False,
@@ -9189,7 +9202,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         four agent checks most read as all of them.
         """
         score = self._gaps(
-            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}}}
         )
         report = MODULE.render_markdown(score)
         self.assertIn(MODULE.AGENT_NOT_COVERED, report)
