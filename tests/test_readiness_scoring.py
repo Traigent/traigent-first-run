@@ -4299,6 +4299,42 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertFalse(narrow.discovered[0].credited)
         self.assertIn("noise floor", narrow.discovered[0].uncredited_reason)
 
+    def test_a_value_nested_inside_a_longer_option_is_not_evidenced(self) -> None:
+        """The guide's headline example of this rule, pinned as an example.
+
+        `references/component-creation.md` teaches the behaviour by worked
+        case: the evidence string "matches whole tokens, so `gpt-4` declared
+        against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing".
+        Its sibling above only ever exercises the coarse half - a value absent
+        from the line altogether - which a plain `value in evidence` test
+        refuses just as readily. The fine half is the half the word boundaries
+        in `_value_is_evidenced` were actually written for, and loosening them
+        to a substring test is the exact defect its own docstring names.
+
+        Both directions, because one alone is passed by a guard that is
+        uniformly wrong. `gpt-4` earns nothing though it is a substring twice
+        over; `gpt-4o` earns credit off the same line, because there it IS a
+        whole token. A guard that always refuses fails the second, a guard that
+        always accepts fails the first, and only the boundary passes both.
+        """
+        line = 'agent.py:4 MODELS = ["gpt-4o-mini", "gpt-4o"]'
+
+        # Nested, so unseen: `gpt-4` sits inside both ids and is neither.
+        nested = self._knob(model={"values": ["gpt-4", "gpt-4o"], "evidence": line})
+        self.assertFalse(nested.discovered[0].credited)
+        reason = nested.discovered[0].uncredited_reason
+        self.assertIn("does not show", reason)
+        # Named, and only it - the sibling it hides inside is genuinely there.
+        self.assertIn("'gpt-4'", reason)
+        self.assertNotIn("'gpt-4o'", reason)
+
+        # And whole tokens off that same line earn their credit.
+        whole = self._knob(
+            model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": line}
+        )
+        self.assertTrue(whole.discovered[0].credited, whole.discovered[0])
+        self.assertEqual(whole.discovered[0].reachable_values, 2)
+
     def test_every_other_no_knob_state_still_blocks_the_run(self) -> None:
         """Only the absent document was reclassified - the other three were not.
 
