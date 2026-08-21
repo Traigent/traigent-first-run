@@ -3492,7 +3492,7 @@ class CliTests(unittest.TestCase):
                         "knobs": {
                             "model": {
                                 "values": ["gpt-4o-mini", "gpt-4o"],
-                                "evidence": "agent.py:8 model reaches the call",
+                                "evidence": "agent.py:8 model reaches the call showing gpt-4o-mini, gpt-4o",
                             },
                             "temperature": {
                                 "low": 0.0,
@@ -4075,7 +4075,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             model={
                 "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                "evidence": "agent.py:8 model=model reaches the provider call",
+                "evidence": "agent.py:8 model=model reaches the provider call showing gpt-4o-mini, gpt-4o, o3-mini",
             },
             temperature={
                 "low": 0.0,
@@ -4084,7 +4084,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             },
             style={
                 "values": ["direct", "structured"],
-                "evidence": "agent.py:11 STYLES[style] selects the system prompt",
+                "evidence": "agent.py:11 STYLES[style] selects the system prompt showing direct, structured",
             },
         )
         pillar, caps, knobs = score_space(facts)
@@ -4165,7 +4165,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             self._knob(
                 model={
                     "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                    "evidence": "agent.py:8 model reaches the provider call",
+                    "evidence": "agent.py:8 model reaches the provider call showing gpt-4o-mini, gpt-4o, o3-mini",
                 },
                 temperature={
                     "low": 0.0,
@@ -4179,7 +4179,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             self._knob(
                 model={
                     "values": ["gpt-4o-mini"],
-                    "evidence": "agent.py:8 model= is hard-coded to one id",
+                    "evidence": "agent.py:8 model= is hard-coded to one id showing gpt-4o-mini",
                 }
             )
         )
@@ -4215,7 +4215,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             model={
                 "values": ["gpt-4o-mini"],
-                "evidence": "agent.py:8 model= is hard-coded to one id",
+                "evidence": "agent.py:8 model= is hard-coded to one id showing gpt-4o-mini",
             },
             seed={
                 "low": 0,
@@ -4838,7 +4838,14 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
                 {"knobs": knobs, **rest},
             )
 
-        cited = "agent.py:8 the value reaches chat.completions.create"
+        # The line a real read would quote, so it SHOWS the options the
+        # fixtures below declare: a knob now earns nothing for an option
+        # its own evidence does not contain, and a fixture citing a bare
+        # line number stopped modelling a read that establishes anything.
+        cited = (
+            'agent.py:8 model in ("gpt-4o-mini", "gpt-4o") reaches '
+            "chat.completions.create"
+        )
         states: list[tuple[str, int, object]] = [
             ("no document and no read", 1, MODULE.AgentFacts()),
             ("read: nothing at all", 1, read()),
@@ -8626,7 +8633,10 @@ def _read(build=None, knobs=None):
     document = {
         "knobs": (
             {
-                "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+                "model": {
+                    "values": ["a", "b", "c"],
+                    "evidence": "agent.py:8 showing a, b, c",
+                },
                 "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
             }
             if knobs is None
@@ -9011,7 +9021,10 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
 
     def _uncounted(self, **spec):
         knobs = {
-            "model": {"values": ["a", "b", "c"], "evidence": "agent.py:8"},
+            "model": {
+                "values": ["a", "b", "c"],
+                "evidence": "agent.py:8 showing a, b, c",
+            },
             "temperature": {"low": 0.0, "high": 1.0, "evidence": "agent.py:9"},
             "top_p": spec,
         }
@@ -9147,7 +9160,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         self,
     ) -> None:
         score = self._gaps(
-            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}}}
         )
         absent = [gap for gap in score.gaps if "could not be measured" in gap]
         self.assertEqual(len(absent), 1, f"one fact, {len(absent)} lines: {absent}")
@@ -9164,7 +9177,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         """
         score = self._gaps(
             {
-                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}},
+                "knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}},
                 "build": {
                     "prompt": {
                         "determined": False,
@@ -9189,7 +9202,7 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         four agent checks most read as all of them.
         """
         score = self._gaps(
-            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1"}}}
+            {"knobs": {"model": {"values": ["a", "b"], "evidence": "a:1 showing b"}}}
         )
         report = MODULE.render_markdown(score)
         self.assertIn(MODULE.AGENT_NOT_COVERED, report)
@@ -9409,3 +9422,180 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                     "generated",
                 )
                 self.assertIn(condition, MODULE.ACTION_FOR_CONDITION)
+
+
+class TheRefusalMessageIsADocumentThatWorksTests(unittest.TestCase):
+    """The agent-knobs refusal prints an example; it has to be a real one.
+
+    Five successive attempts to DESCRIBE this contract in prose were wrong and
+    every one of them read correctly: "everything is optional", "any check
+    inside build is optional", "any field other than evidence answers the
+    question", then the undocumented conditionals, then the undocumented types.
+    A blinded run had already paid for that - eight refusals, then it dropped
+    the flag and told a customer their agent could not be read.
+
+    So the message stopped describing and started showing, and these tests are
+    what make showing safer than describing: the example goes through the real
+    parser, so a message that drifts from the code fails here rather than in
+    somebody's run.
+    """
+
+    def test_the_example_the_refusal_prints_is_accepted_by_the_parser(self) -> None:
+        facts = MODULE.agent_facts_from_discovery(MODULE.AGENT_KNOBS_EXAMPLE)
+        self.assertEqual(["model"], [knob.name for knob in facts.discovered])
+        self.assertTrue(facts.discovery_supplied)
+        self.assertEqual(
+            sorted(MODULE.BUILD_CHECK_ANSWER),
+            sorted(signal.name for signal in facts.build),
+        )
+
+    def test_the_block_the_refusal_prints_parses_and_validates_as_printed(
+        self,
+    ) -> None:
+        # Not "the constant is valid" - the PRINTED text is what a reader
+        # copies. An earlier version annotated each line with `# also reads:`,
+        # which is not JSON, so copying the block gave a parse error: the extra
+        # round trip this message exists to remove, reintroduced by it. Parse
+        # the rendered block and put it through the real parser.
+        printed = MODULE.agent_knobs_shape()
+        start = printed.index("{")
+        end = printed.rindex("}") + 1
+        document = json.loads(printed[start:end])
+        self.assertEqual(MODULE.AGENT_KNOBS_EXAMPLE, document)
+        facts = MODULE.agent_facts_from_discovery(document)
+        self.assertEqual(["model"], [knob.name for knob in facts.discovered])
+
+    def test_the_example_declares_no_value_its_own_evidence_does_not_show(
+        self,
+    ) -> None:
+        # SKILL.md forbids recording an option that was not read - "an omitted
+        # parameter costs a few points, an invented one makes the card wrong" -
+        # and three blinded runs over-claimed a search space anyway. An earlier
+        # example cited one default and declared two options, teaching the
+        # invention in the text an assistant is told to copy.
+        for name, spec in MODULE.AGENT_KNOBS_EXAMPLE["knobs"].items():
+            evidence = str(spec.get("evidence", ""))
+            for value in spec.get("values", []):
+                with self.subTest(knob=name, value=value):
+                    self.assertIn(str(value), evidence)
+
+    def test_every_check_is_refused_without_the_flag_the_example_answers(
+        self,
+    ) -> None:
+        # BUILD_CHECK_ANSWER mirrors the scorer's own `_build_flag` calls, and
+        # nothing structural keeps the two in step. This is that mechanism: if a
+        # check's required flag changes on one side only, the example stops
+        # matching the validator and this fails, naming the check.
+        for check, flag in MODULE.BUILD_CHECK_ANSWER.items():
+            with self.subTest(check=check):
+                document = json.loads(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+                del document["build"][check][flag]
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    MODULE.agent_facts_from_discovery(document)
+                self.assertIn(flag, str(caught.exception))
+
+
+class TheRowReviewRefusalPrintsADocumentThatWorksTests(unittest.TestCase):
+    """The sibling of the agent-knobs example, and it was found the hard way.
+
+    Once the agent-knobs contract stopped being a staircase, a blinded run
+    walked four refusals on THIS document instead - not an object with reviewer
+    and rows, then an entry with no id, then a verdict outside the vocabulary,
+    then an origin outside it. Fixing one hand-authored document at the opening
+    gate had moved the problem to the other one.
+    """
+
+    def test_the_block_the_refusal_prints_parses_as_printed(self) -> None:
+        printed = MODULE.row_review_shape()
+        start = printed.index("{")
+        end = printed.rindex("}") + 1
+        self.assertEqual(MODULE.ROW_REVIEW_EXAMPLE, json.loads(printed[start:end]))
+
+    def test_every_entry_carries_what_the_legend_says_it_does(self) -> None:
+        for index, entry in enumerate(MODULE.ROW_REVIEW_EXAMPLE["rows"]):
+            with self.subTest(entry=index):
+                self.assertEqual({"id", "verdict", "origin", "note"}, set(entry))
+                self.assertIn(entry["verdict"], MODULE.ROW_REVIEW_VERDICTS)
+                self.assertIn(entry["origin"], MODULE.ROW_REVIEW_ORIGINS)
+
+    def test_the_vocabularies_the_legend_prints_are_the_ones_enforced(
+        self,
+    ) -> None:
+        # This is a CONTRACT test, not a drift guard, and the difference was
+        # worth finding. The legend is rendered from the same constants the
+        # scorer enforces, so the two cannot disagree - a first version
+        # asserting "each constant appears in the printed text" was a
+        # tautology, and a second, behavioural one survived widening the
+        # vocabulary too, because adding a member keeps "every member is
+        # accepted" true. There is no drift to guard here.
+        #
+        # What it does prove is worth keeping: every verdict and origin the
+        # message prints is genuinely accepted, and one outside them is
+        # refused with the vocabulary named.
+        for verdict in MODULE.ROW_REVIEW_VERDICTS:
+            with self.subTest(verdict=verdict):
+                self.assertNotIn(verdict, _row_review_refusal(verdict=verdict))
+        self.assertIn("expected one of", _row_review_refusal(verdict="not-a-verdict"))
+        for origin in MODULE.ROW_REVIEW_ORIGINS:
+            with self.subTest(origin=origin):
+                self.assertNotIn(origin, _row_review_refusal(origin=origin))
+        self.assertIn("expected one of", _row_review_refusal(origin="not-an-origin"))
+
+
+def _row_review_refusal(
+    *, verdict: str | None = None, origin: str | None = None
+) -> str:
+    """Return the scorer's complaint about one edited example entry, or "".
+
+    Behavioural, because the legend is derived from the constants and so can
+    only ever agree with them.
+    """
+    document = json.loads(json.dumps(MODULE.ROW_REVIEW_EXAMPLE))
+    document["rows"] = document["rows"][:1]
+    entry = document["rows"][0]
+    if verdict is not None:
+        entry["verdict"] = verdict
+    if origin is not None:
+        entry["origin"] = origin
+    # The counts have to describe the same dataset the review claims to, so
+    # they follow the origin under test rather than being pinned to one.
+    declared = entry["origin"]
+    facts = MODULE.DatasetFacts(
+        exists=True,
+        dataset_supplied=True,
+        unreadable_rows=0,
+        unreadable_detail="",
+        rows=1,
+        labelled_rows=1,
+        tuning_rows=1,
+        holdout_rows=0,
+        tuning_labelled_rows=1,
+        holdout_labelled_rows=0,
+        difficulty_bands=(),
+        difficulty_tagged_rows=0,
+        duplicate_status="none",
+        near_duplicate_status="none",
+        answer_dominance_status="none",
+        split_overlap=0,
+        shared_families=0,
+        tuning_forms=1,
+        holdout_forms=1,
+        integrity_failed=False,
+        synthetic=False,
+        generated_outputs=0,
+        collected_rows=1 if declared == "collected" else 0,
+        synthesised_rows=0,
+        undeclared_rows=1 if declared == "undeclared" else 0,
+        answerable_rows=1,
+        generated_answer_rows=0,
+        placeholder_rows=0,
+        sources=(),
+        unrecognised_sources=(),
+    )
+    try:
+        MODULE.row_review_from_document(document, facts)
+    except MODULE.RowReviewInputError as error:
+        return str(error)
+    except TypeError:
+        raise
+    return ""

@@ -34,6 +34,7 @@ import difflib
 import json
 import math
 import os
+import re
 import sys
 import textwrap
 import traceback
@@ -2915,6 +2916,57 @@ ROW_REVIEW_REVIEWER = "assistant"
 # Provenance classes a reviewed row may carry. `synthesised` is absent on
 # purpose and refused below: this run's own generated rows are out of scope.
 ROW_REVIEW_ORIGINS = ("collected", "undeclared")
+# A row review this scorer accepts, printed verbatim when one is refused.
+#
+# The sibling of `AGENT_KNOBS_EXAMPLE`, and it exists for the same measured
+# reason. Once the agent-knobs contract stopped being a staircase, a blinded
+# run walked FOUR refusals here instead - not an object with reviewer and
+# rows, then an entry with no id, then a verdict outside the vocabulary, then
+# an origin outside it - and the fix for one document had simply moved the
+# problem to the other hand-authored document at the same gate. Reaching this
+# example took five refusals by hand, which is the cost it removes.
+ROW_REVIEW_EXAMPLE: dict[str, Any] = {
+    "reviewer": ROW_REVIEW_REVIEWER,
+    "rows": [
+        {
+            "id": "row-1",
+            "verdict": ROW_REVIEW_VERDICTS[0],
+            "origin": ROW_REVIEW_ORIGINS[0],
+            "note": "the expected rows answer the question this input asks",
+        },
+        {
+            "id": "row-2",
+            "verdict": ROW_REVIEW_VERDICTS[1],
+            "origin": ROW_REVIEW_ORIGINS[0],
+            "note": "the expected output omits a row the question asks for",
+        },
+    ],
+}
+
+
+def row_review_shape() -> str:
+    """Print a row review that works, rather than describing one.
+
+    Same reasoning as `agent_knobs_shape`, and the same shape of evidence
+    behind it. The one rule an example cannot carry is the cross-check: the
+    origins counted here must reconcile with what the preflight counted over
+    the same rows, so the block below is a form to fill from the reader's own
+    dataset rather than values to keep.
+    """
+    document = json.dumps(ROW_REVIEW_EXAMPLE, indent=2)
+    return (
+        "a row review this accepts, complete - copy it and review your own rows:\n"
+        f"{document}\n"
+        'Every entry carries all four fields. "verdict" is one of '
+        + ", ".join(ROW_REVIEW_VERDICTS)
+        + '; "origin" is one of '
+        + ", ".join(ROW_REVIEW_ORIGINS)
+        + ".\n"
+        '"id" names the row this verdict is about and "note" says in one '
+        "sentence why, so a\nreader can trace the judgement back to a row. "
+        "Review the rows you actually read: the\norigins counted here have to "
+        "match what the preflight counted over the same rows."
+    )
 
 
 def _row_count(value: Any, name: str, *, required: bool = True) -> int:
@@ -7244,6 +7296,18 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
+def _value_is_evidenced(value: Any, evidence: str) -> bool:
+    """Does the line the author cited actually show this option?
+
+    Word-boundary, not substring, and the difference is the whole check:
+    across the blinded runs that invented an option, every one of them was a
+    model name nested inside the real one - `gpt-4o` and `gpt-4` both sit
+    inside `gpt-4o-mini`. A substring test read those as evidenced and would
+    have waved through every case it was written for.
+    """
+    return bool(re.search(rf"(?<![\w.-]){re.escape(str(value))}(?![\w.-])", evidence))
+
+
 def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
     """Read one discovered parameter, saying plainly why it earns nothing.
 
@@ -7307,6 +7371,27 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
                 f"knob {name!r} declares 'values' as {type(values).__name__}; "
                 "it is the list of options the agent can actually take"
             )
+        unevidenced = [
+            str(value) for value in values if not _value_is_evidenced(value, evidence)
+        ]
+        if unevidenced:
+            # A finding, not a refusal, per this error class's own rule: a
+            # parameter that does not qualify is reported with its reason,
+            # and only a structurally unreadable document is refused. Nothing
+            # here is unreadable - the options simply are not in the line the
+            # author cited for them, so they earn nothing and the card says so.
+            return DiscoveredKnob(
+                name,
+                "categorical",
+                0,
+                evidence,
+                "declares "
+                + ", ".join(repr(value) for value in unevidenced)
+                + " which the evidence given for it does not show, so this "
+                "score has not seen them; the options a search varies get "
+                "added at the enhanced run, and this read records the ones "
+                "the source already has",
+            )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
             return DiscoveredKnob(
@@ -7369,6 +7454,103 @@ BUILD_CHECK_FIELDS: dict[str, frozenset[str]] = {
         {"used", "declared", "unreachable", "evidence", "determined", "reason"}
     ),
 }
+
+
+# The flag each build check must answer, mirroring the `_build_flag` call the
+# scorer makes for it below. Named here so the printed shape can SHOW what is
+# required instead of describing it: three successive rewrites of that prose
+# were wrong - "everything is optional", then "any check is optional", then
+# "any field other than evidence answers the question" - and each was only
+# caught by running the script. A skeleton that marks the field is not prose
+# that can be almost right.
+BUILD_CHECK_ANSWER: dict[str, str] = {
+    "prompt": "present",
+    "output-contract": "present",
+    "control-flow": "loop",
+    "tools": "used",
+}
+# A document this scorer accepts, printed verbatim when one is refused.
+#
+# It is a real document rather than a sketch with `...` in it, because five
+# successive attempts to DESCRIBE this contract were wrong and each read
+# correctly: "everything is optional", "any check is optional", "any field
+# answers the question", the undocumented conditionals, and finally the
+# undocumented types - `evidence` must be a non-empty string, `few_shot` an
+# integer, `declared` a list. A description can be almost right. An example
+# either passes this scorer or it does not, and
+# `test_readiness_agent_knobs.py` puts this one through the real parser, so
+# the message cannot drift from the code without the suite saying so.
+AGENT_KNOBS_EXAMPLE: dict[str, Any] = {
+    "source": "agent.py",
+    "knobs": {
+        # Both values appear in the line cited for them, because this example
+        # is copied. An earlier version cited a single default and declared two
+        # options, which is the invention `SKILL.md` forbids in the same breath
+        # as it asks for the read - "an omitted parameter costs a few points,
+        # an invented one makes the card wrong" - modelled in the text an
+        # assistant is told to copy. Three blinded runs over-claimed a search
+        # space; the example must not be a fourth reason to.
+        "model": {
+            "evidence": 'agent.py:3 MODELS = ["fast", "slow"], read at agent.py:6',
+            "values": ["fast", "slow"],
+        }
+    },
+    "build": {
+        "prompt": {"present": False, "evidence": "agent.py:5-9 carries no prompt"},
+        "output-contract": {
+            "present": True,
+            "evidence": "agent.py:9 returns a dict with fixed keys",
+        },
+        "control-flow": {
+            "loop": False,
+            "evidence": "agent.py:5-9 makes one straight-line return",
+        },
+        "tools": {"used": False, "evidence": "agent.py:5-9 declares and calls none"},
+    },
+}
+
+
+def agent_knobs_shape() -> str:
+    """Render this document's shape from the constants that enforce it.
+
+    Refusals here are accurate one at a time and, together, a staircase: a
+    blinded run corrected its document eight times, each fix revealing the next
+    rule, and then gave up and scored the agent pillar 0/100 - telling the user
+    their agent could not be read when only the paperwork was wrong. The nested
+    shape is what no message could state, because a check's fields cannot be
+    reported while its parent is still the wrong type. So a refusal carries the
+    whole contract rather than the next step of it.
+
+    Derived, never restated, for the reason the field lists in `--help` are: a
+    skeleton that drifts from the validator teaches a wrong contract with more
+    authority than no skeleton at all.
+    """
+    build = AGENT_KNOBS_EXAMPLE["build"]
+    # No comments inside the block. It says "copy this", so it has to survive
+    # being copied: `#` is not JSON, and a reader who pasted the annotated
+    # version got a parse error - the same extra round trip this message
+    # exists to remove, reintroduced by the thing removing it. Whatever the
+    # block cannot say goes underneath it.
+    document = json.dumps(AGENT_KNOBS_EXAMPLE, indent=2)
+    also_reads = "\n".join(
+        f"  {check}: {', '.join(sorted(BUILD_CHECK_FIELDS[check] - set(build[check])))}"
+        for check, _weight in AGENT_BUILD_CHECKS
+    )
+    return (
+        "a document this accepts, complete - copy it and replace the values:\n"
+        f"{document}\n"
+        '"knobs" is keyed by parameter name: a mapping, not a list. It must be '
+        "present - an empty\nobject is how you say the agent exposes nothing. "
+        '"build" is optional, but if you include\nit, answer ALL FOUR of the '
+        "checks above and no others, each with the fields shown or\nwith "
+        '"determined": false and a "reason" where the read could not settle it.\n'
+        "Each check also reads these, when your own answer makes one relevant - "
+        'a loop needs its\n"bounded", tools in use need their "declared" '
+        "names - and the refusal names the one it wants:\n"
+        f"{also_reads}"
+    )
+
+
 # A prompt earns most of its check for existing and the rest for carrying
 # worked examples. Two is where "examples" starts meaning a pattern rather than
 # an illustration, which is the same threshold `DiscoveredKnob` applies to a
@@ -7689,6 +7871,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             + ", ".join(sorted(AGENT_KNOBS_DOCUMENT_FIELDS))
             + "; each knob reads "
             + ", ".join(sorted(DISCOVERED_KNOB_FIELDS))
+            + ". `knobs` maps each parameter's name to its entry rather than "
+            "listing entries: the name is the key, never a field inside one"
         ),
     )
     parser.add_argument(
@@ -7969,7 +8153,17 @@ def run(argv: Sequence[str] | None = None) -> int:
         AgentDiscoveryInputError,
         RowReviewInputError,
     ) as error:
-        print(f"cannot read scoring input: {error}", file=sys.stderr)
+        detail = f"cannot read scoring input: {error}"
+        if isinstance(error, RowReviewInputError):
+            # The other hand-authored document at this gate, and it grew the
+            # same staircase the moment the first one stopped being one.
+            detail += "\n" + row_review_shape()
+        if isinstance(error, AgentDiscoveryInputError):
+            # This document is hand-authored against a nested contract, and a
+            # refusal that names only the next problem costs a round trip per
+            # rule. Print the whole shape so one correction can be the last.
+            detail += "\n" + agent_knobs_shape()
+        print(detail, file=sys.stderr)
         return 2
 
     # The row review travels with the facts through `score_run`, rather than

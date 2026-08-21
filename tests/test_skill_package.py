@@ -4653,7 +4653,13 @@ class SkillPackageTests(unittest.TestCase):
         "knobs": {
             "model": {
                 "values": ["gpt-4o-mini", "gpt-4o"],
-                "evidence": "agent.py:8 model= reaches chat.completions.create",
+                # The cited line SHOWS both options, because a knob now earns
+                # nothing for an option its own evidence does not contain, and
+                # a conformant opening read is one a customer could check.
+                "evidence": (
+                    'agent.py:8 model in ("gpt-4o-mini", "gpt-4o") reaches '
+                    "chat.completions.create"
+                ),
             },
             "temperature": {
                 "low": 0.0,
@@ -16853,10 +16859,21 @@ class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
         self.assertIn("changes nothing of the customer's", skill)
 
     def test_it_names_the_file_instead_of_the_absence_of_writes(self) -> None:
-        """Naming beats hedging: a reader can check the claim in one command."""
+        """Naming beats hedging: a reader can check the claim in one command.
+
+        This pinned the literal `traigent-runs/row-review.json`, and that is
+        what made the guide contradict itself: stage 1 places every file a
+        scoring writes in `traigent-runs/readiness/<stamp>/`, while this
+        sentence and `evaluation-and-dataset.md` both named a flat path. A
+        fixture audit then failed correct runs for obeying whichever half they
+        read. The decision has one home now - the placement rule - so what is
+        required here is that the score SAYS it wrote a row review and where,
+        not that it repeats an address owned somewhere else.
+        """
         skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("traigent-runs/row-review.json", skill)
+        self.assertIn("wrote its own row review, naming where", skill)
         self.assertIn("a claim of no writes is refuted by one `ls`", skill)
+        self.assertNotIn("traigent-runs/row-review.json", skill)
 
     def test_the_file_it_leaves_is_superseded_rather_than_stranded(self) -> None:
         dataset = self._dataset()

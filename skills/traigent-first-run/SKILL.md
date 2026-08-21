@@ -256,20 +256,27 @@ its provenance; a timestamp, hash, or non-empty `wired` list does not make it cu
 run does this, including a zero-anchor run.
 
 Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
-grades this project instead of reporting nothing. Write that document to a scratch path outside the
-customer's project: the score measures what they brought, so producing it must not add a file to
-what is measured. `traigent-runs/` is its home from stage 3 on. Two halves, one pass, and
+grades this project instead of reporting nothing. Every file a scoring writes to reach it - that
+document, the preflight JSON, any note - goes in `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a
+fresh directory per scoring so a later one never reads an earlier one's. Never delete them, and name that
+directory to the user beside the card: they may want to keep, share, or remove it. Two halves, one pass, and
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
-the line that shows it. Read the same source for how the agent is built and answer all four checks
-the reference names: whether it carries a prompt and worked examples, whether anything pins down the
+the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
+A name only in a comment, docstring, TODO, or example is not a knob, and the list above is examples
+to search the source for, not a set to report. Same rule as `references/component-creation.md`, applied here because this
+gate is evaluated before that reference loads. Read the same source for how the agent is built and
+answer all four checks the reference names: whether it carries a prompt and worked examples,
+whether anything pins down the
 shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
 Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
 agent lacks the thing, and the two are different statements about somebody's code. Withholding the
 second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
 check does everywhere else in the score. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
-wrong. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
+run is where settings get added, from a materially larger space than the agent has today, so the
+honest one-option read costs the user nothing they do not get back. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
 agent's language or on how the card would look without it - and the flag is left off only where the
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
@@ -277,7 +284,10 @@ name it and say what stopped the read, then offer to be pointed at source that c
 offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
 stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
 read found, and no read completed, so passing an empty one reports a finding about the customer's
-agent that nothing established. Proceed with what can be varied if nothing comes back. Never ask
+agent that nothing established. That case is the source defeating the read, never this document
+being refused: a rejected document is yours to correct and send again, and dropping the flag instead
+tells the user something about their agent that is true only of your own paperwork.
+Proceed with what can be varied if nothing comes back. Never ask
 for a config-space file here - the paragraph above omits
 every one of those found before this run's search, so it cannot answer this. The ceiling left
 standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
@@ -289,7 +299,7 @@ The opening score is not skippable, always reports all three pillars, and is the
 reports for the project. Show it before anything is created or repaired.
 
 Say that the score reads the project and changes nothing of the customer's - and, when rows exist,
-that it wrote its own `traigent-runs/row-review.json`. A claim of no writes is refuted by one `ls`.
+that it wrote its own row review, naming where. A claim of no writes is refuted by one `ls`.
 Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary:
