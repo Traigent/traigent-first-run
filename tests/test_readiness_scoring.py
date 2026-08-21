@@ -4299,6 +4299,42 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertFalse(narrow.discovered[0].credited)
         self.assertIn("noise floor", narrow.discovered[0].uncredited_reason)
 
+    def test_a_value_nested_inside_a_longer_option_is_not_evidenced(self) -> None:
+        """The guide's headline example of this rule, pinned as an example.
+
+        `references/component-creation.md` teaches the behaviour by worked
+        case: the evidence string "matches whole tokens, so `gpt-4` declared
+        against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing".
+        Its sibling above only ever exercises the coarse half - a value absent
+        from the line altogether - which a plain `value in evidence` test
+        refuses just as readily. The fine half is the half the word boundaries
+        in `_value_is_evidenced` were actually written for, and loosening them
+        to a substring test is the exact defect its own docstring names.
+
+        Both directions, because one alone is passed by a guard that is
+        uniformly wrong. `gpt-4` earns nothing though it is a substring twice
+        over; `gpt-4o` earns credit off the same line, because there it IS a
+        whole token. A guard that always refuses fails the second, a guard that
+        always accepts fails the first, and only the boundary passes both.
+        """
+        line = 'agent.py:4 MODELS = ["gpt-4o-mini", "gpt-4o"]'
+
+        # Nested, so unseen: `gpt-4` sits inside both ids and is neither.
+        nested = self._knob(model={"values": ["gpt-4", "gpt-4o"], "evidence": line})
+        self.assertFalse(nested.discovered[0].credited)
+        reason = nested.discovered[0].uncredited_reason
+        self.assertIn("does not show", reason)
+        # Named, and only it - the sibling it hides inside is genuinely there.
+        self.assertIn("'gpt-4'", reason)
+        self.assertNotIn("'gpt-4o'", reason)
+
+        # And whole tokens off that same line earn their credit.
+        whole = self._knob(
+            model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": line}
+        )
+        self.assertTrue(whole.discovered[0].credited, whole.discovered[0])
+        self.assertEqual(whole.discovered[0].reachable_values, 2)
+
     def test_every_other_no_knob_state_still_blocks_the_run(self) -> None:
         """Only the absent document was reclassified - the other three were not.
 
@@ -8648,6 +8684,35 @@ def _read(build=None, knobs=None):
     return MODULE.agent_facts_from_discovery(document)
 
 
+def _documented_agent_read():
+    """The `--agent-knobs` example the guide hands the reader, parsed.
+
+    One reader for both tests below, because "does this block parse" and "does
+    this block score" have to be asking about the same bytes.
+    """
+    guide = (
+        ROOT / "skills" / "traigent-first-run" / "references" / "component-creation.md"
+    ).read_text()
+    section = guide.split("## Reading the agent for the opening score", 1)[1]
+    return json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+
+
+# The parameters that example is expected to declare an extent for.
+#
+# Pinned here rather than read out of the example, because a denominator taken
+# from the artefact under test shrinks with it. The scoring check below was
+# written twice against a derived set and found vacuous twice: strip every
+# `values` and `low`/`high` from the JSON and the derived set empties, the
+# comparison becomes set() against set(), and a document that credits nothing
+# passes as one that credits everything. A guard whose strength is a function
+# of the thing it guards is not a guard.
+#
+# The cost of pinning is that the example may not gain or lose a knob quietly,
+# which is the point: it fails here by name, and whoever changed the example
+# says so in this list deliberately.
+DOCUMENTED_AGENT_KNOBS = frozenset({"model", "temperature", "style"})
+
+
 class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """#184: `AGENT` over one number that answered a question about our search.
 
@@ -8664,21 +8729,93 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """
 
     def test_the_documented_agent_read_is_one_complete_consumable_object(self) -> None:
-        guide = (
-            ROOT
-            / "skills"
-            / "traigent-first-run"
-            / "references"
-            / "component-creation.md"
-        ).read_text()
-        section = guide.split("## Reading the agent for the opening score", 1)[1]
-        payload = section.split("```json", 1)[1].split("```", 1)[0]
-        document = json.loads(payload)
-        facts = MODULE.agent_facts_from_discovery(document)
+        facts = MODULE.agent_facts_from_discovery(_documented_agent_read())
         self.assertTrue(facts.discovery_supplied)
         self.assertEqual(
             {signal.name for signal in facts.build or ()},
             {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
+
+    def test_the_documented_agent_read_credits_every_knob_it_declares(self) -> None:
+        """Parsing the example is not the same as scoring it.
+
+        Its sibling above passed while `model` and `style` earned nothing:
+        both evidence lines PARAPHRASED their options ("MODELS lists the three
+        ids"), and `_value_is_evidenced` looks for the literal value. The one
+        document handed to a reader as the shape to copy was a shape that
+        scores zero on two of its three knobs, and a structural check cannot
+        see that. So run it through the scorer.
+
+        Neither assertion is a number: a knob's credit moves whenever the
+        weights do, but no knob in an example we publish should ever earn
+        nothing. `DiscoveredKnob.credited` is the property, not a phrase out of
+        the refusal it prints - a fragment of that sentence is a check the
+        scorer can pass by being reworded, and it only ever saw ONE of the ways
+        a knob earns nothing. The refusal belongs in the failure message
+        instead, where a rewording changes what the reader is told and nothing
+        about what passes.
+
+        Both halves compare against `DOCUMENTED_AGENT_KNOBS` rather than
+        against the example, for the reason recorded there. The first says the
+        example still declares an extent for exactly those parameters, so the
+        second cannot be satisfied by an example that declares fewer; the
+        second is the credit itself, stated positively - the set of knobs the
+        scorer credits IS that set - so an empty result fails instead of
+        passing. The excluded knobs are dropped from the first, because `seed`
+        or `max_tokens` may legitimately appear here to illustrate the refusal
+        they get, and they are never credited in the second either.
+
+        Knobs that record a doubt - `evidence` and no `values` or `low`/`high`
+        - are outside both sets on purpose: the guide teaches that shape and a
+        knob written that way earns nothing by design.
+        """
+        document = _documented_agent_read()
+        declared = {
+            name
+            for name, spec in document["knobs"].items()
+            if {"values", "low", "high"} & set(spec)
+        } - set(MODULE.EXCLUDED_KNOBS)
+        self.assertEqual(
+            declared,
+            set(DOCUMENTED_AGENT_KNOBS),
+            "the --agent-knobs example in references/component-creation.md no "
+            "longer declares an extent for the parameters this test is pinned "
+            "to. That list is what stops the credit check below from passing "
+            "on an example with nothing left to credit, so it is not derived "
+            "from the example: update DOCUMENTED_AGENT_KNOBS in the same "
+            "change that adds or drops a knob there.",
+        )
+        facts = MODULE.agent_facts_from_discovery(document)
+        credited = {knob.name for knob in facts.discovered or () if knob.credited}
+        # Why THAT knob earned nothing, in the scorer's own words, rather than
+        # one repair named for every knob at once. "Cite the values or drop the
+        # extent" fixes a categorical knob whose options are not in the line
+        # cited for them, and fixes nothing about a range inside the noise
+        # floor: a message written for the first direction sends the reader of
+        # the second to the wrong place. `uncredited_reason` is what the scorer
+        # already refused it with, so this reports it instead of guessing.
+        read = {knob.name: knob for knob in facts.discovered or ()}
+        refused = "; ".join(
+            (
+                f"{name}: {read[name].uncredited_reason}"
+                if name in read
+                else f"{name}: the read did not return this parameter at all"
+            )
+            for name in sorted(set(DOCUMENTED_AGENT_KNOBS) - credited)
+        )
+        self.assertEqual(
+            credited,
+            set(DOCUMENTED_AGENT_KNOBS),
+            "the --agent-knobs example in references/component-creation.md "
+            "declares an extent for these knobs and the scorer does not credit "
+            "exactly them. It is the one document a reader is handed as the "
+            "shape to copy, so a knob it cannot get credit for teaches a "
+            "document that scores zero. What the scorer refused, and why: "
+            + (
+                refused
+                or "nothing - every pinned knob is credited, so the scorer "
+                "credits some knob this test is not pinned to"
+            ),
         )
 
     def test_the_opening_cap_measurement_has_an_executable_fixture(self) -> None:
