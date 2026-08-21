@@ -312,11 +312,11 @@ read is evidence about the source at the moment it was taken, never a document t
 {"source": "agent.py",
  "knobs": {
    "model":       {"values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                   "evidence": "agent.py:8 model=model reaches chat.completions.create; agent.py:4 MODELS lists the three ids"},
+                   "evidence": "agent.py:8 model=model reaches chat.completions.create; agent.py:4 MODELS = [\"gpt-4o-mini\", \"gpt-4o\", \"o3-mini\"]"},
    "temperature": {"low": 0.0, "high": 1.0,
                    "evidence": "agent.py:9 temperature=temperature reaches the provider call"},
    "style":       {"values": ["direct", "structured"],
-                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 declares both keys"}},
+                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 STYLES = {\"direct\": ..., \"structured\": ...}"}},
  "build": {
    "prompt": {"present": true, "few_shot": 2,
               "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
@@ -328,8 +328,10 @@ read is evidence about the source at the moment it was taken, never a document t
 ```
 
 A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
-it genuinely accepts, a categorical one needs two or more options that exist. Anything else is
-reported with the reason it earned nothing, which is a line the user can read and correct - so a
+it genuinely accepts, a categorical one needs two or more options its `evidence` quotes verbatim.
+That string is all the scorer reads - it never opens the agent - and it matches whole tokens, so
+`gpt-4` declared against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing. Anything else
+is reported with the reason it earned nothing, which is a line the user can read and correct - so a
 parameter you are unsure of is worth recording rather than dropping. Record it with its `evidence`
 and no `values` or `low`/`high`: that is how a knob says "seen in the agent, extent not
 established". A knob has no `determined` field - that answer belongs to the four `build` checks
