@@ -58,7 +58,7 @@ inferring aliases or positional fallbacks from SDK internals.
 
 The installed SDK owns:
 
-- The default per-optimization cost limit and its in-run enforcement.
+- In-run enforcement, at trial granularity, of the per-optimization cost limit it is given.
 - Graceful partial results when an optimization timeout occurs.
 - Retries for transient Traigent-backend requests.
 - Provider-error classification and stop reasons.
@@ -106,10 +106,11 @@ Reuse the real agent's existing value when present. Generated LiteLLM walkthroug
 reasonable internal fallback such as 120 seconds, adjusted automatically after the live probe.
 This is not a new retry policy.
 
-Use one total walkthrough ceiling, `$5.00` by default. Leave the SDK per-optimization cost limit
-at its installed default unless it exceeds the remaining total ceiling; then lower it through the
-installed public API or a process-only setting. Keep one running total across paid phases, not a
-phase ledger.
+Use one total walkthrough ceiling, `$5.00` by default. Every paid process is launched with that
+total and with what earlier phases already spent, and the decorator contract below turns the pair
+into two things: the per-optimization limit the SDK enforces for that phase, and the gate every
+provider call the wrapper places itself has to pass. `references/run-safety.md` owns what the total
+covers, how it is approved, and how the figures are carried between processes.
 
 ## Walkthrough model ladder
 
@@ -355,6 +356,73 @@ else:
     # backend unreachable - to a local sweep, and returns a result that reads
     # like the managed one the user approved paying for.
     os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"
+
+
+def approved_usd(name: str) -> float:
+    """One figure out of the approval, in USD. No default, ever.
+
+    A default here would be a number nobody approved. Absent one of these, the
+    SDK's own per-optimization default governs instead - built fresh per call,
+    so every phase would get the whole of it and none of them would know what
+    the earlier phases already spent.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        raise SystemExit(
+            f"{name} is not set, and this phase spends real money. Supply the "
+            "approved figures in this process's environment - never in .env, "
+            "which outlives the approval that set them - and start it again."
+        )
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise SystemExit(f"{name} must be a finite, non-negative number of USD")
+    return value
+
+
+# The total the user approved, and the single running total at the moment this
+# process starts - the tracked-or-deducted spend of every earlier paid phase,
+# `0` only while nothing has been spent yet. Two figures rather than one
+# remaining, so the process says what was approved as well as what is left.
+RUN_COST_CEILING_USD = approved_usd("TRAIGENT_FIRST_RUN_COST_CEILING_USD")
+RUN_COST_SPENT_USD = approved_usd("TRAIGENT_FIRST_RUN_COST_SPENT_USD")
+# What one provider call is deducted for when its route reports no cost.
+# Without it an unpriced route makes the ledger below a no-op: every call
+# deducts nothing, the remaining never falls, and nothing ever refuses.
+UNTRACKED_CALL_COST_USD = approved_usd("TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD")
+RUN_COST_REMAINING_USD = RUN_COST_CEILING_USD - RUN_COST_SPENT_USD
+if UNTRACKED_CALL_COST_USD <= 0:
+    raise SystemExit(
+        "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD must be positive: a zero "
+        "deduction lets an unpriced route run until something else stops it"
+    )
+if RUN_COST_REMAINING_USD < UNTRACKED_CALL_COST_USD:
+    raise SystemExit(
+        f"${RUN_COST_REMAINING_USD:.4f} of the approved "
+        f"${RUN_COST_CEILING_USD:.2f} is left, which does not cover one "
+        f"provider call at ${UNTRACKED_CALL_COST_USD:.4f}. Take a larger total "
+        "back to the user; do not start a phase that cannot finish one call."
+    )
+# Placed with the other process-scoped SDK settings, before the import, so it is
+# already in the environment whenever the SDK builds its enforcer from it. That
+# enforcer polices this number per trial for this phase, in place of a default
+# that knows nothing about this walkthrough. `repr` rather than a rounded
+# format: a remaining that rounds to zero is refused above, not written out as
+# a limit no trial can fit under.
+os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
+# Process-only, and set because the alternative is worse than it looks: without
+# it the SDK opens its own handshake whenever its pre-run estimate exceeds the
+# limit, and that handshake's third option RAISES the limit to the estimate
+# times 1.5 - past the approved total, on one keystroke, in the middle of a run
+# the user already approved. It also short-circuits a stored approval token,
+# which raises the limit to whatever the token names. Neither can move this
+# number now, and the SDK's per-trial admission check is untouched.
+#
+# It costs one thing, named here rather than left to be discovered: the SDK's
+# pre-run check on models it holds no price for downgrades from a refusal to a
+# warning. That gap has an owner - `run-safety.md` requires every selected model
+# be verified live and cost-tracked before scaling - and a route the SDK cannot
+# price still debits the ledger below at the conservative rate.
+os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
@@ -768,11 +836,77 @@ def build_request(message: str, config: dict) -> dict:
 # surfaced as $0. It is spend that bought no measurement - report it, never add
 # it to the comparison.
 REFUSED_TRIAL_COSTS: list[float] = []
+# Every provider call this wrapper places, in the order it placed them. The two
+# searches run under the SDK's enforcement of the limit set above; held-out
+# scoring and a judge routed through `call_agent` do not, because
+# `litellm.completion` below is called directly and the orchestrator's permit
+# never sees it. One list holds both, because they spend the same approved
+# total: after a search has spent most of it, held-out scoring has to see what
+# is actually left rather than what was left when this process started.
+RUN_SPEND_USD: list[float] = []
+# One provider call scores one held-out row. An LLM judge that grades every row
+# is a second call per row, disclosed on the same approval, so set this to 2
+# when one grades - otherwise the fit below is computed for half the calls the
+# pass will place. Select it from the evaluation method this run actually wired,
+# before the connected phase starts; it is not a value to leave at the
+# walkthrough's own because the walkthrough grades deterministically.
+CALLS_PER_SCORED_ROW: int = 1
+
+
+def run_remaining_usd() -> float:
+    """USD left of the approved total, as this process has observed it."""
+    return RUN_COST_REMAINING_USD - sum(RUN_SPEND_USD)
+
+
+def record_call_spend(cost: float | None) -> None:
+    """Debit one provider call. An unpriced call is not a free one.
+
+    A route that reports no cost still spent money, so it is deducted at the
+    approved conservative rate. Debiting `0` there would hold the remaining
+    flat across a whole held-out pass, and every gate reading it would pass.
+    """
+    RUN_SPEND_USD.append(UNTRACKED_CALL_COST_USD if cost is None else cost)
+
+
+def refuse_unless_it_fits(calls: int, what: str) -> None:
+    """Refuse a fixed run of calls the remaining cannot fund in full.
+
+    For work whose entire output is one number - held-out scoring is the case
+    here - a pass that stops halfway is not a smaller result, it is a different
+    one under the same name: a mean over whichever rows the money reached. So
+    the fit is settled before the first call and nothing is spent when it fails.
+    """
+    needed = calls * UNTRACKED_CALL_COST_USD
+    remaining = run_remaining_usd()
+    if needed > remaining:
+        raise RuntimeError(
+            f"{what} needs {calls} provider calls, about ${needed:.4f} at the "
+            f"approved conservative rate, and ${remaining:.4f} of the approved "
+            f"${RUN_COST_CEILING_USD:.2f} is left. Report the phases that did "
+            "complete and take a larger total back to the user; do not run "
+            "part of this and present its number as the whole."
+        )
 
 
 def call_agent(message: str, config: dict) -> tuple[str, float | None]:
+    # The last gate before money leaves, and it covers every caller: a search
+    # trial, a held-out row, a judge routed through here. While the SDK can see
+    # cost it is enforcing this same number one admission earlier, so this gate
+    # is catching what that one is not watching - the direct calls, and the
+    # overshoot it allows. It bites first in exactly one case, and that case is
+    # the point: a route the SDK cannot price drops it to counting trials
+    # instead of money, and then this ledger is what the total is left with.
+    if run_remaining_usd() < UNTRACKED_CALL_COST_USD:
+        raise RuntimeError(
+            f"The approved ${RUN_COST_CEILING_USD:.2f} total is exhausted, so "
+            "this call was not placed. Report what completed and ask for a "
+            "larger total before running anything else."
+        )
     response = litellm.completion(**build_request(message, config))
     cost = provider_reported_cost(response)  # before either refusal, not after
+    # Debited before the guards, for the reason the cost is read before them:
+    # a call the wrapper is about to refuse was still paid for.
+    record_call_spend(cost)
     try:
         require_nonzero_token_usage(response)
         require_untruncated_completion(response)
@@ -935,6 +1069,24 @@ def agent(message: str) -> str:
     return output
 ```
 
+Two gates hold the approved total, and they are different gates because the spending happens two
+different ways. Inside `optimize_sync`, the SDK admits a trial only while its own limit allows, and
+that limit is now the remaining rather than a default: the wrapper writes
+`TRAIGENT_RUN_COST_LIMIT` before importing the SDK, so a phase reaching it stops gracefully and
+reports `stop_reason`. Outside it, held-out scoring calls `litellm.completion` directly, where no
+permit exists - so `call_agent` is the single door those calls pass through, and it refuses once
+the remaining cannot cover one more call. Neither gate is arithmetic the assistant performs
+between phases: the first is the SDK's per-trial admission check, and the second reads a ledger
+`call_agent` itself debits from every call's reported cost.
+
+That is why the ledger counts search trials as well as direct calls. Held-out scoring runs last, in
+the same process as the connected search, on the run's recommended and often priciest
+configuration; if it read the remaining as it stood when the process started, it would believe the
+whole of it was still there after the search had spent most of it. The SDK's `ExecutionBudget` is
+the SDK's own way to share one cap across calls, and it is not used here: it holds its state in one
+Python object, so it cannot reach from the baseline process into the connected one, and a second
+cap that has to agree with `TRAIGENT_RUN_COST_LIMIT` is one more place for them to disagree.
+
 The process-only values above are selected by the coding assistant from the inspected project and
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
 to twelve baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
@@ -1000,7 +1152,8 @@ evaluator instead.
 
 For the generated walkthrough, run the credible small space as one local fixed grid containing its
 initial configuration. Start a fresh process with `TRAIGENT_FIRST_RUN_PHASE=baseline` (the
-fail-safe default), supplied by the process and never by `.env`. The contract forces backend-offline
+fail-safe default) and the three approved cost figures `references/run-safety.md` names, all
+supplied by the process and never by `.env`. The contract forces backend-offline
 before import: removing `TRAIGENT_API_KEY` does not suppress a stored CLI login. Provider calls stay
 real. The setting dies with the baseline process; never export it, because the connected
 process requires it absent and refuses it if inherited.
@@ -1046,7 +1199,9 @@ existing user-owned baseline, replace the generated example's
 real one-row fixed configuration remains one row; never manufacture variants around it.
 
 After the baseline, add its tracked cost to the single running total. If cost is unavailable,
-deduct the conservative estimate. Do not start the search if it cannot fit the remaining total
+deduct the conservative estimate. That figure is what the connected process is launched with as
+`TRAIGENT_FIRST_RUN_COST_SPENT_USD`, so the number the baseline actually produced is the number the
+next phase is bounded by. Do not start the search if it cannot fit the remaining total
 ceiling.
 
 Read cost as a number only when the SDK reports one. An absent cost is `not measured`, while an
@@ -1142,7 +1297,8 @@ document whenever the space changes. Its shape is documented in `references/run-
 finished file is passed to the closing readiness score with `--config-space`.
 
 After the account/key handoff, start a fresh process with
-`TRAIGENT_FIRST_RUN_PHASE=connected`, supplied by the process and never by `.env`. It loads the
+`TRAIGENT_FIRST_RUN_PHASE=connected` and the same three approved cost figures, this time carrying
+the baseline's spend, all supplied by the process and never by `.env`. It loads the
 updated `.env`; the earlier process cannot see that edit. Run the zero-LLM portal probe, then one
 connected search with the same function, tuning dataset, and evaluator:
 
@@ -1352,7 +1508,10 @@ against `HOLDOUT_DATASET` through the same loader and the same `task_score` the 
 `references/evaluation-and-dataset.md` owns which configuration that is - one call of
 `evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
 cost joins the single running total exactly as a baseline phase does; `references/run-safety.md`
-owns what the approval discloses about those calls.
+owns what the approval discloses about those calls. These are the walkthrough's only paid calls
+that no permit covers, so they are also the ones the two gates above are written for: the pass
+refuses to start unless the remaining funds every row, and `call_agent` refuses each call
+individually once it does not.
 
 ```python
 def holdout_agent_input(input_data):
@@ -1369,6 +1528,13 @@ def evaluate_holdout(config: dict) -> tuple[float, float | None]:
     scores = []
     tracked_cost: float | None = 0.0
     holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
+    # All of these rows or none of them, decided before the first one is paid
+    # for. This is the run's most expensive configuration on rows nothing else
+    # scores, and it is the last paid work in the walkthrough - so it is also
+    # where an exhausted total is likeliest to arrive.
+    refuse_unless_it_fits(
+        len(holdout.examples) * CALLS_PER_SCORED_ROW, "held-out scoring"
+    )
     for example in holdout.examples:
         input_data = example.input_data
         expected = example.expected_output

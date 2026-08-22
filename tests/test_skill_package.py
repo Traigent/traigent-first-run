@@ -799,6 +799,67 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
     return nodes
 
 
+SPEND_GATE_FUNCTIONS = frozenset(
+    {"run_remaining_usd", "record_call_spend", "refuse_unless_it_fits"}
+)
+
+
+def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
+    """The ledger every paid path in the wrapper passes through.
+
+    Taken from the document for the reason `sdk_wrapper_state_nodes` above is:
+    a fixture that supplies its own `def run_remaining_usd(): return 1.0` runs
+    green against a wrapper whose gate has been deleted, which is the state
+    this package was in before the approved total reached any code at all.
+    Absent names raise rather than yielding a shorter list, so a rename cannot
+    silently leave `call_agent` compiled without its gate.
+    """
+    nodes = [
+        node
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name in SPEND_GATE_FUNCTIONS
+    ]
+    found = {node.name for node in nodes}
+    if found != SPEND_GATE_FUNCTIONS:
+        raise AssertionError(
+            f"the wrapper defines {sorted(found)} of the spend gate "
+            f"{sorted(SPEND_GATE_FUNCTIONS)}; every paid path reads all three"
+        )
+    return nodes
+
+
+def spend_gate_bindings(
+    *, ceiling: float = 5.00, remaining: float = 5.00, per_call: float = 0.05
+) -> dict[str, float]:
+    """The approved figures a compiled `call_agent` needs in its module.
+
+    These come from the environment the paid process is launched with, so no
+    document can supply them and a fixture has to. The defaults are generous on
+    purpose: a fixture testing truncation or request construction should not
+    fail because a gate about money ran out mid-way. The gate's own edges are
+    exercised in `TheApprovedTotalReachesTheCodeTests`, where the numbers are
+    chosen to make it fire.
+    """
+    return {
+        "RUN_COST_CEILING_USD": ceiling,
+        "RUN_COST_REMAINING_USD": remaining,
+        "UNTRACKED_CALL_COST_USD": per_call,
+    }
+
+
+# The approved figures a paid process is launched with. Any fixture that
+# executes the wrapper's pre-import block needs them, because that block now
+# refuses to go any further without them - which is the behaviour, not an
+# inconvenience: a paid phase that starts without the approved total runs on a
+# per-optimization default nobody agreed to.
+APPROVED_LAUNCH_ENV = {
+    "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "5.00",
+    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.05",
+}
+
+
 # Spelled forms of the counts a search space could plausibly have. The prose
 # writes a size as a word ("twelve-row sweep") as often as a numeral ("12 and
 # 24"), so both spellings of the SAME decision have to resolve to one number
@@ -3062,6 +3123,7 @@ class SkillPackageTests(unittest.TestCase):
             ast.Module(
                 body=[
                     *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
                     functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
@@ -3074,6 +3136,7 @@ class SkillPackageTests(unittest.TestCase):
             "build_request": lambda message, config: {},
             "require_nonzero_token_usage": lambda response: None,
             "provider_reported_cost": lambda response: 0.01,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<truncation-guard>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -3162,7 +3225,14 @@ class SkillPackageTests(unittest.TestCase):
             "the wrapper must declare REFUSED_TRIAL_COSTS exactly once",
         )
         module = ast.fix_missing_locations(
-            ast.Module(body=[*state, functions["call_agent"]], type_ignores=[])
+            ast.Module(
+                body=[
+                    *state,
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
         )
         current = None
         refuse: str | None = None
@@ -3181,6 +3251,7 @@ class SkillPackageTests(unittest.TestCase):
             "require_nonzero_token_usage": usage_guard,
             "require_untruncated_completion": truncation_guard,
             "provider_reported_cost": lambda response: 0.02,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<refused-trial-cost>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -7679,7 +7750,14 @@ class SkillPackageTests(unittest.TestCase):
             )
 
         module = ast.fix_missing_locations(
-            ast.Module(body=call_path_nodes, type_ignores=[])
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    *call_path_nodes,
+                ],
+                type_ignores=[],
+            )
         )
         namespace = {
             "litellm": SimpleNamespace(completion=fake_completion),
@@ -7690,6 +7768,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<sdk-call-agent>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -8056,6 +8135,7 @@ class SkillPackageTests(unittest.TestCase):
             ast.Module(
                 body=[
                     *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
                     functions["provider_reported_cost"],
                     functions["require_nonzero_token_usage"],
                     functions["require_untruncated_completion"],
@@ -8073,6 +8153,7 @@ class SkillPackageTests(unittest.TestCase):
             "math": __import__("math"),
             "litellm": SimpleNamespace(completion=completion),
             "build_request": lambda message, config: {},
+            **spend_gate_bindings(),
         }
         exec(compile(call_module, "<provider-call>", "exec"), call_namespace)
         call_agent = call_namespace["call_agent"]
@@ -8141,7 +8222,13 @@ class SkillPackageTests(unittest.TestCase):
         holdout_node = functions["evaluate_holdout"]
         holdout_module = ast.fix_missing_locations(
             ast.Module(
-                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["holdout_agent_input"],
+                    holdout_node,
+                ],
+                type_ignores=[],
             )
         )
         examples = [
@@ -8188,6 +8275,7 @@ class SkillPackageTests(unittest.TestCase):
             "call_agent": call_agent,
             "task_score": task_score,
             "traigent": SimpleNamespace(Dataset=Dataset),
+            **spend_gate_bindings(),
         }
         exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
 
@@ -11201,6 +11289,7 @@ class SkillPackageTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ,
                 {
+                    **APPROVED_LAUNCH_ENV,
                     "TRAIGENT_FIRST_RUN_PHASE": "baseline",
                     "TRAIGENT_REQUIRE_CLOUD": "0",
                 },
@@ -11211,7 +11300,7 @@ class SkillPackageTests(unittest.TestCase):
 
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"},
                 clear=True,
             ):
                 with self.assertRaises(SystemExit) as stopped:
@@ -11371,7 +11460,7 @@ class SkillPackageTests(unittest.TestCase):
             script.parent.mkdir()
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"},
                 clear=True,
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
@@ -11381,7 +11470,7 @@ class SkillPackageTests(unittest.TestCase):
             # baseline assignment never mutates the parent shell.
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "connected"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "connected"},
                 clear=True,
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
@@ -13166,10 +13255,20 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
+            **spend_gate_bindings(),
         }
         exec(
             compile(
-                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                ast.fix_missing_locations(
+                    ast.Module(
+                        body=[
+                            *sdk_wrapper_state_nodes(SDK_EXECUTION.read_text()),
+                            *sdk_wrapper_spend_gate(SDK_EXECUTION.read_text()),
+                            *selected,
+                        ],
+                        type_ignores=[],
+                    )
+                ),
                 "<sdk-call-agent>",
                 "exec",
             ),
@@ -14011,6 +14110,290 @@ class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
         text = self.close()
         self.assertIn("only on collected data", text)
         self.assertIn("on generated rows a high flat score measures material", text)
+
+
+class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
+    """The ceiling the user approves has to govern the calls, not the prose.
+
+    It did not. `run-safety.md` described the whole discipline - lower the
+    per-optimization limit to the remaining, stop before a phase that does not
+    fit - and nothing wrote it anywhere: neither `optimize_sync` call passed a
+    cost argument and no document named `TRAIGENT_RUN_COST_LIMIT`, so each phase
+    independently got the SDK's own default in a process that knew nothing about
+    what the earlier phase spent. Held-out scoring was worse than governed
+    badly; it was not governed at all, because it calls `litellm.completion`
+    directly and no permit ever sees it.
+
+    So this executes the two gates rather than reading for them. A sentence
+    about a ceiling is exactly what was already there.
+    """
+
+    @staticmethod
+    def launch_program(label: str):
+        """The wrapper's pre-import block, compiled - everything before litellm."""
+        fence = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        prefix: list[ast.stmt] = []
+        for node in ast.parse(fence).body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        return compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            label,
+            "exec",
+        )
+
+    def launch(self, environment: dict[str, str]) -> dict:
+        """Run the pre-import block under `environment`, returning its globals."""
+        program = self.launch_program("<approved-total>")
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "traigent-runs" / "walkthrough.py"
+            script.parent.mkdir()
+            with mock.patch.dict(os.environ, environment, clear=True):
+                namespace: dict = {"__file__": str(script)}
+                exec(program, namespace)  # noqa: S102
+                namespace["_environment"] = dict(os.environ)
+                return namespace
+
+    def test_a_paid_phase_without_the_approved_figures_never_starts(self) -> None:
+        """Fail closed, so the SDK's own default can never quietly govern.
+
+        Each figure is dropped on its own. Dropping all three at once passes
+        against a wrapper that only checks the first one it reads, and the
+        first one is the one an author remembers.
+        """
+        for missing in sorted(APPROVED_LAUNCH_ENV):
+            with self.subTest(missing=missing):
+                environment = {
+                    **APPROVED_LAUNCH_ENV,
+                    "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+                }
+                del environment[missing]
+                with self.assertRaises(SystemExit) as stopped:
+                    self.launch(environment)
+                self.assertIn(missing, str(stopped.exception))
+                self.assertIn("spends real money", str(stopped.exception))
+
+    def test_the_remaining_total_becomes_the_limit_the_sdk_enforces(self) -> None:
+        """The approved figures, minus what is spent, in the SDK's own variable.
+
+        Set before the SDK is imported, because that is when it reads it, and
+        `TRAIGENT_COST_APPROVED` beside it so the SDK's interactive handshake -
+        whose third option raises its limit to the estimate times 1.5 - can
+        never move the number past what the user agreed to.
+        """
+        namespace = self.launch(
+            {
+                **APPROVED_LAUNCH_ENV,
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "1.25",
+                "TRAIGENT_FIRST_RUN_PHASE": "connected",
+            }
+        )
+        environment = namespace["_environment"]
+        self.assertAlmostEqual(
+            float(environment["TRAIGENT_RUN_COST_LIMIT"]), 3.75, places=6
+        )
+        self.assertEqual(environment["TRAIGENT_COST_APPROVED"], "true")
+        self.assertAlmostEqual(namespace["RUN_COST_REMAINING_USD"], 3.75, places=6)
+        # The baseline is the same wrapper with nothing spent yet, so its limit
+        # is the whole approved total rather than a per-phase share of it.
+        baseline = self.launch(
+            {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"}
+        )
+        self.assertAlmostEqual(
+            float(baseline["_environment"]["TRAIGENT_RUN_COST_LIMIT"]), 5.00, places=6
+        )
+
+    def test_a_remaining_too_small_for_one_call_stops_before_the_phase(self) -> None:
+        """A near-zero remaining is the shape that produces a silent 0-trial run.
+
+        Floating-point subtraction of two nearly equal figures leaves a
+        positive number the SDK accepts and no trial can fit under, so the run
+        completes having measured nothing. Refusing below one conservative call
+        is a floor with a reason rather than an epsilon.
+        """
+        with self.assertRaises(SystemExit) as stopped:
+            self.launch(
+                {
+                    **APPROVED_LAUNCH_ENV,
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "4.99",
+                    "TRAIGENT_FIRST_RUN_PHASE": "connected",
+                }
+            )
+        self.assertIn("does not cover one", str(stopped.exception))
+        self.assertIn("larger total back to the user", str(stopped.exception))
+
+    def compiled_call_agent(self, **bindings):
+        """`call_agent` with its ledger, plus the stubs it calls out to."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+        reported: float | None = bindings.pop("reported_cost", 0.04)
+        namespace = {
+            "litellm": SimpleNamespace(
+                completion=lambda **kwargs: placed.append(kwargs)
+                or SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="a"))]
+                )
+            ),
+            "build_request": lambda message, config: {"model": config.get("model")},
+            "provider_reported_cost": lambda response: reported,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(compile(module, "<approved-total-call>", "exec"), namespace)  # noqa: S102
+        return namespace, placed
+
+    def test_call_agent_refuses_once_the_approved_total_is_exhausted(self) -> None:
+        """The gate is on the call, so every caller passes it.
+
+        A search trial, a held-out row, and a judge routed through here all
+        arrive at the same door. The refusal places no call at all - it is
+        checked before `litellm.completion`, not after - so an exhausted total
+        costs nothing more to discover.
+        """
+        namespace, placed = self.compiled_call_agent(
+            ceiling=1.00, remaining=0.10, per_call=0.04
+        )
+        call_agent = namespace["call_agent"]
+
+        self.assertEqual(call_agent("first", {}), ("a", 0.04))
+        self.assertEqual(call_agent("second", {}), ("a", 0.04))
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.02, places=6)
+        with self.assertRaises(RuntimeError) as refused:
+            call_agent("third", {})
+        self.assertIn("was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 2, "the refused call still reached the provider")
+
+    def test_an_unpriced_call_is_debited_rather_than_treated_as_free(self) -> None:
+        """Otherwise the ledger is a no-op on exactly the routes that need it.
+
+        A route that reports no cost still spends. Debiting `0` there holds the
+        remaining flat forever, so every gate reading it passes and the whole
+        mechanism is decorative on the one path it was built for.
+        """
+        namespace, placed = self.compiled_call_agent(
+            ceiling=1.00, remaining=0.10, per_call=0.04, reported_cost=None
+        )
+        call_agent = namespace["call_agent"]
+
+        self.assertEqual(call_agent("first", {}), ("a", None))
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.06, places=6)
+        self.assertEqual(call_agent("second", {}), ("a", None))
+        with self.assertRaises(RuntimeError):
+            call_agent("third", {})
+        self.assertEqual(len(placed), 2)
+
+    def test_held_out_scoring_is_all_of_the_rows_or_none_of_them(self) -> None:
+        """A partial held-out pass is a different measurement wearing its name.
+
+        Its whole output is one number over a reserved split, so a mean over
+        the four rows the money reached is not a smaller version of it. The fit
+        is decided before the first row, and a refusal spends nothing.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["holdout_agent_input"],
+                    functions["evaluate_holdout"],
+                ],
+                type_ignores=[],
+            )
+        )
+        examples = [
+            SimpleNamespace(input_data=f"row {index}", expected_output="ok")
+            for index in range(4)
+        ]
+        calls: list[str] = []
+
+        def call_agent(message, config):
+            calls.append(message)
+            return "ok", 0.04
+
+        def build(**bindings):
+            namespace = {
+                "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+                "call_agent": call_agent,
+                "task_score": lambda output, expected, input_data: 1.0,
+                "traigent": SimpleNamespace(
+                    Dataset=SimpleNamespace(
+                        from_jsonl=lambda path: SimpleNamespace(examples=examples)
+                    )
+                ),
+                **spend_gate_bindings(**bindings),
+            }
+            exec(  # noqa: S102
+                compile(module, "<approved-total-holdout>", "exec"), namespace
+            )
+            return namespace
+
+        # Four rows at the conservative rate need more than is left.
+        refusing = build(ceiling=5.00, remaining=0.10, per_call=0.04)
+        with self.assertRaises(RuntimeError) as stopped:
+            refusing["evaluate_holdout"]({"model": "recommended"})
+        self.assertIn("held-out scoring", str(stopped.exception))
+        self.assertEqual(calls, [], "a refused pass paid for rows anyway")
+
+        # And it is the fit that refuses, not the rows: the same pass runs when
+        # the remaining covers all four.
+        allowing = build(ceiling=5.00, remaining=0.40, per_call=0.04)
+        score, cost = allowing["evaluate_holdout"]({"model": "recommended"})
+        self.assertEqual(score, 1.0)
+        self.assertAlmostEqual(cost, 0.16, places=6)
+        self.assertEqual(len(calls), 4)
+
+    def test_the_launch_figures_are_named_where_the_approval_is_owned(self) -> None:
+        """The code reads three names; the document that sets them says which.
+
+        `run-safety.md` owns the approval, so the names live there and
+        `sdk-execution.md` owns what the wrapper does with them. A figure the
+        wrapper requires and no document names is a phase that stops with an
+        error nobody was told how to answer.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        for name in sorted(APPROVED_LAUNCH_ENV):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", safety)
+        self.assertIn("None of the three has a default", safety)
+        self.assertIn("supplied by the process and never by `.env`", safety)
+        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn("TRAIGENT_RUN_COST_LIMIT", sdk)
+        # The rejected alternative, recorded where the mechanism is, so the next
+        # reader does not re-propose it: one Python object cannot span the two
+        # processes the walkthrough deliberately runs the phases in.
+        self.assertIn("`ExecutionBudget`", sdk)
+        self.assertIn(
+            "cannot reach from the baseline process into the connected one", sdk
+        )
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):

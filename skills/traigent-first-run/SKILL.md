@@ -697,7 +697,9 @@ reduction from the twelve-row baseline target. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
-do not layer another retry loop.
+do not layer another retry loop. Launch every paid process with the three approved figures that
+reference names, so what the user approved is what the code enforces; a phase given none of them
+stops before spending rather than falling back to a limit nobody approved.
 
 After the approved live provider probe, derive internal time bounds from observed latency and the
 baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
