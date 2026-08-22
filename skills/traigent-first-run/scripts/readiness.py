@@ -7380,6 +7380,14 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             # and only a structurally unreadable document is refused. Nothing
             # here is unreadable - the options simply are not in the line the
             # author cited for them, so they earn nothing and the card says so.
+            #
+            # It carries the remedy as well as the symptom, and for the same
+            # reason the unknown-field message above does: naming what is wrong
+            # without naming what to write instead is half a message. It is
+            # owed here more than there, because the rule it states lives in
+            # `component-creation.md`, which SKILL.md loads after this gate -
+            # so at the moment this fires, the sentence that would fix it is
+            # not in the reader's context and this line is.
             return DiscoveredKnob(
                 name,
                 "categorical",
@@ -7390,7 +7398,9 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
                 + " which the evidence given for it does not show, so this "
                 "score has not seen them; the options a search varies get "
                 "added at the enhanced run, and this read records the ones "
-                "the source already has",
+                "the source already has; where it does, quote each option "
+                "verbatim in this parameter's own 'evidence' - that line is "
+                "all this read opens, and it matches whole tokens",
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:

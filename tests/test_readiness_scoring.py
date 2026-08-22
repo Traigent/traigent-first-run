@@ -4335,6 +4335,40 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertTrue(whole.discovered[0].credited, whole.discovered[0])
         self.assertEqual(whole.discovered[0].reachable_values, 2)
 
+    def test_a_hyphen_delimited_fragment_is_not_evidenced(self) -> None:
+        """The boundary counts `.` and `-` as token characters - pinned here.
+
+        Its sibling above pins the RULE and not the boundary that implements
+        it. `gpt-4` against `["gpt-4o-mini", "gpt-4o"]` is refused by a
+        standard word boundary exactly as readily as by the wider class
+        `_value_is_evidenced` actually uses, because nothing in that fixture
+        is hyphen-adjacent: swap the lookarounds for a plain word boundary and
+        every assertion above still passes. So that test cannot tell the two
+        definitions apart, and this one is where they part.
+
+        A standard word boundary reads a hyphen as a word break, and this
+        scorer deliberately does not. Under it, `mini` and `gpt` are whole
+        tokens of `gpt-4o-mini` and each earns credit for an option no agent
+        offers - the invented option this function's own docstring says it
+        exists to refuse, arriving through the model ids it was written for.
+        Both sides of the hyphen, because that is what "`-` is a token
+        character" means, and a class that dropped it from only one lookaround
+        would still refuse the other.
+        """
+        line = 'agent.py:4 MODELS = ["gpt-4o-mini", "gpt-4o"]'
+
+        for fragment in ("mini", "gpt"):
+            with self.subTest(fragment=fragment):
+                facts = self._knob(
+                    model={"values": [fragment, "gpt-4o"], "evidence": line}
+                )
+                self.assertFalse(facts.discovered[0].credited)
+                reason = facts.discovered[0].uncredited_reason
+                self.assertIn("does not show", reason)
+                # Named, and only it - the id it is a fragment of is real.
+                self.assertIn(repr(fragment), reason)
+                self.assertNotIn("'gpt-4o'", reason)
+
     def test_every_other_no_knob_state_still_blocks_the_run(self) -> None:
         """Only the absent document was reclassified - the other three were not.
 
