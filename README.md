@@ -307,6 +307,8 @@ example ids and metrics but writes those three content fields as `null`, and kee
 assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined
 results folder is honored and named.
 
+The walkthrough also writes `traigent-runs/run-log.jsonl`, a local record of where the run waited or stopped. It carries a class name and one sentence per event and never your data — no path, no id, no address, no credential, no row text — and `skills/traigent-first-run/scripts/validate_run_log.py` checks that before the run names the file to you. Nothing sends it anywhere; it is yours to read, share, or delete.
+
 The selected LLM provider still receives the content the agent normally sends during model calls.
 Your assistant explains which services receive data and asks before paid calls or private-data
 egress.
@@ -319,7 +321,7 @@ egress.
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
-| `traigent-runs/run-log.jsonl` (created during a run) | Append-only: one line when a run hits something that blocks it or bends the result, one more if that clears. Written to explain a run that stopped, never rewritten and never read back. It names the class of thing that failed, not the instance: no secret, no path, no id, and no text from your data. Ignored when the project uses Git, like the rest of `traigent-runs/` |
+| `traigent-runs/run-log.jsonl` (created during a run) | Append-only: one line each time the run waits for you or meets something that blocks it or bends the result, one more when that clears. Lines are never rewritten and never read back as run state. It names the class of thing that happened, not the instance: no secret, no path, no id, and no text from your data — checked by a bundled script, not only promised. Ignored when the project uses Git, like the rest of `traigent-runs/` |
 | `traigent-runs/readiness/<timestamp>/` | What one readiness scoring read to reach its score, one directory per scoring. Kept, never re-read as input, and named to you with the card |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 | [`tests/`](tests/) | The guide's own quality gates — for example, a hermetic check that the documented local mock path attempts no outbound sockets. They test the guide, not your project; you never need to run them |

@@ -1118,27 +1118,22 @@ division: the record says what is true now, the log says when it happened and wh
 and neither answers the other's question. Where the record already holds a finding - the portal
 probe's pass/fail among them - that field keeps the value and the log's line does not restate it.
 
-**The file is append-only. A line, once written, is never rewritten, and the file is never read
-back.** That is the whole mechanism, and it is chosen against the alternative rather than by
-default. Keeping exactly one line per problem accurate means reading the file, holding every line
-of it, and re-emitting all of them to change one number - which is the operation this assistant is
-least reliable at, performed on the one artifact whose entire value is being trustworthy about a
-run that already went wrong. A single wrong character in a line nobody is looking at any more is
-undetectable, and it is the line somebody will later be shown. So a count, and the time of the
-latest encounter, are what get given up here - deliberately, because the file then keeps only facts
-that were true at the moment they were written, and a problem is stamped when it was first met.
+**The file is append-only: a line, once written, is never rewritten, and nothing in the run reads
+it back as run state.** Re-emitting a file to correct one number is what this assistant is least
+reliable at, and a wrong character in a line nobody rereads is the line somebody is later shown.
+What that gives up is a count and the time of the latest encounter: a problem is stamped when it
+was first met.
 
 | Key | What it holds |
 |---|---|
 | `ts` | UTC `YYYYMMDDTHHMMSSZ`, when this line was written |
 | `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, `run_stop`, or `warning` |
-| `stage` | the run record's stage number |
+| `stage` | the run record's stage, 1 to 8 - the internal numbering, not the `n/5` the user saw |
 | `class` | one value from that event's own closed set below, never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
 | `state` | `open` when it happens, `cleared` when it stops applying |
 | `detail` | one sentence, under the allowlist below |
 
-`event`, `stage`, and `class` together are the identity, and there is no separate key field to keep
-consistent with them. Write one `open` line when that identity first occurs and one `cleared` line
+`event`, `stage`, and `class` together are the identity. Write one `open` line when that identity first occurs and one `cleared` line
 if it later clears; nothing else is ever written for it. A retry that meets the same refusal twelve
 times adds nothing after the first, because nothing about it changed - that is the deduplication,
 and it costs no lookup, since what is already open is something this run did a moment ago rather
@@ -1160,42 +1155,41 @@ The six are told apart by who has to act, and each names the closed set its `cla
   stuck run stopped, so it is written before every stop-and-wait that happens after the record
   exists. A stop before the record is reported in conversation and stays there.
 - `gate_fail` - a gate this guide defines refused: `credential-file-tracked`, `ignore-check`,
-  `containment`, `readiness-cap`, or `invariants`.
+  `containment`, `readiness-cap`, `invariants`, or `uncategorized`.
 - `tool_fail` - a bundled script could not run at all, or a command failed to execute; the class
-  is its exit code. A non-zero exit that is a finding about the project's own material is not this,
-  and neither is one that is the healthy answer: `preflight.py` exits 1 when a check on their
-  dataset fails, and the credential handoff above continues on exit 1 because that is the file not
-  being tracked. Exit 3 from a bundled script is the shape this event is for.
+  is its exit code. Exit 3 from a bundled script is the shape this event is for: a non-zero exit is
+  the healthy answer where the credential handoff continues on exit 1, and a finding about the
+  customer's own material where `preflight.py` exits 1 or 2.
 - `external_refusal` - a provider, portal, or Traigent refusal, under the category this file already
-  gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, or `validation`.
+  gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, `validation`, or
+  `uncategorized` - which is the class for the provider error this file elsewhere says to surface
+  without guessing a category.
 - `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
   `outage`, `persistence`, or `uncategorized`. Tracking that degraded to local-only is
   `run_stop:persistence` and never a warning - the halt above owns it, and a warning is by
   definition the thing that did not stop the run.
 - `warning` - observed, and able to distort the result without stopping the run:
-  `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The catch-all is not
-  decoration: a no-lift delta, rows the comparison could not score, and a model replaced for being
-  unavailable all survive into the result and are none of the three.
+  `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized` - a no-lift delta and rows
+  nothing could score are warnings this guide mandates and none of the first three.
 
 `detail` and the `class` beside it carry the event and nothing else: one sentence naming what
 happened, with no path, no id, no session or account address, no user or machine name, no secret or
 access code, no provider error body, and no text or identifier taken from the project's data. This
 guide prints absolute paths to the user and writes ids into the record because both are useful
 there; this is the file a user may hand to somebody else, so it names the class of thing that failed
-rather than the instance. It is also where the content
-`TRAIGENT_LOG_EXAMPLE_CONTENT=false` keeps out of local logs would come back, one quoted row at a
-time, if the sentence were allowed to carry an example.
+rather than the instance.
 
-It exists once the record does, under that record's own consent gate. Nothing is
-written before that, and nothing is backdated into it afterwards.
+It exists once the record does, under that record's own consent gate, and nothing is
+backdated into it afterwards.
 
 Before the close names this file to the user, run `scripts/validate_run_log.py --log
 traigent-runs/run-log.jsonl` through the selected Python, from the script's literal absolute path
 under the resolved skill directory. It opens the log read-only and checks what the paragraphs above
 only state: a class outside its event's set, a state that is neither, a field the schema does not
-have, a `cleared` with no `open` before it, a repeat of a state already standing, and a `detail`
-carrying a path, a credential, an address, a session or request id, a URL, or a quoted span long
-enough to be somebody's row. Exit 1 names the lines and exit 3 means the check itself could not run,
+have, a `cleared` with no `open` before it, and a `detail` longer than one sentence needs or
+carrying a path, a credential, an email address, a host or IP, a session or request id, a link,
+or a quoted span long enough to be somebody's row. Two clauses of the allowlist have no
+mechanical shape and stay yours to honour: a person's name, and a machine's.
+Exit 1 names the lines and exit 3 means the check itself could not run,
 which is never a finding about the log. A rejected line is reported to the user with what it
-carries, and is not rewritten: append-only is what makes this file worth reading, and the whole
-directory is theirs to delete if they would rather not keep what it found.
+carries, and is not rewritten: append-only is what makes this file worth reading.

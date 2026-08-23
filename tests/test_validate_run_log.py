@@ -16,6 +16,7 @@ short quoted class, a bare stage number.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -23,6 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "skills" / "traigent-first-run" / "scripts" / "validate_run_log.py"
+BASE_REFERENCE = ROOT / "skills" / "traigent-first-run" / "references" / "run-safety.md"
 
 sys.path.insert(0, str(SCRIPT.parent))
 
@@ -141,9 +143,16 @@ class TheAppendOnlySequenceIsCheckedTests(unittest.TestCase):
         problems = findings(line(state="cleared"))
         self.assertTrue(any("without an open line" in p for p in problems))
 
-    def test_a_repeat_of_a_standing_state_is_refused(self) -> None:
-        problems = findings(line(), line(ts="20260823T151205Z"))
-        self.assertTrue(any("already open" in p for p in problems))
+    def test_a_repeat_of_a_standing_state_is_accepted(self) -> None:
+        """The one check that refused correct input, and why it went.
+
+        Nothing on disk distinguishes a same-session retry - which the guide
+        says writes no line - from a resumed session re-opening what it can no
+        longer remember, which the guide explicitly licenses. Refusing both
+        would have failed a correct run at the close, and collapsing on the
+        identity answers the same either way. Deduplication stays guidance.
+        """
+        self.assertEqual(findings(line(), line(ts="20260823T151205Z")), [])
 
     def test_open_then_cleared_holds(self) -> None:
         self.assertEqual(
@@ -163,6 +172,222 @@ class TheAppendOnlySequenceIsCheckedTests(unittest.TestCase):
 
     def test_two_identities_do_not_share_a_sequence(self) -> None:
         self.assertEqual(findings(line(), line(ts="20260823T151205Z", stage=7)), [])
+
+
+class TheFieldsWithNoNegativeCoverageTests(unittest.TestCase):
+    """`ts`, `stage`, `state` and the record shape had none at all.
+
+    A mutation sweep put a number on it: fifteen single edits that each broke a
+    real rule stayed green, because every rule had exactly one representative
+    example and no boundary. Deleting the timestamp check, widening the stage
+    range, adding a third state, and accepting a non-object line were four of
+    them. One example per rule proves the rule was written, not that it holds.
+    """
+
+    def test_a_timestamp_that_is_not_the_stamp_format_is_refused(self) -> None:
+        for bad in ("nope", "2026-08-23T15:12:04Z", "20260823T151204", "", "20260823"):
+            with self.subTest(ts=bad):
+                self.assertTrue(
+                    any("YYYYMMDDTHHMMSSZ" in p for p in findings(line(ts=bad)))
+                )
+
+    def test_the_stamp_the_guide_writes_is_accepted(self) -> None:
+        self.assertEqual(findings(line(ts="20261231T235959Z")), [])
+
+    def test_a_stage_outside_the_records_own_numbering_is_refused(self) -> None:
+        for bad in (0, 9, 99, -1, "6", 6.5, True, None):
+            with self.subTest(stage=bad):
+                self.assertTrue(
+                    any(
+                        "not a run-record stage" in p for p in findings(line(stage=bad))
+                    ),
+                    f"stage {bad!r} was accepted",
+                )
+
+    def test_every_stage_the_record_has_is_accepted(self) -> None:
+        for stage in range(1, 9):
+            with self.subTest(stage=stage):
+                self.assertEqual(findings(line(stage=stage)), [])
+
+    def test_a_third_state_is_refused(self) -> None:
+        for bad in ("closed", "OPEN", "", 1, None):
+            with self.subTest(state=bad):
+                self.assertTrue(
+                    any(
+                        "neither open nor cleared" in p
+                        for p in findings(line(state=bad))
+                    ),
+                    f"state {bad!r} was accepted",
+                )
+
+    def test_a_line_that_is_not_an_object_is_a_finding(self) -> None:
+        import json as _json
+
+        text = _json.dumps([1, 2, 3]) + "\n"
+        problems = [f.problem for f in validate_run_log.validate(text)]
+        self.assertTrue(any("not a JSON object" in p for p in problems))
+
+    def test_an_unhashable_value_is_a_finding_and_never_an_exception(self) -> None:
+        """Exit 3 is reserved for the check breaking, not for a bad line.
+
+        `value in frozenset` raises TypeError on a list or a dict, which the
+        blanket handler turned into exit 3 - and the guide routes exit 3 as a
+        tool failure, so the run would have logged a complaint about its own
+        checker instead of showing the user the line.
+        """
+        for field in ("class", "event", "state"):
+            for bad in ([1], {"a": 1}):
+                with self.subTest(field=field, value=bad):
+                    problems = findings(line(**{field: bad}))
+                    self.assertTrue(problems, f"{field}={bad!r} produced no finding")
+
+    def test_an_exit_code_outside_1_to_255_is_refused(self) -> None:
+        for bad in ("0", "256", "999", "-1", 3):
+            with self.subTest(code=bad):
+                self.assertTrue(
+                    any(
+                        "not an exit code" in p
+                        for p in findings(line(event="tool_fail", **{"class": bad}))
+                    ),
+                    f"exit code {bad!r} was accepted",
+                )
+        self.assertEqual(findings(line(event="tool_fail", **{"class": "255"})), [])
+
+
+class ThePatternsThatRefusedGoodEnglishTests(unittest.TestCase):
+    """The expensive direction, measured rather than assumed.
+
+    Keying quoted content on an opening quote alone made every possessive
+    apostrophe a finding, and this check runs at the close, so a correct log
+    would have shown the customer a rejection. The accepting cases here are
+    the sentences a run really writes.
+    """
+
+    def test_a_possessive_is_not_quoted_content(self) -> None:
+        for detail in (
+            "the provider's quota was exhausted and no trial ran",
+            "the model's answer arrived truncated and the trial was refused",
+            "the run couldn't reach the portal and stopped before paying",
+            "the dataset cap 'below-measurable-size' is still standing",
+        ):
+            with self.subTest(detail=detail):
+                self.assertEqual(findings(line(detail=detail)), [])
+
+    def test_a_matched_quoted_span_is_still_refused(self) -> None:
+        problems = findings(
+            line(detail='the judge returned "the capital of France is Paris and also"')
+        )
+        self.assertTrue(any("quoted content" in p for p in problems))
+
+    def test_a_decorator_is_not_an_email_address(self) -> None:
+        self.assertEqual(
+            findings(line(detail="the agent uses the @traigent.optimize decorator")), []
+        )
+
+    def test_a_long_token_does_not_hang_the_scanner(self) -> None:
+        """An unbounded email pattern backtracked for 78 seconds on 256KB.
+
+        The trigger is exactly what the rule targets - a pasted error body or a
+        base64 blob - and it ran on the last step before the close.
+        """
+        import time
+
+        start = time.monotonic()
+        problems = findings(line(detail="x" * 250_000))
+        self.assertLess(time.monotonic() - start, 2.0)
+        self.assertTrue(any("past the" in p for p in problems))
+
+    def test_every_alternative_inside_a_pattern_has_its_own_example(self) -> None:
+        """One example per rule leaves every other branch of it untested.
+
+        A sweep confirmed it: narrowing the session-id threshold, deleting the
+        `~/` branch and dropping `http://` each stayed green, because the one
+        fixture per carrier happened to exercise a different alternative.
+        """
+        cases = {
+            "a session or request id": (
+                "the request " + "a3f91c2b11de4d0b" + " was rejected",
+            ),
+            "an absolute path": (
+                "the credential file ~/proj/.env is tracked by git",
+                "the file /home/user/proj/.env is tracked by git",
+            ),
+            "a URL": (
+                "the probe failed against http://portal.example.com/api",
+                "the probe failed against https://portal.example.com/api",
+            ),
+        }
+        for carrier, details in cases.items():
+            for detail in details:
+                with self.subTest(carrier=carrier, detail=detail):
+                    self.assertTrue(
+                        any(carrier in p for p in findings(line(detail=detail))),
+                        f"{detail!r} was not refused for {carrier}",
+                    )
+
+    def test_the_carriers_added_after_review_are_caught(self) -> None:
+        for carrier, detail in {
+            "an absolute path": "the file C:\\Users\\jsmith\\proj\\.env is tracked",
+            "a host or address": "the probe could not reach 203.0.113.42 at all",
+        }.items():
+            with self.subTest(carrier=carrier):
+                self.assertTrue(
+                    any(carrier in p for p in findings(line(detail=detail))),
+                    f"{detail!r} was not refused",
+                )
+
+
+class TheProseAndTheScriptDeclareOneVocabularyTests(unittest.TestCase):
+    """They diverged once, and the divergence was customer-visible.
+
+    `uncategorized` was argued for in `run-safety.md` and recorded as shipped
+    in the budget entry while the script still refused it, so a completed run
+    reporting no lift - a case SKILL.md stage 8 has a whole clause for - would
+    have written a line its own checker rejected, and the close would have
+    shown the customer `1 line(s) rejected`. Nothing compared the two, because
+    one test read the prose and another read the code.
+    """
+
+    def _bullets(self) -> dict[str, str]:
+        text = BASE_REFERENCE.read_text().split("### The run log", 1)[1]
+        bullets: dict[str, str] = {}
+        current = None
+        for row in text.splitlines():
+            opener = re.match(r"- `([a-z_]+)` - ", row)
+            if opener:
+                current = opener.group(1)
+                bullets[current] = row
+            elif current and row.startswith("  "):
+                bullets[current] += " " + row.strip()
+            elif current and not row.strip():
+                current = None
+        return bullets
+
+    def test_every_event_the_script_closes_over_is_declared_in_the_prose(
+        self,
+    ) -> None:
+        bullets = self._bullets()
+        self.assertEqual(set(bullets), validate_run_log.EVENTS)
+
+    def test_each_events_value_set_is_identical_in_both(self) -> None:
+        bullets = self._bullets()
+        for event, allowed in validate_run_log.CLASSES.items():
+            declared = set(re.findall(r"`([a-z][a-z-]*)`", bullets[event]))
+            # The bullet also names the event itself and, for `run_stop`, the
+            # composed key it points at; the vocabulary is what remains.
+            declared -= {event} | validate_run_log.EVENTS
+            with self.subTest(event=event):
+                self.assertEqual(
+                    declared & allowed,
+                    allowed,
+                    f"{event}: the prose does not declare {sorted(allowed - declared)}",
+                )
+                self.assertEqual(
+                    declared - allowed,
+                    set(),
+                    f"{event}: the prose declares {sorted(declared - allowed)}, "
+                    "which the script refuses",
+                )
 
 
 class TheScriptItselfBehavesTests(unittest.TestCase):
@@ -216,6 +441,37 @@ class TheScriptItselfBehavesTests(unittest.TestCase):
         self.assertEqual(payload["status"], "rejected")
         self.assertEqual(len(payload["findings"]), 1)
 
+    def test_the_internal_error_path_exits_three_and_says_whose_fault_it_is(
+        self,
+    ) -> None:
+        """Exit 3 is in the contract and was never once executed by a test.
+
+        The guide routes it as "the check could not run, which is never a
+        finding about the log", so the number and the sentence are both part of
+        the API - and a mutation lowering it to 1 stayed green.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            harness = Path(directory) / "boom.py"
+            harness.write_text(
+                "import sys\n"
+                f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+                "import validate_run_log\n"
+                "validate_run_log.run = lambda *a, **k: (_ for _ in ()).throw("
+                "RuntimeError('probe'))\n"
+                "sys.exit(validate_run_log.main())\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(harness)], capture_output=True, text=True
+            )
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("validate_run_log.py", result.stderr)
+        self.assertIn("defect in the check rather than in your project", result.stderr)
+        # The stack stays behind the switch the sibling scripts already use.
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_it_never_writes_to_the_log(self) -> None:
         import tempfile
 
@@ -261,7 +517,7 @@ class TheGuidanceRoutesToItTests(unittest.TestCase):
         )
         self.assertIn("is not rewritten", text)
         self.assertNotIn("may rewrite a line", text)
-        self.assertIn("theirs to delete", text)
+        self.assertIn("append-only is what makes this file worth reading", text)
 
 
 if __name__ == "__main__":

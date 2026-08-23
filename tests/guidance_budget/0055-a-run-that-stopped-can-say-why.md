@@ -1,10 +1,10 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
-resident-ceiling: 85_152
-resident-measured: 85_097
-total-ceiling: 428_093
-total-measured: 428_038
+resident-ceiling: 85_264
+resident-measured: 85_209
+total-ceiling: 427_506
+total-measured: 427_451
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -133,3 +133,63 @@ the customer's own material where preflight exits 1 - the exact relay that
 document forbids by name. And the rename that keeps one run's `cleared` off
 another run's `open` was written for one of the three paths that retire a
 record; it is stated once now, over all of them.
+
+The fourth round found the shape this entry has now argued for twice, in the
+change that was supposed to end it. `uncategorized` was added to the prose, and
+recorded here as shipped, while the checker still refused it - so a completed
+run reporting no lift, which the flow has a whole clause for, would have written
+a line its own validator rejected and shown the customer a rejection at the
+close. Two documents, one vocabulary, and nothing compared them: one test read
+the prose, another read the code. They are compared now, and the closed sets in
+the reference are asserted equal to the sets the script enforces.
+
+One check went for being wrong rather than for being unenforced. Refusing a
+repeated `open` cannot distinguish a same-session retry, which writes nothing,
+from a resumed session re-opening what it can no longer remember, which this
+guide licenses - and refusing correct input at the close is worse than not
+checking, because it teaches people to write around the checker. Collapsing on
+the identity answers the same either way, so deduplication stays guidance and
+the sequence check keeps only what is wrong however it arose.
+
+Resident buys one more line than it did, and it is the line that makes the file
+worth writing: the close is the only place that named this file to the user, and
+a run that stops never reaches the close. The file written to explain a stopped
+run was invisible on exactly those runs. It is named wherever the run stops now,
+and the validator runs there too, so the privacy allowlist is machine-checked on
+the logs most likely to be handed to a stranger rather than only on the ones
+whose runs finished.
+
+The rest of the round was subtraction. Six passages were cut and their arguments
+left here where they were already written: the design rationale for append-only,
+the sentence arguing against a key field nobody proposed, the restatement of the
+consent gate, the second statement that the directory is deletable, and two
+paragraphs answering a reviewer inside the document an assistant reads at
+runtime. A reference states the rule; this ledger is where the reasoning lives.
+
+A fifth round read the checker as code rather than as a promise, and three of
+its defects were the kind only execution finds. Keying a quoted span on an
+opening quote made every possessive apostrophe a finding, so "the provider's
+quota was exhausted" was refused - at the close, on a correct log, in front of
+the customer. An unhashable value reached a set membership test and raised,
+which the blanket handler turned into exit 3, and the guide routes exit 3 as a
+tool failure: the run would have logged a complaint about its own checker rather
+than showing the user the bad line. And the email pattern, unbounded on both
+sides of the `@`, backtracked for seventy-eight seconds on a quarter-megabyte
+token - which is precisely the pasted error body the rule exists to catch.
+
+The quotes must pair now, three membership tests check the type before they
+check the value, the pattern is bounded, and `detail` has a length past which it
+is the finding rather than the thing being searched. Two carriers that were
+never checked at all are, an IP and a bare host; one that looked checked was
+dead code, because two escaped backslashes match a literal `C:\\` that no
+decoded path contains.
+
+The tests moved further than the checker did, and the honest measure is that
+they had to. A sweep of thirty-five edits to the script left fifteen green:
+`ts`, `stage`, `state` and the record shape had no negative coverage at all, and
+every leak pattern had exactly one example, so any narrowing that spared that
+example survived. Each rule now has its boundaries and each pattern each of its
+alternatives, the internal-error path is executed rather than described, and the
+docstring names the two allowlist clauses - a person's name, a machine's - that
+have no mechanical shape and stay the assistant's to honour. A clean exit says
+what it can prove and no more.

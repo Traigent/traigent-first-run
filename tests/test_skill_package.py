@@ -21925,18 +21925,23 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """
         normalized = " ".join(self._log_section().casefold().split())
         self.assertIn("the file is append-only", normalized)
-        self.assertIn("never rewritten, and the file is never read back", normalized)
+        self.assertIn(
+            "never rewritten, and nothing in the run reads it back as run state",
+            normalized,
+        )
         # No re-emission anywhere: the two spellings a rewrite comes back as.
         self.assertNotIn("in place", normalized)
         self.assertNotIn("rewrite the file", normalized)
         # Deduplication without a lookup, and what it gives up.
         self.assertIn("adds nothing after the first", normalized)
         self.assertIn(
-            "a count, and the time of the latest encounter, are what get given up here",
+            "what that gives up is a count and the time of the latest encounter",
             normalized,
         )
         self.assertIn("collapsing on that identity, last line wins", normalized)
-        self.assertIn("no separate key field", normalized)
+        self.assertIn(
+            "`event`, `stage`, and `class` together are the identity", normalized
+        )
 
     def test_a_recurrence_after_clearing_is_still_visible(self) -> None:
         """Collapsing a retry storm must not also collapse a flap.
@@ -22018,7 +22023,6 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, normalized)
-        self.assertIn("traigent_log_example_content=false", normalized)
 
     def test_one_path_spelled_the_same_in_every_document_that_names_it(
         self,
