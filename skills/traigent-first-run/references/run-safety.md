@@ -89,9 +89,10 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   PowerShell, use `Start-Process`. Do not wait for the editor process or interpret its continued
   lifetime as failure; print the absolute path immediately and stop for the user. In a headless
   session, or when no graphical handler is available, skip the opener and print the absolute path
-  as the fallback. Name the target line by key prefix - the `sk-`/`sk-or-` provider key after its
-  `..._API_KEY=` line; at the later portal gate, name `TRAIGENT_API_KEY=` separately. That gate
-  runs this same handoff a second time, on the same file, by these same two rungs - so a headless
+  as the fallback. Name the target line by the variable it sets - whichever of the chosen route's
+  names the customer holds, and no line at all for a route that signs through its own cloud
+  credential chain; at the later portal gate, name `TRAIGENT_API_KEY=` separately. That gate runs
+  this same handoff a second time, on the same file, by these same two rungs - so a headless
   session prints the path there too and opens nothing.
 - When a readiness command is asked to write a report file, verify that the file exists after the
   command returns. Some tooling still prints the score to stdout even when `--report` is supplied,

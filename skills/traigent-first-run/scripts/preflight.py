@@ -311,14 +311,25 @@ COMMON_OUTCOME_FIELDS = (
     "type",
     "grade",
 )
+# Any one name admits its vendor. The paid wrapper in `sdk-execution.md`
+# carries this same inventory - it cannot import a script it is generated
+# alongside - and the package suite compares the two, because a name added
+# here and not there refuses a run this gate already admitted. The suite also
+# compares both against `litellm`, which is what actually decides whether the
+# call succeeds; comparing the two copies to each other can only find a name
+# one of them is missing, never a name both are.
 VENDOR_KEYS = {
-    "OpenRouter": ("OPENROUTER_API_KEY",),
+    "OpenRouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
     "OpenAI": ("OPENAI_API_KEY",),
-    "Anthropic": ("ANTHROPIC_API_KEY",),
-    "Google (Gemini)": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "Mistral": ("MISTRAL_API_KEY",),
-    "Cohere": ("COHERE_API_KEY",),
-    "HuggingFace": ("HF_TOKEN",),
+    "Anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    # First word casefolded is the route key, and the route key is a literal
+    # the client dispatches on - so this label is not free wording. Where the
+    # client dispatches one route under two literals, the wrapper carries the
+    # second as an alias; this report is per vendor and unaffected.
+    "Gemini (Google)": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
+    "Mistral": ("MISTRAL_API_KEY", "MISTRAL_AZURE_API_KEY"),
+    "Cohere": ("COHERE_API_KEY", "CO_API_KEY"),
+    "HuggingFace": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
 
@@ -566,15 +577,19 @@ def check_keys(env: dict[str, str | None]) -> None:
         emit(
             "provider-credentials",
             WARN,
-            "Bedrock credentials are incomplete; access key, secret, and region are required",
+            "Bedrock is reported here only when access key, secret, and region are all present; "
+            "the AWS credential chain may still authenticate that route without them",
         )
 
     if not available:
         emit(
             "provider-credentials",
             WARN,
-            "no LLM provider credentials are available; inspect the agent route separately, "
-            "and do not begin paid work until that route's credential is present",
+            "no LLM provider credential names are present; inspect the agent route separately. "
+            "Bedrock signs through the AWS credential chain, so a shared profile, an SSO session "
+            "or an instance role authenticates it with nothing set here. On a route whose "
+            "credential is an environment variable, do not begin paid work until that route's "
+            "credential is present",
         )
     else:
         emit(

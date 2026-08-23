@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import http.server
 import importlib.util
+import inspect
 import io
 import itertools
 import json
@@ -1442,6 +1443,521 @@ def preflight_constant(name: str) -> object:
         ):
             return ast.literal_eval(node.value)
     raise AssertionError(f"preflight.py defines no module-level {name}")
+
+
+def guide_constant(path: Path, name: str) -> object:
+    """Read one constant out of the code a reference publishes.
+
+    `preflight_constant` above parses a script because importing it would run
+    it. This parses for a harder reason: the guide's constants are not a module
+    at all. They are a fenced block a customer's own wrapper is generated from,
+    in a process that never sees `preflight.py`, so no runtime can compare the
+    two - which is why a value drifts in one and stays in the other.
+    """
+    for node in ast.parse(python_block_containing(path, f"{name} = ")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{path.name} publishes no top-level {name}")
+
+
+def guide_function(path: Path, name: str, namespace: dict):
+    """One published function, run against the module state it reads.
+
+    `load_guide_function` above executes a whole fenced block, which is right
+    for the small ones. The wrapper block is a program: it refuses to start
+    without three approved figures in the environment and imports the SDK
+    before it defines anything, so the only way to exercise one of its checks
+    is to lift that definition out and hand it the names it closes over.
+    """
+    for node in ast.parse(python_block_containing(path, f"def {name}(")).body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            exec(ast.unparse(node), namespace)  # noqa: S102
+            return namespace[name]
+    raise AssertionError(f"{path.name} publishes no top-level {name}()")
+
+
+# Every spelling of an environment read that appears on a litellm credential
+# path. A read this set does not recognise is a name the check below cannot
+# see, which is the failure mode it exists to remove - so the set is matched on
+# the full dotted callee, never on a bare `get`, and `os.environ[...]` is read
+# as the subscript it is rather than skipped for not being a call.
+LITELLM_ENV_READERS = frozenset(
+    {"get_secret", "get_secret_str", "os.environ.get", "os.getenv", "getenv"}
+)
+
+
+def dotted_name(node: ast.AST) -> str | None:
+    """`os.environ.get` back out of the attribute chain that spells it."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def environment_names_read(nodes: list[ast.AST]) -> set[str]:
+    """Every environment variable name these syntax nodes read."""
+    names: set[str] = set()
+    for root in nodes:
+        for node in ast.walk(root):
+            if (
+                isinstance(node, ast.Call)
+                and node.args
+                and dotted_name(node.func) in LITELLM_ENV_READERS
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                names.add(node.args[0].value)
+            elif (
+                isinstance(node, ast.Subscript)
+                and dotted_name(node.value) == "os.environ"
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)
+            ):
+                names.add(node.slice.value)
+    return names
+
+
+def litellm_source(relative: str) -> ast.Module:
+    """One installed litellm module, parsed - the client the run will call."""
+    import litellm
+
+    path = Path(litellm.__file__).resolve().parent / relative
+    if not path.is_file():
+        raise AssertionError(
+            f"the installed litellm has no {relative}. The credential names "
+            "this package accepts are read out of that file, so its "
+            "disappearance is a structural change that has to be re-sourced, "
+            "not a check that quietly stops looking."
+        )
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def litellm_symbol(tree: ast.Module, dotted: str) -> ast.AST:
+    """One definition inside a parsed module, addressed `Class.method`."""
+    node: ast.AST = tree
+    for part in dotted.split("."):
+        node = next(
+            (
+                child
+                for child in ast.iter_child_nodes(node)
+                if isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+                and child.name == part
+            ),
+            None,
+        )
+        if node is None:
+            raise AssertionError(
+                f"the installed litellm defines no {dotted}; the route that "
+                "cites it resolves its credential somewhere else now, and the "
+                "new site has to be found rather than assumed to be empty"
+            )
+    return node
+
+
+def litellm_provider_branches(literal: str) -> list[ast.AST]:
+    """Where a route's key is resolved: its dispatch branch, and what that calls.
+
+    `litellm.completion` dispatches through one long comparison chain, and the
+    branch a route lands in is where that route's key is resolved out of the
+    environment. Matched on the comparison rather than a line number because
+    the pinned version and whatever a contributor has installed are not the
+    same file, and a line number would report that as a defect in this package.
+
+    The branch body alone stopped being the answer in 1.93.0, which moved every
+    body out into a `_complete_<route>(ctx)` function beside `completion` and
+    left the branch a single call. Read as the bodies only, five routes then
+    resolved on no name at all - the check written to notice a missing
+    credential reported that litellm accepts none, which is not a fact about
+    litellm and not one about this package either. So the calls a branch makes
+    to functions defined beside it in `main.py` are followed, transitively, and
+    both versions read the identical set of names for every route.
+
+    Following widens what is read, so it is worth saying what stops it running
+    away: a helper that resolved some other route's key would surface as a name
+    this package neither accepts nor excludes, and the equality below fails on
+    it by name. The answer gets wider only where somebody agrees in writing
+    that it should.
+    """
+    module = litellm_source("main.py")
+    beside_it = {
+        node.name: node
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    completion = litellm_symbol(module, "completion")
+    bodies = []
+    for node in ast.walk(completion):
+        if not isinstance(node, ast.If):
+            continue
+        if any(
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "custom_llm_provider"
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == literal
+            for test in ast.walk(node.test)
+        ):
+            # The branch body only. `orelse` is the rest of the chain, so
+            # including it would hand every route the names of every route
+            # declared below it and make the comparison meaningless.
+            bodies.append(ast.Module(body=node.body, type_ignores=[]))
+    if not bodies:
+        raise AssertionError(
+            f"litellm.completion has no `custom_llm_provider == {literal!r}` "
+            "branch. Either the route moved or the dispatch was rewritten; "
+            "either way the names it accepts have to be re-sourced."
+        )
+    resolution: list[ast.AST] = [*bodies]
+    pending, followed = [*bodies], set()
+    while pending:
+        for node in ast.walk(pending.pop()):
+            called = (
+                node.func.id
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                else None
+            )
+            if called in beside_it and called not in followed:
+                followed.add(called)
+                resolution.append(beside_it[called])
+                pending.append(beside_it[called])
+    return resolution
+
+
+# The module where every call is a credential question. `get_llm_provider` runs
+# BEFORE dispatch and returns a `dynamic_api_key`, which `completion` assigns
+# over `api_key` - so a route resolved there arrives at its branch with the key
+# already found and the branch's own `or get_secret(...)` never evaluates. Read
+# the branch alone and such a route reports the name it does not use, while the
+# name it does use is unreachable. That is the shape both readers below exist to
+# separate: unreachable and absent are the same answer to a reader, and only one
+# of them is agreement.
+LITELLM_PREDISPATCH = "litellm_core_utils/get_llm_provider_logic.py"
+
+
+def require_litellm(case: unittest.TestCase) -> None:
+    """The pinned client, or an honest reason there is nothing to compare against.
+
+    The offline-socket contract's policy, for its reason: skipping is right for
+    a contributor without the pinned stack and wrong for CI, where these are
+    the only checks that read the authority at all.
+    """
+    if importlib.util.find_spec("litellm") is not None:
+        return
+    if os.environ.get("CI"):
+        case.fail(
+            "litellm is missing under CI, so the credential inventories were "
+            f"never compared against it. Install {REQUIREMENTS} before the "
+            "suite; this must not degrade to a skip."
+        )
+    case.skipTest(
+        "litellm is not installed here; install the pinned version from "
+        f"{REQUIREMENTS} to compare the credential inventories against the "
+        "client that actually resolves them"
+    )
+
+
+def litellm_predispatch_branches(literal: str) -> list[ast.Module]:
+    """A route's branches in the resolution that runs before any dispatch.
+
+    Empty is a real answer here, unlike `litellm_provider_branches`. Most
+    routes are not pre-resolved at all, so demanding a branch would turn "this
+    route is dispatched like the others" into a failure - which is why the
+    guard built on this asks what the branches reach, never that they exist.
+    """
+    module = litellm_source(LITELLM_PREDISPATCH)
+    return [
+        ast.Module(body=node.body, type_ignores=[])
+        for node in ast.walk(module)
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(test, ast.Compare)
+            # The chain is written over `custom_llm_provider` and, in the
+            # helpers that rewrite one route into another, over the same name
+            # with a leading underscore. Matching only the bare spelling would
+            # read half the chain and call the other half absent.
+            and isinstance(test.left, ast.Name)
+            and test.left.id.lstrip("_") == "custom_llm_provider"
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == literal
+            for test in ast.walk(node.test)
+        )
+    ]
+
+
+def litellm_predispatch_literals() -> set[str]:
+    """Every route literal that chain compares against - the reader's own pulse.
+
+    A reader that has stopped matching returns nothing for every route and the
+    guard below passes by reading nothing, which is the failure it exists to
+    refuse. This is what that guard checks itself against.
+    """
+    module = litellm_source(LITELLM_PREDISPATCH)
+    return {
+        node.comparators[0].value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id.lstrip("_") == "custom_llm_provider"
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and isinstance(node.comparators[0].value, str)
+    }
+
+
+def litellm_attribute(owner: Any, name: str, cited: str) -> Any:
+    """One name off the installed client, or an honest failure reading it.
+
+    `getattr(..., None)` returns its default for a name that is absent and
+    raises for a name whose module will not import. litellm resolves its
+    Configs lazily, so a Config whose module needs an optional dependency
+    raises out of the lookup rather than answering - measured on the pinned
+    1.93.0, `bedrock_mantle` raises `ModuleNotFoundError: No module named
+    'botocore'` here, and the `None` default does not catch it.
+
+    So the default is not a reading. A resolver that cannot be read is not a
+    resolver that is absent, which is the one distinction every check on this
+    path is built around, and an uncaught traceback would replace the citation
+    the guard exists to print with a stack.
+    """
+    try:
+        return getattr(owner, name, None)
+    except Exception as unreadable:
+        raise AssertionError(
+            f"reading `{cited}` off the installed litellm raised "
+            f"{unreadable!r} instead of answering. A pre-dispatch branch hands "
+            "a route to that name, so what it resolves has to be read rather "
+            "than assumed empty: install what its module imports, or cite the "
+            "site in `delegates` by hand."
+        ) from unreadable
+
+
+def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
+    """The credential resolvers a route is handed to before dispatch.
+
+    Derived rather than listed, which is the whole point. A
+    `litellm.<Config>().<method>()` call a pre-dispatch branch makes returns
+    that route's provider, its api_base and its dynamic api key together, so
+    the site can be NAMED from the call instead of remembered, in the same
+    `(module, Class.method)` shape `delegates` is written in.
+
+    Not every one of them, which the docstring used to claim. Swept over every
+    literal that chain compares against: one site of 35 on the installed
+    1.87.1, and one of 36 on the pinned 1.93.0, resolves no credential at all.
+    `baseten` reaches `BasetenConfig.get_api_base_for_model`, which builds a
+    URL out of the model string and reads nothing, while that branch keeps its
+    own `get_secret_str("BASETEN_API_KEY")` beside the call. So this
+    over-reports rather than under-reports - it can cost a citation for a call
+    that resolves nothing, and cannot miss one that resolves a key - and none
+    of the eight routes reaches such a site today.
+
+    Following the same calls out of `main.py` was measured and rejected: two
+    routes reach a `get_config()` there, which resolves no credential, so the
+    guard would have demanded citations for config getters and taught its
+    readers to cite anything to make it quiet.
+    """
+    import litellm
+
+    root = Path(litellm.__file__).resolve().parent
+    found: set[tuple[str, str]] = set()
+    for branch in litellm_predispatch_branches(literal):
+        for node in ast.walk(branch):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            owner = node.func.value
+            if isinstance(owner, ast.Call):
+                # `litellm.MistralConfig()._resolve(...)`: the instance is
+                # constructed in the same expression that calls the method.
+                owner = owner.func
+            dotted = dotted_name(owner)
+            if dotted is None or not dotted.startswith("litellm."):
+                continue
+            held: Any = litellm
+            for part in dotted.split(".")[1:]:
+                held = litellm_attribute(held, part, dotted)
+                if held is None:
+                    break
+            member = (
+                litellm_attribute(held, node.func.attr, f"{dotted}.{node.func.attr}")
+                if held is not None
+                else None
+            )
+            if member is None:
+                continue
+            member = inspect.unwrap(member)
+            source_file = inspect.getsourcefile(member)
+            if source_file is None:
+                continue
+            try:
+                relative = Path(source_file).resolve().relative_to(root)
+            except ValueError:
+                # Resolved outside the client: not a site this package can
+                # cite, and not one it can read either.
+                continue
+            found.add((relative.as_posix(), member.__qualname__))
+    return found
+
+
+def litellm_dispatch_literals(route: str) -> set[str]:
+    """Every `custom_llm_provider` the client resolves a route's models to.
+
+    Asked of the client rather than compared between two literals typed here.
+    `get_llm_provider` is the function that decides `custom_llm_provider`, and
+    `models_by_provider` is the client's own list of what it files under each
+    route, so every model on a route goes back through the resolver and the
+    answers are the literals a call on that route can arrive as. No model name
+    is written down: an inventory that named its own models would be the same
+    author agreeing with himself one file further along.
+
+    A model already carrying its route as a prefix keeps it rather than
+    gaining a second one, because `mistral/mistral/codestral-2405` is not a
+    model the client can route and its refusal would say nothing about names.
+    """
+    # A proxy setting makes the client answer `litellm_proxy` for every model,
+    # which would fail this for all eight routes with advice that is wrong -
+    # the answer is not an alias, it is the proxy speaking instead of the
+    # resolver. Cleared here so the sweep asks the resolver.
+    import os as _os
+
+    _saved = _os.environ.pop("USE_LITELLM_PROXY", None)
+    try:
+        import litellm
+
+        _saved_flag = getattr(litellm, "use_litellm_proxy", None)
+        litellm.use_litellm_proxy = False
+        try:
+            literals: set[str] = set()
+            for model in litellm.models_by_provider.get(route, ()):
+                bare = (
+                    model.split("/", 1)[1] if model.startswith(f"{route}/") else model
+                )
+                literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
+            return literals
+        finally:
+            if _saved_flag is not None:
+                litellm.use_litellm_proxy = _saved_flag
+    finally:
+        if _saved is not None:
+            _os.environ["USE_LITELLM_PROXY"] = _saved
+
+
+# Where the installed litellm resolves each route's credential.
+#
+# `branch` is the `custom_llm_provider` literal `litellm.completion` dispatches
+# on, and the same literal the chain BEFORE dispatch compares against; whatever
+# either one calls in its own module is followed from it. `delegates`
+# are the resolvers in OTHER modules, which nothing can follow to from here,
+# and they are not decoration: three routes keep a second name there and
+# nowhere else. The Anthropic branch reads only `ANTHROPIC_API_KEY`, and the
+# token that also authenticates it is resolved inside the model-info helpers;
+# the Gemini branch calls `get_api_key_from_env()`, which is where both of
+# Google's current names live. The third is cited from the chain that runs
+# before the branch does, and `litellm_predispatch_resolvers` derives that one
+# rather than trusting anybody to have remembered it.
+#
+# `not_credentials` is the half that keeps this honest. Those branches read
+# endpoints, organisation ids and project ids beside the key, and no name
+# pattern separates those from a credential without also dropping the next
+# credential that fails to match the pattern - which is the silent narrowing
+# this whole check exists to remove. So every name read on the path is either
+# accepted or listed here with the reason it is not a credential, and a name
+# that is neither fails the suite.
+#
+# The list is the union over litellm versions, not a picture of one of them.
+# It has to be: a name an older version reads has to stay excluded or that
+# version's run fails, and the reason written against it is what the exclusion
+# is checked on. Which of these a given version still reads is litellm's
+# plumbing rather than this package's business, so nothing asserts it.
+LITELLM_CREDENTIAL_SOURCES = {
+    "openrouter": SimpleNamespace(
+        branch="openrouter",
+        delegates=(),
+        not_credentials={
+            "OPENROUTER_API_BASE": "the gateway endpoint, not a key for it",
+            "OR_SITE_URL": "a referer header litellm defaults for attribution",
+            "OR_APP_NAME": "an app-name header litellm defaults for attribution",
+        },
+    ),
+    "openai": SimpleNamespace(
+        branch="openai",
+        delegates=(),
+        not_credentials={
+            "OPENAI_API_BASE": "the endpoint",
+            "OPENAI_BASE_URL": "the same endpoint under its newer name",
+            "OPENAI_ORGANIZATION": "billing attribution; authenticates nothing",
+        },
+    ),
+    "anthropic": SimpleNamespace(
+        branch="anthropic",
+        delegates=(
+            ("llms/anthropic/common_utils.py", "AnthropicModelInfo.get_api_key"),
+            ("llms/anthropic/common_utils.py", "AnthropicModelInfo.get_auth_token"),
+        ),
+        not_credentials={
+            "ANTHROPIC_API_BASE": "the endpoint",
+            "ANTHROPIC_BASE_URL": "the same endpoint under its newer name",
+        },
+    ),
+    "gemini": SimpleNamespace(
+        branch="gemini",
+        delegates=(("llms/gemini/common_utils.py", "get_api_key_from_env"),),
+        not_credentials={
+            "GEMINI_API_BASE": "the endpoint",
+            # The same branch serves `vertex_ai_beta`, so it resolves Vertex's
+            # configuration too. None of the three authenticates an AI Studio
+            # `gemini/` call: that call is made with `gemini_api_key`, which
+            # these never supply.
+            "VERTEXAI_PROJECT": "the Vertex route's project, not an AI Studio key",
+            "VERTEXAI_LOCATION": "the Vertex route's region, not an AI Studio key",
+            "VERTEXAI_CREDENTIALS": "the Vertex route's own service-account file",
+        },
+    ),
+    "mistral": SimpleNamespace(
+        branch="mistral",
+        # The one route of the eight that is resolved before dispatch. Its
+        # branch's own `or get_secret("MISTRAL_API_KEY")` is dead code for
+        # anyone whose key sits in the Azure name: `get_llm_provider` has
+        # already returned it as `dynamic_api_key` and `completion` assigns
+        # that over `api_key` before the branch runs.
+        delegates=(
+            (
+                "llms/mistral/chat/transformation.py",
+                "MistralConfig._get_openai_compatible_provider_info",
+            ),
+        ),
+        not_credentials={
+            "MISTRAL_API_BASE": "the endpoint",
+            "MISTRAL_AZURE_API_BASE": "that endpoint's other name, not a key for it",
+        },
+    ),
+    "cohere": SimpleNamespace(
+        branch="cohere",
+        delegates=(),
+        not_credentials={"COHERE_API_BASE": "the endpoint"},
+    ),
+    "huggingface": SimpleNamespace(
+        branch="huggingface",
+        delegates=(),
+        not_credentials={},
+    ),
+    # Nothing to exclude because nothing is read: the branch's own comment is
+    # "boto3 reads keys from .env", and boto3's chain is not litellm's to
+    # resolve. The empty result is the finding, and the equality below is what
+    # turns it back into a failure if litellm ever starts reading a name here.
+    "bedrock": SimpleNamespace(branch="bedrock", delegates=(), not_credentials={}),
+}
 
 
 def score_config_space(document: dict) -> tuple[object, list[str]]:
@@ -8027,6 +8543,527 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
+
+    def test_the_opening_gate_and_the_paid_run_accept_the_same_credentials(
+        self,
+    ) -> None:
+        """One inventory of credential names, read by two programs.
+
+        They disagreed. The gate admitted a Google route on `GEMINI_API_KEY`
+        or `GOOGLE_API_KEY`; the published wrapper knew only the first. The
+        second is the name AI Studio hands out and the one litellm resolves
+        ahead of it, so a customer cleared the opening gate and was then
+        stopped short of `optimize_sync` by a refusal about a call that would
+        have gone through - the worst moment for a check to be wrong, because
+        the run had already been told it was ready.
+
+        Two copies is not an accident anybody can remove. The gate is a script
+        this package ships; the wrapper is code generated into a project that
+        never sees that script, so no import and no runtime comparison exists
+        and the comparison has to be made here. Coverage as well as names: the
+        same drift had left two routes the gate can report as available with no
+        mapping in the wrapper at all, which is the identical stop reached
+        through a different sentence.
+        """
+        gate = {
+            label.split()[0].casefold(): set(names)
+            for label, names in preflight_constant("VENDOR_KEYS").items()
+        }
+        # The one route the gate reports from its own constant rather than from
+        # VENDOR_KEYS, because its names are all required rather than any one.
+        self.assertIn(
+            'available.append("Bedrock")',
+            (SKILL_ROOT / "scripts" / "preflight.py").read_text(),
+            "the gate no longer reports Bedrock under that name, so the route "
+            "this check expects the wrapper to carry is no longer the one the "
+            "gate can admit",
+        )
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        self.assertEqual(
+            sorted(published),
+            sorted([*gate, "bedrock"]),
+            "the opening gate reports one set of provider routes as available "
+            "and the paid wrapper maps another; a route in one and not in the "
+            "other is admitted at the gate and refused at the run",
+        )
+        self.assertEqual(
+            {
+                route: set(names)
+                for route, names in published.items()
+                if route != "bedrock"
+            },
+            gate,
+            "the opening gate and the paid wrapper accept different credential "
+            "names for the same route, so a key that clears the gate can still "
+            "stop the run that spends the money",
+        )
+        # Bedrock is the one route with no name to check. It signs through the
+        # AWS credential chain, so a shared profile, an SSO session, or an
+        # instance role carries it with no `AWS_*` variable set, and refusing
+        # on their absence would stop a run whose calls would have succeeded.
+        # The gate keeps its three names because listing a vendor as available
+        # on them is a report, and a report that misses is not a refusal.
+        self.assertEqual(
+            published["bedrock"],
+            (),
+            "Bedrock now carries names the wrapper will refuse a run over, and "
+            "an environment variable is not where that route's credentials "
+            "have to live",
+        )
+
+    def test_every_route_runs_on_every_name_its_vendor_issues(self) -> None:
+        """The published check, executed - not its wording, pinned.
+
+        The defect above was a name check refusing a name that works, so what
+        this runs is the refusal itself, once per route with only one of that
+        vendor's names present - which is the claim a customer's key actually
+        depends on, and it holds name by name whatever the inventory grows to.
+        Which names belong in that inventory is not asked here; the check below
+        reads them out of litellm.
+
+        The routes with two spellings are run under both. `cohere_chat` is
+        what the client dispatches every `command-r` model to, and the wrapper
+        answered it with "no credential mapping is declared" while
+        `COHERE_API_KEY` held a working key - a refusal that names no name, at
+        the customer whose credential was already correct.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def check_with(route: str, environment: dict[str, str]):
+            return guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                },
+            )
+
+        for route, names in published.items():
+            for name in names:
+                with self.subTest(route=route, name=name):
+                    check_with(route, {name: "placeholder-not-a-key"})()
+            with self.subTest(route=route, credentials="none"):
+                if not names:
+                    # Bedrock: nothing in the environment, and no refusal.
+                    check_with(route, {})()
+                    continue
+                with self.assertRaises(RuntimeError) as refused:
+                    check_with(route, {})()
+                # A customer who genuinely has none is told every name that
+                # would have satisfied the route, not whichever one this
+                # mapping happens to list first.
+                for name in names:
+                    self.assertIn(name, str(refused.exception))
+        # The second spelling of a route is run as the route, because the
+        # refusal it used to reach said nothing about credentials at all: a
+        # customer holding a working key was told their route was not mapped.
+        for alias, route in aliases.items():
+            for name in published[route]:
+                with self.subTest(alias=alias, name=name):
+                    check_with(alias, {name: "placeholder-not-a-key"})()
+            with self.subTest(alias=alias, credentials="none"):
+                with self.assertRaises(RuntimeError) as refused:
+                    check_with(alias, {})()
+                # Refused for the reason the route is refused for, naming the
+                # names - not refused for being a spelling nothing recognises.
+                for name in published[route]:
+                    self.assertIn(name, str(refused.exception))
+        with self.assertRaises(RuntimeError):
+            check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
+
+    def test_both_inventories_accept_every_name_litellm_will(self) -> None:
+        """The comparison the other two structurally cannot make.
+
+        Both checks above compare the gate and the wrapper against each other.
+        That can only ever find a name present in one and absent from the
+        other, and it passed while three routes had a name missing from BOTH -
+        `ANTHROPIC_AUTH_TOKEN`, `CO_API_KEY`, `OR_API_KEY`. Each is a name
+        litellm authenticates a call on, so each was the very defect those
+        checks were written for, in the one shape they cannot see: a customer
+        cleared the opening gate, was refused before the paid run, and the call
+        would have gone through.
+
+        Two lists that agree with each other are not evidence, so this compares
+        against the authority instead. litellm is what decides whether the call
+        succeeds, it is installed, and the resolution is readable code - so the
+        names are read out of it rather than typed here. No vendor's names
+        appear in this file. Adding a route means citing where litellm resolves
+        it, and a name litellm starts accepting arrives as a failure that says
+        the name.
+
+        Reading it rather than pinning a table is also what found the fourth
+        name. `PALM_API_KEY` is still honoured on the Gemini branch, appears in
+        no current Google documentation, and nobody reviewing a hand-written
+        table would have known to put it there.
+
+        What this asks litellm has since been narrowed to credentials, which is
+        the only half that is about this package. The first version bump under
+        it, 1.87.1 to the pinned 1.93.0, moved the resolution one call away and
+        this failed twice over: once because it was reading a dispatch stub
+        instead of the resolution, which `litellm_provider_branches` now
+        follows, and once because it also demanded that every name excluded as
+        not-a-credential still be read. That second demand is unsatisfiable
+        across versions - the exclusions have to cover every version the
+        equality runs against, and can only be read by one - and it is a
+        question about endpoints and org ids rather than about keys. A suite
+        that goes red over which base-URL variable a release consults teaches
+        its readers to reach past it, and the name it would have masked on the
+        way is the one thing here worth protecting.
+
+        What it reads has since widened once more, for the reason the check
+        below carries: the dispatch branch is not the only place a route's key
+        is found. The resolution that runs before dispatch is read here too, so
+        a name that never reaches a branch is compared rather than missed.
+        """
+        require_litellm(self)
+        gate = {
+            label.split()[0].casefold(): set(names)
+            for label, names in preflight_constant("VENDOR_KEYS").items()
+        }
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        self.assertEqual(
+            sorted(LITELLM_CREDENTIAL_SOURCES),
+            sorted(published),
+            "a route is mapped with no cited place litellm resolves it, so it "
+            "is admitted on names nothing checked - which is how the routes "
+            "this check exists for got their names wrong in the first place",
+        )
+        for route, source in LITELLM_CREDENTIAL_SOURCES.items():
+            with self.subTest(route=route):
+                read = environment_names_read(
+                    [
+                        *litellm_provider_branches(source.branch),
+                        # Before the branch: a route resolved here never
+                        # reaches the branch's own read at all.
+                        *litellm_predispatch_branches(source.branch),
+                        *(
+                            litellm_symbol(litellm_source(module), symbol)
+                            for module, symbol in source.delegates
+                        ),
+                    ]
+                )
+                # Only the exclusions this version still reads are asserted on.
+                # An exclusion it has stopped reading is inert - it silences a
+                # name nothing produces - and demanding otherwise would require
+                # the list to be one version's set while the equality below
+                # requires it to be every version's, which no list can be.
+                self.assertEqual(
+                    sorted(
+                        name
+                        for name in set(source.not_credentials) & read
+                        if not source.not_credentials[name].strip()
+                    ),
+                    [],
+                    f"a name the {route} path reads is excluded from it with no "
+                    "reason written against it. Excluding is the one way a name "
+                    "litellm reads leaves this comparison, so it is also the "
+                    "one way a real credential could be dropped from both "
+                    "inventories without anyone arguing for it.",
+                )
+                accepted = read - set(source.not_credentials)
+                self.assertEqual(
+                    accepted,
+                    set(published[route]),
+                    f"litellm authenticates a {route} call on "
+                    f"{sorted(accepted)}, and the paid wrapper accepts "
+                    f"{sorted(published[route])}. A name litellm takes and the "
+                    "wrapper does not stops a run whose calls would have "
+                    "succeeded; a name the wrapper takes and litellm does not "
+                    "promises a credential the vendor will reject.",
+                )
+                if route in gate:
+                    self.assertEqual(
+                        accepted,
+                        gate[route],
+                        f"litellm authenticates a {route} call on "
+                        f"{sorted(accepted)}, and the opening gate reports on "
+                        f"{sorted(gate[route])}. The gate is what tells a "
+                        "customer they are ready before anything is spent.",
+                    )
+
+    def test_every_route_resolved_before_dispatch_cites_the_resolver_it_reaches(
+        self,
+    ) -> None:
+        """The half the reader above structurally cannot see.
+
+        `litellm.completion` is not always where a route's credential is
+        resolved. `get_llm_provider` runs first and returns a
+        `dynamic_api_key`; `completion` assigns that over `api_key` before any
+        branch executes. So a route resolved there arrives at its branch with
+        the key already found, the branch's own `or get_secret(...)` never
+        evaluates, and a reader that follows the branch reports the name that
+        route does not use.
+
+        One of the eight is such a route, and the cost was exactly the defect
+        this file exists for: a customer whose key sits in the Azure AI name
+        was authenticated by the client and refused by the wrapper, seconds
+        before the first paid call, while all three checks above were green.
+        They were green because a name they cannot reach and a name that does
+        not exist are the same answer to them, so invisibility read as
+        agreement. Three patches had already landed at this seam - compare the
+        two lists, read the client's branch, follow what that branch calls -
+        which makes this a mechanism rather than three oversights in a row.
+
+        So the fourth one is a derived guard rather than another row. A
+        `litellm.<Config>().<method>()` call a pre-dispatch branch makes
+        returns that route's provider, its base URL and its dynamic key
+        together, so the site is named from the call. A route that acquires
+        one and is not amended here fails by this name, instead of waiting for
+        the customer who holds that credential.
+
+        Not quite all of them, which this used to claim as construction.
+        Swept over every literal that chain compares against, one site of 35
+        on the installed 1.87.1 and one of 36 on the pinned 1.93.0 resolves no
+        credential: `baseten` is handed a helper that builds an api_base out
+        of the model string and reads nothing, while its key stays in the
+        branch. The guard is unchanged by that - over-reporting costs a
+        citation, under-reporting costs a run - and no route here reaches such
+        a site.
+        """
+        require_litellm(self)
+        self.assertTrue(
+            litellm_predispatch_literals(),
+            f"{LITELLM_PREDISPATCH} no longer compares `custom_llm_provider` "
+            "against any route literal, so this reads nothing and every route "
+            "below reports no pre-dispatch resolver. That is the answer a "
+            "route with an uncited resolver also gives, which is why it has to "
+            "be re-sourced rather than believed.",
+        )
+        for route, source in LITELLM_CREDENTIAL_SOURCES.items():
+            with self.subTest(route=route):
+                self.assertEqual(
+                    sorted(
+                        litellm_predispatch_resolvers(source.branch)
+                        - set(source.delegates)
+                    ),
+                    [],
+                    f"the {route} route is handed to a credential resolver "
+                    "before any dispatch branch runs, and that resolver is not "
+                    "cited in `delegates`, so every name it reads is invisible "
+                    "to the comparison above. Cite it there - the tuple this "
+                    "failure prints is the shape that entry takes - or a key "
+                    "the client authenticates on stays a key the run refuses.",
+                )
+
+    def test_the_route_literal_the_client_dispatches_on_is_one_the_wrapper_takes(
+        self,
+    ) -> None:
+        """Which spelling goes into the environment variable, asked of the client.
+
+        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, casefolded, and
+        looked up, and a value that is not a key raises before anything is
+        spent. No document says which values are keys, so the value comes from
+        wherever the route was read: the model string, or the client's own
+        `custom_llm_provider`. Both say the same word, and for one route that
+        word was not the key - so the assistant that derived it correctly was
+        the one that halted.
+
+        The first version of this check compared the `branch` literal in the
+        inventory above against the published keys. Both are typed in this repository, in one
+        commit by one author, so between them they can only disagree about a
+        misspelling - and it was green while `cohere/command-r` resolved to
+        `cohere_chat`, a literal neither inventory carried. Measured with a
+        working key in `COHERE_API_KEY`: the wrapper refused that run as an
+        unmapped route, which is this file's own defect arriving on the one
+        route it had not asked the client about.
+
+        So it asks. Every model the client files under a route goes back
+        through `get_llm_provider`, and each answer has to be a route the
+        wrapper takes. A route reached under a second literal is declared an
+        alias, and an alias is only allowed to be one while the client reads
+        the same names on both - otherwise it is a second route wearing the
+        first one's credentials, which is a different question with the same
+        shape.
+        """
+        require_litellm(self)
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def names_read(literal: str) -> set[str]:
+            return environment_names_read(
+                [
+                    *litellm_provider_branches(literal),
+                    *litellm_predispatch_branches(literal),
+                ]
+            )
+
+        dispatched = {
+            route: litellm_dispatch_literals(route)
+            for route in LITELLM_CREDENTIAL_SOURCES
+        }
+        for route, literals in dispatched.items():
+            with self.subTest(route=route):
+                self.assertTrue(
+                    literals,
+                    f"the installed client files no model under {route!r}, so "
+                    "this read nothing and every literal that route dispatches "
+                    "on is reported as accepted. An unmapped literal gives the "
+                    "same answer, which is why the route has to be re-sourced "
+                    "rather than believed.",
+                )
+                self.assertEqual(
+                    sorted(
+                        literal
+                        for literal in literals
+                        if aliases.get(literal, literal) not in published
+                    ),
+                    [],
+                    f"the client dispatches a {route} model on a literal the "
+                    "wrapper does not accept, so a route derived from the "
+                    "model string or from `custom_llm_provider` - the two "
+                    "places a route can be read - is refused as unmapped "
+                    "before the first paid call, by a customer holding a key "
+                    "that works. Accept it as an alias of the route it shares "
+                    "its credentials with.",
+                )
+        for alias, route in aliases.items():
+            with self.subTest(alias=alias):
+                self.assertIn(
+                    alias,
+                    set().union(*dispatched.values()),
+                    f"{alias!r} is accepted as another spelling of {route!r} "
+                    "and the client no longer dispatches any route's models "
+                    "on it. An alias nothing produces cannot fail, so it stays "
+                    "until it is read as evidence that a spelling was checked.",
+                )
+                self.assertIn(
+                    route,
+                    published,
+                    f"{alias!r} is accepted as another spelling of {route!r}, "
+                    "which the wrapper maps no credential names to, so the "
+                    "route it resolves to is refused as unmapped anyway.",
+                )
+                self.assertEqual(
+                    names_read(alias),
+                    names_read(route),
+                    f"the client reads different names on {alias!r} than on "
+                    f"{route!r}, so treating the first as another spelling of "
+                    "the second hands a route the wrong inventory - which "
+                    "either refuses a key that works or promises one the "
+                    "vendor will reject.",
+                )
+
+    def test_the_gate_and_the_wrapper_agree_on_what_counts_as_present(self) -> None:
+        """Same names, and now the same answer about a value under one.
+
+        The two inventories were made to agree name for name, and a customer
+        could still clear one and be stopped by the other, because agreeing
+        about names is not agreeing about values. Measured with a `.env` line
+        `GEMINI_API_KEY=# paste your key here`: the gate refuses the
+        placeholder, the wrapper's `.strip()` reads it as a credential, and the
+        wrapper loads that same file - two programs, one set of bytes, opposite
+        answers.
+
+        Which side is wrong is not a matter of taste. No vendor issues a key
+        beginning `#`, and that line is what a half-edited example file leaves
+        behind, so the reading that says "credential" is the wrong one and the
+        program that spends money is where it mattered.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def refusal_for(route: str, environment: dict[str, str]):
+            return guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                },
+            )
+
+        def wrapper_accepts(route: str, value: str) -> bool:
+            for name in published[route]:
+                try:
+                    refusal_for(route, {name: value})()
+                except RuntimeError:
+                    return False
+            return True
+
+        mapped = next(route for route, names in sorted(published.items()) if names)
+        for value in (
+            "",
+            " ",
+            "\t\n ",
+            "#",
+            "# paste your key here",
+            "   # paste your key here   ",
+            "not-a-real-key",
+            "   not-a-real-key   ",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    wrapper_accepts(mapped, value),
+                    PREFLIGHT.key_present(value),
+                    f"the opening gate and the paid wrapper disagree about "
+                    f"{value!r} under a credential name. The gate reads the "
+                    "customer's `.env` and so does the wrapper, so a value one "
+                    "calls a credential and the other calls absent stops a run "
+                    "that was told it was ready - or starts one that was told "
+                    "it was not.",
+                )
+        # The any() itself, probed where it decides: several names, every one
+        # of them blank, and the refusal has to come from the values rather
+        # than from a name being missing from the environment.
+        several = next(
+            route for route, names in sorted(published.items()) if len(names) > 1
+        )
+        with self.assertRaises(RuntimeError):
+            refusal_for(several, {name: "   " for name in published[several]})()
+
+    def test_the_credential_line_is_named_by_its_variable_not_by_a_value(self) -> None:
+        """The handoff has to name a line for every name the run accepts.
+
+        It named one shape: a `sk-`/`sk-or-` value sitting after an
+        `..._API_KEY=` line. Two of the names the run now accepts end in
+        neither, their values begin with neither, and one route has no line in
+        that file at all - so a customer following the instruction looks for
+        something that is not there, and is stopped by the instruction rather
+        than by a missing credential. Both halves are derived from the
+        inventory here, so the next name that does not fit the shape fails
+        rather than waiting to be noticed.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        accepted = sorted({name for names in published.values() for name in names})
+        handoff = next(
+            bullet
+            for bullet in RUN_SAFETY.read_text().split("\n- ")
+            if "Name the target line" in bullet
+        )
+        for suffix in re.findall(r"`\.\.\.([A-Z_]+)=`", handoff):
+            self.assertEqual(
+                [name for name in accepted if not name.endswith(suffix)],
+                [],
+                f"the handoff names the line to fill in as `...{suffix}=`, and "
+                "the run accepts names that do not end that way. The customer "
+                "holding one of them is told to find a line their file does "
+                "not have.",
+            )
+        self.assertNotIn(
+            "sk-",
+            handoff,
+            "the handoff names the target line by what its value starts with. "
+            "Vendors do not agree on that prefix, the run accepts names whose "
+            "values start with something else entirely, and the assistant is "
+            "forbidden to read the value in the first place - so the line has "
+            "to be named by its variable.",
+        )
+        if any(not names for names in published.values()):
+            self.assertIn(
+                "no line",
+                handoff,
+                "a route the run accepts with no credential name at all keeps "
+                "its credential outside this file, and the handoff sends the "
+                "customer to look for a line that was never going to be there",
+            )
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()
