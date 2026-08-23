@@ -208,12 +208,12 @@ reaches your portal — and save it when it appears, because it is shown only on
 
 The Traigent key must be able to write experiments, not only read them. The connected optimization,
 and an exact baseline sync when the installed public API supports one, need that scope. A read-only
-key can be rejected at submit time while the optimization drops to local-only tracking. This governs
+key can be rejected at submit time while the optimization drops to local-only tracking - the run
+keeps spending and nothing appears in the portal. This governs
 the user's very first key, not just a later one, because registration hands over no key at all.
 A manually created key defaults to read-only, so grant it full access rather than accepting
 the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
-to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
-leaves spend that already happened.
+to prevent and expensive to discover.
 
 Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
 at the production service, and a stray override silently sends a paid run somewhere the user cannot
