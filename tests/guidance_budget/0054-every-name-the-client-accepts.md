@@ -104,8 +104,11 @@ lowercase route names; seven of them are what the client dispatches on and
 `google` was not, so an assistant deriving the route from the model string or
 from `custom_llm_provider` - the only two places it can be read - produced
 `gemini` and was refused as an unmapped route before anything was spent. The key
-is now a literal the client dispatches on, and the suite holds every route to
-that.
+is now a literal the client dispatches on, and the suite holds every route
+to that for the models the client files under it. That is the bound, and it
+is not the whole client: a refiner keyed on a model the route inventory does
+not list yields a literal this sweep cannot reach. One exists, it is filed,
+and the two model strings that reach it are retired.
 
 Holding it was the part that was not done. The check written for that read
 `branch` - a literal in the test file - and compared it against the published

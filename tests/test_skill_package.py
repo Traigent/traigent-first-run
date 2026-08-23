@@ -1825,13 +1825,32 @@ def litellm_dispatch_literals(route: str) -> set[str]:
     gaining a second one, because `mistral/mistral/codestral-2405` is not a
     model the client can route and its refusal would say nothing about names.
     """
-    import litellm
+    # A proxy setting makes the client answer `litellm_proxy` for every model,
+    # which would fail this for all eight routes with advice that is wrong -
+    # the answer is not an alias, it is the proxy speaking instead of the
+    # resolver. Cleared here so the sweep asks the resolver.
+    import os as _os
 
-    literals: set[str] = set()
-    for model in litellm.models_by_provider.get(route, ()):
-        bare = model.split("/", 1)[1] if model.startswith(f"{route}/") else model
-        literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
-    return literals
+    _saved = _os.environ.pop("USE_LITELLM_PROXY", None)
+    try:
+        import litellm
+
+        _saved_flag = getattr(litellm, "use_litellm_proxy", None)
+        litellm.use_litellm_proxy = False
+        try:
+            literals: set[str] = set()
+            for model in litellm.models_by_provider.get(route, ()):
+                bare = (
+                    model.split("/", 1)[1] if model.startswith(f"{route}/") else model
+                )
+                literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
+            return literals
+        finally:
+            if _saved_flag is not None:
+                litellm.use_litellm_proxy = _saved_flag
+    finally:
+        if _saved is not None:
+            _os.environ["USE_LITELLM_PROXY"] = _saved
 
 
 # Where the installed litellm resolves each route's credential.
