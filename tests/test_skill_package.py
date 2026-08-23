@@ -806,6 +806,10 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
 SPEND_GATE_FUNCTIONS = frozenset(
     {
         "run_remaining_usd",
+        # Collected because the install below registers it, not because a paid
+        # path calls it: a fixture without it meets a NameError while executing
+        # the door rather than in the assertion it was written for.
+        "report_run_spend",
         # Kept for the one caller the door cannot reach: a preserved evaluator
         # on another client, hand-debiting once per call it makes.
         "record_call_spend",
@@ -938,6 +942,32 @@ def fake_litellm(
     return litellm_module(completion)
 
 
+class RecordingAtexit:
+    """`atexit` for a door compiled in THIS process: records, never registers.
+
+    The install registers the ledger line, so a fixture handed the real module
+    leaves a handler behind that fires when the suite exits - one stray ledger
+    line per fixture, on the output of a run that is measuring something else,
+    reporting a namespace nobody is reading any more. Recording keeps the same
+    call and drops the process-wide effect, and it is readable, so a fixture
+    can assert what the door registered.
+
+    What actually happens on the way out is measured where it can be: a real
+    subprocess, a real `atexit`, and the printed line counted.
+    """
+
+    def __init__(self) -> None:
+        self.registered: list = []
+
+    def register(self, function, *args, **kwargs):
+        self.registered.append(function)
+        return function
+
+    def unregister(self, function) -> None:
+        while function in self.registered:
+            self.registered.remove(function)
+
+
 def spend_gate_bindings(
     *, ceiling: float = 5.00, remaining: float = 5.00, per_call: float = 0.05
 ) -> dict:
@@ -950,10 +980,12 @@ def spend_gate_bindings(
     exercised in `TheApprovedTotalReachesTheCodeTests`, where the numbers are
     chosen to make it fire.
 
-    The two stdlib modules come with them because the door's own state is built
-    from them - one lock and one context variable - and a fixture missing
-    either fails while executing that state rather than in the assertion it was
-    written for.
+    The stdlib modules come with them because the door is built from them - one
+    lock, one context variable, and the rounding the request sizer does - and a
+    fixture missing any of them fails while executing the door rather than in
+    the assertion it was written for. `atexit` comes with them for the same
+    reason and as a stand-in rather than the module, for the reason
+    `RecordingAtexit` above states.
     """
     return {
         "RUN_COST_CEILING_USD": ceiling,
@@ -962,6 +994,8 @@ def spend_gate_bindings(
         "UNTRACKED_CALL_COST_USD": per_call,
         "threading": threading,
         "contextvars": contextvars,
+        "math": math,
+        "atexit": RecordingAtexit(),
     }
 
 
@@ -15465,7 +15499,6 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         }
         namespace = {
             "litellm": module,
-            "math": math,
             **spend_gate_bindings(**bindings),
         }
         exec(  # noqa: S102
@@ -15623,14 +15656,23 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         Measured on the installed litellm against a local server counting what
         arrived, it does not: a caller passing `num_retries=2` placed five
         requests through the door, a process-wide `litellm.num_retries=2`
-        placed three, and each `fallbacks` entry adds another attempt. litellm
+        placed three, and one `fallbacks` entry on its own placed two. litellm
         copies `num_retries` over the client's `max_retries` and runs a retry
         loop of its own above it, so the pin is overridden and doubled.
+
         `setdefault("num_retries", 0)` does not help either: litellm reads that
         as `kwargs.get("num_retries") or litellm.num_retries`, where a literal
         `0` is falsy - and it DOES suppress the global on `acompletion`, which
         is worse than useless, a safeguard that works on the entry point
         nothing generates and not on the one every generated line uses.
+
+        The last case is here because the five above it each move ONE of those
+        knobs, and the reservation was sized by multiplying their separate laws
+        together - which is not what the library does. A caller's own
+        `num_retries=2` with one fallback placed 14 requests, not the 10 that
+        product predicts: an extra retry round on every fallback leg, and 18 of
+        32 measured cells under-reserved because of it. A grid that varies one
+        axis at a time cannot see that, so one crossed cell rides with them.
 
         So the claim is no longer that the invocation is one request. It is
         that the ledger holds what the invocation can place, reserved before it
@@ -15648,6 +15690,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             ("a process-wide num_retries", 2, {}),
             ("a caller's num_retries", None, {"num_retries": 2}),
             ("one fallback", None, {"fallbacks": ["openai/gpt-4o-mini"]}),
+            (
+                "a fallback and a caller's num_retries",
+                None,
+                {"num_retries": 2, "fallbacks": ["openai/gpt-4o-mini"]},
+            ),
         )
         for label, global_retries, extra in cases:
             with self.subTest(case=label):
@@ -15683,6 +15730,218 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         f"${sum(namespace['RUN_SPEND_USD']):.4f} at $0.0500 "
                         "each; a reservation only bounds the total while it "
                         "covers what the invocation can place",
+                    )
+
+    def test_a_negative_retry_count_still_places_a_round_it_is_reserved_for(
+        self,
+    ) -> None:
+        """A negative count looks like no retries and does not behave like one.
+
+        Flooring the counts at zero closes the credit - a negative count can no
+        longer hand the approved total money back - and on its own it leaves a
+        second hole, because litellm does not read a negative count as an
+        absent one. Measured against a local server counting what arrived:
+        `num_retries=-5` with one fallback placed four requests where a floor
+        of zero reserved two, and a process-wide `litellm.num_retries=-5`
+        placed two where it reserved one. So the floor is one wherever the
+        count is set, and the assertion here is the bound rather than equality
+        - a pathological count is reserved for conservatively, not exactly.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        cases = (
+            ("a negative caller num_retries", None, {"num_retries": -5}),
+            (
+                "a negative caller num_retries on a fallback",
+                None,
+                {"num_retries": -5, "fallbacks": ["openai/gpt-4o-mini"]},
+            ),
+            ("a negative process-wide num_retries", -5, {}),
+            ("a negative max_retries", None, {"max_retries": -3}),
+        )
+        for label, global_retries, extra in cases:
+            with self.subTest(case=label):
+                with self.door_on_the_installed_litellm(
+                    num_retries=global_retries,
+                    ceiling=100.00,
+                    remaining=100.00,
+                    per_call=0.05,
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=[{"role": "user", "content": "hi"}],
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                            **extra,
+                        )
+                    placed = len(namespace["_arrived"])
+                    self.assertGreaterEqual(
+                        sum(namespace["RUN_SPEND_USD"]) + 1e-9,
+                        placed * 0.05,
+                        f"{label} placed {placed} billable provider request(s) "
+                        f"and reserved ${sum(namespace['RUN_SPEND_USD']):.4f} "
+                        "at $0.0500 each, so the run spent money the approved "
+                        "total was never asked for",
+                    )
+
+    def test_a_knob_this_cannot_size_is_refused_rather_than_priced_at_one(
+        self,
+    ) -> None:
+        """The third hole at this seam, closed by inverting the default.
+
+        `worst_case_requests` read three keywords and priced every other one
+        at nothing. `retry_policy` is one litellm honours on plain
+        `completion`: it reads the policy on the failure path and hands the
+        count that policy names to `completion_with_retries`, whose attempts
+        re-enter the door as nested calls and reserve nothing. Measured on the
+        installed library against a local server answering 429, an invocation
+        reserved for 1 request placed 6; with `num_retries=1` beside it, 3
+        against 7; with one fallback beside it, 2 against 12.
+
+        A longer list of names to refuse is the mechanism that let this
+        through in the first place, so the test is the keyword's NAME instead:
+        one that retries or falls back is refused unless it is one of the
+        three this prices, and the default at the seam is closed rather than
+        open. That is what a list would still have missed -
+        `context_window_fallback_dict`, measured placing 2 requests against a
+        reservation of 1 once the context-window error it waits for actually
+        fired - and it is what a keyword a later release adds meets before it
+        spends rather than after.
+
+        Nothing the walkthrough generates sets one, asserted below, so the
+        refusal costs a generated run nothing. What it stops is the preserved
+        caller whose retry behaviour this package otherwise keeps, and it
+        stops them by naming the three keywords it does price.
+        """
+        refused = (
+            "retry_policy",
+            "context_window_fallback_dict",
+            "context_window_fallbacks",
+            "content_policy_fallbacks",
+            "retry_strategy",
+        )
+        for knob in refused:
+            with self.subTest(knob=knob):
+                placed: list[dict] = []
+                namespace = self.compiled_door(fake_litellm(placed))
+                with self.assertRaises(RuntimeError) as refusal:
+                    namespace["litellm"].completion(
+                        model="provider/m", messages=[], **{knob: {"a": 1}}
+                    )
+                self.assertIn(knob, str(refusal.exception))
+                self.assertIn(
+                    "num_retries",
+                    str(refusal.exception),
+                    "the refusal does not name what to express the resilience "
+                    "as, so it reads as a defect in this package",
+                )
+                self.assertEqual(
+                    placed,
+                    [],
+                    f"{knob} reached the provider, so every request it "
+                    "multiplies the invocation into is unreserved money",
+                )
+                self.assertEqual(
+                    namespace["RUN_SPEND_USD"],
+                    [],
+                    "a refused invocation left a reservation behind, which "
+                    "walks the remaining down for a call nobody placed",
+                )
+        # The three it prices still go through, or the refusal has eaten the
+        # retry behaviour this package promises a preserved caller it keeps.
+        priced: list[dict] = []
+        namespace = self.compiled_door(fake_litellm(priced))
+        namespace["litellm"].completion(
+            model="provider/m",
+            messages=[],
+            num_retries=2,
+            max_retries=0,
+            fallbacks=["provider/backup"],
+        )
+        self.assertEqual(len(priced), 1)
+        # Nothing generated sets one of them, so this refuses a caller the
+        # package inherited and never the walkthrough's own wrapper.
+        for source in re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        ):
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.Call):
+                    for keyword in node.keywords:
+                        self.assertNotIn(
+                            keyword.arg,
+                            refused,
+                            "a generated call sets a keyword the door refuses, "
+                            "so the walkthrough cannot place its own calls",
+                        )
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        with self.door_on_the_installed_litellm(
+            ceiling=100.00, remaining=100.00, per_call=0.05
+        ) as namespace:
+            import litellm
+
+            with self.assertRaises(RuntimeError):
+                litellm.completion(
+                    model="openai/gpt-4o-mini",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_key="k",
+                    api_base=namespace["_api_base"],
+                    retry_policy={"RateLimitErrorRetries": 5},
+                )
+            self.assertEqual(
+                len(namespace["_arrived"]),
+                0,
+                "the invocation reached the provider carrying a knob this "
+                "cannot size, which is how it placed six billable requests "
+                "against a reservation of one",
+            )
+
+    def test_a_fractional_retry_count_buys_a_whole_round_it_is_reserved_for(
+        self,
+    ) -> None:
+        """`int()` truncates and the library's stop condition does not.
+
+        litellm hands the count to `tenacity.stop_after_attempt`, which stops
+        at the first attempt number that REACHES the figure, so a fraction
+        buys the whole round above it. Measured against a local server
+        counting what arrived, with a process-wide `litellm.num_retries`: 1.5
+        placed 3 requests where truncation reserved 2, 2.5 placed 4 against 3,
+        and 4.2 placed 6 against 5. Whole floats are exact either way, which
+        is why this sat under the earlier grid - nobody types 1.5, and a
+        configuration that divides one figure by another produces it.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        for count in (0.5, 1.5, 2.5, 4.2):
+            with self.subTest(count=count):
+                with self.door_on_the_installed_litellm(
+                    num_retries=count,
+                    ceiling=100.00,
+                    remaining=100.00,
+                    per_call=0.05,
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=[{"role": "user", "content": "hi"}],
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                        )
+                    placed = len(namespace["_arrived"])
+                    self.assertAlmostEqual(
+                        sum(namespace["RUN_SPEND_USD"]),
+                        placed * 0.05,
+                        places=6,
+                        msg=f"a process-wide num_retries of {count} placed "
+                        f"{placed} billable provider request(s) and reserved "
+                        f"${sum(namespace['RUN_SPEND_USD']):.4f} at $0.0500 "
+                        "each, so a fractional count spends a round the "
+                        "approved total was never asked for",
                     )
 
     def test_a_fallback_re_entry_does_not_charge_the_total_twice(self) -> None:
@@ -15725,6 +15984,178 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         "scorer that declared its calls correctly is stopped",
                     )
 
+    def test_a_negative_retry_count_cannot_reserve_negative_money(self) -> None:
+        """A reservation is a debit, so a negative one pays the run back.
+
+        Neither count had a floor. `num_retries=-5` sized one invocation at -9
+        provider requests, so the reservation CREDITED the ledger and the
+        remaining walked UP through the approved total - $499.83 to $500.10 on
+        one call, further on every call after it - while the line the next
+        phase is launched from reported a negative spend. `max_retries=-3` did
+        the same. Nothing in litellm asks for a negative count; a caller
+        computing one from a configuration file produces one, and the door
+        answers to callers it did not write.
+
+        The floor is on the counts rather than on the total, and it is one
+        rather than zero wherever litellm reads the count as set: a floor of
+        zero stopped the credit and still under-reserved, because a negative
+        count buys a round. The test below measures that half on the library.
+        """
+        for label, extra in (
+            ("a negative num_retries", {"num_retries": -5, "max_retries": 0}),
+            ("a negative max_retries", {"max_retries": -3}),
+            (
+                "a negative num_retries with fallbacks",
+                {
+                    "num_retries": -5,
+                    "max_retries": 0,
+                    "fallbacks": ["provider/backup"],
+                },
+            ),
+        ):
+            with self.subTest(case=label):
+                placed: list[dict] = []
+                namespace = self.compiled_door(
+                    fake_litellm(placed, raises=RuntimeError("the provider refused")),
+                    ceiling=500.00,
+                    remaining=499.83,
+                    per_call=0.03,
+                )
+                self.assertGreaterEqual(
+                    namespace["worst_case_requests"](dict(extra)),
+                    1,
+                    f"{label} sized one invocation below a single provider "
+                    "request, so placing it hands the approved total money "
+                    "back and every gate reading the remaining passes",
+                )
+                start = namespace["run_remaining_usd"]()
+                for _ in range(3):
+                    with contextlib.suppress(RuntimeError):
+                        namespace["litellm"].completion(
+                            model="provider/m", messages=[], **extra
+                        )
+                self.assertEqual(len(placed), 3)
+                self.assertLessEqual(
+                    namespace["run_remaining_usd"](),
+                    start - 3 * 0.03,
+                    f"three calls with {label} left the remaining at "
+                    f"${namespace['run_remaining_usd']():.4f} against a "
+                    f"${start:.4f} start - a reservation that runs backwards "
+                    "walks the remaining above the approved total",
+                )
+                self.assertGreater(
+                    min(namespace["RUN_SPEND_USD"]),
+                    0,
+                    "a ledger entry paid the run back rather than debiting it",
+                )
+
+    def test_the_ledger_line_is_absent_on_every_ending_that_skips_atexit(
+        self,
+    ) -> None:
+        """The safeguard's edge, measured, because the guidance now states it.
+
+        Three sentences claimed the line prints however the process ends. The
+        first repair replaced that with a closed list of the two endings that
+        print nothing - SIGTERM and `os._exit` - and a closed list is the same
+        overstatement pointing the other way: measured one subprocess per
+        ending, six of them print nothing, and the two named were not the ones
+        a long paid phase is likeliest to take. SIGKILL is `kill -9`, the
+        out-of-memory killer and a container eviction; SIGHUP is a dropped SSH
+        session. None of the six runs an `atexit` handler at all.
+
+        So the guidance states the rule - an ending that never reaches
+        `atexit` prints nothing - with the measured endings under it as
+        examples rather than as the population. The half that is actionable
+        keys on the LINE being absent rather than on which signal fired, which
+        is what makes it hold for an ending nobody has measured yet.
+        """
+        endings = {
+            "SIGTERM": "os.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(5)",
+            "SIGKILL": "os.kill(os.getpid(), signal.SIGKILL)\ntime.sleep(5)",
+            "SIGHUP": "os.kill(os.getpid(), signal.SIGHUP)\ntime.sleep(5)",
+            "SIGQUIT": "os.kill(os.getpid(), signal.SIGQUIT)\ntime.sleep(5)",
+            "os._exit": "os._exit(0)",
+            "os.abort": "os.abort()",
+        }
+        for label, ending in sorted(endings.items()):
+            with self.subTest(ending=label):
+                program = "\n".join(
+                    [
+                        "import os",
+                        "import signal",
+                        "import time",
+                        self.spend_report_program(
+                            ceiling=5.00,
+                            spent=2.00,
+                            per_call=0.05,
+                            placed=[0.40, 0.50],
+                            refused=[0.10],
+                            ending=ending,
+                        ),
+                    ]
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    script = Path(directory) / "killed.py"
+                    script.write_text(program, encoding="utf-8")
+                    finished = subprocess.run(
+                        [sys.executable, str(script)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                lines = [
+                    line
+                    for line in finished.stdout.splitlines()
+                    if "provider call(s)" in line
+                ]
+                self.assertEqual(
+                    len(lines),
+                    0,
+                    f"{label} printed the ledger line, so the guidance below "
+                    "names a gap that is no longer there and sends the "
+                    "assistant to a fallback it does not need",
+                )
+        safety = RUN_SAFETY.read_text()
+        # Both documents, because the claim was made in both and an
+        # unqualified copy is what a reader acts on.
+        for document in (safety, SDK_EXECUTION.read_text()):
+            for named in sorted(endings):
+                self.assertIn(
+                    named,
+                    document,
+                    f"a document states which endings leave no ledger line "
+                    f"and {named} is not among them, though it was measured "
+                    "printing nothing",
+                )
+        # And the half a qualified claim owes the reader: what to carry
+        # forward out of a phase that printed no figure at all.
+        self.assertIn("not recoverable", safety)
+
+    def test_the_claim_about_uncovered_paid_calls_is_made_once(self) -> None:
+        """One claim in two documents drifts, and this pair already had.
+
+        `run-safety.md` called the held-out agent and judge calls the
+        walkthrough's only paid calls the SDK never sees. `task_score` places
+        `SCORER_CALLS_PER_ROW` calls on EVERY scored row, the search included,
+        and the SDK cannot see those either - it settles a trial's cost before
+        it applies the metric functions - so the "only" was false for any run
+        an LLM judge grades. Both sentences arrived together; the one that
+        stayed is the one that is true, and the other points at it rather than
+        restating it in its own words a second time.
+        """
+        owner = "the walkthrough's only paid calls that no permit covers"
+        self.assertIn(owner, " ".join(SDK_EXECUTION.read_text().split()))
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertNotIn(
+            "only paid calls",
+            safety,
+            "the claim about which paid calls go unseen is written out in two "
+            "documents, which is how it drifted: the held-out pass is not the "
+            "only one, because a judge grades every scored row of the search "
+            "as well",
+        )
+        self.assertIn("which of this run's paid calls no permit covers", safety)
+
     def spend_report_program(
         self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending
     ) -> str:
@@ -15732,16 +16163,23 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         text = SDK_EXECUTION.read_text()
         wanted = {"report_run_spend", "run_remaining_usd"}
         collected: list[ast.stmt] = []
+        registered: list[ast.stmt] = []
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
-            for node in ast.parse(source).body:
+            tree = ast.parse(source)
+            for node in tree.body:
                 if isinstance(node, ast.FunctionDef) and node.name in wanted:
                     collected.append(node)
-                elif isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(
+            # Walked rather than read off the module body: the registration
+            # sits inside the door's install guard, so a second execution of
+            # the fence cannot add a second handler.
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(
                     node
                 ):
-                    collected.append(node)
+                    registered.append(node)
+        collected += registered
         self.assertEqual(
-            len([node for node in collected if isinstance(node, ast.Expr)]),
+            len(registered),
             1,
             "the ledger line is registered to run on the way out exactly once",
         )
@@ -15780,16 +16218,30 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "SystemExit": 'raise SystemExit("managed optimization stopped")',
             "unhandled exception": 'raise RuntimeError("provider gave up")',
             "failed assert": 'assert False, "no best configuration selected"',
+            # Both named in the guidance and neither measured until now: the
+            # status a phase exits with does not change whether the line is
+            # printed, and SIGINT is the one signal that does reach `atexit`,
+            # which is why it sits on this side of the pair of tests.
+            "sys.exit(3)": "sys.exit(3)",
+            "SIGINT": "os.kill(os.getpid(), signal.SIGINT)\ntime.sleep(5)",
         }
         for label, ending in sorted(endings.items()):
             with self.subTest(ending=label):
-                program = self.spend_report_program(
-                    ceiling=5.00,
-                    spent=2.00,
-                    per_call=0.05,
-                    placed=[0.40, 0.50],
-                    refused=[0.10],
-                    ending=ending,
+                program = "\n".join(
+                    [
+                        "import os",
+                        "import signal",
+                        "import sys",
+                        "import time",
+                        self.spend_report_program(
+                            ceiling=5.00,
+                            spent=2.00,
+                            per_call=0.05,
+                            placed=[0.40, 0.50],
+                            refused=[0.10],
+                            ending=ending,
+                        ),
+                    ]
                 )
                 with tempfile.TemporaryDirectory() as directory:
                     script = Path(directory) / "phase.py"
@@ -15858,6 +16310,90 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "the ledger line is called directly as well as registered to run "
             "on the way out, so a phase that finishes prints it twice",
         )
+
+    def test_a_second_execution_registers_one_ledger_line_and_not_two(self) -> None:
+        """The guard the wrap had and the report line did not.
+
+        The wrap is guarded because a second execution of the fence in one
+        process would otherwise wrap again and debit every call twice. The
+        registration sat outside that guard, so the same second execution
+        registered a second handler on a ledger nobody was writing to -
+        measured, two lines out, the second reporting `0 provider call(s) and
+        spent $0.0000` from its own blind namespace. A reader taking the
+        handoff figure off the last line takes the empty one.
+
+        Run rather than read: two real executions of the fence in one real
+        process against one `litellm`, ended normally, with the printed lines
+        counted.
+        """
+        text = SDK_EXECUTION.read_text()
+        # Any registration left at module level comes with them, so this
+        # measures where the call actually is rather than where it should be:
+        # collecting only the install would report a registration moved back
+        # outside it as no line at all instead of as two.
+        beside = [
+            node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(node)
+        ]
+        door = "\n".join(
+            ast.unparse(node)
+            for node in (
+                *sdk_wrapper_state_nodes(text),
+                *sdk_wrapper_spend_gate(text),
+                *beside,
+            )
+        )
+        program = "\n".join(
+            [
+                "import atexit",
+                "import contextvars",
+                "import threading",
+                "from types import SimpleNamespace",
+                "def completion(*args, **kwargs):",
+                "    raise RuntimeError('no provider here')",
+                "async def acompletion(*args, **kwargs):",
+                "    raise RuntimeError('no provider here')",
+                "litellm = SimpleNamespace(",
+                "    completion=completion, acompletion=acompletion, num_retries=0",
+                ")",
+                f"DOOR = {door!r}",
+                "def install():",
+                "    namespace = {",
+                "        'litellm': litellm, 'atexit': atexit,",
+                "        'threading': threading, 'contextvars': contextvars,",
+                "        'RUN_COST_CEILING_USD': 5.0, 'RUN_COST_SPENT_USD': 2.0,",
+                "        'RUN_COST_REMAINING_USD': 3.0,",
+                "        'UNTRACKED_CALL_COST_USD': 0.05,",
+                "    }",
+                "    exec(compile(DOOR, '<door>', 'exec'), namespace)",
+                "    return namespace",
+                "first = install()",
+                "second = install()",
+                "first['RUN_SPEND_USD'].append(0.4)",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "twice.py"
+            script.write_text(program, encoding="utf-8")
+            finished = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        lines = [
+            line for line in finished.stdout.splitlines() if "provider call(s)" in line
+        ]
+        self.assertEqual(
+            len(lines),
+            1,
+            "executing the fence twice in one process printed "
+            f"{len(lines)} ledger line(s), so the handoff figure is two "
+            f"figures and one of them is blind: {finished.stdout!r}",
+        )
+        self.assertIn("$0.4000", lines[0], "the one line printed is the blind one")
 
     def test_the_remaining_is_read_and_taken_in_one_step(self) -> None:
         """The concurrency exposure, closed by reserving instead of debiting.
@@ -16042,6 +16578,112 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             litellm.completion = original
             server.shutdown()
         return bool(hits)
+
+    def door_function(self, name):
+        """One function, compiled out of the document, with no door installed."""
+        import ast as _ast
+        import re as _re
+
+        text = SDK_EXECUTION.read_text()
+        for source in _re.findall(r"```python\n(.*?)\n```", text, _re.DOTALL):
+            tree = _ast.parse(source)
+            for node in tree.body:
+                if isinstance(node, _ast.FunctionDef) and node.name == name:
+                    namespace: dict = {"math": __import__("math")}
+                    exec(compile(_ast.Module([node], []), "<door>", "exec"), namespace)
+                    return namespace[name]
+        raise AssertionError(f"{name} is not defined in the document")
+
+    def test_the_cost_reader_reads_the_field_litellm_actually_fills(self) -> None:
+        """The reader must return the figure the installed client priced.
+
+        litellm records a call's price at `_hidden_params["response_cost"]`,
+        and that is what the SDK's own accounting reads. A reader that consults
+        only `usage.cost` and the OpenRouter response-cost header gets None on
+        every call for five of the six routes this package supports, and the
+        door then debits the flat unpriced rate each time. That is not a
+        ledger, it is a call counter, and the difference is not academic: it
+        reported a run at the approved ceiling when the true spend was a
+        twentieth of it, and refused the held-out pass that would have fit.
+
+        The reading is compared to the client's own figure rather than merely
+        required to be present, because presence is satisfied by answers that
+        are not the cost: a reader pointed one key sideways, at the response's
+        elapsed milliseconds, debited hundreds of thousands of times the true
+        price, and a reader that answered `0.0` for every priced call
+        - a door recording every call as free - was equally present. Both are
+        worse failures than the one presence catches.
+
+        A route the installed client cannot price proves nothing either way, so
+        it is named rather than dropped in silence: litellm's pricing map has
+        holes, and when this was written it priced
+        `anthropic/claude-3-5-haiku-20241022` at None on both the release
+        installed here and the pinned one. That is also why the run has to end
+        having exercised at least one route - a rename of the field leaves
+        every route unpriced, which is otherwise indistinguishable from a pass.
+        """
+        try:
+            import litellm
+        except ImportError:  # pragma: no cover - litellm is a pinned dep
+            self.skipTest("litellm is not installed")
+        reader = self.door_function("provider_reported_cost")
+        blind = []
+        exercised = []
+        unpriced = []
+        # One model per route this package supports.
+        for model in (
+            "gpt-4o-mini",
+            "anthropic/claude-sonnet-4-20250514",
+            "gemini/gemini-2.0-flash",
+            "mistral/mistral-small-latest",
+            "cohere/command-r",
+            "openrouter/openai/gpt-4o-mini",
+        ):
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": "x"}],
+                mock_response="ok",
+            )
+            priced = (getattr(response, "_hidden_params", {}) or {}).get(
+                "response_cost"
+            )
+            if priced is None:
+                unpriced.append(model)
+                continue
+            read = reader(response)
+            if read is None:
+                blind.append(model)
+                continue
+            exercised.append(model)
+            # A relative tolerance rather than `assertAlmostEqual`'s default
+            # seven places: a call on these routes costs a fraction of a cent,
+            # and seven places calls anything under 5e-8 equal to zero, so the
+            # default would wave through the reader that answers `0.0`.
+            self.assertAlmostEqual(
+                read,
+                float(priced),
+                delta=abs(float(priced)) * 1e-9,
+                msg=(
+                    f"on {model} the door read {read!r} where the client "
+                    f"priced the call at {float(priced)!r}, so the ledger "
+                    "debits a figure that is not what the run spent"
+                ),
+            )
+        self.assertEqual(
+            blind,
+            [],
+            "the door read no cost on these routes while the client had "
+            "priced the call, so every one of them would debit the flat "
+            "unpriced rate instead of the real one",
+        )
+        self.assertTrue(
+            exercised,
+            "this test proved nothing: the installed client priced none of "
+            "the routes it walked, so no reading was compared to anything. "
+            f"Unpriced here: {unpriced}. Either the field this reads moved, "
+            "or every model id above has fallen out of the pricing map - "
+            "check which before believing the door is a ledger.",
+        )
 
     def test_the_doors_edge_is_stated_as_a_rule_and_gets_every_name_right(
         self,
