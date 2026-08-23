@@ -3,8 +3,8 @@
 follows: 0054
 resident-ceiling: 85_176
 resident-measured: 85_121
-total-ceiling: 427_300
-total-measured: 427_245
+total-ceiling: 426_053
+total-measured: 425_998
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -345,3 +345,36 @@ span four - and the three homes said them three ways, with the round's own test
 pinning the README's divergent wording, so an edit making them agree failed. A
 gate that forbids its own fix is worse than the drift it was written for. The
 lists are extracted and compared now instead of pinned three times.
+
+The taxonomy is three events, and this is the change the previous nine rounds
+were paying for without making. Six events were told apart by who has to act,
+but on that axis there are three actors - the user, this run, and nobody - so
+the extra three needed boundary rules, and the boundary rules are where the
+bytes and the defects both went. The three fattest bullets were the three whose
+borders had been argued, and what they spent it on was traffic between events: a
+refusal that halts the run recorded as the stop rather than the refusal, an exit
+code that is the healthy answer on one path and a finding about the customer's
+material on another, a degradation that is a stop and never a warning. None of
+those sentences tells a support reader anything. They existed because there were
+six.
+
+`blocked` is waiting on the user. `stopped` is this run not going on, and its
+seventeen classes say why - the gate that refused, the script that could not run,
+the category the provider refused under, the reason a phase ended early. A
+`warning` is what did not stop the run. Nothing has to be argued into the right
+event, so the exit-code rule, the halt-versus-warning ruling and the
+refusal-versus-stop precedence all go, and with them two vocabularies and the
+tests that policed the borders.
+
+The subtraction went with it. The reference no longer re-enumerates the checks
+the script makes and the docstring lists - a third copy after the paragraphs
+that state each rule and the code that enforces them - and no longer carries a
+third copy of the five things no checker can settle. Both point instead, and the
+test compares the two remaining homes by extracting the lists rather than
+pinning a literal in each.
+
+One rule moved rather than shrank, and it is the one the file exists for. The
+check ran before the close and before a stop the assistant executes; the run
+this file is written for is the one where the customer closes the laptop, and
+that is a stop the assistant never reaches. It runs before every stop-and-wait
+now, which is a moment that exists on the abandoned path.

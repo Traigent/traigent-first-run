@@ -66,12 +66,6 @@ class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
                         findings(line(event=event, **{"class": value})), []
                     )
 
-    def test_tool_fail_closes_over_exit_codes_rather_than_a_list(self) -> None:
-        self.assertEqual(findings(line(event="tool_fail", **{"class": "3"})), [])
-        problems = findings(line(event="tool_fail", **{"class": "readiness"}))
-        self.assertEqual(len(problems), 1)
-        self.assertIn("not an exit code", problems[0])
-
     def test_an_invented_event_is_refused_by_name(self) -> None:
         problems = findings(line(event="oops"))
         self.assertTrue(any("not one of the six" in problem for problem in problems))
@@ -622,28 +616,6 @@ class TheFieldsWithNoNegativeCoverageTests(unittest.TestCase):
                     problems = findings(line(**{field: bad}))
                     self.assertTrue(problems, f"{field}={bad!r} produced no finding")
 
-    def test_an_exit_code_outside_1_to_255_is_refused(self) -> None:
-        for bad in ("0", "256", "999", "-1", 3):
-            with self.subTest(code=bad):
-                self.assertTrue(
-                    any(
-                        "not an exit code" in p
-                        for p in findings(line(event="tool_fail", **{"class": bad}))
-                    ),
-                    f"exit code {bad!r} was accepted",
-                )
-        self.assertEqual(findings(line(event="tool_fail", **{"class": "255"})), [])
-
-
-class ThePatternsThatRefusedGoodEnglishTests(unittest.TestCase):
-    """The expensive direction, measured rather than assumed.
-
-    Keying quoted content on an opening quote alone made every possessive
-    apostrophe a finding, and this check runs at the close, so a correct log
-    would have shown the customer a rejection. The accepting cases here are
-    the sentences a run really writes.
-    """
-
     def test_a_possessive_is_not_quoted_content(self) -> None:
         for detail in (
             "the provider's quota was exhausted and no trial ran",
@@ -951,7 +923,7 @@ class TheScriptItselfBehavesTests(unittest.TestCase):
     def test_a_trailing_newline_does_not_satisfy_a_pattern(self) -> None:
         """`$` admits one; `fullmatch` is what the contract meant."""
         self.assertTrue(findings(line(ts="20260823T151204Z\n")))
-        self.assertTrue(findings(line(event="tool_fail", **{"class": "1\n"})))
+        self.assertTrue(findings(line(**{"class": "key\n"})))
 
     def test_the_json_contract_holds_on_every_exit(self) -> None:
         """`--json` promised a parseable stdout and broke it on the commonest exit."""

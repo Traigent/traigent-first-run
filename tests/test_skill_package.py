@@ -21820,14 +21820,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     one at a time, and one path spelled identically in four documents.
     """
 
-    EVENTS = (
-        "blocked",
-        "gate_fail",
-        "tool_fail",
-        "external_refusal",
-        "run_stop",
-        "warning",
-    )
+    EVENTS = ("blocked", "stopped", "warning")
     LOG_PATH = "`traigent-runs/run-log.jsonl`"
 
     def _safety(self) -> str:
@@ -21938,22 +21931,19 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         bullets = self._event_bullets()
         expected = {
             "blocked": ("`approval`", "`key`", "`answer`"),
-            "gate_fail": (
+            "stopped": (
                 "`credential-file-tracked`",
                 "`ignore-check`",
                 "`containment`",
                 "`readiness-cap`",
                 "`invariants`",
-            ),
-            "external_refusal": (
+                "`tool`",
                 "`authentication`",
                 "`key-scope`",
                 "`account-access`",
                 "`quota`",
                 "`rate`",
                 "`validation`",
-            ),
-            "run_stop": (
                 "`timeout`",
                 "`cost-ceiling`",
                 "`outage`",
@@ -21971,12 +21961,12 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             for value in values:
                 with self.subTest(event=event, value=value):
                     self.assertIn(value, bullets[event])
-        self.assertIn("exit code", bullets["tool_fail"])
-        # A non-zero exit is the healthy answer on two paths this guide
-        # defines and a finding about the customer material on a third, so
-        # the event cannot key on it.
-        self.assertIn("could not run at all", bullets["tool_fail"])
-        self.assertIn("exit 3", bullets["tool_fail"].casefold())
+        # A non-zero exit was the healthy answer on two paths this guide
+        # defines and a finding about the customer's material on a third, so
+        # nothing keys on it: a script that could not run is one `stopped`
+        # class among seventeen, and the exit code lives in `detail`.
+        self.assertIn("`tool`", bullets["stopped"])
+        self.assertNotIn("exit code", bullets["stopped"])
         self.assertIn("never authored prose", self._log_section().casefold())
 
     def test_the_halt_this_file_orders_is_not_filed_as_a_warning(self) -> None:
@@ -21990,8 +21980,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """
         bullets = self._event_bullets()
         self.assertNotIn("local-only", bullets["warning"])
-        self.assertIn("local-only", bullets["run_stop"])
-        self.assertIn("persistence", bullets["run_stop"])
+        # Under three events there is no boundary to argue: a halt is a stop.
+        self.assertIn("`persistence`", bullets["stopped"])
         safety = " ".join(self._safety().casefold().split())
         self.assertIn("stop paid work at once", safety)
 
@@ -22039,10 +22029,10 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "flapping survives while a silent retry loop does not", normalized
         )
         self.assertIn(
-            "a `blocked` or `gate_fail` identity left `open` is where the run stopped",
+            "a `blocked` or `stopped` identity left `open` is where the run stopped",
             normalized,
         )
-        # Two of the six never stop applying, so a finished run ends with
+        # A warning never stops applying, so a finished run ends with
         # them standing - which the earlier reading rule called stuck.
         self.assertIn(
             "any warning a finished run met is still standing at its close", normalized
@@ -22151,7 +22141,6 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "paths, credentials, addresses, hosts and ips, links, long ids, long quoted spans",
             "append-only: one line the first time the run waits for you",
             "a repeat that changed nothing adds none",
-            "never rewritten and never read back as run state",
             "no path, no id, no address, no credential, no quoted row",
             "validate_run_log.py` backstops that",
             "nothing sends the file anywhere",
@@ -22160,32 +22149,29 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, readme)
 
-    def test_the_reference_enumerates_every_check_the_script_makes(self) -> None:
-        """A checker whose description drifts is a promise again.
+    def test_the_docstring_enumerates_every_check_the_script_makes(self) -> None:
+        """One home for the list, and it is the file that implements it.
 
-        Two carriers were added to the script in one round and named in the
-        prose in another, and nothing compared the lists.
+        The reference carried a third copy of it - after the paragraphs that
+        state each rule, and after the script that enforces them - so a carrier
+        added to the code had two documents to drift from. It points now.
         """
-        section = " ".join(self._log_section().casefold().split())
-        for check in (
-            "a class outside its event's set",
-            "a state that is neither",
-            "a field the schema does not have",
-            "a `cleared` with no `open` before it",
-            "or is missing",
-            "a `ts` outside the stamp",
-            "a line that is not a json object",
-            "longer than one sentence needs",
-            "a path",
-            "a credential",
-            "an email address",
-            "a host or ip",
-            "a session or request id",
-            "a link",
-            "a quoted span",
+        checker = ast.parse(
+            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
+        )
+        doc = " ".join((ast.get_docstring(checker) or "").casefold().split())
+        for carrier in (
+            "paths",
+            "credentials",
+            "addresses",
+            "identifiers",
+            "links",
+            "quoted spans",
         ):
-            with self.subTest(check=check):
-                self.assertIn(check, section)
+            with self.subTest(carrier=carrier):
+                self.assertIn(carrier, doc)
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("its own docstring carries the list", section)
 
     def test_the_reference_pins_the_exits_and_the_honesty_carve_out(self) -> None:
         """Exit 2 and the absent-log path had no pin, and the script has both."""
@@ -22195,20 +22181,20 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn("opens the log read-only", section)
         self.assertIn("before this run names the file to the user", section)
         # What the checker cannot settle, said where the claim is made.
-        self.assertIn("stay yours to honour", section)
         # The consent gate and the no-backdating rule.
         self.assertIn("under the same anchoring condition", section)
         self.assertIn("nothing is backdated into it afterwards", section)
         # The scope of what gets a line, in the document that owns it.
         self.assertIn("every event named below gets a line", section)
 
-    def test_the_unsettleable_list_is_one_list_in_three_homes(self) -> None:
+    def test_the_unsettleable_list_is_one_list_in_both_homes(self) -> None:
         """Extracted and compared, not pinned three times.
 
-        The previous version asserted a different literal in each document and
-        happened to pin the README's divergent wording, so an edit making the
-        three agree failed the test. A gate that forbids its own fix is worse
-        than the drift it was written for.
+        The previous version asserted a different literal in each of three
+        documents and happened to pin the README's divergent wording, so an
+        edit making them agree failed the test. A gate that forbids its own fix
+        is worse than the drift it was written for - and one of the three homes
+        has since become a pointer, which is the better fix again.
         """
 
         def items(text: str) -> list[str]:
@@ -22224,12 +22210,12 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         checker = ast.parse(
             (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
         )
-        reference = items(self._log_section())
         readme = items((ROOT / "README.md").read_text())
         docstring = items(ast.get_docstring(checker) or "")
-        self.assertEqual(len(reference), 5, reference)
-        self.assertEqual(reference, docstring)
-        self.assertEqual(reference, readme)
+        # Two homes: the reference points at the docstring rather than carrying
+        # a third copy of the same five things.
+        self.assertEqual(len(docstring), 5, docstring)
+        self.assertEqual(docstring, readme)
 
     def test_one_path_spelled_the_same_in_every_document_that_names_it(
         self,

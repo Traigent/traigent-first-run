@@ -50,41 +50,43 @@ TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 # The identity is `event` + `stage` + `class`, so `class` is one of the three
 # things deduplication matches on. Left open, one failure met twice spells itself two
 # ways and the log grows a second entry for a problem that never changed.
+#
+# Three events, told apart by who has to act - the user, this run, or
+# nobody. A fourth needs a boundary rule against the other three, and every
+# boundary rule this file carried was a rule about the taxonomy rather than
+# about a run.
 CLASSES: dict[str, frozenset[str]] = {
     "blocked": frozenset({"approval", "key", "answer"}),
-    "gate_fail": frozenset(
+    "stopped": frozenset(
         {
+            # a gate this guide defines
             "credential-file-tracked",
             "ignore-check",
             "containment",
             "readiness-cap",
             "invariants",
-            "uncategorized",
-        }
-    ),
-    "external_refusal": frozenset(
-        {
+            # a bundled script that could not run
+            "tool",
+            # a provider, portal or Traigent refusal, by its category
             "authentication",
             "key-scope",
             "account-access",
             "quota",
             "rate",
             "validation",
+            # the run or a phase ending early for its own reasons
+            "timeout",
+            "cost-ceiling",
+            "outage",
+            "persistence",
             "uncategorized",
         }
-    ),
-    "run_stop": frozenset(
-        {"timeout", "cost-ceiling", "outage", "persistence", "uncategorized"}
     ),
     "warning": frozenset(
         {"refused-trial", "untracked-cost", "cap-standing", "uncategorized"}
     ),
 }
-# `tool_fail` closes over the exit codes a command can return rather than over a
-# hand-written list, so it is checked by shape.
-# 1 through 255: `0` is a success and nothing above 255 is a wait status.
-EXIT_CODE_CLASS = re.compile(r"(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])")
-EVENTS = frozenset(CLASSES) | {"tool_fail"}
+EVENTS = frozenset(CLASSES)
 STATES = frozenset({"open", "cleared"})
 FIELDS = frozenset({"ts", "event", "stage", "class", "state", "detail"})
 TIMESTAMP = re.compile(r"[0-9]{8}T[0-9]{6}Z")
@@ -182,16 +184,6 @@ class Finding:
 
 
 def _check_class(event: str, value: Any, number: int, out: list[Finding]) -> None:
-    if event == "tool_fail":
-        if not isinstance(value, str) or not EXIT_CODE_CLASS.fullmatch(value):
-            out.append(
-                Finding(
-                    number,
-                    f"tool_fail class {value!r} is not an exit code",
-                    "use the exit status the command returned",
-                )
-            )
-        return
     allowed = CLASSES.get(event)
     if allowed is None:
         return

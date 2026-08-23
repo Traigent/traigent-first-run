@@ -1110,83 +1110,70 @@ numeric telemetry, and keep error text and metadata recorded with the run conten
 
 ### The run log
 
-Every event named below gets a line in
-`traigent-runs/run-log.jsonl`, appended when it happens rather than at the end of the stage - a
-recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
-handed this directory can say where the run stopped and why. The record says what is true now, the log says when it happened and
-whether it cleared. Where the record already holds a finding - the portal
-probe's pass/fail among them - that field keeps the value and the log's line does not restate it.
+Every event named below gets a line in `traigent-runs/run-log.jsonl`, appended when it happens
+rather than at the end of the stage - a recovery that never returns is exactly the run nobody can
+explain afterwards. It exists so a person handed this directory can say where the run stopped and
+why. The record says what is true now, the log says when it happened and whether it cleared. Where
+the record already holds a finding - the portal probe's pass/fail among them - that field keeps the
+value and the log's line does not restate it.
 
 **The file is append-only: a line, once written, is never rewritten, and nothing in the run reads
-it back as run state.** What that gives up is a count and the time of the latest encounter: a problem is stamped when
-it was first met.
+it back as run state.** What that gives up is a count and the time of the latest encounter: a
+problem is stamped when it was first met.
 
 | Key | What it holds |
 |---|---|
 | `ts` | UTC `YYYYMMDDTHHMMSSZ`, when this line was written |
-| `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, `run_stop`, or `warning` |
+| `event` | `blocked`, `stopped`, or `warning` |
 | `stage` | the run record's stage, 1 to 8 - the internal numbering, not the `n/5` the user saw |
-| `class` | a string: one value from that event's own closed set below, or for `tool_fail` the exit code as text. Never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
+| `class` | a string, one value from that event's own closed set below. Never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
 | `state` | `open` when it happens, `cleared` when it stops applying |
 | `detail` | one sentence, under the allowlist below |
 
-`event`, `stage`, and `class` together are the identity. Write one `open` line when that identity first occurs and one `cleared` line
-if it later clears; nothing else is ever written for it. A retry that meets the same refusal twelve
-times adds nothing after the first, because nothing about it changed - that is the deduplication. A problem that recurs after clearing opens again and is
-visible as the second `open` line, so flapping survives while a silent retry loop does not.
+`event`, `stage`, and `class` together are the identity. Write one `open` line when that identity
+first occurs and one `cleared` line if it later clears; nothing else is ever written for it. A retry
+that meets the same refusal twelve times adds nothing after the first, because nothing about it
+changed. A problem that recurs after clearing opens again and is visible as the second `open` line,
+so flapping survives while a silent retry loop does not.
 
-Read it by collapsing on that identity, last line wins. A `blocked` or `gate_fail` identity left
-`open` is where the run stopped. A `warning` never stops applying, so any warning a
-finished run met is still standing at its close, which is the file working rather than a run
-that hung. Nothing in the file may waive a gate, decide what runs next, resume a
-run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. The log belongs to the
-record beside it: where SKILL.md retires a record the log is renamed with it, and where a run
-starts a fresh record it starts a fresh log - so no `cleared` from an earlier run is read as this
-one's.
+Read it by collapsing on that identity, last line wins. A `blocked` or `stopped` identity left
+`open` is where the run stopped. A `warning` never stops applying, so any warning a finished run met
+is still standing at its close, which is the file working rather than a run that hung. Nothing in
+the file may waive a gate, decide what runs next, resume a run, or be quoted as a result:
+`traigent-runs/run-plan.md` remains the only resume authority. The log belongs to the record beside
+it: where SKILL.md retires a record the log is renamed with it, and where a run starts a fresh
+record it starts a fresh log - so no `cleared` from an earlier run is read as this one's.
 
-The six are told apart by who has to act, and each names what its `class` may be.
+The three are told apart by who has to act, and each names what its `class` may be.
 
-- `blocked` - waiting on the user: `approval`, `key`, or `answer`. This is the one that says where a
-  stuck run stopped, so it is written before every stop-and-wait that happens after the record
-  exists.
-- `gate_fail` - a gate this guide defines refused: `credential-file-tracked`, `ignore-check`,
-  `containment`, `readiness-cap`, `invariants`, or `uncategorized`.
-- `tool_fail` - a bundled script could not run at all, or a command failed to execute; the class
-  is its exit code. Exit 3 from a bundled script is the shape this event is for: a non-zero exit is
-  the healthy answer where the credential handoff continues on exit 1, and a finding about the
-  customer's own material where `preflight.py` exits 1.
-- `external_refusal` - a provider, portal, or Traigent refusal, under the category this file already
-  gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, `validation`, or
-  `uncategorized` - which is the class for the provider error this file elsewhere says to surface
-  without guessing a category.
-- `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
-  `outage`, `persistence`, or `uncategorized`. A refusal that halts the run is recorded as the
-  stop rather than as the refusal, so the mid-run 400 or 403 above lands here once. Tracking that degraded to local-only is
-  `run_stop:persistence` and never a warning - the halt above owns it, and a warning is by
-  definition the thing that did not stop the run.
-- `warning` - observed, and able to distort the result without stopping the run:
-  `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized` - a no-lift delta and rows
-  nothing could score are warnings this guide mandates and none of the first three.
+- `blocked` - waiting on the user: `approval`, `key`, or `answer`. Written before every
+  stop-and-wait that happens after the record exists, which is what says where a stuck run stopped.
+- `stopped` - this run cannot go on, or a phase ended early. A gate this guide defines refused:
+  `credential-file-tracked`, `ignore-check`, `containment`, `readiness-cap`, `invariants`. A
+  bundled script could not run: `tool`. A provider, portal, or Traigent refusal, under the category
+  this file already gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`,
+  `validation`. The run or a phase ended early for its own reasons: `timeout`, `cost-ceiling`,
+  `outage`, `persistence`. And `uncategorized`, for the provider error this file elsewhere says to
+  surface without guessing a category.
+- `warning` - observed, and able to distort the result without stopping the run: `refused-trial`,
+  `untracked-cost`, `cap-standing`, or `uncategorized` - a no-lift delta and rows nothing could
+  score are warnings this guide mandates and none of the first three.
 
 `detail` and the `class` beside it carry the event and nothing else: one sentence naming what
 happened, with no path, no id, no session or account address, no user or machine name, no secret or
-access code, no provider error body, and no text or identifier taken from the project's data. This is the file a user may hand to somebody else, so it names the class of thing that
-failed rather than the instance.
+access code, no provider error body, and no text or identifier taken from the project's data. This
+is the file a user may hand to somebody else, so it names the class of thing that failed rather than
+the instance.
 
-It exists once the record does, under the same anchoring condition, and nothing is
-backdated into it afterwards.
+It exists once the record does, under the same anchoring condition, and nothing is backdated into
+it afterwards.
 
-Before this run names the file to the user - at the close, or wherever it stops - run
-`scripts/validate_run_log.py --log
-traigent-runs/run-log.jsonl` through the selected Python, from the script's literal absolute path
-under the resolved skill directory. It opens the log read-only and checks what the paragraphs above
-only state: a class outside its event's set, a state that is neither, a field the schema does not
-have or is missing, a `ts` outside the stamp, an `event` or `stage` outside its range, a line
-that is not a JSON object, a `cleared` with no `open` before it, and a `detail` longer than one sentence needs or
-carrying a path, a credential, an email address, a host or IP, a session or request id, a link,
-or a quoted span long enough to be somebody's row. Five things the allowlist names have no shape a checker can settle and stay yours to
-honour: a person's name, a machine's, an access or confirmation code, a provider
-error body, and short or unquoted text from the project.
-Exit 1 names the lines and exit 2 says the file exists and could not be read; exit 3 routes as
-it does for every bundled script. A run that met nothing worth logging wrote no file, and that
-exits 0 with nothing to report. A rejected line is reported to the user with what it carries.
+Run `scripts/validate_run_log.py --log traigent-runs/run-log.jsonl` through the selected Python,
+from the script's literal absolute path under the resolved skill directory, before every
+stop-and-wait and before this run names the file to the user. A stop the assistant never reaches is
+the run this file exists for, so the check rides the waits rather than only the endings. It opens
+the log read-only and refuses what the paragraphs above state; its own docstring carries the list,
+including the five things the allowlist names that no checker can settle. Exit 1 names the lines and
+exit 2 says the file exists and could not be read; exit 3 routes as it does for every bundled
+script. A run that met nothing worth logging wrote no file, and that exits 0 with nothing to report.
+A rejected line is reported to the user with what it carries.
