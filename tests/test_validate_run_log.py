@@ -169,7 +169,9 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
             "AKIA",
             "eyJ",
         ):
-            token = prefix + "A1b2C3d4E5f6G7h8"
+            # The pattern wants 8+ of `[A-Za-z0-9_-]` after the prefix, and
+            # nothing here should read as entropy to a person or a scanner.
+            token = prefix + "EXAMPLE-NOT-A-KEY"
             with self.subTest(prefix=prefix):
                 self.assertTrue(self._pattern("a credential").search(token), token)
 
