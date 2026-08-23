@@ -1107,3 +1107,53 @@ For generated wrappers, set the process-only SDK results folder to a child of `t
 before importing Traigent so its local optimization logs and state remain inside the ignored
 walkthrough directory. Store no secrets, raw private content in run names, or prompts/outputs in
 numeric telemetry, and keep error text and metadata recorded with the run content-free.
+
+### The run log
+
+Every failure class above, and every warning that survives into the result, gets one line in
+`traigent-runs/run-log.jsonl`, written when it happens rather than at the end of the stage - a
+recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
+handed this directory can say where the run stopped and why. SKILL.md's mandate rests on a
+division: the record says what is true now, the log says when it happened, how often, and whether
+it cleared, and neither answers the other's question. Where the record already has a field for a
+finding - the portal probe's pass/fail among them - that field keeps the value and the log carries
+only the timing.
+
+One line per distinct problem, never one per occurrence. Each line is a JSON object:
+
+| Key | What it holds |
+|---|---|
+| `key` | `<event>:<stage>:<slug>` - the identity deduplication is done on |
+| `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, or `warning` |
+| `stage` | the SKILL stage it happened in |
+| `detail` | one content-free sentence naming what happened |
+| `first_ts`, `last_ts` | UTC `YYYYMMDDTHHMMSSZ` |
+| `count` | how many times that key has occurred |
+| `resolved`, `resolved_ts` | set on that same line when it clears; a line that never clears is what a stuck run looks like |
+
+A repeat of a key already in the file updates its `last_ts` and `count` in place, and never appends
+a second line: twelve identical lines from one retry loop bury the finding a reader came for, and
+the count is the fact worth keeping. Reading the file to find that key is not reading it as run
+input - nothing in it may waive a gate, decide what runs next, resume a run, or be quoted as a
+result, and `traigent-runs/run-plan.md` remains the only resume authority.
+
+The five are told apart by who has to act. `blocked` - waiting on the user for an approval, a key,
+or an answer; this is the one that says where a stuck run stopped, so it is written before the wait
+rather than after it. `gate_fail` - a gate this guide defines refused: the tracked or ignore check
+on the credential file, execution-evaluator containment, a blocking readiness cap, an invariant
+mismatch. `tool_fail` - a bundled script or command exited non-zero, with its exit code and
+sanitized class, exit 3 among them. `external_refusal` - a provider, portal, or Traigent refusal
+under the category this section already gives it: authentication, key scope, account or plan access,
+quota or funding, rate, or validation. `warning` - observed, and able to distort the result without
+stopping the run: tracking degraded to local-only, a refused truncated trial, an untracked-cost
+deduction, a cap left standing.
+
+The sanitization rule this section applies to external error text binds here, with one clause added:
+no secret value, no confirmation or access code, no raw provider error body - which can echo a key
+or a prompt - and no example content. Row ids, never row text. A file written to explain a failed
+run is exactly where the content `TRAIGENT_LOG_EXAMPLE_CONTENT=false` keeps out of local logs gets
+reintroduced.
+
+It lives under the record's consent gate: it exists once `traigent-runs/` lawfully does. A failure
+before that is reported in conversation and written when the directory is created, under the time it
+is written at - never an invented earlier one.

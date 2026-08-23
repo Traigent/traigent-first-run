@@ -319,6 +319,7 @@ egress.
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
+| `traigent-runs/run-log.jsonl` (created during a run) | One line per distinct blocking failure or result-affecting warning, deduplicated, with when it first and last happened and whether it cleared. Written to explain a run that stopped; never read back as input, and it holds no secret and no example text |
 | `traigent-runs/readiness/<timestamp>/` | What one readiness scoring read to reach its score, one directory per scoring. Kept, never re-read as input, and named to you with the card |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 | [`tests/`](tests/) | The guide's own quality gates — for example, a hermetic check that the documented local mock path attempts no outbound sockets. They test the guide, not your project; you never need to run them |

@@ -992,7 +992,7 @@ outcome and the recommendation, never beside them.
 
 Those two are not the only files this run wrote, and a user who wants to know where everything
 went should not have to ask twice. In the same layer, list the rest under the same project root:
-`traigent-runs/run-plan.md`, `traigent-runs/config-space.json`,
+`traigent-runs/run-plan.md`, `traigent-runs/run-log.jsonl`, `traigent-runs/config-space.json`,
 `traigent-runs/calibration-cases.json`, `traigent-runs/calibration-results.json`, plus any
 `traigent-runs/walkthrough_agent.py`, `traigent-runs/evaluator.py`, readiness report, and
 SDK run logs that exist. Name only what was actually written. The sentence above covers all of

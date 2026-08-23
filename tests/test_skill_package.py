@@ -21714,5 +21714,124 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         )
 
 
+class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
+    """Two questions about an unfinished run, and one artifact behind neither.
+
+    The record answers which stage, but only for a session that resumes: a run
+    abandoned mid-stage is read by nobody who was not already continuing it.
+    What refused, when, and how many times was answered nowhere at all - a
+    blocking refusal reached the customer as a sentence in a conversation that
+    is gone by the time anybody asks about it.
+
+    The log is a second file rather than more fields on the record because the
+    record is re-read top to bottom on resume and is authoritative for what a
+    resumed run may skip, so history appended there arrives dressed as state.
+    What keeps two artifacts from becoming two homes for one rule is that they
+    answer different questions - what is true now, against when it happened and
+    whether it cleared - and that nothing in a run reads the log back.
+    """
+
+    def _log_section(self) -> str:
+        safety = (SKILL_ROOT / "references" / "run-safety.md").read_text()
+        heading = "### The run log"
+        self.assertEqual(safety.count(heading), 1)
+        return " ".join(safety.split(heading, 1)[1].casefold().split())
+
+    def test_the_five_kinds_are_declared_where_the_failures_already_are(
+        self,
+    ) -> None:
+        """Recovery enumerates every failure class; the vocabulary joins it.
+
+        A sixth kind invented at the moment of writing is a kind nothing
+        classifies, so the closed list is the point rather than the names.
+        """
+        section = self._log_section()
+        for kind in (
+            "`blocked`",
+            "`gate_fail`",
+            "`tool_fail`",
+            "`external_refusal`",
+            "`warning`",
+        ):
+            with self.subTest(kind=kind):
+                self.assertIn(kind, section)
+        self.assertIn(
+            "one line per distinct problem, never one per occurrence", section
+        )
+
+    def test_a_repeat_updates_one_line_instead_of_adding_another(self) -> None:
+        """Dedup is legibility, not tidiness.
+
+        The failure that writes the most lines is a retry, and it carries the
+        fewest distinct facts; twelve identical lines bury the finding the
+        reader opened the file for.
+        """
+        section = self._log_section()
+        self.assertIn("updates its `last_ts` and `count` in place", section)
+        self.assertIn("never appends a second line", section)
+        self.assertIn("resolved`, `resolved_ts`", section)
+
+    def test_the_mandate_has_one_home_and_the_edge_case_has_another(self) -> None:
+        """SKILL.md carries the rule; the reference carries where it bends.
+
+        Looking a key up to deduplicate is the one read the log takes, and a
+        reference stating the bare mandate a second time is the defect this
+        package has already been bitten by four times.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        section = self._log_section()
+        self.assertIn("no part of this one reads it back", skill)
+        self.assertNotIn("nothing in the run reads it back", section)
+        self.assertIn("is not reading it as run input", section)
+        self.assertIn(
+            "`traigent-runs/run-plan.md` remains the only resume authority", section
+        )
+
+    def test_the_file_written_to_explain_a_failure_holds_no_content(self) -> None:
+        """The likeliest place to undo a decision made three sections away.
+
+        Example content is kept out of the SDK's own local logs on purpose, and
+        a raw provider error body carries a key or a prompt as readily as a row
+        quoted to make a diagnosis concrete.
+        """
+        section = self._log_section()
+        self.assertIn("row ids, never row text", section)
+        self.assertIn("`traigent_log_example_content=false`", section)
+        self.assertIn("no raw provider error body", section)
+
+    def test_it_waits_for_the_same_consent_the_record_waits_for(self) -> None:
+        """A log before the answer is a write before the answer.
+
+        The zero-anchor gate's list is what it would have been written against,
+        so the log inherits that gate rather than earning an exception to it.
+        """
+        section = self._log_section()
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("it exists once `traigent-runs/` lawfully does", section)
+        self.assertIn("never an invented earlier one", section)
+        self.assertIn("do not create `traigent-runs/`", skill)
+
+    def test_a_file_the_run_writes_is_disclosed_where_writes_are_listed(
+        self,
+    ) -> None:
+        """Every file the run wrote is named at the close, and in the layout."""
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        record = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn("`traigent-runs/run-log.jsonl`", dataset)
+        self.assertIn("`traigent-runs/run-log.jsonl`", readme)
+        # The record is pinned to state and to a line count that holds it
+        # there, so the log is disclosed where writes are listed rather than
+        # by spending two of those lines pointing at it.
+        self.assertNotIn("run-log", record)
+
+
 if __name__ == "__main__":
     unittest.main()
