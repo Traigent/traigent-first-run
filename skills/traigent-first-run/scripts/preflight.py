@@ -311,6 +311,10 @@ COMMON_OUTCOME_FIELDS = (
     "type",
     "grade",
 )
+# Any one name admits its vendor. The paid wrapper in `sdk-execution.md`
+# carries this same inventory - it cannot import a script it is generated
+# alongside - and the package suite compares the two, because a name added
+# here and not there refuses a run this gate already admitted.
 VENDOR_KEYS = {
     "OpenRouter": ("OPENROUTER_API_KEY",),
     "OpenAI": ("OPENAI_API_KEY",),
@@ -318,7 +322,7 @@ VENDOR_KEYS = {
     "Google (Gemini)": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "Mistral": ("MISTRAL_API_KEY",),
     "Cohere": ("COHERE_API_KEY",),
-    "HuggingFace": ("HF_TOKEN",),
+    "HuggingFace": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
 

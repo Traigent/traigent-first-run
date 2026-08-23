@@ -1444,6 +1444,40 @@ def preflight_constant(name: str) -> object:
     raise AssertionError(f"preflight.py defines no module-level {name}")
 
 
+def guide_constant(path: Path, name: str) -> object:
+    """Read one constant out of the code a reference publishes.
+
+    `preflight_constant` above parses a script because importing it would run
+    it. This parses for a harder reason: the guide's constants are not a module
+    at all. They are a fenced block a customer's own wrapper is generated from,
+    in a process that never sees `preflight.py`, so no runtime can compare the
+    two - which is why a value drifts in one and stays in the other.
+    """
+    for node in ast.parse(python_block_containing(path, f"{name} = ")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{path.name} publishes no top-level {name}")
+
+
+def guide_function(path: Path, name: str, namespace: dict):
+    """One published function, run against the module state it reads.
+
+    `load_guide_function` above executes a whole fenced block, which is right
+    for the small ones. The wrapper block is a program: it refuses to start
+    without three approved figures in the environment and imports the SDK
+    before it defines anything, so the only way to exercise one of its checks
+    is to lift that definition out and hand it the names it closes over.
+    """
+    for node in ast.parse(python_block_containing(path, f"def {name}(")).body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            exec(ast.unparse(node), namespace)  # noqa: S102
+            return namespace[name]
+    raise AssertionError(f"{path.name} publishes no top-level {name}()")
+
+
 def score_config_space(document: dict) -> tuple[object, list[str]]:
     """Run a config-space document through the real adapter and agent scorer."""
     pillar, caps, _knobs = READINESS.score_agent(
@@ -8027,6 +8061,116 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('os.environ.setdefault("TRAIGENT_RESULTS_FOLDER"', text)
         self.assertNotIn("cost = litellm.completion_cost(", text)
+
+    def test_the_opening_gate_and_the_paid_run_accept_the_same_credentials(
+        self,
+    ) -> None:
+        """One inventory of credential names, read by two programs.
+
+        They disagreed. The gate admitted a Google route on `GEMINI_API_KEY`
+        or `GOOGLE_API_KEY`; the published wrapper knew only the first. The
+        second is the name AI Studio hands out and the one litellm resolves
+        ahead of it, so a customer cleared the opening gate and was then
+        stopped short of `optimize_sync` by a refusal about a call that would
+        have gone through - the worst moment for a check to be wrong, because
+        the run had already been told it was ready.
+
+        Two copies is not an accident anybody can remove. The gate is a script
+        this package ships; the wrapper is code generated into a project that
+        never sees that script, so no import and no runtime comparison exists
+        and the comparison has to be made here. Coverage as well as names: the
+        same drift had left two routes the gate can report as available with no
+        mapping in the wrapper at all, which is the identical stop reached
+        through a different sentence.
+        """
+        gate = {
+            label.split()[0].casefold(): set(names)
+            for label, names in preflight_constant("VENDOR_KEYS").items()
+        }
+        # The one route the gate reports from its own constant rather than from
+        # VENDOR_KEYS, because its names are all required rather than any one.
+        self.assertIn(
+            'available.append("Bedrock")',
+            (SKILL_ROOT / "scripts" / "preflight.py").read_text(),
+            "the gate no longer reports Bedrock under that name, so the route "
+            "this check expects the wrapper to carry is no longer the one the "
+            "gate can admit",
+        )
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        self.assertEqual(
+            sorted(published),
+            sorted([*gate, "bedrock"]),
+            "the opening gate reports one set of provider routes as available "
+            "and the paid wrapper maps another; a route in one and not in the "
+            "other is admitted at the gate and refused at the run",
+        )
+        self.assertEqual(
+            {
+                route: set(names)
+                for route, names in published.items()
+                if route != "bedrock"
+            },
+            gate,
+            "the opening gate and the paid wrapper accept different credential "
+            "names for the same route, so a key that clears the gate can still "
+            "stop the run that spends the money",
+        )
+        # Bedrock is the one route with no name to check. It signs through the
+        # AWS credential chain, so a shared profile, an SSO session, or an
+        # instance role carries it with no `AWS_*` variable set, and refusing
+        # on their absence would stop a run whose calls would have succeeded.
+        # The gate keeps its three names because listing a vendor as available
+        # on them is a report, and a report that misses is not a refusal.
+        self.assertEqual(
+            published["bedrock"],
+            (),
+            "Bedrock now carries names the wrapper will refuse a run over, and "
+            "an environment variable is not where that route's credentials "
+            "have to live",
+        )
+
+    def test_every_route_runs_on_every_name_its_vendor_issues(self) -> None:
+        """The published check, executed - not its wording, pinned.
+
+        The defect above was a name check refusing a name that works, so what
+        this runs is the refusal itself, once per route with only one of that
+        vendor's names present. `HF_TOKEN` and `HUGGINGFACE_API_KEY` are the
+        second pair and litellm reads them in that order; both were verified
+        against the resolution order in the installed client, not inferred from
+        a vendor's documentation page.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+
+        def check_with(route: str, environment: dict[str, str]):
+            return guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                },
+            )
+
+        for route, names in published.items():
+            for name in names:
+                with self.subTest(route=route, name=name):
+                    check_with(route, {name: "placeholder-not-a-key"})()
+            with self.subTest(route=route, credentials="none"):
+                if not names:
+                    # Bedrock: nothing in the environment, and no refusal.
+                    check_with(route, {})()
+                    continue
+                with self.assertRaises(RuntimeError) as refused:
+                    check_with(route, {})()
+                # A customer who genuinely has none is told every name that
+                # would have satisfied the route, not whichever one this
+                # mapping happens to list first.
+                for name in names:
+                    self.assertIn(name, str(refused.exception))
+        with self.assertRaises(RuntimeError):
+            check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()

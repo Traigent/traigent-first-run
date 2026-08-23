@@ -514,13 +514,27 @@ STRONG_REASONING_EFFORT = (
     os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
 )
 SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
+# Every name a route's vendor issues keys under, any one of which is enough.
+# The same inventory `preflight.py` opens the run with, route for route and
+# name for name, because a gate that admits a credential in front of a run that
+# refuses it stops a customer on a call that would have succeeded. litellm
+# reads `GOOGLE_API_KEY` before `GEMINI_API_KEY`, and `HF_TOKEN` before
+# `HUGGINGFACE_API_KEY`, so declaring either pair by one name alone refuses
+# exactly the name that vendor's own documentation hands out first.
 PROVIDER_KEY_NAMES = {
-    "openrouter": "OPENROUTER_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "google": "GEMINI_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-    "cohere": "COHERE_API_KEY",
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "mistral": ("MISTRAL_API_KEY",),
+    "cohere": ("COHERE_API_KEY",),
+    "huggingface": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
+    # Empty because no environment name settles it: Bedrock signs through the
+    # AWS credential chain, so a shared profile, an SSO session, or an instance
+    # role authenticates with no `AWS_*` variable set at all. Refusing on their
+    # absence would stop a run whose calls would have gone through, so this
+    # route is declared and left to fail, if it fails, on its own first call.
+    "bedrock": (),
 }
 
 # Select this literal from the inspected task and evaluator before either paid
@@ -592,18 +606,19 @@ ENHANCED_MAX_TRIALS = positive_int(
 
 
 def require_current_route_credential() -> None:
-    key_name = PROVIDER_KEY_NAMES.get(SELECTED_CURRENT_PROVIDER)
-    if key_name is None:
+    key_names = PROVIDER_KEY_NAMES.get(SELECTED_CURRENT_PROVIDER)
+    if key_names is None:
         raise RuntimeError(
             f"No first-run credential mapping is declared for the inspected "
             f"provider route {SELECTED_CURRENT_PROVIDER!r}"
         )
-    if not os.environ.get(key_name, "").strip():
+    if key_names and not any(os.environ.get(name, "").strip() for name in key_names):
         raise RuntimeError(
             f"The current model route {SELECTED_CURRENT_MODEL!r} uses "
-            f"{SELECTED_CURRENT_PROVIDER}, but {key_name} is not set. Add that "
-            "credential or explicitly approve a provider-route change; the "
-            "first run will not switch routes automatically."
+            f"{SELECTED_CURRENT_PROVIDER}, and none of "
+            f"{', '.join(key_names)} is set. Add any one of those credentials "
+            "or explicitly approve a provider-route change; the first run will "
+            "not switch routes automatically."
         )
 
 BASELINE_CONFIG = {
