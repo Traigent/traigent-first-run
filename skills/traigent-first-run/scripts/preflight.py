@@ -322,8 +322,10 @@ VENDOR_KEYS = {
     "OpenRouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
     "OpenAI": ("OPENAI_API_KEY",),
     "Anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-    # First word casefolded is the route key, and the route key is the literal
-    # the client dispatches on - so this label is not free wording.
+    # First word casefolded is the route key, and the route key is a literal
+    # the client dispatches on - so this label is not free wording. Where the
+    # client dispatches one route under two literals, the wrapper carries the
+    # second as an alias; this report is per vendor and unaffected.
     "Gemini (Google)": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
     "Mistral": ("MISTRAL_API_KEY", "MISTRAL_AZURE_API_KEY"),
     "Cohere": ("COHERE_API_KEY", "CO_API_KEY"),

@@ -1,8 +1,8 @@
-# 0053 - every name the client accepts
+# 0054 - every name the client accepts
 
 follows: 0053
-total-ceiling: 419_406
-total-measured: 419_347
+total-ceiling: 420_603
+total-measured: 420_544
 
 A customer holding a working Google key was admitted by the opening gate and
 then refused, seconds before the first paid call, by the wrapper that spends
@@ -66,16 +66,21 @@ wrapper refused. Green suite, working key, stopped run - the defect this ledger
 entry is about, surviving three patches, because unreachable and absent are the same
 answer to a reader and only one of them means agreement.
 
-So the fourth patch buys a derived guard rather than another row. Anything a
-pre-dispatch branch hands a route to is a credential resolver by construction -
-that module returns the provider, the base URL and the dynamic key and nothing
-else - so the site is named from the call instead of remembered, and a route
-that acquires one without citing it fails by name and prints the citation to
-paste. Following the same calls out of the dispatch file was measured and
-rejected: two routes reach a config getter there that resolves no credential,
-and a guard that demanded those be cited would have taught its readers to cite
-anything to make it quiet. The guard is worth 0 guidance bytes; only the name
-itself costs, at 24.
+So the fourth patch buys a derived guard rather than another row. What a
+pre-dispatch branch hands a route to returns that route's provider, its base
+URL and its dynamic key together, so the site is named from the call instead of
+remembered, and a route that acquires one without citing it fails by name and
+prints the citation to paste. Not every such site resolves a credential, which
+this entry first claimed as construction: swept over every literal that chain
+compares against, one of 35 on the installed release and one of 36 on the
+pinned one is handed a helper that builds an endpoint out of the model string
+and reads nothing at all, with its key still in the branch. The guard is right
+either way - a site that reads nothing costs a citation, a site that reads a
+key would cost a customer's run - and no route here reaches one. Following the
+same calls out of the dispatch file was measured and rejected: two routes reach
+a config getter there that resolves no credential, and a guard that demanded
+those be cited would have taught its readers to cite anything to make it quiet.
+The guard is worth 0 guidance bytes; only the name itself costs, at 24.
 
 The gate had the same defect pointing the other way. With nothing set it told
 every reader not to begin paid work until their route's credential was present,
@@ -99,9 +104,31 @@ lowercase route names; seven of them are what the client dispatches on and
 `google` was not, so an assistant deriving the route from the model string or
 from `custom_llm_provider` - the only two places it can be read - produced
 `gemini` and was refused as an unmapped route before anything was spent. The key
-is now the literal the client dispatches on, and the suite holds every route to
-that, which is why this costs no bytes: the answer is derivable rather than
-documented.
+is now a literal the client dispatches on, and the suite holds every route to
+that.
+
+Holding it was the part that was not done. The check written for that read
+`branch` - a literal in the test file - and compared it against the published
+keys, a literal in the reference, both typed by one author in one commit, which
+between them can disagree about a misspelling and about nothing else. It was
+green while `cohere/command-r` resolved to `cohere_chat`: seven routes reach
+their branch under one spelling and cohere reaches its under two, because the
+client sends the `command-r` family down a branch it shares with the older
+completion models, written `== "cohere_chat" or == "cohere"`, reading the same
+two names for both. Measured with a working key in `COHERE_API_KEY` and that
+route inspected: the wrapper refused, seconds before the first paid call, with
+a sentence that names no name - the halt this entry is about, on the one route
+the check never asked the client about.
+
+So the literals come out of the client too. Every model it files under a route
+goes back through `get_llm_provider`, which is the function that decides
+`custom_llm_provider`, and every answer has to be a route the wrapper takes -
+no model name written down here, and no list agreeing with the list beside it.
+The second spelling is accepted as an alias, which the suite allows only while
+the client reads the same names on both, and the wrapper is run under it rather
+than read: remove the alias and the executed check refuses `cohere_chat` again,
+naming it. That is 403 bytes and it is why this section no longer claims to be
+free.
 
 The handoff that tells a customer which line to fill in named a value prefix
 after an `..._API_KEY=` line. Two accepted names end in neither, their values
@@ -117,31 +144,32 @@ how many names there are.
 
 The figures below:
 
-    0053 total measured                                    417_409
-    sdk-execution.md                                        +1_835
+    0053 total measured                                    418_203
+    sdk-execution.md                                        +2_238
       the inventory comment - two copies, one authority,
         and the names no vendor page prints                     697
       the Bedrock entry's reason for holding no names           392
       the any-of check, and one name reading as one name        364
       the placeholder a bare `.strip()` called a credential      183
       the eight routes as tuples                                199
+      the second literal one route is dispatched under          403
     GUIDE.md                                                   +14
       the credentials this run keeps in a variable               14
     run-safety.md                                              +89
       the line named by its variable, and the route that
         has no line to name                                      89
-    total measured here                                    419_347
+    total measured here                                    420_544
 
 Resident rises by the 14 bytes in `GUIDE.md` and by nothing else: `SKILL.md`
 already sends the reader to this reference for the paid wrapper, and which
 environment variable a vendor issues its key under is not a rule the flow needs
 to carry from the first turn. Everything that reads the client, compares the two
 predicates, derives the route literal and checks the handoff lives in the suite,
-which no run loads. The ceiling above leaves 99 bytes: the 59 that 0052 left,
-plus 40 for the branch stacked directly on this one - measured over the same
-document set at that branch's head against this one, not taken from its
-description of itself - so both fit without a second raise arriving as a red
-trunk.
+which no run loads. The ceiling above leaves 59 bytes, the margin its
+predecessor leaves. The branch stacked directly on this one adds 40 - measured
+over the same document set at that branch's head against this one, not taken
+from its description of itself - so it fits inside that margin with 19 to
+spare, and neither raise arrives as a red trunk.
 
 The figures above have now been re-measured twice, for two unrelated reasons.
 The first was that 0052 moved underneath them. This branch was cut when 0052
@@ -166,13 +194,28 @@ Re-measured once more when this branch was rebuilt. The entry it follows is now
 history stopped being an ancestor of the trunk when its predecessor merged as a
 squash, so it was rebuilt from the trunk rather than merged into it.
 
-What this branch adds did not change - 1_835 bytes in the execution reference,
-89 in run safety and 14 in the guide, item for item, the same edits - but the
-package they are added to did. 417_409 + 1_938 = 419_347, and the margin stays
-at the 59 bytes its predecessor leaves.
+What this branch added did not change when it was rebuilt - 1_835 bytes in the
+execution reference, 89 in run safety and 14 in the guide, item for item, the
+same edits - but the package they are added to did, so 417_409 + 1_938 =
+419_347 was the figure that rebuild carried. Review then found the route above
+and the alias that answers it, which is the one increment since that is a
+change of content rather than of base: 2_341 in place of 1_938, and
+418_203 + 2_341 = 420_544, with the margin still the 59 bytes its predecessor
+leaves.
 
-That is three re-measurements of one entry across one branch's life, each
-because a figure underneath it moved. An entry that named the figure it was
-measured on top of, rather than only the index of the entry that held it, would
-have gone red on this branch the moment that figure changed, instead of staying
-green until the merge.
+That is three re-measurements of one entry across one branch's life because a
+figure underneath it moved, and a fourth because what it carries grew - only
+the last of which any check could have asked for. An entry that named the
+figure it was measured on top of, rather than only the index of the entry that
+held it, would have gone red on this branch the moment that figure changed,
+instead of staying green until the merge.
+Re-measured a fourth time. The entry below this one answered another round of
+review, so the figure this branch is added to moved again: 418_203 now, and
+418_203 + 2_341 = 420_544. The 2_341 has not changed at any point - 2_238 in
+the execution reference, 89 in run safety, 14 in the guide - because what this
+branch adds has not changed. Only the floor under it has.
+
+Four re-measurements of one entry, each because a number underneath it moved
+and nothing said so until the two were put together. The entry names the index
+of the state it was measured on; naming the figure as well is what would have
+turned each of those into a red branch instead of a quiet one.

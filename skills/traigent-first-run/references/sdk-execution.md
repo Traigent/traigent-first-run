@@ -538,6 +538,11 @@ PROVIDER_KEY_NAMES = {
     # route is declared and left to fail, if it fails, on its own first call.
     "bedrock": (),
 }
+# One route, two literals. litellm sends `command-r` to `cohere_chat` and
+# `command` to `cohere`, through one branch written `== "cohere_chat" or ==
+# "cohere"` that reads the same two names for both - so which spelling an
+# assistant derives depends on the model it read, not on the credential.
+ROUTE_ALIASES = {"cohere_chat": "cohere"}
 
 # Select this literal from the inspected task and evaluator before either paid
 # run. Zero belongs only to deterministic/exact work; otherwise use one
@@ -608,7 +613,8 @@ ENHANCED_MAX_TRIALS = positive_int(
 
 
 def require_current_route_credential() -> None:
-    key_names = PROVIDER_KEY_NAMES.get(SELECTED_CURRENT_PROVIDER)
+    route = ROUTE_ALIASES.get(SELECTED_CURRENT_PROVIDER, SELECTED_CURRENT_PROVIDER)
+    key_names = PROVIDER_KEY_NAMES.get(route)
     if key_names is None:
         raise RuntimeError(
             f"No first-run credential mapping is declared for the inspected "

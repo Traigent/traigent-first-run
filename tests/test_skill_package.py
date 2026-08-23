@@ -1715,15 +1715,51 @@ def litellm_predispatch_literals() -> set[str]:
     }
 
 
+def litellm_attribute(owner: Any, name: str, cited: str) -> Any:
+    """One name off the installed client, or an honest failure reading it.
+
+    `getattr(..., None)` returns its default for a name that is absent and
+    raises for a name whose module will not import. litellm resolves its
+    Configs lazily, so a Config whose module needs an optional dependency
+    raises out of the lookup rather than answering - measured on the pinned
+    1.93.0, `bedrock_mantle` raises `ModuleNotFoundError: No module named
+    'botocore'` here, and the `None` default does not catch it.
+
+    So the default is not a reading. A resolver that cannot be read is not a
+    resolver that is absent, which is the one distinction every check on this
+    path is built around, and an uncaught traceback would replace the citation
+    the guard exists to print with a stack.
+    """
+    try:
+        return getattr(owner, name, None)
+    except Exception as unreadable:
+        raise AssertionError(
+            f"reading `{cited}` off the installed litellm raised "
+            f"{unreadable!r} instead of answering. A pre-dispatch branch hands "
+            "a route to that name, so what it resolves has to be read rather "
+            "than assumed empty: install what its module imports, or cite the "
+            "site in `delegates` by hand."
+        ) from unreadable
+
+
 def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
     """The credential resolvers a route is handed to before dispatch.
 
-    Derived rather than listed, which is the whole point. Every
-    `litellm.<Config>().<method>()` call a pre-dispatch branch makes is a
-    credential resolver by construction - that module's return value is the
-    provider, the api_base and the dynamic api key, and nothing else - so the
-    site can be NAMED from the call instead of remembered, in the same
+    Derived rather than listed, which is the whole point. A
+    `litellm.<Config>().<method>()` call a pre-dispatch branch makes returns
+    that route's provider, its api_base and its dynamic api key together, so
+    the site can be NAMED from the call instead of remembered, in the same
     `(module, Class.method)` shape `delegates` is written in.
+
+    Not every one of them, which the docstring used to claim. Swept over every
+    literal that chain compares against: one site of 35 on the installed
+    1.87.1, and one of 36 on the pinned 1.93.0, resolves no credential at all.
+    `baseten` reaches `BasetenConfig.get_api_base_for_model`, which builds a
+    URL out of the model string and reads nothing, while that branch keeps its
+    own `get_secret_str("BASETEN_API_KEY")` beside the call. So this
+    over-reports rather than under-reports - it can cost a citation for a call
+    that resolves nothing, and cannot miss one that resolves a key - and none
+    of the eight routes reaches such a site today.
 
     Following the same calls out of `main.py` was measured and rejected: two
     routes reach a `get_config()` there, which resolves no credential, so the
@@ -1750,10 +1786,14 @@ def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
                 continue
             held: Any = litellm
             for part in dotted.split(".")[1:]:
-                held = getattr(held, part, None)
+                held = litellm_attribute(held, part, dotted)
                 if held is None:
                     break
-            member = getattr(held, node.func.attr, None) if held is not None else None
+            member = (
+                litellm_attribute(held, node.func.attr, f"{dotted}.{node.func.attr}")
+                if held is not None
+                else None
+            )
             if member is None:
                 continue
             member = inspect.unwrap(member)
@@ -1768,6 +1808,30 @@ def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
                 continue
             found.add((relative.as_posix(), member.__qualname__))
     return found
+
+
+def litellm_dispatch_literals(route: str) -> set[str]:
+    """Every `custom_llm_provider` the client resolves a route's models to.
+
+    Asked of the client rather than compared between two literals typed here.
+    `get_llm_provider` is the function that decides `custom_llm_provider`, and
+    `models_by_provider` is the client's own list of what it files under each
+    route, so every model on a route goes back through the resolver and the
+    answers are the literals a call on that route can arrive as. No model name
+    is written down: an inventory that named its own models would be the same
+    author agreeing with himself one file further along.
+
+    A model already carrying its route as a prefix keeps it rather than
+    gaining a second one, because `mistral/mistral/codestral-2405` is not a
+    model the client can route and its refusal would say nothing about names.
+    """
+    import litellm
+
+    literals: set[str] = set()
+    for model in litellm.models_by_provider.get(route, ()):
+        bare = model.split("/", 1)[1] if model.startswith(f"{route}/") else model
+        literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
+    return literals
 
 
 # Where the installed litellm resolves each route's credential.
@@ -8537,8 +8601,15 @@ class SkillPackageTests(unittest.TestCase):
         depends on, and it holds name by name whatever the inventory grows to.
         Which names belong in that inventory is not asked here; the check below
         reads them out of litellm.
+
+        The routes with two spellings are run under both. `cohere_chat` is
+        what the client dispatches every `command-r` model to, and the wrapper
+        answered it with "no credential mapping is declared" while
+        `COHERE_API_KEY` held a working key - a refusal that names no name, at
+        the customer whose credential was already correct.
         """
         published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
 
         def check_with(route: str, environment: dict[str, str]):
             return guide_function(
@@ -8547,6 +8618,7 @@ class SkillPackageTests(unittest.TestCase):
                 {
                     "os": SimpleNamespace(environ=environment),
                     "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
                     "SELECTED_CURRENT_PROVIDER": route,
                     "SELECTED_CURRENT_MODEL": f"{route}/some-model",
                 },
@@ -8567,6 +8639,20 @@ class SkillPackageTests(unittest.TestCase):
                 # would have satisfied the route, not whichever one this
                 # mapping happens to list first.
                 for name in names:
+                    self.assertIn(name, str(refused.exception))
+        # The second spelling of a route is run as the route, because the
+        # refusal it used to reach said nothing about credentials at all: a
+        # customer holding a working key was told their route was not mapped.
+        for alias, route in aliases.items():
+            for name in published[route]:
+                with self.subTest(alias=alias, name=name):
+                    check_with(alias, {name: "placeholder-not-a-key"})()
+            with self.subTest(alias=alias, credentials="none"):
+                with self.assertRaises(RuntimeError) as refused:
+                    check_with(alias, {})()
+                # Refused for the reason the route is refused for, naming the
+                # names - not refused for being a spelling nothing recognises.
+                for name in published[route]:
                     self.assertIn(name, str(refused.exception))
         with self.assertRaises(RuntimeError):
             check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
@@ -8704,13 +8790,21 @@ class SkillPackageTests(unittest.TestCase):
         two lists, read the client's branch, follow what that branch calls -
         which makes this a mechanism rather than three oversights in a row.
 
-        So the fourth one is a derived guard rather than another row. Every
-        `litellm.<Config>().<method>()` call a pre-dispatch branch makes is a
-        credential resolver by construction - that module returns the provider,
-        the base URL and the dynamic key, and nothing else - so the site is
-        named from the call. A route that acquires one and is not amended here
-        fails by this name, instead of waiting for the customer who holds that
-        credential.
+        So the fourth one is a derived guard rather than another row. A
+        `litellm.<Config>().<method>()` call a pre-dispatch branch makes
+        returns that route's provider, its base URL and its dynamic key
+        together, so the site is named from the call. A route that acquires
+        one and is not amended here fails by this name, instead of waiting for
+        the customer who holds that credential.
+
+        Not quite all of them, which this used to claim as construction.
+        Swept over every literal that chain compares against, one site of 35
+        on the installed 1.87.1 and one of 36 on the pinned 1.93.0 resolves no
+        credential: `baseten` is handed a helper that builds an api_base out
+        of the model string and reads nothing, while its key stays in the
+        branch. The guard is unchanged by that - over-reporting costs a
+        citation, under-reporting costs a run - and no route here reaches such
+        a site.
         """
         require_litellm(self)
         self.assertTrue(
@@ -8740,7 +8834,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_route_literal_the_client_dispatches_on_is_one_the_wrapper_takes(
         self,
     ) -> None:
-        """Which spelling goes into the environment variable, settled by a check.
+        """Which spelling goes into the environment variable, asked of the client.
 
         `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, casefolded, and
         looked up, and a value that is not a key raises before anything is
@@ -8750,24 +8844,90 @@ class SkillPackageTests(unittest.TestCase):
         word was not the key - so the assistant that derived it correctly was
         the one that halted.
 
-        Nothing here asks anybody to write the spelling down. The accepted key
-        IS the literal the client dispatches on, and this is what holds that
-        for the next route somebody adds.
+        The first version of this check compared the `branch` literal in the
+        inventory above against the published keys. Both are typed in this repository, in one
+        commit by one author, so between them they can only disagree about a
+        misspelling - and it was green while `cohere/command-r` resolved to
+        `cohere_chat`, a literal neither inventory carried. Measured with a
+        working key in `COHERE_API_KEY`: the wrapper refused that run as an
+        unmapped route, which is this file's own defect arriving on the one
+        route it had not asked the client about.
+
+        So it asks. Every model the client files under a route goes back
+        through `get_llm_provider`, and each answer has to be a route the
+        wrapper takes. A route reached under a second literal is declared an
+        alias, and an alias is only allowed to be one while the client reads
+        the same names on both - otherwise it is a second route wearing the
+        first one's credentials, which is a different question with the same
+        shape.
         """
+        require_litellm(self)
         published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
-        self.assertEqual(
-            sorted(
-                source.branch
-                for source in LITELLM_CREDENTIAL_SOURCES.values()
-                if source.branch not in published
-            ),
-            [],
-            "a route is accepted under a name the client does not dispatch on, "
-            "so the value derived from the model string or from "
-            "`custom_llm_provider` - the two places a route can be read - is "
-            "refused as an unmapped route before the first paid call, and "
-            "nothing the assistant can read says which other word to use",
-        )
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def names_read(literal: str) -> set[str]:
+            return environment_names_read(
+                [
+                    *litellm_provider_branches(literal),
+                    *litellm_predispatch_branches(literal),
+                ]
+            )
+
+        dispatched = {
+            route: litellm_dispatch_literals(route)
+            for route in LITELLM_CREDENTIAL_SOURCES
+        }
+        for route, literals in dispatched.items():
+            with self.subTest(route=route):
+                self.assertTrue(
+                    literals,
+                    f"the installed client files no model under {route!r}, so "
+                    "this read nothing and every literal that route dispatches "
+                    "on is reported as accepted. An unmapped literal gives the "
+                    "same answer, which is why the route has to be re-sourced "
+                    "rather than believed.",
+                )
+                self.assertEqual(
+                    sorted(
+                        literal
+                        for literal in literals
+                        if aliases.get(literal, literal) not in published
+                    ),
+                    [],
+                    f"the client dispatches a {route} model on a literal the "
+                    "wrapper does not accept, so a route derived from the "
+                    "model string or from `custom_llm_provider` - the two "
+                    "places a route can be read - is refused as unmapped "
+                    "before the first paid call, by a customer holding a key "
+                    "that works. Accept it as an alias of the route it shares "
+                    "its credentials with.",
+                )
+        for alias, route in aliases.items():
+            with self.subTest(alias=alias):
+                self.assertIn(
+                    alias,
+                    set().union(*dispatched.values()),
+                    f"{alias!r} is accepted as another spelling of {route!r} "
+                    "and the client no longer dispatches any route's models "
+                    "on it. An alias nothing produces cannot fail, so it stays "
+                    "until it is read as evidence that a spelling was checked.",
+                )
+                self.assertIn(
+                    route,
+                    published,
+                    f"{alias!r} is accepted as another spelling of {route!r}, "
+                    "which the wrapper maps no credential names to, so the "
+                    "route it resolves to is refused as unmapped anyway.",
+                )
+                self.assertEqual(
+                    names_read(alias),
+                    names_read(route),
+                    f"the client reads different names on {alias!r} than on "
+                    f"{route!r}, so treating the first as another spelling of "
+                    "the second hands a route the wrong inventory - which "
+                    "either refuses a key that works or promises one the "
+                    "vendor will reject.",
+                )
 
     def test_the_gate_and_the_wrapper_agree_on_what_counts_as_present(self) -> None:
         """Same names, and now the same answer about a value under one.
@@ -8786,6 +8946,7 @@ class SkillPackageTests(unittest.TestCase):
         program that spends money is where it mattered.
         """
         published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
 
         def refusal_for(route: str, environment: dict[str, str]):
             return guide_function(
@@ -8794,6 +8955,7 @@ class SkillPackageTests(unittest.TestCase):
                 {
                     "os": SimpleNamespace(environ=environment),
                     "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
                     "SELECTED_CURRENT_PROVIDER": route,
                     "SELECTED_CURRENT_MODEL": f"{route}/some-model",
                 },
