@@ -16579,6 +16579,68 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             server.shutdown()
         return bool(hits)
 
+    def door_function(self, name):
+        """One function, compiled out of the document, with no door installed."""
+        import ast as _ast
+        import re as _re
+
+        text = SDK_EXECUTION.read_text()
+        for source in _re.findall(r"```python\n(.*?)\n```", text, _re.DOTALL):
+            tree = _ast.parse(source)
+            for node in tree.body:
+                if isinstance(node, _ast.FunctionDef) and node.name == name:
+                    namespace: dict = {"math": __import__("math")}
+                    exec(compile(_ast.Module([node], []), "<door>", "exec"), namespace)
+                    return namespace[name]
+        raise AssertionError(f"{name} is not defined in the document")
+
+    def test_the_cost_reader_reads_the_field_litellm_actually_fills(self) -> None:
+        """The reader must consult the field the installed client populates.
+
+        litellm records a call's price at `_hidden_params["response_cost"]`,
+        and that is what the SDK's own accounting reads. A reader that consults
+        only `usage.cost` and the OpenRouter response-cost header gets None on
+        every call for five of the six routes this package supports, and the
+        door then debits the flat unpriced rate each time. That is not a
+        ledger, it is a call counter, and the difference is not academic: it
+        reported a run at the approved ceiling when the true spend was a
+        twentieth of it, and refused the held-out pass that would have fit.
+
+        Measured here rather than asserted, against whatever litellm is
+        installed, so the day the field moves this fails and says which route.
+        """
+        try:
+            import litellm
+        except ImportError:  # pragma: no cover - litellm is a pinned dep
+            self.skipTest("litellm is not installed")
+        reader = self.door_function("provider_reported_cost")
+        blind = []
+        for model in (
+            "gpt-4o-mini",
+            "gemini/gemini-2.0-flash",
+            "mistral/mistral-small-latest",
+            "cohere/command-r",
+        ):
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": "x"}],
+                mock_response="ok",
+            )
+            priced = (getattr(response, "_hidden_params", {}) or {}).get(
+                "response_cost"
+            )
+            if not priced:
+                continue
+            if reader(response) is None:
+                blind.append(model)
+        self.assertEqual(
+            blind,
+            [],
+            "the door read no cost on these routes while the client had "
+            "priced the call, so every one of them would debit the flat "
+            "unpriced rate instead of the real one",
+        )
+
     def test_the_doors_edge_is_stated_as_a_rule_and_gets_every_name_right(
         self,
     ) -> None:

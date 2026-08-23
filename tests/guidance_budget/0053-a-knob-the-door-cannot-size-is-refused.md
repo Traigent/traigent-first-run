@@ -1,8 +1,8 @@
 # 0053 - a knob the door cannot size is refused
 
 follows: 0052
-total-ceiling: 416_677
-total-measured: 416_618
+total-ceiling: 417_468
+total-measured: 417_409
 
 Four corrections at one seam bought this raise, and the largest of them is
 why the repair is a rule rather than one more name on a list.
@@ -100,3 +100,20 @@ tenth largest of the 51 along this chain and an eighth of the one 0052 itself
 took, and all of it lands in the two documents the door and its discipline
 live in - nothing arrived in either of them ahead of this entry, so there is
 no earlier state anyone has to reconstruct to check the arithmetic.
+
+
+A second measurement was folded into this entry before it landed. The door's
+cost reader consulted `usage.cost` and the OpenRouter response-cost header and
+never `_hidden_params["response_cost"]` -- the field the installed client
+actually fills, and the one the SDK's own accounting reads. Measured against
+that client, the two readings it did consult return nothing on five of the six
+routes this package supports, so on those routes the door debited the flat
+unpriced rate on every call and stopped being a ledger at all. End to end that
+counter believed a run had spent $4.98 of an approved $5.00 when the true
+figure was $0.249, and refused a held-out pass that fitted twenty times over.
+
+The 791 bytes are the reader's new first branch and the comment that says why
+it is first, at 549, plus 242 for the paragraph in the run record. The test
+that holds it costs nothing here: it lives in the suite, which no run loads,
+and it measures the installed client rather than asserting a remembered field,
+so the day that field moves it fails and names the route.

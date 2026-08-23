@@ -769,12 +769,23 @@ def build_prompt(
 
 
 def provider_reported_cost(response) -> float | None:
+    # `_hidden_params["response_cost"]` FIRST, because it is the field litellm
+    # actually populates and the one the SDK's own accounting reads. Measured
+    # against the installed client on five of the six routes this package
+    # supports - openai, anthropic, gemini, mistral and cohere - the two
+    # readings below it return None on every call, so a door that consulted
+    # only those was not a ledger at all: it debited the flat unpriced rate
+    # every time and became a call counter. Measured end to end, that counter
+    # reported a run at its approved ceiling when the true spend was a
+    # twentieth of it, and refused a held-out pass that fitted many times over.
+    hidden = getattr(response, "_hidden_params", {}) or {}
+    reported = hidden.get("response_cost") if isinstance(hidden, dict) else None
     usage = getattr(response, "usage", None)
-    reported = getattr(usage, "cost", None)
+    if reported is None:
+        reported = getattr(usage, "cost", None)
     if reported is None and isinstance(usage, dict):
         reported = usage.get("cost")
     if reported is None:
-        hidden = getattr(response, "_hidden_params", {}) or {}
         headers = hidden.get("additional_headers", {}) or {}
         reported = headers.get("llm_provider-x-litellm-response-cost")
     if reported is None:
