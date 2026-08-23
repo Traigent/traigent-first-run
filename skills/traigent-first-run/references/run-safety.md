@@ -203,7 +203,7 @@ on the existing account brings the run back.
 Once portal registration has completed, you may show one short note - "Your
 Traigent address was already confirmed, so there is no second confirmation email; your account is
 active and your 10-day portal access period has started. Next, create your API key from the key
-control in the top bar. Grant it full access — a read-only key still spends your money, but nothing
+control in the top bar. Grant it full access — a read-only key is refused, so no experiment
 reaches your portal — and save it when it appears, because it is shown only once."
 
 The Traigent key must be able to write experiments, not only read them. The connected optimization,
@@ -212,8 +212,8 @@ key can be rejected at submit time while the optimization drops to local-only tr
 the user's very first key, not just a later one, because registration hands over no key at all.
 A manually created key defaults to read-only, so grant it full access rather than accepting
 the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
-to prevent and expensive to discover, because by the time it shows up the spend has already
-happened.
+to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
+leaves spend that already happened.
 
 Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
 at the production service, and a stray override silently sends a paid run somewhere the user cannot

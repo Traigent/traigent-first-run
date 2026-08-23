@@ -10382,13 +10382,26 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
 
     def test_traigent_key_must_have_write_access_not_read_only(self) -> None:
-        """A read-only key spends on the run and records nothing.
+        """A read-only key is refused, and the note may not say it is charged.
 
-        Verified in the portal service: a manually created key defaults to
-        read-only, so the connected run is rejected at submit time and silently
-        drops to local-only tracking. The warning has to land while the user is
-        creating the key, because by the time the symptom appears the money is
-        already spent.
+        A manually created key defaults to read-only, and the connected run
+        needs to write experiments. What that costs the customer depends on
+        where the refusal lands, and the two are not the same:
+
+        * At session create, the pinned SDK raises rather than continuing --
+          `SessionCreationFailureReason.AUTH` aborts unless
+          `TRAIGENT_ALLOW_UNTRACKED` is set, which this guide never sets. No
+          trial runs and no provider call is placed, so nothing is charged.
+        * A key that is accepted there and rejected later, or a session create
+          that fails with 400, does degrade to local-only while the run keeps
+          spending. That is the path the warning above this one describes.
+
+        This docstring used to assert the first case charged the customer too,
+        and that sentence outlived the release that made it false: the abort
+        landed in the SDK before this text was written. An unexecuted claim in
+        a docstring is how a fact goes stale without any test noticing, so the
+        absent-phrase check below exists to make the false form fail rather
+        than merely be absent.
         """
         normalized = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
@@ -10396,9 +10409,22 @@ class SkillPackageTests(unittest.TestCase):
             "a manually created key defaults to read-only",
             "grant it full access",
             "do not add a backend or api url",
+            "a read-only key is refused",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        for false_claim in (
+            "read-only key still spends your money",
+            "read-only key still spends",
+        ):
+            with self.subTest(absent=false_claim):
+                self.assertNotIn(
+                    false_claim,
+                    normalized,
+                    "the pinned SDK aborts before any trial when the key is "
+                    "refused at session create, so telling the customer they "
+                    "are charged anyway is false where they read it",
+                )
 
     def test_first_time_access_path_is_single_and_ordered(self) -> None:
         """There is exactly one way a first-time user reaches the portal.
