@@ -4128,6 +4128,62 @@ class SkillPackageTests(unittest.TestCase):
         ]
         self.assertEqual(positions, sorted(positions))
 
+    def test_the_install_step_reruns_preflight_without_the_defer_flag(self) -> None:
+        """The deferred SKIP promises a verification that has to land somewhere.
+
+        `--defer-missing-sdk` reports an absent SDK as `sdk-version: SKIP`
+        with the words "verify it in the isolated environment after
+        installation". Both flagged invocations run before the install, so
+        that promise had nowhere to land: an install that fetched nothing, or
+        that landed a release other than the pinned one, reached the SDK
+        checks and every paid step behind them, and surfaced later as an
+        unrelated error rather than as "the SDK did not install".
+
+        Measured against the script, absent-plus-the-flag is the only one of
+        the four SDK states that is not already a failure, so a run WITHOUT
+        the flag is what closes both it and the wrong-version case, and the
+        install is the only point where either can be answered.
+
+        Order, not presence. A sentence naming the flagless re-run buys
+        nothing where it sits ahead of the install, so what is pinned here is
+        where it sits relative to the step it verifies and the SDK checks it
+        gates - and the remedy beside it, because naming a failure without
+        naming what to do about it is the half this guidance keeps losing.
+        """
+        stage_five = " ".join(
+            SKILL.read_text()
+            .casefold()
+            .split("### 5.", 1)[1]
+            .split("### 6.", 1)[0]
+            .split()
+        )
+        ordered = (
+            "install the exact declared dependencies",
+            "re-run `scripts/preflight.py`",
+            "without `--defer-missing-sdk`",
+            "`sdk-version: pass` is required before continuing",
+            "reinstall the exact pin",
+            "verify capabilities and public signatures",
+        )
+        for phrase in ordered:
+            with self.subTest(phrase=phrase):
+                self.assertIn(
+                    phrase,
+                    stage_five,
+                    "stage 5 has to re-run the preflight without "
+                    "`--defer-missing-sdk` after the install and say what "
+                    "must be true to continue; otherwise the strict "
+                    "FAIL-on-absent branch is unreachable through this guide.",
+                )
+        positions = [stage_five.index(phrase) for phrase in ordered]
+        self.assertEqual(
+            positions,
+            sorted(positions),
+            "the flagless re-run has to come after the install step and "
+            "before the SDK checks it gates; anywhere else it verifies "
+            "nothing.",
+        )
+
     def test_run_safety_owns_depth_without_repeating_the_skill_flow(self) -> None:
         text = RUN_SAFETY.read_text()
         normalized_safety = " ".join(text.casefold().split())

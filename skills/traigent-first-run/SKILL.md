@@ -73,9 +73,6 @@ at stage 1 with a new opening score, and never rerun paid work without newly sco
 Observe a live process, but never restart or expand it from the record alone. A record with every
 stage done or skipped is finished, not a resume point. The operating contract owns the mismatch
 rule.
-When the project has no compatible exact SDK declaration, use the tested pins in
-[`assets/requirements-first-run.txt`](assets/requirements-first-run.txt); never install an
-unversioned `traigent` package.
 
 ## Operating contract
 
@@ -640,12 +637,14 @@ Only after the standard-library-only component checks:
    compatible exact declarations, or otherwise the exact pins in
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
    Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
-   reference owns the rationale.
+   reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
+   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, reinstall
+   the exact pin there and re-run it - nothing else catches a silent or partial install.
 4. Verify capabilities and public signatures from the installed SDK. Use its public dataset
    loader/validator, decorator, and evaluation models; use a public no-execution contract validator
    when available, otherwise finish with safe mock plumbing and do not claim exhaustive static
    compatibility. Never recreate SDK binding fallbacks. Use resolved dataset paths for the pinned
-   SDK's tracked nested-relative defect. A missing SDK blocks only these SDK checks.
+   SDK's tracked nested-relative defect.
 5. Run calibration deferred solely for a local installed dependency. Then run a fresh-process
    Traigent mock plumbing check only when every model call and external side effect is intercepted;
    exit it and never reuse that process for a real run.
