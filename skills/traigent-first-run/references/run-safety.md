@@ -658,10 +658,10 @@ the card shows. `references/sdk-execution.md` owns what the wrapper does with th
 Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process, which
 is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
 optimization-call limit, but it does not yet share one cumulative budget with calibration and other
-calls. Until it does, keep a single running total rather than a phase ledger: each paid phase ends
-by printing what it spent against the figures it was launched with, and that printed total - not the
-SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is added to the
-running total and passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
+calls. Until it does, keep a single running total rather than a phase ledger: each paid phase prints
+what it spent against the figures it was launched with, and the combined figure that line names -
+not the SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is the
+running total, passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
 Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not.
 
@@ -669,7 +669,10 @@ A phase that reaches the remaining stops there and is reported as what it is: th
 completed, its stop reason, and the work that did not run. The way past it is a fresh approval for
 a larger total, taken back to the user with what has been spent so far - never a larger figure
 handed to the same process, and never a second attempt at the same phase on top of what the first
-one already spent.
+one already spent. A phase that DIED having spent is the same arithmetic and not a fresh start:
+every paid process prints its ledger on the way out however it ends, so take the running total from
+that line, carry it into whatever runs next, and report the phase as stopped part-way rather than
+as not having happened.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
@@ -677,8 +680,9 @@ Do not layer another retry loop over it, expose retry counts to the user, or set
 user's agent/provider client, with one exception the spend ledger requires: retries the provider
 client would take underneath the wrapper are turned off, because a call it repeats down there costs
 real money the ledger never sees and the running total never moves for. An explicit retry count the
-caller set is kept, and `references/sdk-execution.md` owns the mechanism and what it trades away -
-a transient failure now surfaces instead of being absorbed. Generated walkthrough provider calls add
+caller set is kept and is charged for rather than absorbed, and `references/sdk-execution.md` owns
+the mechanism and what it trades away - a transient failure now surfaces instead of being retried
+silently. Generated walkthrough provider calls add
 no explicit retries. When the preserved client has bounded retries, include their possible extra
 calls in the internal runtime/spend estimate without asking the user to configure them.
 

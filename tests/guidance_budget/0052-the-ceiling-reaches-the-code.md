@@ -2,9 +2,9 @@
 
 follows: 0051
 resident-ceiling: 84_760
-resident-measured: 84_709
-total-ceiling: 402_428
-total-measured: 402_369
+resident-measured: 84_714
+total-ceiling: 411_391
+total-measured: 411_332
 
 Every word about the spend ceiling was already correct and none of it was
 wired. `run-safety.md` set out the whole discipline - lower the per-optimization
@@ -61,51 +61,99 @@ That door was still half a ledger while it debited only what came back. A
 provider call that raises after reaching the provider is billable and brings no
 cost home with it, and litellm surfaces a timeout, a rate limit, a dropped
 connection and a mid-stream failure exactly that way rather than as a degraded
-response. The wrap therefore catches, deducts at the conservative rate - the
-answer already given to a price it cannot read - and re-raises the caller's own
-exception untouched. Omitted, this overstated what was left by everything that
-failed, on precisely the routes that fail more than once; a route failing every
-time would have spent the whole approved total without moving the figure that
-governs it. `BaseException` and not `Exception`, because an awaited call
-cancelled in flight raises `CancelledError`, which is neither of those and had
-still reached the provider. The pre-call refusal stays outside the catch: it
-placed nothing, so it owes nothing.
+response. It is charged at the conservative rate - the answer already given to a
+price it cannot read - and the caller's own exception is left untouched.
+Omitted, this overstated what was left by everything that failed, on precisely
+the routes that fail more than once; a route failing every time would have spent
+the whole approved total without moving the figure that governs it. Every shape
+of failure is covered without naming any of them, including an awaited call
+cancelled in flight, which raises `CancelledError` and is not an `Exception` -
+the money is committed before the call and simply stays committed when the call
+does not come back. A refusal is the one path that owes nothing, and it happens
+before anything is committed, because it placed nothing.
 
 One debit per invocation is honest only while an invocation is one billable
 request, and it was not. litellm hands the OpenAI-shaped client a nonzero
-`max_retries`: measured on 1.87.1 against a local HTTP server that counts what
-arrives, one call on an `openai/` or `azure/` route placed three provider
-requests, and the same call passing `max_retries=0` placed one. The count is
-that client's default and moves between releases, which is the reason to pin it
-rather than to count it - the guidance says "several" and the test asserts the
-property, so neither goes stale at the next bump. Several failed requests under
-a single conservative debit is the mild half. The half that never raises is why
-this went into the code rather than into a caveat - attempt one times out after
-the provider generated its tokens, so it is billed; the retry answers 200;
-nothing raises, no conservative branch runs, and the ledger books the retry's
-exact price while omitting the request that was paid for. The shortfall arrives
-wearing a measured figure. So both wrappers set that default themselves, ahead
-of the refusal. Deducting `1 + max_retries` on the exception path was the
-obvious alternative and does nothing for a case that never reaches the exception
-path. A retry taken above the door goes through the door and is paid for; one
-taken inside the client is invisible to it, so the decision moves outward to
-where it can be seen - and `setdefault` leaves a caller that asked for retries
-holding them.
+`max_retries`: measured against a local HTTP server that counts what arrives,
+one call on an `openai/` route placed three provider requests, and the same call
+passing `max_retries=0` placed one. Several failed requests under a single
+conservative debit is the mild half. The half that never raises is why this went
+into the code rather than into a caveat - attempt one times out after the
+provider generated its tokens, so it is billed; the retry answers 200; nothing
+raises, no conservative branch runs, and the ledger books the retry's exact price
+while omitting the request that was paid for. The shortfall arrives wearing a
+measured figure. So both wrappers set that default themselves.
 
-That is a trade, and writing it as a pure win would be the same defect class as
-an overstated safeguard, so both halves are in the comment beside the line: what
-is bought is the invariant the ceiling rests on, one wrapped call being one
-billable request, and what is given up is the silent absorption of a transient
-429 or 500, which now reaches the caller. It is not lost quietly - the failure
-branch above debits that attempt conservatively, so it is paid for and visible,
-and re-running is the user's decision rather than the client's. It also
-contradicted a standing rule, in both of the places that stated it: `run-safety.md`
-said to preserve the retry behaviour already present in the user's client, and
-`sdk-execution.md` opened by saying to leave the SDK and provider retry defaults
-unchanged. Two statements of one rule is how a rule gets changed in one place,
-which is the defect this repository keeps finding, so both now carry the same
-single exception and point at the line that takes it. Finding the second copy is
-what the whole-document read is for; the diff showed only the door.
+Pinning it bought a claim it does not support, and the claim was written down
+twice before anybody re-measured. One wrapped call is one billable request only
+while nobody spells retries the other way. On the same counting server: a caller
+passing its own `num_retries` of two placed FIVE requests through the door, and
+a process-wide `litellm.num_retries` of two placed three, because litellm copies
+that value over the client's `max_retries` and runs a retry loop of its own
+above it. Defaulting the second spelling to zero as well does not work and looks
+as though it does - the value is read as `kwargs.get("num_retries") or
+litellm.num_retries`, so a literal zero is falsy and the process-wide figure
+governs anyway, while on the async entry point the same zero IS honoured. A
+safeguard that holds on the name nothing generates and fails on the name every
+generated line uses is worse than none.
+
+The rule the guidance already carries is that the caller nobody wrote is the one
+to design for, and both of those spellings arrive from exactly there: a
+preserved agent or judge, imported after the door on this guide's own
+instruction, carrying whatever retry setting its author chose. So the answer is
+not a third kwarg. The debit moves to the front of the call: the door reads the
+worst case the request states - one, plus each retry either spelling asks for,
+multiplied by one attempt per `fallbacks` entry - refuses unless the remaining
+covers all of it, and reserves the whole figure before placing anything. A
+success settles that reservation down to the price that came back; a failure
+leaves it standing, which measured exact against every configuration above,
+where the old debit booked one conservative figure for up to five billable
+requests.
+
+Two alternatives were measured and neither survived contact with the library.
+Counting at the transport, through the documented `client_session` hook, would
+have seen retries, fallbacks and the non-chat entry points at once; it is
+consulted only by the OpenAI-family client, and a counting transport saw one of
+one request on an `openai/` route and none of one on Anthropic, Gemini or
+OpenRouter - the route this walkthrough's own example key belongs to. Counting
+at the logging layer fails differently: a custom logger fired one pre-call and
+one success event for three billable requests, and three pre-calls and one
+failure for five. Reconciling a reservation against what really happened is also
+out, because nothing on the response says: a reply returned after four billable
+requests carries the same hidden parameters as one returned after one, with no
+attempt count on it anywhere. That is why the settled figure on a retried
+success still misses the attempts that failed before it, and why that is written
+beside the reservation as a gap rather than left to be discovered.
+
+What the pin is now for is stated as what it is. It is not the invariant; it is
+what makes the count possible, because an absent `max_retries` is the client's
+own default, which moves between releases and cannot be read off the request,
+while zero is a figure the door can assert. A caller who wants the resilience
+sets the number itself and is charged for it. The trade is unchanged and still
+belongs in the comment beside the line - a transient 429 or 500 now reaches the
+caller instead of being absorbed - and it still contradicted a standing rule in
+both of the places that stated it: `run-safety.md` said to preserve the retry
+behaviour already present in the user's client, and `sdk-execution.md` opened by
+saying to leave the SDK and provider retry defaults unchanged. Two statements of
+one rule is how a rule gets changed in one place, which is the defect this
+repository keeps finding, so both now carry the same single exception and point
+at the line that takes it. Finding the second copy is what the whole-document
+read is for; the diff showed only the door.
+
+Reserving first closed a second finding for free, and refuted a sentence this
+entry used to carry about it. Resolving the wrapped attribute was called
+sufficient for the money being seen, and it is only necessary: litellm's
+`fallbacks` handling re-enters `litellm.completion` once per attempt, so every
+attempt went through the door and so did the invocation above them, and the
+ledger ended up holding one entry more than the run placed requests - three
+against two with one fallback, four against three with two. That surplus is not
+a rounding error where a scorer declares what it places: `check_scorer_calls`
+compares a declared count against exactly that number, so a compliant judge was
+stopped by a red that was the counter's fault. The door now counts an INVOCATION
+once, marking itself in flight through a context variable, so a re-entry taken
+underneath it is part of it. A context variable rather than a flag because a new
+thread starts with a fresh context and a new task copies the current one, which
+is the behaviour both the thread pool and the async fallback path need.
 
 A place instead of a rule earns bytes twice over: it is fewer lines than the
 count it replaces, and the refusal message it can write is better, naming the
@@ -117,14 +165,19 @@ binding older than the door misses it, and so does a client that is not litellm
 at all. Enumerating the exceptions instead of stating that rule got two of four
 names wrong, which a sentinel patched over `litellm.completion` settles in a
 second: `batch_completion` submits it to a thread pool and a configured `Router`
-calls it, so both go through the door. The two that really do reach the provider
-along their own path are `text_completion` and `completion_with_retries`, joined
-by the spend-capable names that are not chat completions at all. A list of names
-has to track a library nobody here controls and the rule does not, so the
-guidance carries the rule plus two worked examples, and a test measures the
-names on the installed library instead of reading them off a memory - the pin is
-1.93.0 and these were measured on 1.87.1, which is exactly the gap a fixed table
-would have hidden. It matters beyond tidiness: a later passage branches a
+calls it, so both go through the door. Five names really do reach the provider
+along their own path, and the same five are now written in all three places that
+enumerate them, because three copies said three different things: the guidance
+had `text_completion`, `completion_with_retries`, `embedding`, `responses` and
+`image_generation`, the test's own comment had the first three, and this entry
+had the first two under a category standing in for the rest. Every one of the
+five is now probed by the sentinel rather than asserted from a memory - two of
+them were named in the guidance and never measured at all, which is how a list
+starts drifting from the library again. A list of names has to track a library
+nobody here controls and the rule does not, so the guidance carries the rule
+plus worked examples, and the test measures them on whatever litellm is
+installed rather than on the release anyone remembers - which is exactly the gap
+a fixed table would have hidden. It matters beyond tidiness: a later passage branches a
 preserved evaluator on this exact question, warning that hand-debiting a call
 the door already saw charges the approved total twice and refuses a run that
 fits, and a reader with a `Router`-based agent was being sent into the wrong
@@ -147,16 +200,24 @@ test fails if either generated `optimize_sync` call starts asking for
 concurrency.
 
 That note then made a third overstatement of its own, in the sentence promising
-concurrency costs no money. The refusal is a check followed by a call with
+concurrency costs no money. The refusal was a check followed by a call with
 nothing held between them, so N callers reading one remaining all pass it and
 all place: measured by installing the door on the real library and letting
 `batch_completion` fan out eight ways against a remaining that funded exactly
 one call, eight requests reached the local server and the total finished below
-zero. A lock closing that would have to be held across the provider call, which
-is the concurrency being asked for, and would stall the async door's event loop
-- so the note states the exposure exactly instead, up to N-1 calls past the last
-one the remaining can fund. It also names how a reader arrives there without
-asking: `batch_completion` is a thread pool of its own and is ledgered.
+zero. The note that replaced it said no lock could close that, on the grounds
+that the lock would have to be held across the provider call - which was true of
+a debit taken afterwards and false of a reservation taken before. Committing the
+money in front of the call closes it, and it rather than any lock is what does:
+the window between deciding and spending used to hold a whole provider round
+trip, and the same eight-way fan-out against the same remaining now places one
+request and stops. What is left of that window is microseconds of bytecode, and
+one lock across the read and the append closes that too without ever touching
+the async door's event loop - measured by deleting it, which the fan-out no
+longer notices, so the lock is asserted where it is written rather than pretended
+to be exercised. What concurrency still costs is the exactness of the two
+window reads, which is a stopped scorer rather than money, and that is what the
+note says now.
 
 The ledger's last gap was that it died with the process and nothing emitted it.
 The figure the next phase is launched with was being assembled by hand from the
@@ -165,9 +226,47 @@ neither the conservative deduction for a call no route priced nor the spend on
 trials the response checks refused - so the claim that the next phase is bounded
 by what this one produced was not true of the number the code produced, and the
 closing check asked for a total nothing computed. Each paid phase now ends on
-one printed line: the calls it placed, what it spent against the approved total,
-what is left, and how much of that spend bought no measurement. The handoff
-sentence and the closing check both point at that figure now.
+one printed line: the calls it placed, what it spent, what it was launched
+having spent, what that leaves of the approved total, and how much of the spend
+bought no measurement. The handoff sentence and the closing check both point at
+that figure now.
+
+Where that line was written was the whole of it, and it was written where
+nothing ever goes wrong. It sat as a statement after the search returned, and in
+the connected phase below five assertions including one on the portal URL, while
+the failure handler above it exits with `SystemExit` - so the phase that most
+needs the figure printed nothing at all. Round five made that likelier on
+purpose, since pinning the client's retries lets a transient 429 surface where
+it used to be absorbed: a $5.00 approval, a baseline spending $0.90 over eight
+trials, a rate limit on the ninth, and the connected phase launched believing
+nothing had been spent and handed the whole $5.00 again. It is registered with
+`atexit` now, which covers an unhandled exception and a `SystemExit` alike and
+runs once, and the two statements are gone so a finished phase cannot print two
+totals for a reader to choose between. Its arithmetic was wrong as well as its
+placement: printing this process's spend against the whole ceiling and calling
+the difference remaining reads as $0.90 of $5.00 with $2.10 left, which is three
+figures that cannot all be true. Naming the fourth - what the process was
+launched having spent - makes the line add up and makes it the handoff figure.
+
+The last of the three figures never reached the code either, and the test that
+proved it did could not have seen it. `TRAIGENT_FIRST_RUN_PHASE` is read before
+`load_dotenv` and popped after, under a comment saying a stale file cannot opt
+into connected work; the three money figures were read after it, and
+`load_dotenv` fills an absent process variable from the file. Measured with an
+empty process environment and a `.env` naming all three, the block ran to
+completion on the file's ceiling and wrote it into `TRAIGENT_RUN_COST_LIMIT` -
+the number the per-trial admission check, the door's refusal and the held-out
+refusal all key on. Four sentences promising the figures come from the process
+and never from a file were false. They are true now because the three names are
+captured before the file is loaded and popped afterwards, exactly as the phase
+flag is. The gate's own test survived five rounds because its temporary project
+root held a script and no `.env`, which is a condition no real run is ever in -
+the walkthrough tells the user to create one for their provider key. Its fixture
+now writes a `.env` carrying all three figures at values nobody approved, so a
+reading order that ever consults the file fails an assertion instead of passing
+quietly. The preflight mechanism that already refused a persisted approval flag
+refuses these three and the derived limit beside them, which is one existing
+check extended rather than a second one invented.
 
 One of the settings gives something up, and saying so is part of what the
 bytes are for. Approving cost inside the process is what stops a stored token
@@ -209,11 +308,11 @@ that stage loads and can leave.
 Where the measured figures come from:
 
     0051 resident measured                                  84_474
-    the launch rule in the stage that spends                  +235
-    resident measured here                                  84_709
+    the launch rule in the stage that spends                  +240
+    resident measured here                                  84_714
 
     0051 total measured                                    369_593
-    sdk-execution.md                                      +29_916
+    sdk-execution.md                                      +38_532
       the approved figures, their three refusals, and
         the two SDK settings with what one of them
         gives up, all before the import                5_886
@@ -243,30 +342,53 @@ Where the measured figures come from:
       the two launch instructions, now naming what
         the process will stop without                    159
       the run-bounds pointer and the owns-list           185
-      one invocation held to one billable attempt,
-        on both wrappers, what that trades away,
-        the failed-call comment that now says what
-        one costs, and the carve-out in the
+      the client's own retries pinned off on both
+        wrappers, what that trades away, the
+        failed-call comment that now says what one
+        costs, and the carve-out in the
         leave-the-defaults rule above                  2_240
-      the edge stated as a rule with two worked
+      the edge stated as a rule with worked
         examples, and the branch that reads it           701
-      what concurrency actually costs, beside the
-        two reads that share the list                    629
-      the line each paid phase ends on, its two
-        call sites, and the prose it corrects          1_103
-    run-safety.md                                          +2_625
+      what concurrency costs, beside the two reads
+        that share the list                              629
+      the line each paid phase ends on and the
+        prose it corrects                              1_103
+      three stdlib imports                                50
+      the approved figures captured before the file
+        is loaded, popped after it, and read from
+        that capture                                   1_201
+      the ledger line moved onto the way out, the
+        figure it was launched with, the two
+        statements it replaces, and the two
+        passages that now point at it                  1_087
+      the door reserving what one invocation can
+        place instead of debiting what one attempt
+        did - the lock and the in-flight mark, the
+        worst case it reads off the request, the
+        reservation and its settlement, the two
+        wrappers over them, the two alternatives
+        that lost, which half of it closed the
+        concurrency exposure, and the rule
+        statements the measurements corrected          5_860
+      the retry rule extended to the caller the
+        door exists for                                  418
+    run-safety.md                                           +2_967
       the three launch figures, replacing the sentence
         that stated the discipline and wired none of it   1_060
       what happens when a phase reaches the remaining       404
       the held-out approval, all rows or none               262
       the closing check, and the running total's
-        destination                                        365
+        destination                                        360
       the handoff figure named as the printed
         ledger rather than tracked cost                     108
       the one exception to preserving a caller's
-        retry behaviour, and what it costs                  426
-    SKILL.md                                                 +235
-    total measured here                                   402_369
+        retry behaviour, what it costs, and that an
+        explicit count is charged rather than
+        absorbed                                            474
+      what a phase that died having spent leaves
+        for the next one                                    299
+    SKILL.md                                                 +240
+    total measured here                                   411_332
 
 Both ceilings sit under sixty bytes above their measurement, in line with the
 57 that 0051 left: enough to reword a sentence without a successor entry, too

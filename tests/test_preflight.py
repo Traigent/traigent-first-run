@@ -60,13 +60,58 @@ class StaticPreflightTests(unittest.TestCase):
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
-    def test_missing_custom_cost_limit_uses_sdk_default_without_warning(self) -> None:
+    def test_absent_cost_limit_passes_without_promising_the_sdk_default(
+        self,
+    ) -> None:
+        """An absent cap is fine, and the reassurance it used to carry is not.
+
+        This reported that the installed SDK's own default applies, which was
+        true while nothing set the limit. Each paid process now derives it from
+        the approved figures it is launched with, so a reader told the SDK
+        default governs is being told the walkthrough's ceiling does not.
+        """
         MODULE.check_cost_settings({}, {})
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
         self.assertEqual(cost_cap.status, MODULE.PASS)
-        self.assertIn("installed SDK default applies", cost_cap.detail)
+        self.assertNotIn("SDK default", cost_cap.detail)
+        self.assertIn("approved figures it is launched with", cost_cap.detail)
+
+    def test_a_cost_figure_persisted_in_the_file_fails(self) -> None:
+        """The approval is per process; a file outlives it.
+
+        Same mechanism the persisted approval flag already used, extended to
+        the three figures that now govern spending and to the per-optimization
+        limit derived from them. The run reads those names before `.env` is
+        loaded, so one here changes nothing today - it fails because a stale
+        approved total sitting in a file is what a later change to that reading
+        order would silently start enforcing.
+        """
+        for name in (
+            "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+            "TRAIGENT_FIRST_RUN_COST_SPENT_USD",
+            "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD",
+            "TRAIGENT_RUN_COST_LIMIT",
+        ):
+            with self.subTest(name=name):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings({}, {name: "500.00"})
+                result = next(
+                    item
+                    for item in MODULE.RESULTS
+                    if item.check == "cost-figures-in-file"
+                )
+                self.assertEqual(result.status, MODULE.FAIL)
+                self.assertIn(name, result.detail)
+
+        MODULE.RESULTS.clear()
+        MODULE.check_cost_settings({}, {})
+        self.assertEqual(
+            [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
+            [],
+            "a clean .env was reported as carrying a persisted figure",
+        )
 
     def test_sdk_check_accepts_only_the_tested_version(self) -> None:
         with mock.patch.object(

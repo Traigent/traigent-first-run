@@ -67,10 +67,14 @@ The first-run wrapper must not duplicate those behaviors. Preserve any retry beh
 present in the user's agent, and do not set `TRAIGENT_VENDOR_MAX_RETRIES` or LiteLLM `num_retries`
 for generated walkthrough code. The single exception is the one the ledger below cannot do without:
 the door pins the provider client's own `max_retries` to `0`, because retries taken beneath it are
-billed without being debited. It is stated with what it trades where it is written, and
-`references/run-safety.md` owns the rule it is the exception to. If the preserved agent already
-has bounded provider retries, include their possible extra calls in the automatic runtime/spend
-estimate without asking the user to choose the count.
+billed without being counted. It is stated with what it trades where it is written, and
+`references/run-safety.md` owns the rule it is the exception to. That rule binds what is GENERATED,
+and the caller the door exists for is the other one: this guide preserves the user's agent and judge
+and imports them after the door, so a `num_retries` already in their code, or a process-wide
+`litellm.num_retries`, arrives at the door and multiplies the provider requests one call places.
+The door reads both spellings and reserves for them rather than pretending they are absent. If the
+preserved agent already has bounded provider retries, include their possible extra calls in the
+automatic runtime/spend estimate without asking the user to choose the count.
 
 ## Automatic run bounds
 
@@ -296,22 +300,43 @@ selected route lists at run time, then verify each id is live and cost-tracked b
 Use one production-compatible function for baseline and optimization:
 
 ```python
+import atexit
+import contextvars
 import json
 import math
 import os
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
+APPROVED_FIGURE_NAMES = (
+    "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+    "TRAIGENT_FIRST_RUN_COST_SPENT_USD",
+    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD",
+)
 # Read before dotenv: a stale .env cannot opt into connected work. Baseline is
 # the fail-safe default.
 FIRST_RUN_PHASE = os.environ.get(
     "TRAIGENT_FIRST_RUN_PHASE", "baseline"
 ).strip().casefold()
+# The three approved figures, read here for the same reason and taken from this
+# dict below rather than from the environment again. `load_dotenv` fills an
+# ABSENT process variable from the file, so figures left in `.env` would have
+# supplied the ceiling, the running total and the per-call rate - and the
+# refusal below, which exists so a phase launched without an approval cannot
+# start, would have found them present and passed. Measured against an
+# otherwise empty environment and a `.env` naming all three: the block ran to
+# completion on the file's ceiling and wrote it into TRAIGENT_RUN_COST_LIMIT.
+APPROVED_FIGURES = {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
+for _approved_name in APPROVED_FIGURE_NAMES:
+    # Popped like the phase flag, so a child process inherits neither an
+    # approval nor a running total it was not launched with.
+    os.environ.pop(_approved_name, None)
 if FIRST_RUN_PHASE not in {"baseline", "connected"}:
     raise SystemExit("TRAIGENT_FIRST_RUN_PHASE must be 'baseline' or 'connected'")
 def inherited(name: str) -> bool:
@@ -367,9 +392,10 @@ def approved_usd(name: str) -> float:
     A default here would be a number nobody approved. Absent one of these, the
     SDK's own per-optimization default governs instead - built fresh per call,
     so every phase would get the whole of it and none of them would know what
-    the earlier phases already spent.
+    the earlier phases already spent. Read out of the pre-dotenv capture above,
+    which is what makes "never in .env" a refusal rather than a request.
     """
-    raw = os.environ.get(name, "").strip()
+    raw = (APPROVED_FIGURES.get(name) or "").strip()
     if not raw:
         raise SystemExit(
             f"{name} is not set, and this phase spends real money. Supply the "
@@ -885,17 +911,13 @@ REFUSED_TRIAL_COSTS: list[float] = []
 # specifies one. Passing
 # `parallel_config={"trial_concurrency": N}` to either `optimize_sync` below, or
 # to `traigent.configure`, breaks both reads: a neighbour's call lands inside
-# the window. It also loses money, by an amount worth stating exactly. The
-# door's refusal below is a check and then a call with nothing held between
-# them, so N callers reading the same remaining all pass it and all place: the
-# exposure is up to N-1 calls past the last one the remaining can fund, not the
-# single call the door refuses on. No lock closes that, because the lock would
-# have to be held across the provider call itself - which is the concurrency
-# being asked for, and would block the async door's event loop. Nor does a
-# reader have to opt in to reach it: `batch_completion` is a thread pool of its
-# own and is ledgered. So size the remaining for N and make those two reads
-# correct before asking for concurrency, or a scorer stops on a neighbour and
-# the ceiling is passed by up to N-1 calls.
+# the window, and a scorer then stops for a call it did not place. What it no
+# longer costs is money: the door below reserves before it places, under a lock
+# held across the read and the reservation and never across the provider call,
+# so N callers cannot all pass a remaining that funds one. Nor does a reader
+# have to opt in to reach concurrency - `batch_completion` is a thread pool of
+# its own and is ledgered - which is why the reservation, and not the
+# sequential premise, is what the ceiling rests on.
 RUN_SPEND_USD: list[float] = []
 # The same calls, in the same order, at what the provider actually reported -
 # `None` kept as `None`. The ledger above deducts a conservative figure for an
@@ -915,6 +937,18 @@ CALLS_PER_SCORED_ROW: int = 1 + SCORER_CALLS_PER_ROW
 # The judge's own model, fixed for the whole run and never the trial's. `None`
 # while the wired evaluator is deterministic, as this walkthrough's is.
 JUDGE_MODEL: str | None = None
+# Held across "is there room, and take it" and across nothing else - never
+# across a provider call, which is what made a lock look impossible here.
+LEDGER_LOCK: threading.Lock = threading.Lock()
+# True while a door invocation is in flight, so a re-entry knows it is nested
+# and leaves the money to the invocation that reserved for it. A context
+# variable rather than a module flag: a new thread starts with a fresh context,
+# so `batch_completion`'s pool is unaffected by its neighbours, and a new task
+# copies the current one, so an async fallback re-entering the door still sees
+# itself as nested.
+INSIDE_THE_DOOR: contextvars.ContextVar = contextvars.ContextVar(
+    "traigent_first_run_inside_the_door", default=False
+)
 
 
 def run_remaining_usd() -> float:
@@ -923,136 +957,225 @@ def run_remaining_usd() -> float:
 
 
 def report_run_spend() -> None:
-    """Print what THIS process spent. Every paid phase ends on this line.
+    """Print what THIS process spent, however this process ends.
 
     The ledger dies with the process, so a figure nothing emits reaches neither
     the close nor the next phase's `TRAIGENT_FIRST_RUN_COST_SPENT_USD`. It is
     not the SDK's tracked cost and is not interchangeable with it: this carries
     the conservative debit for every call no route priced, and the spend on
     trials the two response checks refused, and that figure carries neither.
+
+    Registered with `atexit` below rather than written after the last call,
+    because the phase that most needs this line is the one that did not finish:
+    a transient failure raises out of the search, the connected handler exits,
+    and a statement below it never runs. It names what it was launched having
+    spent as well as what it spent, because without that the line did not add
+    up: a process already carrying earlier spend cannot report its own against
+    the whole ceiling and call the difference remaining.
     """
+    spent_here = sum(RUN_SPEND_USD)
     print(
         f"this process placed {len(RUN_SPEND_USD)} provider call(s) and spent "
-        f"${sum(RUN_SPEND_USD):.4f} of the approved "
-        f"${RUN_COST_CEILING_USD:.2f}; ${run_remaining_usd():.4f} remains, and "
-        f"${sum(REFUSED_TRIAL_COSTS):.4f} of that spend bought no measurement"
+        f"${spent_here:.4f}; with ${RUN_COST_SPENT_USD:.4f} spent before it "
+        f"started, ${RUN_COST_SPENT_USD + spent_here:.4f} of the approved "
+        f"${RUN_COST_CEILING_USD:.2f} is gone and ${run_remaining_usd():.4f} "
+        f"remains; ${sum(REFUSED_TRIAL_COSTS):.4f} of this process's spend "
+        "bought no measurement"
     )
 
 
-def record_call_spend(cost: float | None) -> None:
-    """Debit one provider call. An unpriced call is not a free one.
+# Once, whichever way the process ends - and it ends once, so a phase that
+# raises does not print a second line under the one it already printed.
+atexit.register(report_run_spend)
 
-    A route that reports no cost still spent money, so it is deducted at the
-    approved conservative rate. Debiting `0` there would hold the remaining
-    flat across a whole held-out pass, and every gate reading it would pass.
+
+def record_call_spend(cost: float | None) -> None:
+    """Debit one provider call the door never saw. An unpriced call is not free.
+
+    For a preserved evaluator on another client - the one case the door cannot
+    reach - so the ceiling still falls at the conservative rate. A route that
+    reports no cost still spent money; debiting `0` there would hold the
+    remaining flat across a whole held-out pass and every gate reading it
+    would pass.
     """
     RUN_CALL_COSTS.append(cost)
     RUN_SPEND_USD.append(UNTRACKED_CALL_COST_USD if cost is None else cost)
 
 
-def refuse_if_exhausted(args: tuple, kwargs: dict) -> None:
-    """Refuse one call the remaining cannot cover, before it is placed."""
-    if run_remaining_usd() >= UNTRACKED_CALL_COST_USD:
-        return
-    model = kwargs.get("model") or (args[0] if args else "an unnamed model")
-    raise RuntimeError(
-        f"The approved ${RUN_COST_CEILING_USD:.2f} total is exhausted, so a "
-        f"call to {model} was not placed. Report what completed and ask for a "
-        "larger total before running anything else."
+def worst_case_requests(kwargs: dict) -> int:
+    """Billable provider requests one door invocation may leave behind.
+
+    The door cannot watch them happen, so it reads what the request states.
+    Measured on the installed litellm against a local server counting what
+    arrived, with the pin below applied: nothing set placed 1 request,
+    `max_retries` of N placed N+1, a process-wide `litellm.num_retries` of N
+    placed N+1, a caller's own `num_retries` of N placed 2N+1 - litellm copies
+    it over the client's `max_retries` and runs a retry loop of its own above
+    that - and each `fallbacks` entry multiplies the whole by one more attempt.
+
+    The pin is what makes any of this countable, and that is its remaining
+    merit: an absent `max_retries` is the provider client's own default, which
+    moves between releases and cannot be read off the request, while `0` is a
+    number this can assert. A caller who wants the resilience sets the count
+    itself, and now pays for it here instead of spending it invisibly.
+    """
+    asked = kwargs.get("num_retries")
+    library_retries = int(asked or getattr(litellm, "num_retries", 0) or 0)
+    client_retries = int((asked if asked is not None else kwargs["max_retries"]) or 0)
+    return (1 + library_retries + client_retries) * (
+        1 + len(kwargs.get("fallbacks") or ())
     )
 
 
-def debit_placed_call(response):
-    """Debit the call that produced `response`, then hand it back.
+def reserve_call_spend(args: tuple, kwargs: dict) -> int:
+    """Commit one invocation's worst case BEFORE it is placed, or refuse it.
 
-    Debited before anything else can raise on this response: by here the call
-    is placed and billed. Malformed cost metadata raises out of
-    `provider_reported_cost`, and reading it before debiting left that one path
-    spending without a debit - so a restart after the crash begins from a spent
-    figure missing the call, and under-counts. An unreadable cost is deducted
-    conservatively, the same answer as an absent one.
+    Reserving rather than debiting afterwards is the whole of this design's
+    third answer at this seam. A debit taken after the call is always one call
+    behind, and every hole found here has been money leaving between the check
+    and the debit: retries underneath the door, a fallback re-entering it, a
+    neighbour reading the same remaining. A reservation closes all three at
+    once, because what is committed is what the invocation may cost rather than
+    what one attempt of it did.
+
+    Committing before the call is also what closed the concurrency exposure,
+    and it rather than the lock is what did it: the window between deciding and
+    spending used to contain a whole provider round trip. The lock closes what
+    is left of that window by making the read and the reservation one step, and
+    it is released before the call rather than held across it.
+
+    Two alternatives lost, and both look better than they measure. Deducting
+    `1 + the retry count` on the failure path leaves the success path alone,
+    and the success path is where a billed attempt hides behind a retry that
+    answered. Counting at litellm's own HTTP hook would have covered retries,
+    fallbacks and the non-chat entry points together, and that hook is
+    consulted by the OpenAI-family client alone: a counting transport saw the
+    request on an `openai/` route and none of the requests on Anthropic,
+    Gemini or OpenRouter.
+
+    What it does not buy is stated with it. On the failure path the reservation
+    stands, which is exact against every configuration measured above. On the
+    success path it settles down to the price litellm reported, and litellm
+    reports one price however many attempts it billed for - measured: a
+    response returned after four billable requests carries the same
+    `_hidden_params` as one returned after one, with no attempt count anywhere
+    on it. So an attempt that was billed and then retried into a success is
+    outside the settled figure, bounded by this reservation while the call is
+    in flight and by nothing afterwards. That gap is the reason the invariant
+    above is stated as the pin's reach and not as a property of every caller.
     """
-    try:
-        cost = provider_reported_cost(response)
-    except RuntimeError:
-        record_call_spend(None)
-        raise
-    record_call_spend(cost)
-    return response
+    requests = worst_case_requests(kwargs)
+    needed = requests * UNTRACKED_CALL_COST_USD
+    with LEDGER_LOCK:
+        remaining = run_remaining_usd()
+        if remaining < needed:
+            model = kwargs.get("model") or (args[0] if args else "an unnamed model")
+            raise RuntimeError(
+                f"${remaining:.4f} of the approved ${RUN_COST_CEILING_USD:.2f} "
+                f"total is left, which does not cover the {requests} provider "
+                f"request(s) this invocation may place, so a call to {model} "
+                "was not placed. Report what completed and ask for a larger "
+                "total before running anything else."
+            )
+        RUN_SPEND_USD.append(needed)
+        RUN_CALL_COSTS.append(None)
+        return len(RUN_SPEND_USD) - 1
+
+
+def settle_call_spend(slot: int, cost: float | None) -> None:
+    """Replace a reservation with what the call is now known to have cost.
+
+    In place, so one invocation is one ledger entry whatever happened beneath
+    it - which is what `check_scorer_calls` counts and what the held-out slice
+    reads. An unreadable or absent cost keeps the conservative figure, the same
+    answer the design gives everywhere else it cannot read a price.
+    """
+    RUN_SPEND_USD[slot] = UNTRACKED_CALL_COST_USD if cost is None else cost
+    RUN_CALL_COSTS[slot] = cost
 
 
 def ledgered(place):
     """Wrap `litellm.completion` so a caller cannot decline the ledger."""
 
     def placed(*args, **kwargs):
-        # One invocation is one debit, so hold it to one billable attempt.
-        # litellm hands the OpenAI-shaped client a nonzero `max_retries`, and a
-        # timeout is in that client's own retry set, so one call on an `openai/`
-        # or `azure/` route places SEVERAL provider requests below this line and
-        # exactly one under `max_retries=0`. How many is the client's default,
-        # which moves between releases and is why this pins it rather than
-        # counting it. Several failures would take a single conservative debit,
-        # and the case that does not even look wrong is worse - an attempt that
-        # times out AFTER the provider generated its tokens is billed, the retry
-        # answers 200, nothing raises, and the ledger books the retry's exact
-        # cost while omitting the attempt that was paid for. A retry taken out
-        # here goes through this door and is debited; one taken inside the
-        # client is invisible to it, so the decision moves outward to where it
-        # can be seen and paid for. `setdefault`, so a caller that set
-        # `max_retries` itself keeps it.
+        # Pin what cannot be counted, then count the rest and reserve it.
+        # litellm hands the OpenAI-shaped client a nonzero `max_retries`, so a
+        # call retries below this line where nothing can see it; `setdefault`
+        # stops that and leaves a caller who asked for retries holding them.
+        # The pin alone was claimed to make one wrapped call one billable
+        # request, and `worst_case_requests` above records the measurements
+        # that refuted it. Nor can the rest be turned off from here:
+        # `setdefault("num_retries", 0)` is read as
+        # `kwargs.get("num_retries") or litellm.num_retries`, where a literal
+        # `0` is falsy - and it DOES suppress the process-wide figure on
+        # `acompletion`, which is worse than useless, a safeguard holding on
+        # the entry point nothing generates and not on the one every generated
+        # line uses.
         #
-        # This is a trade and not a free win. What is bought is the invariant
-        # the whole ceiling rests on: one wrapped call is one billable request.
-        # What is given up is the silent absorption of a transient 429 or 500 -
-        # it now reaches the caller instead. It does not vanish quietly: the
-        # branch below debits that attempt conservatively, so a failure is paid
-        # for and visible in the ledger, and running it again is the user's
-        # decision rather than the client's. `references/run-safety.md` records
-        # this as the one exception to preserving a caller's retry behaviour.
+        # So the invariant is not asserted. What is reserved instead is the
+        # worst case the request states, before the call. `run-safety.md`
+        # records the pin as the one exception to preserving a caller's retry
+        # behaviour and what it trades: a transient 429 or 500 now reaches the
+        # caller instead of being absorbed, paid for and visible rather than
+        # silently, and re-running is the user's decision.
         kwargs.setdefault("max_retries", 0)
-        refuse_if_exhausted(args, kwargs)
+        if INSIDE_THE_DOOR.get():
+            # A re-entry, not a new call - litellm's fallback handling calls
+            # back in once per attempt, and the invocation that reserved
+            # covered all of them. The paragraph after this fence owns why, and
+            # what it concedes: a genuinely separate call placed from INSIDE
+            # another one is covered by that invocation's reservation and no
+            # more.
+            return place(*args, **kwargs)
+        slot = reserve_call_spend(args, kwargs)
+        outside = INSIDE_THE_DOOR.set(True)
+        # Nothing catches below. A call that fails after reaching the provider
+        # is billable and brings back no price - litellm surfaces a timeout, a
+        # rate limit, a dropped connection and a mid-stream failure as an
+        # exception rather than as a degraded response, and an awaited call
+        # cancelled in flight raises `CancelledError`, which is not even an
+        # `Exception`. The reservation already stands for all of them and for
+        # the attempts retried underneath, so the exception propagates as the
+        # object the caller would otherwise have caught. Cost metadata that
+        # raises out of `provider_reported_cost` lands the same way, with the
+        # conservative figure left in place rather than a call spending
+        # nothing.
         try:
             response = place(*args, **kwargs)
-        except BaseException:
-            # A call that fails AFTER reaching the provider is billable and
-            # brings back no cost at all: litellm surfaces a timeout, a rate
-            # limit, a dropped connection and a mid-stream failure as an
-            # exception rather than as a degraded response. That is the same
-            # situation as a cost this cannot read - a call was placed, its
-            # price is unknown - and it gets the same answer, or the remaining
-            # overstates itself by every call that failed. One debit covers one
-            # invocation, which the line above holds to one billable attempt.
-            # `BaseException`, because an awaited call cancelled in flight
-            # raises `CancelledError`, which is not an `Exception` and had
-            # still reached the provider. The refusal above stays outside this:
-            # it placed nothing, so it owes nothing.
-            record_call_spend(None)
-            raise
-        return debit_placed_call(response)
+            settle_call_spend(slot, provider_reported_cost(response))
+        finally:
+            INSIDE_THE_DOOR.reset(outside)
+        return response
 
     return placed
 
 
 def ledgered_async(place):
     """The same for `litellm.acompletion`. Generated code awaits neither, but
-    an entry point left unwrapped is exactly the outside being removed."""
+    an entry point left unwrapped is exactly the outside being removed - and
+    this is the one the re-entry check below actually fires on, because
+    litellm's `fallbacks` handling routes even a synchronous call back through
+    `acompletion`, once per attempt, on a loop it runs in this thread."""
 
     async def placed(*args, **kwargs):
         kwargs.setdefault("max_retries", 0)  # as above, and for the same reason
-        refuse_if_exhausted(args, kwargs)
+        if INSIDE_THE_DOOR.get():
+            return await place(*args, **kwargs)
+        slot = reserve_call_spend(args, kwargs)
+        outside = INSIDE_THE_DOOR.set(True)
         try:
             response = await place(*args, **kwargs)
-        except BaseException:
-            record_call_spend(None)
-            raise
-        return debit_placed_call(response)
+            settle_call_spend(slot, provider_reported_cost(response))
+        finally:
+            INSIDE_THE_DOOR.reset(outside)
+        return response
 
     return placed
 
 
 # The door: one wrap, on the attribute every caller resolves.
 #
-# The debit lives on `litellm.completion` itself rather than on a function
+# The ledger lives on `litellm.completion` itself rather than on a function
 # callers are asked to come to, so a hand-written judge that calls it - which is
 # what a judge naturally does - is ledgered without knowing this file exists.
 # `place_call`, `call_agent` and `call_judge` below are conveniences over it.
@@ -1079,6 +1202,11 @@ def refuse_unless_it_fits(calls: int, what: str) -> None:
     here - a pass that stops halfway is not a smaller result, it is a different
     one under the same name: a mean over whichever rows the money reached. So
     the fit is settled before the first call and nothing is spent when it fails.
+
+    One conservative rate per call, which is what a generated call reserves. A
+    preserved caller that configures retries reserves more than that per call,
+    so size the approved total with those extra requests in it - the rule above
+    the import already requires exactly that of the estimate.
     """
     needed = calls * UNTRACKED_CALL_COST_USD
     remaining = run_remaining_usd()
@@ -1093,11 +1221,11 @@ def refuse_unless_it_fits(calls: int, what: str) -> None:
 
 
 def place_call(request: dict) -> tuple[str, float | None]:
-    """One call, refused and debited by the door, then checked as a measurement.
+    """One call, reserved and settled by the door, then checked as a measurement.
 
-    It no longer decides whether money may leave: the refusal and the debit
-    both happen inside the wrapped `litellm.completion` below, for this caller
-    and every other one. What is left is what only a caller wanting a
+    It no longer decides whether money may leave: the refusal and the
+    reservation both happen inside the wrapped `litellm.completion` below, for
+    this caller and every other one. What is left is what only a caller wanting a
     MEASUREMENT needs - the two checks below turn a canned or truncated
     response into a failed trial rather than a scored one - which is why this
     is still worth calling and no longer worth requiring. Its `what` label went
@@ -1105,7 +1233,7 @@ def place_call(request: dict) -> tuple[str, float | None]:
     callers this file never wrote and holds no label from them.
 
     The cost is read off the response rather than off the end of the ledger. It
-    is a pure read of the same object the debit read, so the two cannot
+    is a pure read of the same object the settlement read, so the two cannot
     disagree, and it does not depend on what else is in that list.
     """
     response = litellm.completion(**request)
@@ -1350,9 +1478,10 @@ that limit is now the remaining rather than a default: the wrapper writes
 `TRAIGENT_RUN_COST_LIMIT` before importing the SDK, so a phase reaching it stops gracefully and
 reports `stop_reason`. Outside it, held-out scoring and an LLM judge call `litellm.completion`
 directly, where no permit exists - so the second gate is on `litellm.completion` itself, wrapped
-once at setup, and it refuses once the remaining cannot cover one more call. Neither gate is
+once at setup, and it refuses a call whose worst case the remaining cannot cover. Neither gate is
 arithmetic the assistant performs between phases: the first is the SDK's per-trial admission check,
-and the second reads a ledger that same wrapper debits from every call's reported cost.
+and the second reads a ledger that same wrapper reserves against before each call and settles after
+it.
 
 **The second gate is a place, not a rule, and that is the whole of this design.** Two earlier
 versions asked callers to come to a function - first because a judge had bypassed the ledger
@@ -1378,6 +1507,15 @@ agent or evaluator module after the wrapper installs the door, keep generated ca
 wrapped names, and where neither can be arranged, declare what the scorer spends:
 `check_scorer_calls` compares that declaration against
 the ledger on every row, which is what still notices a call the door cannot see.
+
+Resolving the attribute is what brings a call to the door; it is not on its own what makes the
+money right, and treating the two as one sentence cost a run. litellm's own `fallbacks` handling
+re-enters `litellm.completion` once per attempt, so every attempt resolved the wrapped name and the
+invocation above them did too - measured at three ledger entries against two provider requests with
+one fallback, and four against three with two. On a scorer declaring what it places, that surplus
+entry is a stop on a caller that complied. So the door counts an INVOCATION once: a re-entry taken
+while another invocation is in flight is part of it, covered by the reservation that invocation
+already took, and the two rules together are what "the money is seen" means here.
 
 A judge is the caller that made this necessary rather than merely tidy. It runs inside `task_score`,
 whose `metric_functions` contract passes a prediction, an expectation and an input and returns a
@@ -1503,7 +1641,6 @@ baseline_results = agent.optimize_sync(
     timeout=BASELINE_TIMEOUT_SECONDS,
     save_to=BASELINE_RESULTS,
 )
-report_run_spend()
 ```
 
 Pass `algorithm="grid"` explicitly for this baseline sweep. **This applies to the local baseline
@@ -1533,9 +1670,11 @@ existing user-owned baseline, replace the generated example's
 `BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A
 real one-row fixed configuration remains one row; never manufacture variants around it.
 
-The baseline process ends on `report_run_spend()`, and the total it prints is `sum(RUN_SPEND_USD)` -
-the ledger that governed the phase, already carrying the conservative deduction for any call its
-route did not price. That total is what the connected process is launched with as
+The baseline process prints its ledger on the way out, whether it finished or died, because
+`report_run_spend` is registered with `atexit` rather than written after the last call. The figure
+to carry forward is the one that line names as gone - what this process spent plus what it was
+launched having spent - already carrying the conservative deduction for any call its route did not
+price. That total is what the connected process is launched with as
 `TRAIGENT_FIRST_RUN_COST_SPENT_USD`, so the number the baseline actually produced is the number the
 next phase is bounded by. Do not assemble it by hand from the SDK's tracked cost: that is a smaller,
 different quantity, and the gap is exactly the spend the ledger exists to catch. Do not start the
@@ -1745,8 +1884,9 @@ Two shapes reach that handler and they cost differently. A session that cannot b
 before any provider trial, so nothing was spent and the honest report is "the managed run did not
 start", with the sanitized reason and the baseline still standing as the result. A managed run that
 loses the brain mid-flight raises after some trials are already paid for: recover what the SDK
-persisted, report the trials that completed and the spend they carried, and say plainly that the
-search stopped early rather than presenting a partial frontier as the answer. Neither shape is a
+persisted, report the trials that completed, take the spend from the ledger line this process
+printed on its way out rather than from the SDK's tracked cost, and say plainly that the search
+stopped early rather than presenting a partial frontier as the answer. Neither shape is a
 reason to re-run the phase without the flag - that would buy back the exact result this prevents.
 
 Do not enable mock mode in this process. The optimization space must include the current
@@ -1906,7 +2046,6 @@ assert optimized_results.trials, "optimization did not execute"
 assert baseline_results.best_config is not None, "no baseline winner selected"
 assert optimized_results.best_config is not None, "no best configuration selected"
 assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
-report_run_spend()
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
