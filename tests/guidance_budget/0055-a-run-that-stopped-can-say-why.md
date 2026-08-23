@@ -1,10 +1,11 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
-resident-ceiling: 85_176
-resident-measured: 85_121
-total-ceiling: 426_053
-total-measured: 425_998
+resident-ceiling: 85_129
+resident-measured: 85_074
+total-ceiling: 425_679
+total-measured: 425_624
+
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -68,16 +69,6 @@ abandoned before task intent is anchored still leaves nothing behind. That is
 plausibly the commonest place to walk away, and no field defined here pretends
 to see it.
 
-Four of the bytes above are what an adversarial read of the first draft cost,
-and each bought a rule the draft did not have. The taxonomy had filed the
-degradation this file elsewhere orders a halt for as a warning - defined as the
-thing that does not stop the run, seventy-one lines from the sentence ordering
-the stop - so the events now name the closed set each key is spelled from, and
-that condition sits under the one that means the run ended early. A sixth event
-exists because walking the recovery list against five found nine classes with
-nowhere to go, an outage and an uncategorised provider error among them, and a
-vocabulary with a hole in it is one an author fills by inventing a word.
-
 The identity was authored prose, which cannot be spelled the same way twice by
 a writer who has forgotten the first time - and the writer is asked to find its
 own line again after a wait long enough to lose it. Drawing that field from a
@@ -100,154 +91,11 @@ because nothing about it changed - which is the deduplication that was wanted,
 bought without a lookup - while a problem that returns after clearing opens
 again and stays visible.
 
-The tests moved further than the guidance did. The first set was eight
-substring assertions, and a mutation sweep passed all of them against seven
-edits that reversed what the section says - deleting every event definition,
-dropping two redaction clauses, and renaming the artifact in one document but
-not the other. They now parse the field set out of the table, read the cells
-that carry a rule rather than a type, check each clause of the allowlist on its
-own, refuse the two spellings a rewrite comes back as, and require one path
-spelled identically in four documents. Every mutation written against them at
-that point had gone red.
-
-A third round bought a script rather than a sentence. Every rule above was
-executed by the assistant and enforced by nothing, which is this repository's
-own recurring defect wearing the one shape it can least afford: a privacy
-promise, on a file written into somebody's real project and meant to be handed
-to a stranger. `scripts/validate_run_log.py` reads the log and refuses a class
-outside its event's set, a state that is neither, a field the schema does not
-have, a sequence that clears something never opened - the repeat check went, for
-the reason the round below gives - and a sentence carrying a path, a credential, an address, an
-identifier, a link, or a quoted span long enough to be somebody's row. It
-cannot prove a sentence is free of customer data; it refuses every carrier
-anyone has actually leaked through, which is what the clause decomposes into.
-Scripts sit outside this budget, so the mechanism costs nothing here and the
-closed vocabularies become safe to keep.
-
-The same round closed three holes the vocabulary still had. `warning` had no
-catch-all while its sibling did, and the guide mandates warnings - a no-lift
-delta, and rows nothing could score - that were none of its three values, leaving an assistant to invent a class it is
-forbidden to invent. `tool_fail` keyed on a non-zero exit, which is the healthy
-answer where the credential handoff continues on exit 1, and is a finding about
-the customer's own material where preflight exits 1 - the exact relay that
-document forbids by name. And the rename that keeps one run's `cleared` off
-another run's `open` was written for one of the three paths that retire a
-record; it is stated once now, over all of them.
-
-The fourth round found the shape this entry has now argued for twice, in the
-change that was supposed to end it. `uncategorized` was added to the prose, and
-recorded here as shipped, while the checker still refused it - so a completed
-run reporting no lift, which the flow has a whole clause for, would have written
-a line its own validator rejected and shown the customer a rejection at the
-close. Two documents, one vocabulary, and nothing compared them: one test read
-the prose, another read the code. They are compared now, and the closed sets in
-the reference are asserted equal to the sets the script enforces.
-
-One check went for being wrong rather than for being unenforced. Refusing a
-repeated `open` cannot distinguish a same-session retry, which writes nothing,
-from a resumed session re-opening what it can no longer remember, which this
-guide licenses - and refusing correct input at the close is worse than not
-checking, because it teaches people to write around the checker. Collapsing on
-the identity answers the same either way, so deduplication stays guidance and
-the sequence check keeps only what is wrong however it arose.
-
-Resident buys the fifth line, and it is the line that makes the file
-worth writing: the close is the only place that named this file to the user, and
-a run that stops never reaches the close. The file written to explain a stopped
-run was invisible on exactly those runs. It is named wherever the run stops now,
-and the validator runs there too, so the privacy allowlist is machine-checked on
-the logs most likely to be handed to a stranger rather than only on the ones
-whose runs finished.
-
-The rest of the round was subtraction. Six passages were cut and their arguments
-left here where they were already written: the design rationale for append-only,
-the sentence arguing against a key field nobody proposed, the restatement of the
-consent gate, the second statement that the directory is deletable, and two
-paragraphs answering a reviewer inside the document an assistant reads at
-runtime. A reference states the rule; this ledger is where the reasoning lives.
-
-A fifth round read the checker as code rather than as a promise, and three of
-its defects were the kind only execution finds. Keying a quoted span on an
-opening quote made every possessive apostrophe a finding, so "the provider's
-quota was exhausted" was refused - at the close, on a correct log, in front of
-the customer. An unhashable value reached a set membership test and raised,
-which the blanket handler turned into exit 3, and the guide routes exit 3 as a
-tool failure: the run would have logged a complaint about its own checker rather
-than showing the user the bad line. And the email pattern, unbounded on both
-sides of the `@`, backtracked for seventy-eight seconds on a quarter-megabyte
-token - which is precisely the pasted error body the rule exists to catch.
-
-The quotes must pair now, three membership tests check the type before they
-check the value, the pattern is bounded, and `detail` has a length past which it
-is the finding rather than the thing being searched. Two carriers that were
-never checked at all are, an IP and a bare host; one that looked checked was
-dead code, because two escaped backslashes match a literal `C:\\` that no
-decoded path contains.
-
-The tests moved further than the checker did, and the honest measure is that
-they had to. A sweep of thirty-five edits to the script left fifteen green:
-`ts`, `stage`, `state` and the record shape had no negative coverage at all, and
-every leak pattern had exactly one example, so any narrowing that spared that
-example survived. Each rule was given boundaries and the internal-error path is executed
-rather than described, and the docstring names the five allowlist clauses that have no shape a checker
-can settle and stay the assistant's to honour. A clean exit says
-what it can prove and no more.
-
-A sixth round is the honest end of this entry, because it found the fix from the
-fifth reintroducing the defect the fifth had written its commit message about.
-Pairing the quote characters stopped one possessive being read as an opening
-quote and made two of them, twenty-six characters apart, into a span - which is
-the register this reference itself writes in, so ten of sixteen realistic
-sentences were refused at the close on a correct log. An apostrophe between two
-letters is never a quote, and the rule says so now. Beside it, a twenty-letter
-run was refused as an identifier, which is what a provider's error class name
-is, and naming one is exactly how an uncategorised refusal gets written; an
-identifier worth refusing carries a digit and a class name does not.
-
-Three claims made in this entry were also not true when they were written, and
-that is worth recording where the claims are. Comments in the shipped checker
-still narrated this repository's own drafting; the naming of the log moved to
-every stop while its check stayed at the close; and the sweep those paragraphs
-called exhausted was the authors' own. A later sweep of fifty-five edits left
-seventeen green, every one of them aimed at what the previous two rounds added.
-The gaps are closed - each pattern's alternatives, the stage scale, the timing
-rule, the absent-log path - and the claim is narrowed to what was measured.
-
 The absent log was its own small defect: a run that meets nothing worth logging
 writes no file, and reporting that as unreadable had the guide route a missing
 log as a tool failure, opening a file to complain that one was missing. It exits
 zero with nothing to report, and exit 2 keeps the case it was for - a file that
 exists and cannot be read.
-
-A seventh round ran four readers over disjoint halves of the change at once,
-and the two that read the prose and the checker each found the previous round's
-fix carrying the previous round's defect forward in a narrower form. The quote
-rule had been bounded against a letter, so a possessive on a token ending in a
-digit still opened a span - `gpt-4's refusal ... the rows'` - and the
-double-quote alternative had no bound at all, so one quoted term's closing mark
-paired with the next term's opening one. The identifier rule had been given a
-digit test on the reasoning that a class name carries none; vendor prefixes
-front-load digits, and nine of twenty realistic provider error class names were
-refused, which is exactly the sentence an uncategorised refusal is written as.
-Both rules are bounded on characters a word can end with now, and the digit has
-to sit past the eighth character.
-
-Two carriers the contract names first were never reachable. The path rule keyed
-on a boundary CHARACTER class of whitespace and quotes, so a path in backticks -
-the register this guide itself prints paths in - walked past it, and the address
-rule demanded whitespace before the local part, so an address in parentheses did
-too. Both are negative lookbehinds now, which is the difference between listing
-the punctuation you thought of and excluding the characters that cannot precede
-a carrier.
-
-The rest of the round was the checker's own contract. A deeply nested line
-raises `RecursionError` rather than `ValueError`, so a malformed line reported
-the check as broken - the same parser-blowup shape `preflight.py` already
-catches around its own parser. `--json` promised a parseable stdout and emitted
-prose on the two commonest exits. A misspelled flag exited 2, the code this tool
-spends on an unreadable log, so a mistyped argument reported a false fact about
-the customer's file. And `\d` is Unicode, so a stamp in Arabic-Indic digits
-satisfied a format this guide writes in ASCII.
 
 One residual is accepted rather than closed, and it is worth naming because a
 reader will otherwise assume a mechanism exists. The visibility guard scans
@@ -259,122 +107,25 @@ readily as it caught the case, so the guard is not extended and the discipline
 stays a reading one. The commit is published and stays published; the shipped
 tree says what it should.
 
-One last thing this round is worth recording, because it is the same defect the
-whole entry is about, committed by the verification rather than by the guidance.
-Every mutation sweep quoted above ran in a copied tree that omitted `tools/`, so
-`tests/test_skill_package.py` failed to import and returned non-zero for every
-mutation put to it. A non-zero exit is what a caught mutation looks like, so the
-guidance half of those sweeps reported a kill for each one and proved nothing.
-It surfaced only because three edits that should have PASSED came back red, and
-a false red is the half of a gate nobody looks at. The sweep is scratch tooling rather than
-anything this repository ships; it copies the whole checkout now and raises on an
-import error rather than counting it, and the figures here are from the re-run.
-
-An eighth reader found the seventh round's own carelessness. Four paragraphs
-above shipped twice, because the updater that appends them was run twice and
-nothing in this ledger could see it: both reason floors measure an entry against
-itself, where doubling makes the number easier rather than harder to clear, and
-the overlap rule compares entries to each OTHER. A repeated paragraph is a
-defect now, checked where the floors are.
-
-Two regexes it also caught were narrowed in the wrong direction by the round
-before. Requiring a hostname's letter at the head of its label made every host
-beginning with a digit unreachable - there is no word boundary inside
-`1password`, so that label can never be a leftmost match - and a label needs a
-letter somewhere rather than first. And requiring an identifier's digit past the
-eighth character bought back nine class names by letting through every token
-whose digits sit at the front; the latest digit in a real class name is at index
-six, and no class name is single-case, so seven characters plus a single-case
-alternative keeps all of them and refuses the ids again. The docstring inside
-the checker still said two allowlist clauses had no mechanical shape while the
-reference and the README said five - one fact in three homes, and the round
-edited two of them.
-
-A ninth reader read only for truth, and found twelve sentences that were not.
-Four were the round-by-round record drifting past the tree: a check described
-after it was removed, a mandated warning the guide does not mandate, a fraction
-that counted two of three, and a rename asserted in the document that does not
-own it. Five were customer-facing, and those are the ones that matter here - the
-layout row promised a line per occurrence when the whole design is a line per
-identity, and the carrier list named five of the seven shapes the checker
-settles, so a reader filed addresses and hosts under honour-only. Two more were
-this entry's own arithmetic of rounds.
-
-The same reader confirmed by execution what the prose only asserted: every exit
-path, all seven carriers, all five class sets byte-identical to the code, the
-stamp regex ASCII-only, the identity, and the two boundary claims about class
-names - digit at index six passes, index seven is refused. What it could not
-reproduce it declined to count, and said so: the sweep figures quoted above are
-scratch tooling this repository does not ship, and they stand on their author's
-word rather than on anything a reader can run.
-
-The subtraction this entry recorded twice is finally done. Four passages it had
-claimed were cut were still in the reference - the append-only rationale, the
-sentence defending a check nobody built, the division argument for why two files
-exist, and the aside justifying that paths are printed elsewhere. A record that
-says a thing was cut is worth less than the cut.
-
-A tenth reader read the ninth round itself, and every one of its findings was
-about that round rather than about the change. The pattern is the finding: two
-consecutive rounds spent their effort on the previous round's fixes, at roughly
-the rate they closed them.
-
-Three of them were one mistake with three faces. Trying to tell a provider's
-error class name from an identifier by WHERE its digit sits does not work, and
-each attempt to place the boundary traded one error for the other: at index
-eight, tokens whose digits sat at the front walked through; at seven, eight of
-thirteen realistic class names were refused, `AzureOpenAIGpt4Error` among them,
-because a class name carrying a model name puts its digit anywhere. Case
-separates them and position never did - a class name is CamelCase and an
-identifier rarely is - so the mixed-case branch is gone. A mixed-case token now
-escapes, and the docstring says so rather than the checker implying otherwise.
-That is one shape unsettled against eight false refusals removed, and the
-unsettled one is stated where a reader will look.
-
-The guard added last round for a doubled entry had no probe of its own, which
-made it the one rule in that function nobody had watched fail; its fixed
-character floor exempted exactly the doubling it was written for, because an
-entry near the floor has paragraphs under it; and it refused an entry that
-quotes one passage twice on purpose, which is what an entry about one fact in
-three homes has to do. It measures a proportion now, skips quotations and code,
-and has probes in both directions.
-
-The five things the allowlist cannot settle were also not one list. The word
-`clauses` miscounted them - the allowlist has seven clauses and these five items
-span four - and the three homes said them three ways, with the round's own test
-pinning the README's divergent wording, so an edit making them agree failed. A
-gate that forbids its own fix is worse than the drift it was written for. The
-lists are extracted and compared now instead of pinned three times.
-
-The taxonomy is three events, and this is the change the previous nine rounds
-were paying for without making. Six events were told apart by who has to act,
-but on that axis there are three actors - the user, this run, and nobody - so
-the extra three needed boundary rules, and the boundary rules are where the
-bytes and the defects both went. The three fattest bullets were the three whose
-borders had been argued, and what they spent it on was traffic between events: a
-refusal that halts the run recorded as the stop rather than the refusal, an exit
-code that is the healthy answer on one path and a finding about the customer's
-material on another, a degradation that is a stop and never a warning. None of
-those sentences tells a support reader anything. They existed because there were
-six.
-
-`blocked` is waiting on the user. `stopped` is this run not going on, and its
-seventeen classes say why - the gate that refused, the script that could not run,
-the category the provider refused under, the reason a phase ended early. A
+The taxonomy is three events, and it is the shape the argument above needs
+rather than the one it started with. Told apart by who has to act, there are
+three actors - the user, this run, and nobody - so a fourth event needs a
+boundary rule against the other three, and every boundary rule this file carried
+was a rule about the taxonomy rather than about a run. `blocked` is waiting on
+the user. `stopped` is this run not going on, and its classes say why. A
 `warning` is what did not stop the run. Nothing has to be argued into the right
-event, so the exit-code rule, the halt-versus-warning ruling and the
-refusal-versus-stop precedence all go, and with them two vocabularies and the
-tests that policed the borders.
+event, so no argument about one can be wrong.
 
-The subtraction went with it. The reference no longer re-enumerates the checks
-the script makes and the docstring lists - a third copy after the paragraphs
-that state each rule and the code that enforces them - and no longer carries a
-third copy of the five things no checker can settle. Both point instead, and the
-test compares the two remaining homes by extracting the lists rather than
-pinning a literal in each.
+What that leaves unbought is size rather than correctness, and it is worth
+saying because the entry above spends its bytes on the correctness half. Three
+events carry as many distinct class values as six did; the old four survive as
+prose inside one bullet, describing rather than deciding. The defects the
+taxonomy generated are structurally gone. The number of words an assistant has
+to spell the same way twice is not.
 
-One rule moved rather than shrank, and it is the one the file exists for. The
-check ran before the close and before a stop the assistant executes; the run
-this file is written for is the one where the customer closes the laptop, and
-that is a stop the assistant never reaches. It runs before every stop-and-wait
-now, which is a moment that exists on the abandoned path.
+What is deliberately not in this entry any more is the round-by-round record of
+how the work went. Thirteen commit messages carry it, which is where a reader
+looking for it will look, and an entry that is four-fifths chronicle argues for
+its bytes with the wrong thing - as this one did, at three times the size of the
+guidance it justifies, while carrying seven statements a later paragraph in the
+same file called false.

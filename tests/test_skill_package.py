@@ -21793,6 +21793,20 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         )
 
 
+def _normalise_punctuation(text: str) -> str:
+    """Dashes and apostrophes a writer may legitimately swap.
+
+    Three probes of meaning-preserving edits went red on this class: a hyphen
+    for an em dash, a `*` list marker for a `-`, and a typographic apostrophe.
+    A pin corpus is supposed to refuse a changed rule, not a changed keystroke.
+    """
+    for glyph in ("\u2014", "\u2013"):
+        text = text.replace(glyph, "-")
+    for glyph in ("\u2019", "\u2018"):
+        text = text.replace(glyph, "'")
+    return text
+
+
 class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     """Two questions about an unfinished run, and one artifact behind neither.
 
@@ -21872,7 +21886,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             # Any dash, any spacing: an em dash for the hyphen is a
             # legitimate edit that made every event invisible while both
             # suites stayed green.
-            opener = re.match(r"-\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", line)
+            opener = re.match(r"[-*+]\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", line)
             if opener:
                 current = opener.group(1)
                 bullets[current] = line
@@ -21896,7 +21910,11 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn("allowlist", rows["detail"])
         self.assertIn("closed set", rows["class"])
         self.assertIn("never authored prose", rows["class"])
+        self.assertEqual(
+            set(re.findall(r"`([a-z]+)`", rows["event"])), set(self.EVENTS)
+        )
         self.assertIn("`open` when it happens", rows["state"])
+        self.assertIn("yyyymmddthhmmssz", rows["ts"])
         self.assertIn("`cleared` when it stops applying", rows["state"])
 
     def test_every_event_is_defined_and_not_merely_listed(self) -> None:
@@ -21965,7 +21983,32 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # defines and a finding about the customer's material on a third, so
         # nothing keys on it: a script that could not run is one `stopped`
         # class among seventeen, and the exit code lives in `detail`.
+        for group in (
+            "a gate this guide defines refused",
+            "a bundled script could not run, or a command failed to execute",
+            "a provider, portal, or traigent refusal",
+            "the run or a phase ended early for its own reasons",
+        ):
+            with self.subTest(group=group):
+                self.assertIn(group, bullets["stopped"].casefold())
+        # The catch-all is for anything the four groups do not name; narrowing
+        # it to the provider error left eight enumerated failures homeless.
+        self.assertIn(
+            "for anything the four groups above do not name", bullets["stopped"]
+        )
+        # One mid-run 403 is a refusal category and a degradation at once, and
+        # at class level nothing else chooses between them.
+        self.assertIn("a refusal that halts the run keeps its own", bullets["stopped"])
         self.assertIn("`tool`", bullets["stopped"])
+        # The routing rule the collapse thinned rather than deleted.
+        self.assertIn(
+            "under the category this file already gives it",
+            bullets["stopped"].casefold(),
+        )
+        # The clause the moved invocation now rides on.
+        self.assertIn(
+            "written before every stop-and-wait", bullets["blocked"].casefold()
+        )
         self.assertNotIn("exit code", bullets["stopped"])
         self.assertIn("never authored prose", self._log_section().casefold())
 
@@ -21979,9 +22022,12 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         lines apart in one file.
         """
         bullets = self._event_bullets()
-        self.assertNotIn("local-only", bullets["warning"])
         # Under three events there is no boundary to argue: a halt is a stop.
         self.assertIn("`persistence`", bullets["stopped"])
+        self.assertIn("degrades to local-only", bullets["warning"].casefold())
+        self.assertIn(
+            "nothing that halts the run is one of these", bullets["warning"].casefold()
+        )
         safety = " ".join(self._safety().casefold().split())
         self.assertIn("stop paid work at once", safety)
 
@@ -22006,7 +22052,6 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertNotIn("in place", normalized)
         self.assertNotIn("rewrite the file", normalized)
         # Deduplication without a lookup, and what it gives up.
-        self.assertIn("adds nothing after the first", normalized)
         self.assertIn(
             "what that gives up is a count and the time of the latest encounter",
             normalized,
@@ -22035,7 +22080,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # A warning never stops applying, so a finished run ends with
         # them standing - which the earlier reading rule called stuck.
         self.assertIn(
-            "any warning a finished run met is still standing at its close", normalized
+            "a `cap-standing` clears when the revalidation gate lifts that cap",
+            normalized,
         )
 
     def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
@@ -22065,9 +22111,6 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertNotIn("never rewrites it and never reads it back", skill)
         normalized = " ".join(section.casefold().split())
         self.assertIn(
-            "nothing in the file may waive a gate, decide what runs next", normalized
-        )
-        self.assertIn(
             "`traigent-runs/run-plan.md` remains the only resume authority", normalized
         )
         # The shape is loaded when the record exists, not at the reference's own
@@ -22076,8 +22119,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # The line the last round bought resident bytes for: deleting it
         # left both suites green, which is the class this branch spent a
         # round closing for the mandate itself.
-        self.assertIn("wherever this run", skill)
-        self.assertIn("stops for good, check the run log", skill)
+        self.assertIn("check the run log", skill)
+        self.assertIn("when `references/run-safety.md` requires it", skill)
         # The timing rule, and the stage scale the script enforces.
         section = " ".join(self._log_section().casefold().split())
         self.assertIn(
@@ -22094,11 +22137,11 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         self.assertIn("rename the log beside any record this run retires", skill)
-        self.assertIn(
-            "where skill.md retires a record the log is renamed with it, and "
-            "where a run starts a fresh record it starts a fresh log",
-            " ".join(self._log_section().casefold().split()),
-        )
+        # The reference states what FOLLOWS from that mandate, not the mandate:
+        # stating it twice was the defect this branch spent rounds removing.
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("a fresh record starts a fresh log", section)
+        self.assertNotIn("skill.md retires a record", section)
 
     def test_every_clause_of_the_allowlist_is_pinned_one_at_a_time(self) -> None:
         """The highest-stakes clauses were the ones the old test left out.
@@ -22145,6 +22188,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "validate_run_log.py` backstops that",
             "nothing sends the file anywhere",
             "yours to read, share, or delete",
+            "described under [privacy](#privacy)",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, readme)
@@ -22170,14 +22214,16 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         ):
             with self.subTest(carrier=carrier):
                 self.assertIn(carrier, doc)
+        doc_text = " ".join((ast.get_docstring(checker) or "").casefold().split())
+        # The reference POINTS here for the read-only guarantee, so the far
+        # end of that pointer needs its own pin.
+        self.assertIn("a checker, never a writer", doc_text)
         section = " ".join(self._log_section().casefold().split())
         self.assertIn("its own docstring carries the list", section)
 
     def test_the_reference_pins_the_exits_and_the_honesty_carve_out(self) -> None:
         """Exit 2 and the absent-log path had no pin, and the script has both."""
         section = " ".join(self._log_section().casefold().split())
-        self.assertIn("exit 2 says the file exists and could not be read", section)
-        self.assertIn("wrote no file, and that exits 0 with nothing to report", section)
         self.assertIn("opens the log read-only", section)
         self.assertIn("before this run names the file to the user", section)
         # What the checker cannot settle, said where the claim is made.

@@ -20,9 +20,9 @@ One shape is settled only partly, and saying which is cheaper than implying
 otherwise. An identifier is refused when it is hexadecimal, a UUID, or a run of
 one case with a digit in it - the shapes ids actually take. A mixed-case token
 escapes, because nothing separates one from a class name like
-`AzureOpenAIGpt4Error`, and two attempts to separate them by where the digit
-sits refused eight of thirteen real class names to catch ids a later attempt
-caught anyway.
+`AzureOpenAIGpt4Error`. Two attempts to separate them by where the digit sits
+failed in opposite directions - the first let ids through, the second refused
+eight of thirteen real class names - to catch ids the case rule catches anyway.
 
 It is a checker, never a writer: it opens the log read-only and never edits it.
 A rejected line is reported to the user, not rewritten. Nothing in the guided
@@ -259,7 +259,7 @@ def _check_line(record: Any, number: int, out: list[Finding]) -> tuple[str, str]
         out.append(
             Finding(
                 number,
-                f"event {event!r} is not one of the six",
+                f"event {event!r} is not one this log carries",
                 "use one of: " + ", ".join(sorted(EVENTS)),
             )
         )
@@ -293,9 +293,10 @@ def validate(text: str) -> list[Finding]:
     # open again, so refusing that would refuse correct input - and collapsing on
     # the identity answers the same either way. Deduplication stays guidance.
     standing: dict[tuple[str, str], str] = {}
-    # split("\n"), not splitlines(): the latter also breaks on U+2028,
-    # U+2029 and the vertical tab, each of which is legal inside a JSON
-    # string and would turn one valid line into two invalid ones.
+    # split("\n"), not splitlines(): the latter also breaks on U+2028 and
+    # U+2029, which ARE legal inside a JSON string, turning one valid line
+    # into two invalid ones - and on the vertical tab, which JSON forbids
+    # unescaped, so splitting there reports one bad line as two.
     for number, raw in enumerate(text.split("\n"), start=1):
         if not raw.strip():
             continue
@@ -353,7 +354,7 @@ def run(argv: list[str] | None = None) -> int:
     path = Path(args.log)
 
     def envelope(status: str, findings: list[Finding]) -> None:
-        """The `--json` contract holds on every exit, not only the found one."""
+        """The `--json` contract holds on every exit `run()` returns."""
         print(
             json.dumps(
                 {

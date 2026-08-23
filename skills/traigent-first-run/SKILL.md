@@ -101,8 +101,8 @@ unversioned `traigent` package.
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
   invent progress/ETA.
-- Explain a blocked step in plain language and give one recommended recovery. At the close, and wherever
-  this run stops for good, check the run log as `references/run-safety.md` requires and name its path.
+- Explain a blocked step in plain language and give one recommended recovery. Check the run log
+  and name its path when `references/run-safety.md` requires it.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
 - Never expose secrets in chat, commands, logs, diffs, or metadata.

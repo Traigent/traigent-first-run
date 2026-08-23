@@ -53,10 +53,103 @@ def findings(*records: dict[str, object]) -> list[str]:
 class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
     """A misspelled class used to land silently in a support artifact."""
 
+    def test_the_closed_sets_are_closed_against_literals_not_each_other(
+        self,
+    ) -> None:
+        """Widening both homes together left every test green.
+
+        The prose and the script are compared to one another, so a coordinated
+        edit - an eighteenth `stopped` class added to both - passed. A set
+        checked only against its own mirror is not closed; these literals are
+        the mirror's mirror, and an intentional addition edits them on purpose.
+        """
+        self.assertEqual(
+            validate_run_log.CLASSES["blocked"],
+            frozenset({"approval", "key", "answer"}),
+        )
+        self.assertEqual(
+            validate_run_log.CLASSES["stopped"],
+            frozenset(
+                {
+                    "credential-file-tracked",
+                    "ignore-check",
+                    "containment",
+                    "readiness-cap",
+                    "invariants",
+                    "tool",
+                    "authentication",
+                    "key-scope",
+                    "account-access",
+                    "quota",
+                    "rate",
+                    "validation",
+                    "timeout",
+                    "cost-ceiling",
+                    "outage",
+                    "persistence",
+                    "uncategorized",
+                }
+            ),
+        )
+        self.assertEqual(
+            validate_run_log.CLASSES["warning"],
+            frozenset(
+                {"refused-trial", "untracked-cost", "cap-standing", "uncategorized"}
+            ),
+        )
+        self.assertEqual(validate_run_log.EVENTS, frozenset(validate_run_log.CLASSES))
+        self.assertEqual(validate_run_log.STATES, frozenset({"open", "cleared"}))
+        self.assertEqual(
+            validate_run_log.FIELDS,
+            frozenset({"ts", "event", "stage", "class", "state", "detail"}),
+        )
+
+    def test_the_allowlist_covers_the_whole_detail_at_any_length(self) -> None:
+        """Two mutants skipped the scan, by length and by offset.
+
+        A short `detail` and a carrier past the hundredth character were both
+        accepted, because every fixture happened to be mid-length and put its
+        carrier early.
+        """
+        self.assertTrue(findings(line(detail="stopped at ~/.env")))
+        long_prose = "the run stopped after a long stretch of ordinary prose " * 2
+        self.assertTrue(
+            findings(line(detail=long_prose + "at https://portal.example.com/api"))
+        )
+
     def test_a_class_outside_its_event_set_is_refused(self) -> None:
         problems = findings(line(**{"class": "credential"}))
         self.assertEqual(len(problems), 1)
         self.assertIn("outside its closed set", problems[0])
+
+    def test_every_event_closes_its_set_not_only_the_first_one(self) -> None:
+        """The fixture defaults to `blocked`, so the other two were untested.
+
+        Opening `stopped` to any string left both suites green - and `stopped`
+        is where seventeen of the twenty-four pairs live.
+        """
+        for event, invented in (
+            ("stopped", "readiness"),
+            ("warning", "tool"),
+            ("blocked", "timeout"),
+        ):
+            with self.subTest(event=event):
+                problems = findings(line(event=event, **{"class": invented}))
+                self.assertTrue(problems, f"{event}:{invented} was accepted")
+                self.assertIn("outside its closed set", problems[0])
+
+    def test_no_event_carries_a_class_that_belongs_to_another(self) -> None:
+        """A closed set that can grow is not closed."""
+        for event, allowed in validate_run_log.CLASSES.items():
+            others = set().union(
+                *(v for k, v in validate_run_log.CLASSES.items() if k != event)
+            )
+            for stray in sorted(others - allowed):
+                with self.subTest(event=event, stray=stray):
+                    self.assertTrue(
+                        findings(line(event=event, **{"class": stray})),
+                        f"{event} accepted {stray}",
+                    )
 
     def test_every_event_accepts_every_value_its_own_set_declares(self) -> None:
         for event, values in validate_run_log.CLASSES.items():
@@ -68,7 +161,9 @@ class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
 
     def test_an_invented_event_is_refused_by_name(self) -> None:
         problems = findings(line(event="oops"))
-        self.assertTrue(any("not one of the six" in problem for problem in problems))
+        self.assertTrue(
+            any("not one this log carries" in problem for problem in problems)
+        )
 
     def test_the_field_set_is_closed_in_both_directions(self) -> None:
         record = line()
@@ -277,7 +372,12 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
 
     def test_each_absolute_path_branch(self) -> None:
         pattern = self._pattern("an absolute path")
-        for path in ("/home/user/proj/.env", "~/proj/.env", "C:\\Users\\proj"):
+        for path in (
+            "/home/user/proj/.env",
+            "~/proj/.env",
+            "~/.env",
+            "C:\\Users\\proj",
+        ):
             with self.subTest(path=path):
                 self.assertTrue(pattern.search(f"the file {path} is tracked"), path)
 
@@ -560,7 +660,14 @@ class TheFieldsWithNoNegativeCoverageTests(unittest.TestCase):
     """
 
     def test_a_timestamp_that_is_not_the_stamp_format_is_refused(self) -> None:
-        for bad in ("nope", "2026-08-23T15:12:04Z", "20260823T151204", "", "20260823"):
+        for bad in (
+            "nope",
+            "2026-08-23T15:12:04Z",
+            "20260823T151204",
+            "",
+            "20260823",
+            "20260823t151204z",
+        ):
             with self.subTest(ts=bad):
                 self.assertTrue(
                     any("YYYYMMDDTHHMMSSZ" in p for p in findings(line(ts=bad)))
@@ -610,7 +717,7 @@ class TheFieldsWithNoNegativeCoverageTests(unittest.TestCase):
         tool failure, so the run would have logged a complaint about its own
         checker instead of showing the user the line.
         """
-        for field in ("class", "event", "state"):
+        for field in ("class", "event", "state", "detail"):
             for bad in ([1], {"a": 1}):
                 with self.subTest(field=field, value=bad):
                     problems = findings(line(**{field: bad}))
@@ -710,7 +817,7 @@ class TheProseAndTheScriptDeclareOneVocabularyTests(unittest.TestCase):
         current = None
         blank_run = 0
         for row in text.splitlines():
-            opener = re.match(r"-\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", row)
+            opener = re.match(r"[-*+]\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", row)
             if opener:
                 current = opener.group(1)
                 bullets[current] = row
@@ -732,9 +839,10 @@ class TheProseAndTheScriptDeclareOneVocabularyTests(unittest.TestCase):
         bullets = self._bullets()
         for event, allowed in validate_run_log.CLASSES.items():
             declared = set(re.findall(r"`([a-z][a-z-]*)`", bullets[event]))
-            # The bullet also names the event itself and, for `run_stop`, the
-            # composed key it points at; the vocabulary is what remains.
-            declared -= {event} | validate_run_log.EVENTS
+            # The bullet also names the event itself, and may name a FIELD -
+            # `detail`, where a failing command's exit status goes. The
+            # vocabulary is what remains once both are taken out.
+            declared -= {event} | validate_run_log.EVENTS | validate_run_log.FIELDS
             with self.subTest(event=event):
                 self.assertEqual(
                     declared & allowed,
@@ -992,10 +1100,9 @@ class TheGuidanceRoutesToItTests(unittest.TestCase):
             .split()
         )
         self.assertIn("scripts/validate_run_log.py --log", text)
-        self.assertIn("exit 1 names the lines", text)
-        self.assertIn("exit 2 says the file exists and could not be read", text)
-        # Exit 3 is one rule for every bundled script, stated once where
-        # the other three already route it.
+        # One home each: the docstring for this script's own exits, and the
+        # file's existing rule for exit 3, which every bundled script shares.
+        self.assertIn("its docstring states what each exit means", text)
         self.assertIn("exit 3 routes as it does for every bundled script", text)
         self.assertIn("exit 3 from any bundled script", text)
 
