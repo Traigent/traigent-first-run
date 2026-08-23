@@ -514,20 +514,21 @@ STRONG_REASONING_EFFORT = (
     os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
 )
 SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
-# Every name a route's vendor issues keys under, any one of which is enough.
+# Every name litellm will authenticate a route on, any one of which is enough.
 # The same inventory `preflight.py` opens the run with, route for route and
 # name for name, because a gate that admits a credential in front of a run that
-# refuses it stops a customer on a call that would have succeeded. litellm
-# reads `GOOGLE_API_KEY` before `GEMINI_API_KEY`, and `HF_TOKEN` before
-# `HUGGINGFACE_API_KEY`, so declaring either pair by one name alone refuses
-# exactly the name that vendor's own documentation hands out first.
+# refuses it stops a customer on a call that would have succeeded. Neither copy
+# is the authority and neither is checked against the other alone: the suite
+# reads the names out of the installed client's own resolution code, so a route
+# whose second name is in nobody's documentation - `OR_API_KEY`, `CO_API_KEY`,
+# `PALM_API_KEY` - is still a name a customer's key can be sitting in.
 PROVIDER_KEY_NAMES = {
-    "openrouter": ("OPENROUTER_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
     "openai": ("OPENAI_API_KEY",),
-    "anthropic": ("ANTHROPIC_API_KEY",),
-    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
     "mistral": ("MISTRAL_API_KEY",),
-    "cohere": ("COHERE_API_KEY",),
+    "cohere": ("COHERE_API_KEY", "CO_API_KEY"),
     "huggingface": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
     # Empty because no environment name settles it: Bedrock signs through the
     # AWS credential chain, so a shared profile, an SSO session, or an instance
@@ -613,12 +614,18 @@ def require_current_route_credential() -> None:
             f"provider route {SELECTED_CURRENT_PROVIDER!r}"
         )
     if key_names and not any(os.environ.get(name, "").strip() for name in key_names):
+        # One name reads as one name. "none of OPENAI_API_KEY is set" was
+        # grammatical nonsense at exactly the moment the reader is stuck.
+        missing = (
+            f"but {key_names[0]} is not set. Add that credential"
+            if len(key_names) == 1
+            else f"and none of {', '.join(key_names)} is set. Add any one of them"
+        )
         raise RuntimeError(
             f"The current model route {SELECTED_CURRENT_MODEL!r} uses "
-            f"{SELECTED_CURRENT_PROVIDER}, and none of "
-            f"{', '.join(key_names)} is set. Add any one of those credentials "
-            "or explicitly approve a provider-route change; the first run will "
-            "not switch routes automatically."
+            f"{SELECTED_CURRENT_PROVIDER}, {missing} or explicitly approve a "
+            "provider-route change; the first run will not switch routes "
+            "automatically."
         )
 
 BASELINE_CONFIG = {

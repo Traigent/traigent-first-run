@@ -314,14 +314,17 @@ COMMON_OUTCOME_FIELDS = (
 # Any one name admits its vendor. The paid wrapper in `sdk-execution.md`
 # carries this same inventory - it cannot import a script it is generated
 # alongside - and the package suite compares the two, because a name added
-# here and not there refuses a run this gate already admitted.
+# here and not there refuses a run this gate already admitted. The suite also
+# compares both against `litellm`, which is what actually decides whether the
+# call succeeds; comparing the two copies to each other can only find a name
+# one of them is missing, never a name both are.
 VENDOR_KEYS = {
-    "OpenRouter": ("OPENROUTER_API_KEY",),
+    "OpenRouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
     "OpenAI": ("OPENAI_API_KEY",),
-    "Anthropic": ("ANTHROPIC_API_KEY",),
-    "Google (Gemini)": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "Anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "Google (Gemini)": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
     "Mistral": ("MISTRAL_API_KEY",),
-    "Cohere": ("COHERE_API_KEY",),
+    "Cohere": ("COHERE_API_KEY", "CO_API_KEY"),
     "HuggingFace": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
