@@ -1129,7 +1129,7 @@ was first met.
 | `ts` | UTC `YYYYMMDDTHHMMSSZ`, when this line was written |
 | `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, `run_stop`, or `warning` |
 | `stage` | the run record's stage, 1 to 8 - the internal numbering, not the `n/5` the user saw |
-| `class` | one value from that event's own closed set below, never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
+| `class` | a string: one value from that event's own closed set below, or for `tool_fail` the exit code as text. Never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
 | `state` | `open` when it happens, `cleared` when it stops applying |
 | `detail` | one sentence, under the allowlist below |
 
@@ -1149,7 +1149,7 @@ SKILL.md retires a record - a mismatch, a historical artifact, a finished run - 
 to the same stamp beside it and a fresh one starts, so no `cleared` from an earlier run is read as
 this one's.
 
-The six are told apart by who has to act, and each names the closed set its `class` comes from.
+The six are told apart by who has to act, and each names what its `class` may be.
 
 - `blocked` - waiting on the user: `approval`, `key`, or `answer`. This is the one that says where a
   stuck run stopped, so it is written before every stop-and-wait that happens after the record
@@ -1182,7 +1182,8 @@ rather than the instance.
 It exists once the record does, under that record's own consent gate, and nothing is
 backdated into it afterwards.
 
-Before the close names this file to the user, run `scripts/validate_run_log.py --log
+Before this run names the file to the user - at the close, or wherever it stops - run
+`scripts/validate_run_log.py --log
 traigent-runs/run-log.jsonl` through the selected Python, from the script's literal absolute path
 under the resolved skill directory. It opens the log read-only and checks what the paragraphs above
 only state: a class outside its event's set, a state that is neither, a field the schema does not
@@ -1190,6 +1191,7 @@ have, a `cleared` with no `open` before it, and a `detail` longer than one sente
 carrying a path, a credential, an email address, a host or IP, a session or request id, a link,
 or a quoted span long enough to be somebody's row. Two clauses of the allowlist have no
 mechanical shape and stay yours to honour: a person's name, and a machine's.
-Exit 1 names the lines and exit 3 means the check itself could not run,
-which is never a finding about the log. A rejected line is reported to the user with what it
+Exit 1 names the lines, exit 2 says the file exists and could not be read, and exit 3 means
+the check itself could not run, which is never a finding about the log. A run that met nothing
+worth logging wrote no file, and that exits 0 with nothing to report. A rejected line is reported to the user with what it
 carries, and is not rewritten: append-only is what makes this file worth reading.

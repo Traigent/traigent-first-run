@@ -3,8 +3,8 @@
 follows: 0054
 resident-ceiling: 85_264
 resident-measured: 85_209
-total-ceiling: 427_506
-total-measured: 427_451
+total-ceiling: 427_725
+total-measured: 427_670
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -188,8 +188,34 @@ The tests moved further than the checker did, and the honest measure is that
 they had to. A sweep of thirty-five edits to the script left fifteen green:
 `ts`, `stage`, `state` and the record shape had no negative coverage at all, and
 every leak pattern had exactly one example, so any narrowing that spared that
-example survived. Each rule now has its boundaries and each pattern each of its
-alternatives, the internal-error path is executed rather than described, and the
+example survived. Each rule was given boundaries and the internal-error path is executed
+rather than described, and the
 docstring names the two allowlist clauses - a person's name, a machine's - that
 have no mechanical shape and stay the assistant's to honour. A clean exit says
 what it can prove and no more.
+
+A sixth round is the honest end of this entry, because it found the fix from the
+fifth reintroducing the defect the fifth had written its commit message about.
+Pairing the quote characters stopped one possessive being read as an opening
+quote and made two of them, twenty-six characters apart, into a span - which is
+the register this reference itself writes in, so ten of sixteen realistic
+sentences were refused at the close on a correct log. An apostrophe between two
+letters is never a quote, and the rule says so now. Beside it, a twenty-letter
+run was refused as an identifier, which is what a provider's error class name
+is, and naming one is exactly how an uncategorised refusal gets written; an
+identifier worth refusing carries a digit and a class name does not.
+
+Three claims made in this entry were also not true when they were written, and
+that is worth recording where the claims are. Comments in the shipped checker
+still narrated this repository's own drafting; the naming of the log moved to
+every stop while its check stayed at the close; and the sweep those paragraphs
+called exhausted was the authors' own. A later sweep of fifty-five edits left
+seventeen green, every one of them aimed at what the previous two rounds added.
+The gaps are closed - each pattern's alternatives, the stage scale, the timing
+rule, the absent-log path - and the claim is narrowed to what was measured.
+
+The absent log was its own small defect: a run that meets nothing worth logging
+writes no file, and reporting that as unreadable had the guide route a missing
+log as a tool failure, opening a file to complain that one was missing. It exits
+zero with nothing to report, and exit 2 keeps the case it was for - a file that
+exists and cannot be read.

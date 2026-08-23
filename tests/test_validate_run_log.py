@@ -136,6 +136,94 @@ class TheAllowlistOnDetailIsCheckedTests(unittest.TestCase):
                 self.assertEqual(findings(line(detail=detail)), [])
 
 
+class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
+    """One example per rule is one alternative per rule.
+
+    A sweep put a number on it: deleting the bare-host branch, the alphanumeric
+    session-id branch, three credential prefixes and both curly-quote forms each
+    left the suite green, because the single fixture for that carrier happened
+    to exercise a different alternative. These run against the compiled
+    patterns rather than through `detail`, because the length bound short-
+    circuits before the patterns do - which is also why the email bound needs
+    its own case here.
+    """
+
+    def _pattern(self, label: str):
+        for name, pattern in validate_run_log.LEAKS:
+            if name == label:
+                return pattern
+        raise AssertionError(f"no pattern named {label}")
+
+    def test_each_credential_prefix_is_refused(self) -> None:
+        for prefix in (
+            "sk-ant-",
+            "sk-",
+            "sk_",
+            "uk_",
+            "ghp_",
+            "gho_",
+            "ghu_",
+            "ghs_",
+            "github_pat_",
+            "xoxb-",
+            "AKIA",
+            "eyJ",
+        ):
+            token = prefix + "A1b2C3d4E5f6G7h8"
+            with self.subTest(prefix=prefix):
+                self.assertTrue(self._pattern("a credential").search(token), token)
+
+    def test_both_branches_of_the_host_rule(self) -> None:
+        pattern = self._pattern("a host or address")
+        # RFC 5737 TEST-NET-3 and RFC 2606 example domains.
+        self.assertTrue(pattern.search("could not reach 203.0.113.42 at all"))
+        self.assertTrue(pattern.search("could not reach portal.example.com at all"))
+
+    def test_both_branches_of_the_session_id_rule(self) -> None:
+        pattern = self._pattern("a session or request id")
+        self.assertTrue(pattern.search("request a3f91c2b11de4d0b failed"))
+        self.assertTrue(pattern.search("request A7f3Kq9ZmX2bLp0RtYuI failed"))
+        # A class name is letters only, and naming one is how an uncategorised
+        # provider refusal gets written.
+        self.assertIsNone(pattern.search("returned a ServiceUnavailableError"))
+
+    def test_both_curly_quote_forms(self) -> None:
+        pattern = self._pattern("quoted content")
+        self.assertTrue(pattern.search("it said \u201c" + "a" * 30 + "\u201d"))
+        self.assertTrue(pattern.search("it said \u2018" + "a" * 30 + "\u2019"))
+
+    def test_both_url_schemes(self) -> None:
+        pattern = self._pattern("a URL")
+        self.assertTrue(pattern.search("against http://portal.example.com/api"))
+        self.assertTrue(pattern.search("against https://portal.example.com/api"))
+
+    def test_each_absolute_path_branch(self) -> None:
+        pattern = self._pattern("an absolute path")
+        for path in ("/home/user/proj/.env", "~/proj/.env", "C:\\Users\\proj"):
+            with self.subTest(path=path):
+                self.assertTrue(pattern.search(f"the file {path} is tracked"), path)
+
+    def test_the_email_pattern_is_bounded_on_its_own(self) -> None:
+        """The length bound short-circuits before this ever runs through `detail`.
+
+        Unbounded, this backtracked quadratically on a long token with no `@`
+        in it, so the bound is what keeps the check fast on the input the rule
+        exists to catch. Measured here against the pattern directly.
+        """
+        import time
+
+        pattern = self._pattern("an email address")
+        start = time.monotonic()
+        self.assertIsNone(pattern.search("x" * 200_000))
+        self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_the_detail_bound_admits_a_long_sentence(self) -> None:
+        """The false-red side of the bound: it refuses a paste, not a sentence."""
+        sentence = "the connected optimization stopped early " * 8
+        self.assertLess(len(sentence), validate_run_log.DETAIL_LIMIT)
+        self.assertEqual(findings(line(detail=sentence)), [])
+
+
 class TheAppendOnlySequenceIsCheckedTests(unittest.TestCase):
     """`open` then `cleared`, and nothing that changed nothing."""
 
@@ -328,13 +416,10 @@ class ThePatternsThatRefusedGoodEnglishTests(unittest.TestCase):
     def test_the_carriers_added_after_review_are_caught(self) -> None:
         for carrier, detail in {
             "an absolute path": "the file C:\\Users\\jsmith\\proj\\.env is tracked",
-            # RFC 5737 TEST-NET-3: reserved for documentation, never routable,
-            # and assembled so no tracked file carries a bare address literal.
-            "a host or address": (
-                "the probe could not reach "
-                + ".".join(("203", "0", "113", "42"))
-                + " at all"
-            ),
+            # RFC 5737 TEST-NET-3, reserved for documentation and never
+            # routable - the same literal form this repository already uses
+            # in its socket-contract fixtures.
+            "a host or address": "the probe could not reach 203.0.113.42 at all",
         }.items():
             with self.subTest(carrier=carrier):
                 self.assertTrue(
@@ -422,15 +507,76 @@ class TheScriptItselfBehavesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("line 1", result.stdout)
 
-    def test_an_unreadable_log_exits_two_rather_than_reporting_findings(self) -> None:
+    def test_an_absent_log_is_nothing_to_report_rather_than_a_failure(self) -> None:
+        """A run that met nothing worth logging wrote no file.
+
+        Reporting that as unreadable had the guide route exit 2 as a tool
+        failure - opening a log to complain that one is missing.
+        """
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--log", str(ROOT / "no-such-file.jsonl")],
             capture_output=True,
             text=True,
             check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no run log was written", result.stdout)
+
+    def test_a_log_that_exists_and_cannot_be_read_exits_two(self) -> None:
+        """Exit 2 is the file being unusable, which is not a finding about it."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            # A directory at the log's path exists and cannot be read as a file.
+            log = Path(directory) / "run-log.jsonl"
+            log.mkdir()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot be read", result.stderr)
+
+    def test_invalid_utf8_is_the_file_being_unusable_not_an_internal_error(
+        self,
+    ) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run-log.jsonl"
+            log.write_bytes(b'{"ts": "\xff\xfe"}\n')
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 2)
+
+    def test_a_byte_order_mark_is_not_broken_json(self) -> None:
+        import tempfile
+
+        record = json.dumps(line())
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run-log.jsonl"
+            log.write_text(record + "\n", encoding="utf-8-sig")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_line_separator_inside_a_string_does_not_split_the_line(self) -> None:
+        """`splitlines()` breaks on U+2028, which is legal inside a JSON string."""
+        record = json.dumps(
+            line(detail="the run stopped\u2028waiting"), ensure_ascii=False
+        )
+        problems = [f.problem for f in validate_run_log.validate(record + "\n")]
+        self.assertEqual([p for p in problems if "not JSON" in p], [])
 
     def test_a_line_that_is_not_json_is_one_finding_not_a_crash(self) -> None:
         """A malformed line is a finding about the log, never a stack trace."""

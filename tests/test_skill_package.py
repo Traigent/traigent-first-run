@@ -21744,7 +21744,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     outright. A substring that survives the deletion of the rule it guards is
     not a guard. What is pinned below is the key set parsed out of the schema
     table, the vocabulary each event closes over, every clause of the allowlist
-    one at a time, and one path spelled identically in three documents.
+    one at a time, and one path spelled identically in four documents.
     """
 
     EVENTS = (
@@ -21790,7 +21790,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
                 continue
             cells = line.split("|")
             for key in re.findall(r"`([a-z_]+)`", cells[1]):
-                rows[key] = cells[2].strip()
+                rows[key] = cells[2].strip().casefold()
         return rows
 
     def _event_bullets(self) -> dict[str, str]:
@@ -21894,7 +21894,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # the event cannot key on it.
         self.assertIn("could not run at all", bullets["tool_fail"])
         self.assertIn("exit 3", bullets["tool_fail"].casefold())
-        self.assertIn("never authored prose", self._log_section())
+        self.assertIn("never authored prose", self._log_section().casefold())
 
     def test_the_halt_this_file_orders_is_not_filed_as_a_warning(self) -> None:
         """The defect this section shipped with, pinned so it cannot return.
@@ -21989,6 +21989,17 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # The shape is loaded when the record exists, not at the reference's own
         # stage - stage 3 can refuse before stage 4 loads the document.
         self.assertIn("load it before the first line is written", skill)
+        # The line the last round bought resident bytes for: deleting it
+        # left both suites green, which is the class this branch spent a
+        # round closing for the mandate itself.
+        self.assertIn("wherever this run", skill)
+        self.assertIn("stops for good, check the run log", skill)
+        # The timing rule, and the stage scale the script enforces.
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn(
+            "appended when it happens rather than at the end of the stage", section
+        )
+        self.assertIn("1 to 8", section)
 
     def test_a_restart_carries_the_log_with_the_record(self) -> None:
         """A key with no run in it merges two runs into one file.

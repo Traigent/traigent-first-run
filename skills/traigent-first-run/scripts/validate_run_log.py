@@ -85,15 +85,15 @@ TIMESTAMP = re.compile(r"^\d{8}T\d{6}Z$")
 # ones a machine can settle. A checker cannot prove a sentence carries no
 # customer data - it can refuse every carrier anyone has actually leaked
 # through, which is what the clause is protecting against.
-# One sentence, so a `detail` far past that is itself the finding - and an
-# unbounded pattern over a huge single token is where a scanner stops being
-# fast. The bound is generous: it refuses a paste, not a long sentence.
+# One sentence, so a `detail` far past that is itself the finding, and a
+# pattern scan over a huge single token is where a checker stops being fast.
+# The bound is generous: it refuses a paste, not a long sentence.
 DETAIL_LIMIT = 400
 
 LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Requires a boundary before the slash, so `3/5`, `and/or` and `input/output`
-    # are ordinary prose. One escaped backslash for the Windows branch: two was
-    # the regex for a literal `C:\\`, which no JSON-decoded path ever contains.
+    # stay ordinary prose. The Windows branch takes one escaped backslash: two
+    # matches a literal `C:\\`, which no JSON-decoded path contains.
     ("an absolute path", re.compile(r"(?:^|[\s\"'(])(?:/[^\s\"']*/|~/|[A-Za-z]:\\)")),
     (
         "a credential",
@@ -102,10 +102,10 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"[A-Za-z0-9_\-]{8,}"
         ),
     ),
-    # Bounded on both sides of the `@`. Unbounded, this backtracks quadratically
-    # on a long token with no `@` in it - which is exactly the pasted error body
-    # or base64 blob the rule exists to catch - and took 78 seconds on 256KB.
-    # The lookbehind keeps a decorator like `@traigent.optimize` out of it.
+    # Bounded on both sides of the `@`: unbounded, this backtracks
+    # quadratically on a long token containing no `@`, which is exactly the
+    # pasted error body or base64 blob the rule exists to catch. The lookbehind
+    # keeps a decorator such as `@traigent.optimize` out of it.
     (
         "an email address",
         re.compile(
@@ -116,7 +116,7 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "a session or request id",
         re.compile(
             r"\b(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-            r"[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}|[A-Za-z0-9]{20,})\b"
+            r"[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}|(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{20,})\b"
         ),
     ),
     ("a URL", re.compile(r"\bhttps?://\S+")),
@@ -131,7 +131,17 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # finding, so `the provider's quota was exhausted` was refused.
     (
         "quoted content",
-        re.compile("\"[^\"]{25,}\"|'[^']{25,}'|“[^”]{25,}”|‘[^’]{25,}’"),
+        re.compile(
+            # The single-quote form is bounded on both sides by a
+            # non-letter, because an apostrophe between two letters is a
+            # possessive or a contraction. Without that bound, "the user's
+            # approval before the provider's trial" reads as one quoted
+            # span twenty-six characters long.
+            '"[^"]{25,}"'
+            "|(?<![A-Za-z])'[^']{25,}'(?![A-Za-z])"
+            "|\u201c[^\u201d]{25,}\u201d"
+            "|\u2018[^\u2019]{25,}\u2019"
+        ),
     ),
 )
 
@@ -319,6 +329,11 @@ def run(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     path = Path(args.log)
+    if not path.exists():
+        # Reporting an absent log as unreadable would have the guide open a
+        # file to complain that one is missing.
+        print(f"{path}: no run log was written")
+        return 0
     try:
         # utf-8-sig so a byte-order mark is not reported as broken JSON.
         text = path.read_text(encoding="utf-8-sig")
