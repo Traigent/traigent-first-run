@@ -2778,6 +2778,7 @@ class SkillPackageTests(unittest.TestCase):
             "scripts/preflight.py",
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
+            "scripts/validate_run_log.py",
             "assets/run-plan.md",
             "assets/requirements-first-run.txt",
         }
@@ -18474,7 +18475,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
         self.assertEqual(
             [path.name for path in scripts],
-            ["calibrate_evaluator.py", "preflight.py", "readiness.py"],
+            [
+                "calibrate_evaluator.py",
+                "preflight.py",
+                "readiness.py",
+                "validate_run_log.py",
+            ],
             "the bundled scripts have changed; this ban covers whatever this "
             "glob finds, so a script outside it is a script nobody checks",
         )
@@ -21814,8 +21820,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn("allowlist", rows["detail"])
         self.assertIn("closed set", rows["class"])
         self.assertIn("never authored prose", rows["class"])
-        self.assertIn("`open`", rows["state"])
-        self.assertIn("`cleared`", rows["state"])
+        self.assertIn("`open` when it happens", rows["state"])
+        self.assertIn("`cleared` when it stops applying", rows["state"])
 
     def test_every_event_is_defined_and_not_merely_listed(self) -> None:
         """The table row alone satisfied the old test; a definition is the point.
@@ -21838,12 +21844,13 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     def test_each_event_closes_over_a_vocabulary_the_key_can_be_spelled_from(
         self,
     ) -> None:
-        """`class` is two thirds of the identity dedup matches on.
+        """`class` is one of the three fields the identity is spelled from.
 
-        Left as authored prose, the same failure met twice spells its key two
-        ways, every count stays 1, and a `blocked` line is never found again by
-        the turn that would resolve it. So each event names the closed set its
-        class is drawn from, and `tool_fail` names the exit code instead.
+        Left as authored prose, the same failure met twice spells itself two
+        ways, so a reader collapsing on the identity sees two problems where
+        there was one, and the turn that clears a `blocked` line cannot name
+        what it is clearing. Each event names the closed set its class comes
+        from; `tool_fail` names an exit code instead.
         """
         bullets = self._event_bullets()
         expected = {
@@ -21870,13 +21877,23 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
                 "`persistence`",
                 "`uncategorized`",
             ),
-            "warning": ("`refused-trial`", "`untracked-cost`", "`cap-standing`"),
+            "warning": (
+                "`refused-trial`",
+                "`untracked-cost`",
+                "`cap-standing`",
+                "`uncategorized`",
+            ),
         }
         for event, values in expected.items():
             for value in values:
                 with self.subTest(event=event, value=value):
                     self.assertIn(value, bullets[event])
         self.assertIn("exit code", bullets["tool_fail"])
+        # A non-zero exit is the healthy answer on two paths this guide
+        # defines and a finding about the customer material on a third, so
+        # the event cannot key on it.
+        self.assertIn("could not run at all", bullets["tool_fail"])
+        self.assertIn("exit 3", bullets["tool_fail"].casefold())
         self.assertIn("never authored prose", self._log_section())
 
     def test_the_halt_this_file_orders_is_not_filed_as_a_warning(self) -> None:
@@ -21914,7 +21931,10 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertNotIn("rewrite the file", normalized)
         # Deduplication without a lookup, and what it gives up.
         self.assertIn("adds nothing after the first", normalized)
-        self.assertIn("the count is what gets given up here", normalized)
+        self.assertIn(
+            "a count, and the time of the latest encounter, are what get given up here",
+            normalized,
+        )
         self.assertIn("collapsing on that identity, last line wins", normalized)
         self.assertIn("no separate key field", normalized)
 
@@ -21941,7 +21961,19 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         section = self._log_section()
-        self.assertIn("never rewrites it and never reads it back", skill)
+        # The obligation itself, which the first version of this class never
+        # pinned: deleting the two lines that create it left every other
+        # assertion satisfied, so the guard stayed green over a package with
+        # no mandate in it at all.
+        self.assertIn(
+            "append every blocking failure, every stop-and-wait, and every warning",
+            skill,
+        )
+        self.assertIn("one line when it happens and one if it clears", skill)
+        # The write discipline is part of the shape the reference owns, and
+        # that reference loads before the first line is written. Stating it
+        # in both documents was one rule with two homes, and 78 bytes.
+        self.assertNotIn("never rewrites it and never reads it back", skill)
         normalized = " ".join(section.casefold().split())
         self.assertIn(
             "nothing in the file may waive a gate, decide what runs next", normalized
@@ -21951,21 +21983,20 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         )
         # The shape is loaded when the record exists, not at the reference's own
         # stage - stage 3 can refuse before stage 4 loads the document.
-        self.assertIn("load it when the record is created", skill)
+        self.assertIn("load it before the first line is written", skill)
 
     def test_a_restart_carries_the_log_with_the_record(self) -> None:
         """A key with no run in it merges two runs into one file.
 
-        `count` becomes a cross-run count and a stale `resolved` makes a stuck
-        run read as cleared - inverting this file's own line that a line which
-        never clears is what a stuck run looks like.
+        A previous run's `cleared` collapses onto this run's `open` and the
+        file reports an abandoned run as cleared - inverting its own line
+        that an identity whose last line is `open` is a stuck run.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("rename the log beside any record this run retires", skill)
         self.assertIn(
-            "renaming `traigent-runs/run-log.jsonl` to the same stamp beside it", skill
-        )
-        self.assertIn(
-            "a restart carries the log with the record",
+            "wherever skill.md retires a record - a mismatch, a historical "
+            "artifact, a finished run - the log is renamed",
             " ".join(self._log_section().casefold().split()),
         )
 
@@ -21992,7 +22023,10 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     def test_one_path_spelled_the_same_in_every_document_that_names_it(
         self,
     ) -> None:
-        """Renaming the artifact in one document passed the whole suite."""
+        """Renaming the artifact in one document passed the whole suite.
+
+        Four documents name it; the check is that they agree.
+        """
         documents = {
             "SKILL.md": SKILL.read_text(),
             "run-safety.md": self._safety(),

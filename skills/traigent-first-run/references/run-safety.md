@@ -1124,8 +1124,9 @@ default. Keeping exactly one line per problem accurate means reading the file, h
 of it, and re-emitting all of them to change one number - which is the operation this assistant is
 least reliable at, performed on the one artifact whose entire value is being trustworthy about a
 run that already went wrong. A single wrong character in a line nobody is looking at any more is
-undetectable, and it is the line somebody will later be shown. So the count is what gets given up
-here, deliberately, and the file keeps only facts that are true at the moment they are written.
+undetectable, and it is the line somebody will later be shown. So a count, and the time of the
+latest encounter, are what get given up here - deliberately, because the file then keeps only facts
+that were true at the moment they were written, and a problem is stamped when it was first met.
 
 | Key | What it holds |
 |---|---|
@@ -1148,8 +1149,10 @@ it was open again in a new session.
 
 Read it by collapsing on that identity, last line wins. An identity whose last line is `open` is
 what a stuck run looks like. Nothing in the file may waive a gate, decide what runs next, resume a
-run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. A
-restart carries the log with the record, so no `cleared` from an earlier run is read as this one's.
+run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. Wherever
+SKILL.md retires a record - a mismatch, a historical artifact, a finished run - the log is renamed
+to the same stamp beside it and a fresh one starts, so no `cleared` from an earlier run is read as
+this one's.
 
 The six are told apart by who has to act, and each names the closed set its `class` comes from.
 
@@ -1158,15 +1161,21 @@ The six are told apart by who has to act, and each names the closed set its `cla
   exists. A stop before the record is reported in conversation and stays there.
 - `gate_fail` - a gate this guide defines refused: `credential-file-tracked`, `ignore-check`,
   `containment`, `readiness-cap`, or `invariants`.
-- `tool_fail` - a bundled script or command exited non-zero; the class is its exit code.
+- `tool_fail` - a bundled script could not run at all, or a command failed to execute; the class
+  is its exit code. A non-zero exit that is a finding about the project's own material is not this,
+  and neither is one that is the healthy answer: `preflight.py` exits 1 when a check on their
+  dataset fails, and the credential handoff above continues on exit 1 because that is the file not
+  being tracked. Exit 3 from a bundled script is the shape this event is for.
 - `external_refusal` - a provider, portal, or Traigent refusal, under the category this file already
   gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, or `validation`.
 - `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
   `outage`, `persistence`, or `uncategorized`. Tracking that degraded to local-only is
   `run_stop:persistence` and never a warning - the halt above owns it, and a warning is by
   definition the thing that did not stop the run.
-- `warning` - observed, and able to distort the result without stopping the run: `refused-trial`,
-  `untracked-cost`, or `cap-standing`.
+- `warning` - observed, and able to distort the result without stopping the run:
+  `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The catch-all is not
+  decoration: a no-lift delta, rows the comparison could not score, and a model replaced for being
+  unavailable all survive into the result and are none of the three.
 
 `detail` and the `class` beside it carry the event and nothing else: one sentence naming what
 happened, with no path, no id, no session or account address, no user or machine name, no secret or
@@ -1177,5 +1186,16 @@ rather than the instance. It is also where the content
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` keeps out of local logs would come back, one quoted row at a
 time, if the sentence were allowed to carry an example.
 
-It exists once `traigent-runs/` lawfully does, which is the record's own consent gate. Nothing is
+It exists once the record does, under that record's own consent gate. Nothing is
 written before that, and nothing is backdated into it afterwards.
+
+Before the close names this file to the user, run `scripts/validate_run_log.py --log
+traigent-runs/run-log.jsonl` through the selected Python, from the script's literal absolute path
+under the resolved skill directory. It opens the log read-only and checks what the paragraphs above
+only state: a class outside its event's set, a state that is neither, a field the schema does not
+have, a `cleared` with no `open` before it, a repeat of a state already standing, and a `detail`
+carrying a path, a credential, an address, a session or request id, a URL, or a quoted span long
+enough to be somebody's row. Exit 1 names the lines and exit 3 means the check itself could not run,
+which is never a finding about the log. A rejected line is reported to the user with what it
+carries, and is not rewritten: append-only is what makes this file worth reading, and the whole
+directory is theirs to delete if they would rather not keep what it found.

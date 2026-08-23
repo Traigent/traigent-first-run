@@ -1,10 +1,10 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
-resident-ceiling: 85_215
-resident-measured: 85_160
-total-ceiling: 426_433
-total-measured: 426_378
+resident-ceiling: 85_152
+resident-measured: 85_097
+total-ceiling: 428_093
+total-measured: 428_038
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -26,7 +26,7 @@ the one document a resume trusts would have manufactured more of it.
 
 What makes a second artifact safe under one-decision-one-home is that it
 declares nothing the record declares. The record says what is true now; the log
-says when it happened, how many times, and whether it cleared. Neither can
+says when a problem was first met and whether it cleared. Neither can
 answer the other's question, so neither can contradict it, and where a finding
 already owns a field on the record - the portal probe among them - that field
 keeps the value while the log keeps only the timing beside it. The rule holding
@@ -36,9 +36,9 @@ never re-read either.
 
 Deduplication is not tidiness, it is what makes the file legible at the moment
 it matters. The failure that produces the most lines is a retry, and a retry
-produces the fewest distinct facts, so one line per problem carrying a count
-beats twelve lines carrying one finding between them. A line that never gains a
-resolution is then exactly the picture of a run somebody walked away from.
+produces the fewest distinct facts, so a repeat that changed nothing writes
+nothing. An identity whose last line is still open is then exactly the picture
+of a run somebody walked away from.
 
 The redaction clause is the half worth the most and reads as the most obvious.
 This guide deliberately turns example content off in the SDK's own local logs,
@@ -50,10 +50,10 @@ a list of forbidden things, because the surrounding guidance spends its effort
 teaching the opposite habit: print the absolute path so they can open it, write
 the session id into the record. Both are right where they are and wrong here,
 and a denylist would have had to anticipate each of them. So the sentence
-carries the class of thing that failed and not the instance, and the class is
-the only field the identity is spelled from.
+carries the class of thing that failed and not the instance, and `event`, `stage` and
+`class` together are the identity.
 
-Resident moves by four lines, and only because a mandate that lives solely in
+Resident moves by five lines, and only because a mandate that lives solely in
 a reference loaded before paid execution is a mandate the run does not yet hold
 when an earlier stage refuses. SKILL.md names the file, the obligation, and the
 one instruction that closes that window - load the shape when the record is
@@ -81,7 +81,7 @@ The identity was authored prose, which cannot be spelled the same way twice by
 a writer who has forgotten the first time - and the writer is asked to find its
 own line again after a wait long enough to lose it. Drawing that field from a
 closed set is what lets two encounters agree without either one looking the
-other up.
+other up, and it is one of the three fields the identity is spelled from.
 
 The write went further, and this is the paragraph that pays for itself. Keeping
 exactly one line per problem accurate obliges the assistant to read the file
@@ -108,3 +108,28 @@ that carry a rule rather than a type, check each clause of the allowlist on its
 own, refuse the two spellings a rewrite comes back as, and require one path
 spelled identically in four documents. Every mutation written against them has
 gone red.
+
+A third round bought a script rather than a sentence. Every rule above was
+executed by the assistant and enforced by nothing, which is this repository's
+own recurring defect wearing the one shape it can least afford: a privacy
+promise, on a file written into somebody's real project and meant to be handed
+to a stranger. `scripts/validate_run_log.py` reads the log and refuses a class
+outside its event's set, a state that is neither, a field the schema does not
+have, a sequence that clears something never opened or repeats a state already
+standing, and a sentence carrying a path, a credential, an address, an
+identifier, a link, or a quoted span long enough to be somebody's row. It
+cannot prove a sentence is free of customer data; it refuses every carrier
+anyone has actually leaked through, which is what the clause decomposes into.
+Scripts sit outside this budget, so the mechanism costs nothing here and the
+closed vocabularies become safe to keep.
+
+The same round closed three holes the vocabulary still had. `warning` had no
+catch-all while its sibling did, and the guide mandates warnings - a no-lift
+delta, rows nothing could score, a model swapped for being unavailable - that
+were none of its three values, leaving an assistant to invent a class it is
+forbidden to invent. `tool_fail` keyed on a non-zero exit, which is the healthy
+answer where the credential handoff continues on exit 1, and is a finding about
+the customer's own material where preflight exits 1 - the exact relay that
+document forbids by name. And the rename that keeps one run's `cleared` off
+another run's `open` was written for one of the three paths that retire a
+record; it is stated once now, over all of them.

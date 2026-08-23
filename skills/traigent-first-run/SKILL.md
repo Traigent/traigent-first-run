@@ -41,10 +41,10 @@ scoring one is reported. Only after task intent is anchored, copy
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
-Beside it, append every blocking failure and every warning that survives into the result to
-`traigent-runs/run-log.jsonl`, one line when it happens and one if it clears.
-`references/run-safety.md` owns that line's shape; load it when the record is created rather than
-at its own stage. That file explains a run; this one never rewrites it and never reads it back.
+Beside it, append every blocking failure, every stop-and-wait, and every warning that survives
+into the result to `traigent-runs/run-log.jsonl`, one line when it happens and one if it clears.
+`references/run-safety.md` owns that line's shape; load it before the first line is written
+rather than at its own stage, and rename the log beside any record this run retires.
 Keep its stage-status block current from the moment the record exists: at every stage boundary and
 before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
 next stage is always the first neither marked done nor skipped. A session finding
@@ -68,8 +68,7 @@ enhanced space is deliberately excluded because it must add controls; before a c
 verify separately that it retains every recorded baseline model/value and that its only additions
 exactly match the freshly rendered and approved enhanced card. If the invariants are incomplete or
 differ, do not resume this run: rename the old record to the next unused
-`traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), renaming
-`traigent-runs/run-log.jsonl` to the same stamp beside it, keep its spend and results
+`traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
 historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
 at stage 1 with a new opening score, and never rerun paid work without newly scoped approval.
 Observe a live process, but never restart or expand it from the record alone. A record with every
