@@ -447,7 +447,16 @@ os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
 # remaining too small for one call; and the ledger below, for the calls no
 # permit sees. So the loss is specific: a phase that does not fit spends up to
 # the approved total and stops partway, where it would have refused having spent
-# nothing. Neither path exceeds that total.
+# nothing.
+#
+# Both of those stop AGAINST the total rather than capping it, and the
+# difference is money. Admission and the ledger each decide before a call, on a
+# flat conservative per-call figure, while nothing here sets `max_tokens` - so a
+# strong-tier or judge call can legitimately cost more than the figure it was
+# admitted under, and the last call of a phase can carry the running total past
+# the approved one. The approved ceiling halts further spending; it is not a
+# bound on what the provider bills for a call that has left, and
+# `run-safety.md` owns that rule.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
@@ -856,13 +865,25 @@ def build_request(message: str, config: dict) -> dict:
 # surfaced as $0. It is spend that bought no measurement - report it, never add
 # it to the comparison.
 REFUSED_TRIAL_COSTS: list[float] = []
-# Every provider call this wrapper places, in the order it placed them. The two
-# searches run under the SDK's enforcement of the limit set above; a held-out
-# row and an LLM judge's grading call do not, because `place_call` below reaches
-# `litellm.completion` directly and the orchestrator's permit never sees it. One
-# list holds all of them, because they spend the same approved total: after a
-# search has spent most of it, held-out scoring has to see what is actually left
-# rather than what was left when this process started.
+# Every provider call this PROCESS places, in the order it placed them - not
+# every call this wrapper places, which is a smaller set and was the defect. The
+# two searches run under the SDK's enforcement of the limit set above; a
+# held-out row and an LLM judge's grading call do not, because they reach
+# `litellm.completion` and the orchestrator's permit never sees it. One list
+# holds all of them, because they spend the same approved total: after a search
+# has spent most of it, held-out scoring has to see what is actually left rather
+# than what was left when this process started.
+#
+# Two things read WINDOWS of this list - the held-out cost slice and
+# `check_scorer_calls` - and a window is exact only while one call is placed at
+# a time. It is: the SDK resolves an unspecified `parallel_config` to sequential
+# execution, `trial_concurrency` and `example_concurrency` and `thread_workers`
+# all 1, and nothing here specifies one. Passing
+# `parallel_config={"trial_concurrency": N}` to either `optimize_sync` below, or
+# to `traigent.configure`, breaks both reads: a neighbour's call lands inside
+# the window. It loses no money - the refusal and the debit are on the door
+# below, one call at a time, whatever else runs - but make those two reads
+# correct before asking for concurrency, or a scorer stops on a neighbour.
 RUN_SPEND_USD: list[float] = []
 # The same calls, in the same order, at what the provider actually reported -
 # `None` kept as `None`. The ledger above deducts a conservative figure for an
@@ -900,6 +921,80 @@ def record_call_spend(cost: float | None) -> None:
     RUN_SPEND_USD.append(UNTRACKED_CALL_COST_USD if cost is None else cost)
 
 
+def refuse_if_exhausted(args: tuple, kwargs: dict) -> None:
+    """Refuse one call the remaining cannot cover, before it is placed."""
+    if run_remaining_usd() >= UNTRACKED_CALL_COST_USD:
+        return
+    model = kwargs.get("model") or (args[0] if args else "an unnamed model")
+    raise RuntimeError(
+        f"The approved ${RUN_COST_CEILING_USD:.2f} total is exhausted, so a "
+        f"call to {model} was not placed. Report what completed and ask for a "
+        "larger total before running anything else."
+    )
+
+
+def debit_placed_call(response):
+    """Debit the call that produced `response`, then hand it back.
+
+    Debited before anything else can raise on this response: by here the call
+    is placed and billed. Malformed cost metadata raises out of
+    `provider_reported_cost`, and reading it before debiting left that one path
+    spending without a debit - so a restart after the crash begins from a spent
+    figure missing the call, and under-counts. An unreadable cost is deducted
+    conservatively, the same answer as an absent one.
+    """
+    try:
+        cost = provider_reported_cost(response)
+    except RuntimeError:
+        record_call_spend(None)
+        raise
+    record_call_spend(cost)
+    return response
+
+
+def ledgered(place):
+    """Wrap `litellm.completion` so a caller cannot decline the ledger."""
+
+    def placed(*args, **kwargs):
+        refuse_if_exhausted(args, kwargs)
+        return debit_placed_call(place(*args, **kwargs))
+
+    return placed
+
+
+def ledgered_async(place):
+    """The same for `litellm.acompletion`. Generated code awaits neither, but
+    an entry point left unwrapped is exactly the outside being removed."""
+
+    async def placed(*args, **kwargs):
+        refuse_if_exhausted(args, kwargs)
+        return debit_placed_call(await place(*args, **kwargs))
+
+    return placed
+
+
+# The door: one wrap, on the attribute every caller resolves.
+#
+# The debit lives on `litellm.completion` itself rather than on a function
+# callers are asked to come to, so a hand-written judge that calls it - which is
+# what a judge naturally does - is ledgered without knowing this file exists.
+# `place_call`, `call_agent` and `call_judge` below are conveniences over it.
+# Each wrapper saves what the attribute held and calls through it, which is the
+# shape the SDK's own metadata-capture patch uses, so the two compose in either
+# order and neither loses the other's work.
+#
+# It reaches every caller that RESOLVES the attribute when it calls, and no
+# others - so import a preserved agent or evaluator module AFTER this line. The
+# paragraph after this fence owns what stays outside it and what covers that.
+if not getattr(litellm, "_first_run_ledgered", False):
+    litellm.completion = ledgered(litellm.completion)
+    litellm.acompletion = ledgered_async(litellm.acompletion)
+    # On the module, not in this file's namespace: a second execution of this
+    # wrapper in one process would otherwise wrap again and debit every call
+    # twice, which overstates spend and refuses a run that fits.
+    litellm._first_run_ledgered = True
+
+
 def refuse_unless_it_fits(calls: int, what: str) -> None:
     """Refuse a fixed run of calls the remaining cannot fund in full.
 
@@ -920,37 +1015,24 @@ def refuse_unless_it_fits(calls: int, what: str) -> None:
         )
 
 
-def place_call(request: dict, what: str) -> tuple[str, float | None]:
-    """The last gate before money leaves, and every paid call passes it.
+def place_call(request: dict) -> tuple[str, float | None]:
+    """One call, refused and debited by the door, then checked as a measurement.
 
-    A search trial, a held-out row and a judge's grading call all arrive here,
-    because this is the only place in the wrapper that reaches
-    `litellm.completion`. While the SDK can see cost it is enforcing this same
-    number one admission earlier, so this gate is catching what that one is not
-    watching - the direct calls, and the overshoot it allows. It bites first in
-    exactly one case, and that case is the point: a route the SDK cannot price
-    drops it to counting trials instead of money, and then this ledger is what
-    the total is left with.
+    It no longer decides whether money may leave: the refusal and the debit
+    both happen inside the wrapped `litellm.completion` below, for this caller
+    and every other one. What is left is what only a caller wanting a
+    MEASUREMENT needs - the two checks below turn a canned or truncated
+    response into a failed trial rather than a scored one - which is why this
+    is still worth calling and no longer worth requiring. Its `what` label went
+    with the refusal: the door names the model instead, because it answers to
+    callers this file never wrote and holds no label from them.
+
+    The cost is read off the response rather than off the end of the ledger. It
+    is a pure read of the same object the debit read, so the two cannot
+    disagree, and it does not depend on what else is in that list.
     """
-    if run_remaining_usd() < UNTRACKED_CALL_COST_USD:
-        raise RuntimeError(
-            f"The approved ${RUN_COST_CEILING_USD:.2f} total is exhausted, so "
-            f"{what} was not placed. Report what completed and ask for a "
-            "larger total before running anything else."
-        )
     response = litellm.completion(**request)
-    # Debited before anything else can raise on this response: by here the call
-    # is placed and billed. Malformed cost metadata raises out of
-    # `provider_reported_cost`, and reading it before debiting left that one
-    # path spending without a debit - so a restart after the crash begins from
-    # a spent figure missing the call, and under-counts. An unreadable cost is
-    # deducted conservatively, the same answer as an absent one.
-    try:
-        cost = provider_reported_cost(response)
-    except RuntimeError:
-        record_call_spend(None)
-        raise
-    record_call_spend(cost)
+    cost = provider_reported_cost(response)
     try:
         require_nonzero_token_usage(response)
         require_untruncated_completion(response)
@@ -963,16 +1045,17 @@ def place_call(request: dict, what: str) -> tuple[str, float | None]:
 
 def call_agent(message: str, config: dict) -> tuple[str, float | None]:
     """One trial's agent call, built from the configuration under test."""
-    return place_call(build_request(message, config), "this agent call")
+    return place_call(build_request(message, config))
 
 
 def call_judge(prompt: str) -> tuple[str, float | None]:
-    """One grading call: same door, same ledger, same refusal.
+    """One grading call, built as the judge's rather than the trial's.
 
     Separate from `call_agent` rather than a configuration passed to it,
     because the judge is not the agent. Its request carries no swept knob and
     not the trial's model, or the grader moves with the thing it is grading and
-    the run measures the pair. It is still money, so it is still placed here.
+    the run measures the pair. That, not the ledger, is now why a judge should
+    come through here: the ledger reaches it either way.
     """
     if JUDGE_MODEL is None:
         raise RuntimeError(
@@ -987,32 +1070,36 @@ def call_judge(prompt: str) -> tuple[str, float | None]:
             # Drop this key for a judging route that rejects sampling.
             "temperature": 0.0,
             "messages": [{"role": "user", "content": prompt}],
-        },
-        "a judge call",
+        }
     )
 
 
 def check_scorer_calls(placed_before: int) -> None:
     """Hold the scorer to the number of provider calls it declared.
 
-    This is what makes the routing rule after this fence a fact rather than an
-    instruction. Counting the ledger around one synchronous scorer call is
-    exact even while the SDK runs trials concurrently, because a synchronous
-    call cannot yield to its event loop and no other row can interleave.
+    Not a routing check any more - there is nowhere left to route around, so a
+    scorer that declares one call and places two is inside the ceiling already
+    and the remaining is already right. What it protects is the DECLARATION,
+    which is load-bearing on its own: `CALLS_PER_SCORED_ROW` derives from it
+    and sizes the held-out refusal, and that refusal is settled BEFORE any of
+    the calls it is sizing, so it has nothing of its own to observe. A
+    declaration of 1 against a judge placing 2 funds half the pass it refuses
+    on. It is also what still notices a caller the door cannot see.
 
-    It fires after the first unrouted call rather than before it, so the defect
-    costs one call to find - and stops the run there rather than under-counting
-    every row after it.
+    The count is a delta over `RUN_SPEND_USD`, so it inherits the
+    sequential-execution dependency recorded there.
     """
     placed = len(RUN_SPEND_USD) - placed_before
     if placed == SCORER_CALLS_PER_ROW:
         return
     raise RuntimeError(
-        f"Scoring one row placed {placed} provider call(s) through the "
-        f"approved total, and SCORER_CALLS_PER_ROW declares "
-        f"{SCORER_CALLS_PER_ROW}. A judge that reaches litellm directly spends "
-        "money no gate sees: place it with call_judge, or correct the "
-        "declared count"
+        f"Scoring one row placed {placed} provider call(s) that the ledger "
+        f"saw, and SCORER_CALLS_PER_ROW declares {SCORER_CALLS_PER_ROW} - the "
+        "number the held-out refusal is sized from, before any of these calls "
+        "happen. More than declared: the scorer places calls it does not "
+        "declare - correct the count, or stop placing them. Fewer: a call the "
+        "ledger cannot see - place it with call_judge, or debit it with "
+        "record_call_spend"
     )
 
 
@@ -1185,18 +1272,33 @@ different ways. Inside `optimize_sync`, the SDK admits a trial only while its ow
 that limit is now the remaining rather than a default: the wrapper writes
 `TRAIGENT_RUN_COST_LIMIT` before importing the SDK, so a phase reaching it stops gracefully and
 reports `stop_reason`. Outside it, held-out scoring and an LLM judge call `litellm.completion`
-directly, where no permit exists - so `place_call` is the single door those calls pass through, and
-it refuses once the remaining cannot cover one more call. Neither gate is arithmetic the assistant
-performs between phases: the first is the SDK's per-trial admission check, and the second reads a
-ledger `place_call` itself debits from every call's reported cost.
+directly, where no permit exists - so the second gate is on `litellm.completion` itself, wrapped
+once at setup, and it refuses once the remaining cannot cover one more call. Neither gate is
+arithmetic the assistant performs between phases: the first is the SDK's per-trial admission check,
+and the second reads a ledger that same wrapper debits from every call's reported cost.
 
-A judge is the caller that made the second gate necessary rather than merely tidy, and the one a
-wrapper most easily leaves outside it. It runs inside `task_score`, whose `metric_functions`
-contract passes a prediction, an expectation and an input and returns a number - no ledger, nothing
-to debit through. The SDK cannot close that from its side either: it settles a trial's cost before
-it applies the metric functions, so a call made inside one is already past that trial's accounting.
-`call_judge` and `check_scorer_calls` are what answer it; the rule for generating a scorer that uses
-them is with the rest of `task_score` below.
+**The second gate is a place, not a rule, and that is the whole of this design.** Two earlier
+versions asked callers to come to a function - first because a judge had bypassed the ledger
+outright, then because a judge had routed the call it declared and made another one directly, which
+a count of *routed* calls could not tell from compliance. Each asked the caller again and added a
+way to notice when it did not comply, and each left the next caller a way out. Putting the debit on
+the module attribute removes the outside instead: a hand-written judge that calls
+`litellm.completion`, which is what a judge naturally does, is ledgered without being asked to be.
+
+State its edge exactly, because an overstated safeguard is worse than a named gap. It reaches every
+caller that RESOLVES `litellm.completion` at call time, and no others: not a module that bound the
+function with `from litellm import completion` before setup, and not a client that is not litellm at
+all - a raw provider SDK, an HTTP call, a subprocess. So import a preserved agent or evaluator
+module after the wrapper installs the door, and where that cannot be arranged, declare what the
+scorer spends: `check_scorer_calls` compares that declaration against the ledger on every row, which
+is what still notices a call the door cannot see.
+
+A judge is the caller that made this necessary rather than merely tidy. It runs inside `task_score`,
+whose `metric_functions` contract passes a prediction, an expectation and an input and returns a
+number - no ledger, nothing to debit through. The SDK cannot close that from its side either: it
+settles a trial's cost before it applies the metric functions, so a call made inside one is already
+past that trial's accounting. The rule for generating a scorer is with the rest of `task_score`
+below.
 
 That is why the ledger counts search trials as well as direct calls. Held-out scoring runs last, in
 the same process as the connected search, on the run's recommended and often priciest
@@ -1268,19 +1370,30 @@ example metadata or full control of agent execution, use the installed SDK's pub
 evaluator instead.
 
 When that evaluator is an LLM judge - which `references/evaluation-and-dataset.md` prescribes for
-summary, explanation, writing, and story tasks - it grades with `call_judge` and never with
-`litellm` directly, and never with `call_agent`, whose request is built from the trial's own knobs.
+summary, explanation, writing, and story tasks - it grades with `call_judge`, and never with
+`call_agent`, whose request is built from the trial's own knobs. Reaching `litellm` around it is no
+longer a way to spend unseen money, but it still grades on whatever model that request names, and
+the two response checks do not run - so route it for those reasons rather than for the ledger's.
+
 Then set `SCORER_CALLS_PER_ROW` to the number of provider calls grading one row places. That number
-is the run's claim about its own evaluator: it sizes the held-out refusal, and `check_scorer_calls`
-tests it against the ledger on every row scored, in the search as well as the held-out pass. A
-deterministic evaluator declares `0` and is held to placing none.
+is the run's claim about its own evaluator, and the one thing here nothing else can derive: it sizes
+the held-out refusal, which is settled before the pass it is sizing places a call, and
+`check_scorer_calls` tests it against the ledger on every row scored, in the search as well as the
+held-out pass. A deterministic evaluator declares `0` and is held to placing none.
 
 A preserved evaluator that places its own provider calls is the case the adapter cannot route,
-because changing it is not on offer. Debit them instead: call `record_call_spend(None)` once per
-call it makes, before returning its score, so the declared count still matches and the ceiling still
-falls at the conservative rate. Disclose on the approval that this evaluator's spend is deducted
-rather than reported, and that it is bounded one call late - the debit lands after the call, where
-`call_judge` refuses before it.
+because changing it is not on offer. Two shapes, and they need opposite handling - **debit exactly
+once**, and which one applies is decided by reading the evaluator's own call path:
+
+- **It reaches `litellm.completion`.** Nothing to do: the door already refused and debited it, and
+  adding `record_call_spend(None)` here would charge the approved total twice for one call and
+  refuse a run that fits. Declare its calls in `SCORER_CALLS_PER_ROW` and stop there.
+- **It uses another client** - a provider SDK, an HTTP call, a subprocess - or holds a
+  `from litellm import completion` binding older than the door. Debit it by hand: call
+  `record_call_spend(None)` once per call it makes, before returning its score, so the declared
+  count still matches and the ceiling still falls at the conservative rate. Disclose on the approval
+  that this evaluator's spend is deducted rather than reported, and that it is bounded one call late
+  - a hand debit lands after the call, where the door refuses before it.
 
 ## Small baseline sweep
 
@@ -1644,8 +1757,8 @@ against `HOLDOUT_DATASET` through the same loader and the same `task_score` the 
 cost joins the single running total exactly as a baseline phase does; `references/run-safety.md`
 owns what the approval discloses about those calls. These and a judge's are the walkthrough's only
 paid calls that no permit covers, so they are also the ones the two gates above are written for: the
-pass refuses to start unless the remaining funds every row and its grading, and `place_call` refuses
-each call individually once it does not.
+pass refuses to start unless the remaining funds every row and its grading, and the wrapped
+`litellm.completion` refuses each call individually once it does not.
 
 ```python
 def holdout_agent_input(input_data):

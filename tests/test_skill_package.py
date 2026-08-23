@@ -823,6 +823,19 @@ SPEND_GATE_FUNCTIONS = frozenset(
 # than by position, because position is what a reordering edit changes.
 DOOR_INSTALL_MARKER = "_first_run_ledgered"
 
+# The litellm attributes the door is installed on. `SPEND_GATE_FUNCTIONS` above
+# is a different guard and does not cover this one: it fails when a gate
+# function is renamed or deleted, and passes cleanly while the wrapper calls
+# money through an attribute the install never wrapped.
+#
+# That gap is what the re-decision narrowed rather than closed. Moving the gate
+# off `place_call` and onto the attribute means a caller cannot decline it, so
+# a new entry point through `completion` or `acompletion` is ledgered without
+# anyone remembering to route it - but `litellm` exposes other ways to spend
+# (`text_completion`, `batch_completion`), and reaching one of those is the
+# same money leaving through a name nothing here wraps.
+LEDGERED_ENTRY_POINTS = frozenset({"completion", "acompletion"})
+
 
 def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
     """The ledger every paid path in the wrapper passes through.
@@ -14676,6 +14689,85 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             asyncio.run(acompletion(model="provider/judge", messages=[]))
         self.assertIn("a call to provider/judge was not placed", str(refused.exception))
         self.assertEqual(len(placed), 1, "the refused await reached a provider")
+
+    def test_no_provider_call_reaches_litellm_by_a_name_the_door_is_not_on(
+        self,
+    ) -> None:
+        """The entry point nobody wrapped, which no other test here notices.
+
+        Every ledger assertion in this class drives money through `completion`
+        or `acompletion` and proves the door holds there. None of them says
+        those are the ONLY names money leaves by, so a wrapper that grew a
+        `litellm.text_completion` path would take the whole suite green with an
+        undebited provider call in it - verified by adding exactly that and
+        watching 359 tests pass. The old `place_call` gate did not cover this
+        either; it was a list of gate FUNCTIONS, and it still is.
+
+        So this asserts the two halves that together close it, over the
+        document rather than over a fixture:
+
+        Wrapped is exactly `LEDGERED_ENTRY_POINTS`. Dropping one is already
+        caught for `acompletion` by the test above, but that test knows the
+        name; this one fails for whichever name goes missing. Adding a wrap
+        fails here too, and deliberately - the new name has to be written into
+        `LEDGERED_ENTRY_POINTS` and into `litellm_module`, which the fixtures
+        build from, or every fixture meets an attribute its stand-in module
+        does not have.
+
+        Called is a subset of wrapped. This is the half that catches the new
+        entry point: any `litellm.<name>(...)` in the generated wrapper has to
+        be a name the install put the ledger on.
+        """
+        sources = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )
+
+        wrapped = set()
+        for node in self.door_install():
+            for statement in ast.walk(node):
+                if not isinstance(statement, ast.Assign):
+                    continue
+                for target in statement.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "litellm"
+                        and target.attr != DOOR_INSTALL_MARKER
+                    ):
+                        wrapped.add(target.attr)
+        self.assertEqual(
+            wrapped,
+            set(LEDGERED_ENTRY_POINTS),
+            "the door is installed on litellm attributes that are not the ones "
+            "this package claims it covers; wrapping a new one also means "
+            "naming it in LEDGERED_ENTRY_POINTS and giving litellm_module a "
+            "stand-in for it",
+        )
+
+        called = {
+            node.func.attr
+            for source in sources
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "litellm"
+        }
+        self.assertEqual(
+            called - wrapped,
+            set(),
+            "the wrapper calls litellm by a name the door is not installed on, "
+            "so that call is neither refused when the approved total is gone "
+            "nor debited when it spends; wrap it in the install above or place "
+            "it through one of "
+            f"{sorted(LEDGERED_ENTRY_POINTS)}",
+        )
+        self.assertIn(
+            "completion",
+            called,
+            "no litellm call was found at all, so this test proved nothing - "
+            "the fences moved or the wrapper stopped placing calls",
+        )
 
     def test_the_wrapper_never_asks_the_sdk_for_concurrent_execution(self) -> None:
         """The unstated premise under two ledger reads, made a failing test.
