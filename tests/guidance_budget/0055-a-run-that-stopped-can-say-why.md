@@ -1,10 +1,10 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
-resident-ceiling: 85_189
-resident-measured: 85_134
-total-ceiling: 425_741
-total-measured: 425_686
+resident-ceiling: 85_215
+resident-measured: 85_160
+total-ceiling: 426_433
+total-measured: 426_378
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -79,18 +79,32 @@ vocabulary with a hole in it is one an author fills by inventing a word.
 
 The identity was authored prose, which cannot be spelled the same way twice by
 a writer who has forgotten the first time - and the writer is asked to find its
-own key again after a wait long enough to lose it. Drawing the third field from
-a closed set is what makes deduplication a lookup instead of a recollection.
-And forbidding the append mandated a read-modify-rewrite in the one file whose
-purpose is surviving the endings the section above it enumerates, so the write
-goes to a sibling path and is renamed over the original, which is the only
-write that is atomic for a record this size.
+own line again after a wait long enough to lose it. Drawing that field from a
+closed set is what lets two encounters agree without either one looking the
+other up.
+
+The write went further, and this is the paragraph that pays for itself. Keeping
+exactly one line per problem accurate obliges the assistant to read the file
+back, hold every line of it, and re-emit all of them to move one number. That is
+the operation a language model is least reliable at, aimed at the one artifact
+whose value is being trustworthy about a run that already went wrong, and its
+failure mode is silent: a character altered in a line nobody rereads is exactly
+the line somebody is later shown. Hardening it - a temporary file renamed over
+the original - answered the crash and left the re-emission untouched, and the
+re-emission was the larger risk. So the file is append-only and is never read
+back at all: one line when a problem appears, one if it clears, and a reader
+collapses them. The count is what that gives up, said out loud where the file is
+defined. A retry that meets one refusal twelve times still writes one line,
+because nothing about it changed - which is the deduplication that was wanted,
+bought without a lookup - while a problem that returns after clearing opens
+again and stays visible.
 
 The tests moved further than the guidance did. The first set was eight
 substring assertions, and a mutation sweep passed all of them against seven
 edits that reversed what the section says - deleting every event definition,
-dropping two redaction clauses, renaming the artifact in one document but not
-the other, and appending one line per occurrence after all. They now parse the
-key set out of the table, read the cells that carry a rule rather than a type,
-check each clause of the allowlist on its own, and require one path spelled
-identically in four documents. Seventeen mutations, seventeen red.
+dropping two redaction clauses, and renaming the artifact in one document but
+not the other. They now parse the field set out of the table, read the cells
+that carry a rule rather than a type, check each clause of the allowlist on its
+own, refuse the two spellings a rewrite comes back as, and require one path
+spelled identically in four documents. Every mutation written against them has
+gone red.

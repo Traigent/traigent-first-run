@@ -21806,18 +21806,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """Parsed from the table, so deleting a row fails rather than passes."""
         self.assertEqual(
             self._schema_keys(),
-            {
-                "key",
-                "event",
-                "stage",
-                "class",
-                "detail",
-                "first_ts",
-                "last_ts",
-                "count",
-                "resolved",
-                "resolved_ts",
-            },
+            {"ts", "event", "stage", "class", "state", "detail"},
         )
         rows = self._schema_rows()
         # The three cells that carry a rule rather than a datatype.
@@ -21825,7 +21814,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn("allowlist", rows["detail"])
         self.assertIn("closed set", rows["class"])
         self.assertIn("never authored prose", rows["class"])
-        self.assertIn("matched whole", rows["key"])
+        self.assertIn("`open`", rows["state"])
+        self.assertIn("`cleared`", rows["state"])
 
     def test_every_event_is_defined_and_not_merely_listed(self) -> None:
         """The table row alone satisfied the old test; a definition is the point.
@@ -21837,7 +21827,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertEqual(set(bullets), set(self.EVENTS))
         section = self._log_section()
         self.assertIn(
-            "one line per distinct problem, never one per occurrence",
+            "write one `open` line when that identity first occurs",
             " ".join(section.casefold().split()),
         )
         for event in self.EVENTS:
@@ -21905,41 +21895,57 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         safety = " ".join(self._safety().casefold().split())
         self.assertIn("stop paid work at once", safety)
 
-    def test_a_repeat_updates_one_line_and_the_write_survives_a_kill(
-        self,
-    ) -> None:
-        """Dedup is legibility; the rename is what makes dedup affordable.
+    def test_the_file_is_append_only_and_never_re_emitted(self) -> None:
+        """The mechanism, and the one it was chosen over.
 
-        Forbidding the append mandates read-modify-rewrite, and the section
-        directly above this one enumerates six endings that arrive without
-        warning. A kill between truncating and writing would destroy the one
-        artifact written to explain a killed run.
+        Keeping exactly one line per problem accurate means reading the file,
+        holding every line, and re-emitting all of them to change one number -
+        which is what this assistant is least reliable at, on the artifact
+        whose whole value is being trustworthy about a run that went wrong. A
+        corrupted line in a file nobody rereads is undetectable and is the line
+        somebody is later shown. Append-only removes the operation rather than
+        hardening it, and the section says what that costs.
         """
-        section = self._log_section()
-        normalized = " ".join(section.casefold().split())
-        self.assertIn("updates its `last_ts` and `count` in place", normalized)
-        self.assertIn("never appends a second line", normalized)
-        # The reversal a prose assertion cannot see: "never appends a second
-        # line UNLESS ... one line per occurrence".
-        self.assertEqual(normalized.count("per occurrence"), 1)
-        self.assertIn("never one per occurrence", normalized)
-        self.assertIn("rename it over the original", normalized)
-        self.assertIn("cannot parse", normalized)
+        normalized = " ".join(self._log_section().casefold().split())
+        self.assertIn("the file is append-only", normalized)
+        self.assertIn("never rewritten, and the file is never read back", normalized)
+        # No re-emission anywhere: the two spellings a rewrite comes back as.
+        self.assertNotIn("in place", normalized)
+        self.assertNotIn("rewrite the file", normalized)
+        # Deduplication without a lookup, and what it gives up.
+        self.assertIn("adds nothing after the first", normalized)
+        self.assertIn("the count is what gets given up here", normalized)
+        self.assertIn("collapsing on that identity, last line wins", normalized)
+        self.assertIn("no separate key field", normalized)
+
+    def test_a_recurrence_after_clearing_is_still_visible(self) -> None:
+        """Collapsing a retry storm must not also collapse a flap.
+
+        A problem that comes back after clearing is a state change and gets its
+        own `open` line; only a silent repeat of something already open is
+        dropped.
+        """
+        normalized = " ".join(self._log_section().casefold().split())
+        self.assertIn("recurs after clearing opens again", normalized)
+        self.assertIn(
+            "flapping survives while a silent retry loop does not", normalized
+        )
+        self.assertIn("last line is `open` is what a stuck run looks like", normalized)
 
     def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
-        """SKILL.md carries the rule; the reference carries where it bends.
+        """SKILL.md carries the rule; the reference carries the shape.
 
-        Looking a key up to deduplicate is the one read the log takes, so the
-        mandate is "not as input" rather than "not at all" - the wording the
-        README already used. The previous check banned one spelling of the
-        broader claim, which one article defeated.
+        An earlier draft had to say "not as input", because deduplication read
+        the file. Nothing reads it now, so the mandate is the plain one, and
+        the reference states what the file may not decide.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         section = self._log_section()
-        self.assertIn("reads it back as input", skill)
+        self.assertIn("never rewrites it and never reads it back", skill)
         normalized = " ".join(section.casefold().split())
-        self.assertIsNone(re.search(r"reads? it back", normalized))
-        self.assertIn("is not reading it as run input", normalized)
+        self.assertIn(
+            "nothing in the file may waive a gate, decide what runs next", normalized
+        )
         self.assertIn(
             "`traigent-runs/run-plan.md` remains the only resume authority", normalized
         )

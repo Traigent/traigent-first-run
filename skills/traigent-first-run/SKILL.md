@@ -41,10 +41,10 @@ scoring one is reported. Only after task intent is anchored, copy
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
-Beside it, log every blocking failure and every warning that survives into the result to
-`traigent-runs/run-log.jsonl`, one deduplicated line each. `references/run-safety.md` owns that
-line's shape; load it when the record is created rather than at its own stage. That file explains
-a run, and no part of this one reads it back as input.
+Beside it, append every blocking failure and every warning that survives into the result to
+`traigent-runs/run-log.jsonl`, one line when it happens and one if it clears.
+`references/run-safety.md` owns that line's shape; load it when the record is created rather than
+at its own stage. That file explains a run; this one never rewrites it and never reads it back.
 Keep its stage-status block current from the moment the record exists: at every stage boundary and
 before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
 next stage is always the first neither marked done nor skipped. A session finding

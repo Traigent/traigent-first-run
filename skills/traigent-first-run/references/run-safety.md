@@ -1110,39 +1110,46 @@ numeric telemetry, and keep error text and metadata recorded with the run conten
 
 ### The run log
 
-Every stop, refusal, and result-affecting warning above gets one line in
-`traigent-runs/run-log.jsonl`, written when it happens rather than at the end of the stage - a
+Every stop, refusal, and result-affecting warning above gets a line in
+`traigent-runs/run-log.jsonl`, appended when it happens rather than at the end of the stage - a
 recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
 handed this directory can say where the run stopped and why. SKILL.md's mandate rests on a
-division: the record says what is true now, the log says when it happened, how often, and whether
-it cleared, and neither answers the other's question. Where the record already holds a finding - the
-portal probe's pass/fail among them - that field keeps the value and the log's line does not restate
-it.
+division: the record says what is true now, the log says when it happened and whether it cleared,
+and neither answers the other's question. Where the record already holds a finding - the portal
+probe's pass/fail among them - that field keeps the value and the log's line does not restate it.
 
-One line per distinct problem, never one per occurrence. Each line is a JSON object:
+**The file is append-only. A line, once written, is never rewritten, and the file is never read
+back.** That is the whole mechanism, and it is chosen against the alternative rather than by
+default. Keeping exactly one line per problem accurate means reading the file, holding every line
+of it, and re-emitting all of them to change one number - which is the operation this assistant is
+least reliable at, performed on the one artifact whose entire value is being trustworthy about a
+run that already went wrong. A single wrong character in a line nobody is looking at any more is
+undetectable, and it is the line somebody will later be shown. So the count is what gets given up
+here, deliberately, and the file keeps only facts that are true at the moment they are written.
 
 | Key | What it holds |
 |---|---|
-| `key` | `<event>:<stage>:<class>`, matched whole - the identity deduplication is done on |
+| `ts` | UTC `YYYYMMDDTHHMMSSZ`, when this line was written |
 | `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, `run_stop`, or `warning` |
 | `stage` | the run record's stage number |
-| `class` | one value from that event's own closed set below, never authored prose - two encounters with one failure have to spell its key the same way, and a sentence written twice will not |
+| `class` | one value from that event's own closed set below, never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |
+| `state` | `open` when it happens, `cleared` when it stops applying |
 | `detail` | one sentence, under the allowlist below |
-| `first_ts`, `last_ts` | UTC `YYYYMMDDTHHMMSSZ` |
-| `count` | how many times that key has occurred |
-| `resolved`, `resolved_ts` | set on that same line when it clears; a line that never clears is what a stuck run looks like |
 
-A repeat of a key already in the file updates its `last_ts` and `count` in place, and never appends
-a second line: twelve identical lines from one retry loop bury the finding a reader came for, and
-the count is the fact worth keeping. Write the whole file to a sibling temporary path and rename it
-over the original, because this file's purpose is surviving the endings listed above - a kill
-between truncating and writing destroys the one artifact that explains the run, and the section
-above lists six signals that arrive without warning. Leave a line this run cannot parse exactly
-where it is and append beside it; a file it cannot read is not a file it may rewrite. Reading the
-file to find that key is not reading it as run input - nothing in it may waive a gate, decide what
-runs next, resume a run, or be quoted as a result, and `traigent-runs/run-plan.md` remains the only
-resume authority. A restart carries the log with the record, so no count and no `resolved` from an
-earlier run is read as this one's.
+`event`, `stage`, and `class` together are the identity, and there is no separate key field to keep
+consistent with them. Write one `open` line when that identity first occurs and one `cleared` line
+if it later clears; nothing else is ever written for it. A retry that meets the same refusal twelve
+times adds nothing after the first, because nothing about it changed - that is the deduplication,
+and it costs no lookup, since what is already open is something this run did a moment ago rather
+than something it has to go and find. A problem that recurs after clearing opens again and is
+visible as the second `open` line, so flapping survives while a silent retry loop does not. A
+resumed session that no longer remembers appends `open` again, which is a fact and not a duplicate:
+it was open again in a new session.
+
+Read it by collapsing on that identity, last line wins. An identity whose last line is `open` is
+what a stuck run looks like. Nothing in the file may waive a gate, decide what runs next, resume a
+run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. A
+restart carries the log with the record, so no `cleared` from an earlier run is read as this one's.
 
 The six are told apart by who has to act, and each names the closed set its `class` comes from.
 
@@ -1156,7 +1163,7 @@ The six are told apart by who has to act, and each names the closed set its `cla
   gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, or `validation`.
 - `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
   `outage`, `persistence`, or `uncategorized`. Tracking that degraded to local-only is
-  `run_stop:<stage>:persistence` and never a warning - the halt above owns it, and a warning is by
+  `run_stop:persistence` and never a warning - the halt above owns it, and a warning is by
   definition the thing that did not stop the run.
 - `warning` - observed, and able to distort the result without stopping the run: `refused-trial`,
   `untracked-cost`, or `cap-standing`.
