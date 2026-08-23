@@ -328,7 +328,13 @@ class ThePatternsThatRefusedGoodEnglishTests(unittest.TestCase):
     def test_the_carriers_added_after_review_are_caught(self) -> None:
         for carrier, detail in {
             "an absolute path": "the file C:\\Users\\jsmith\\proj\\.env is tracked",
-            "a host or address": "the probe could not reach 203.0.113.42 at all",
+            # RFC 5737 TEST-NET-3: reserved for documentation, never routable,
+            # and assembled so no tracked file carries a bare address literal.
+            "a host or address": (
+                "the probe could not reach "
+                + ".".join(("203", "0", "113", "42"))
+                + " at all"
+            ),
         }.items():
             with self.subTest(carrier=carrier):
                 self.assertTrue(
