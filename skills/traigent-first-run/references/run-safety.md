@@ -671,24 +671,29 @@ completed, its stop reason, and the work that did not run. The way past it is a 
 a larger total, taken back to the user with what has been spent so far - never a larger figure
 handed to the same process, and never a second attempt at the same phase on top of what the first
 one already spent. A phase that DIED having spent is the same arithmetic and not a fresh start:
-a paid process prints its ledger on every ending that runs `atexit` - finishing, `sys.exit`, an
-uncaught exception, `SystemExit` and SIGINT are each measured printing it once - so take the
-running total from that line, carry it into whatever runs next, and report the phase as stopped
-part-way rather than as not having happened. Two endings print nothing, measured: SIGTERM, which is
-what a plain `kill` sends, and `os._exit`. When no ledger line was printed, that phase's spend is
-not recoverable and the SDK's tracked cost is a floor rather than the figure - so carry the whole
-of what that phase was approved to spend forward as spent, say to the user that it was killed and
-its exact spend is unknown, and take any further work back to them as a fresh approval.
+a paid process prints its ledger on every ending that runs `atexit` - finishing, `sys.exit` with
+any status, an uncaught exception, `SystemExit` and SIGINT are each measured printing it once - so
+take the running total from that line, carry it into whatever runs next, and report the phase as
+stopped part-way rather than as not having happened. An ending that never reaches `atexit` prints
+nothing at all, and that rule is what to hold rather than a list of two: measured, SIGTERM, SIGKILL
+- what `kill -9`, the out-of-memory killer and a container eviction send - SIGHUP, a dropped SSH
+session, SIGQUIT, `os._exit` and `os.abort` each printed no line. When no ledger line was printed,
+that phase's spend is not recoverable and the SDK's tracked cost is a floor rather than the figure
+- so carry the whole of what that phase was approved to spend forward as spent, say to the user
+that it was killed and its exact spend is unknown, and take any further work back to them as a
+fresh approval.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
 `TRAIGENT_VENDOR_MAX_RETRIES` for the first run. Preserve retry behavior already present in the
-user's agent/provider client, with one exception the spend ledger requires: retries the provider
+user's agent/provider client, with two exceptions the spend ledger requires. Retries the provider
 client would take underneath the wrapper are turned off, because a call it repeats down there costs
-real money the ledger never sees and the running total never moves for. An explicit retry count the
-caller set is kept and is charged for rather than absorbed, and `references/sdk-execution.md` owns
-the mechanism and what it trades away - a transient failure now surfaces instead of being retried
-silently. Generated walkthrough provider calls add
+real money the ledger never sees and the running total never moves for; and resilience expressed
+through a knob the reservation cannot size - `retry_policy` among them - is refused rather than
+guessed at, because pricing it at one call is what let six requests be billed against one. An
+explicit retry count the caller set is kept and is charged for rather than absorbed, and
+`references/sdk-execution.md` owns the mechanism and what it trades away - a transient failure now
+surfaces instead of being retried silently. Generated walkthrough provider calls add
 no explicit retries. When the preserved client has bounded retries, include their possible extra
 calls in the internal runtime/spend estimate without asking the user to configure them.
 

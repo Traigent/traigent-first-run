@@ -980,11 +980,12 @@ def spend_gate_bindings(
     exercised in `TheApprovedTotalReachesTheCodeTests`, where the numbers are
     chosen to make it fire.
 
-    The two stdlib modules come with them because the door's own state is built
-    from them - one lock and one context variable - and a fixture missing
-    either fails while executing that state rather than in the assertion it was
-    written for. `atexit` comes with them for the same reason and as a stand-in
-    rather than the module, for the reason `RecordingAtexit` above states.
+    The stdlib modules come with them because the door is built from them - one
+    lock, one context variable, and the rounding the request sizer does - and a
+    fixture missing any of them fails while executing the door rather than in
+    the assertion it was written for. `atexit` comes with them for the same
+    reason and as a stand-in rather than the module, for the reason
+    `RecordingAtexit` above states.
     """
     return {
         "RUN_COST_CEILING_USD": ceiling,
@@ -993,6 +994,7 @@ def spend_gate_bindings(
         "UNTRACKED_CALL_COST_USD": per_call,
         "threading": threading,
         "contextvars": contextvars,
+        "math": math,
         "atexit": RecordingAtexit(),
     }
 
@@ -15497,7 +15499,6 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         }
         namespace = {
             "litellm": module,
-            "math": math,
             **spend_gate_bindings(**bindings),
         }
         exec(  # noqa: S102
@@ -15786,6 +15787,163 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         "total was never asked for",
                     )
 
+    def test_a_knob_this_cannot_size_is_refused_rather_than_priced_at_one(
+        self,
+    ) -> None:
+        """The third hole at this seam, closed by inverting the default.
+
+        `worst_case_requests` read three keywords and priced every other one
+        at nothing. `retry_policy` is one litellm honours on plain
+        `completion`: it reads the policy on the failure path and hands the
+        count that policy names to `completion_with_retries`, whose attempts
+        re-enter the door as nested calls and reserve nothing. Measured on the
+        installed library against a local server answering 429, an invocation
+        reserved for 1 request placed 6; with `num_retries=1` beside it, 3
+        against 7; with one fallback beside it, 2 against 12.
+
+        A longer list of names to refuse is the mechanism that let this
+        through in the first place, so the test is the keyword's NAME instead:
+        one that retries or falls back is refused unless it is one of the
+        three this prices, and the default at the seam is closed rather than
+        open. That is what a list would still have missed -
+        `context_window_fallback_dict`, measured placing 2 requests against a
+        reservation of 1 once the context-window error it waits for actually
+        fired - and it is what a keyword a later release adds meets before it
+        spends rather than after.
+
+        Nothing the walkthrough generates sets one, asserted below, so the
+        refusal costs a generated run nothing. What it stops is the preserved
+        caller whose retry behaviour this package otherwise keeps, and it
+        stops them by naming the three keywords it does price.
+        """
+        refused = (
+            "retry_policy",
+            "context_window_fallback_dict",
+            "context_window_fallbacks",
+            "content_policy_fallbacks",
+            "retry_strategy",
+        )
+        for knob in refused:
+            with self.subTest(knob=knob):
+                placed: list[dict] = []
+                namespace = self.compiled_door(fake_litellm(placed))
+                with self.assertRaises(RuntimeError) as refusal:
+                    namespace["litellm"].completion(
+                        model="provider/m", messages=[], **{knob: {"a": 1}}
+                    )
+                self.assertIn(knob, str(refusal.exception))
+                self.assertIn(
+                    "num_retries",
+                    str(refusal.exception),
+                    "the refusal does not name what to express the resilience "
+                    "as, so it reads as a defect in this package",
+                )
+                self.assertEqual(
+                    placed,
+                    [],
+                    f"{knob} reached the provider, so every request it "
+                    "multiplies the invocation into is unreserved money",
+                )
+                self.assertEqual(
+                    namespace["RUN_SPEND_USD"],
+                    [],
+                    "a refused invocation left a reservation behind, which "
+                    "walks the remaining down for a call nobody placed",
+                )
+        # The three it prices still go through, or the refusal has eaten the
+        # retry behaviour this package promises a preserved caller it keeps.
+        priced: list[dict] = []
+        namespace = self.compiled_door(fake_litellm(priced))
+        namespace["litellm"].completion(
+            model="provider/m",
+            messages=[],
+            num_retries=2,
+            max_retries=0,
+            fallbacks=["provider/backup"],
+        )
+        self.assertEqual(len(priced), 1)
+        # Nothing generated sets one of them, so this refuses a caller the
+        # package inherited and never the walkthrough's own wrapper.
+        for source in re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        ):
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.Call):
+                    for keyword in node.keywords:
+                        self.assertNotIn(
+                            keyword.arg,
+                            refused,
+                            "a generated call sets a keyword the door refuses, "
+                            "so the walkthrough cannot place its own calls",
+                        )
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        with self.door_on_the_installed_litellm(
+            ceiling=100.00, remaining=100.00, per_call=0.05
+        ) as namespace:
+            import litellm
+
+            with self.assertRaises(RuntimeError):
+                litellm.completion(
+                    model="openai/gpt-4o-mini",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_key="k",
+                    api_base=namespace["_api_base"],
+                    retry_policy={"RateLimitErrorRetries": 5},
+                )
+            self.assertEqual(
+                len(namespace["_arrived"]),
+                0,
+                "the invocation reached the provider carrying a knob this "
+                "cannot size, which is how it placed six billable requests "
+                "against a reservation of one",
+            )
+
+    def test_a_fractional_retry_count_buys_a_whole_round_it_is_reserved_for(
+        self,
+    ) -> None:
+        """`int()` truncates and the library's stop condition does not.
+
+        litellm hands the count to `tenacity.stop_after_attempt`, which stops
+        at the first attempt number that REACHES the figure, so a fraction
+        buys the whole round above it. Measured against a local server
+        counting what arrived, with a process-wide `litellm.num_retries`: 1.5
+        placed 3 requests where truncation reserved 2, 2.5 placed 4 against 3,
+        and 4.2 placed 6 against 5. Whole floats are exact either way, which
+        is why this sat under the earlier grid - nobody types 1.5, and a
+        configuration that divides one figure by another produces it.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        for count in (0.5, 1.5, 2.5, 4.2):
+            with self.subTest(count=count):
+                with self.door_on_the_installed_litellm(
+                    num_retries=count,
+                    ceiling=100.00,
+                    remaining=100.00,
+                    per_call=0.05,
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=[{"role": "user", "content": "hi"}],
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                        )
+                    placed = len(namespace["_arrived"])
+                    self.assertAlmostEqual(
+                        sum(namespace["RUN_SPEND_USD"]),
+                        placed * 0.05,
+                        places=6,
+                        msg=f"a process-wide num_retries of {count} placed "
+                        f"{placed} billable provider request(s) and reserved "
+                        f"${sum(namespace['RUN_SPEND_USD']):.4f} at $0.0500 "
+                        "each, so a fractional count spends a round the "
+                        "approved total was never asked for",
+                    )
+
     def test_a_fallback_re_entry_does_not_charge_the_total_twice(self) -> None:
         """The over-debit that stopped a compliant scorer, measured and closed.
 
@@ -15891,24 +16049,33 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                     "a ledger entry paid the run back rather than debiting it",
                 )
 
-    def test_the_ledger_line_is_absent_on_two_endings_and_both_are_named(
+    def test_the_ledger_line_is_absent_on_every_ending_that_skips_atexit(
         self,
     ) -> None:
         """The safeguard's edge, measured, because the guidance now states it.
 
-        Three sentences claimed the line prints however the process ends, and
-        two endings do not print it: SIGTERM, which is what a plain `kill`
-        sends, and `os._exit`. Neither runs an `atexit` handler at all. A
-        `kill` on a long paid phase is exactly what the guidance around this
-        is written for, so the gap is named there and measured here rather
-        than left as a claim that holds on five endings out of seven.
+        Three sentences claimed the line prints however the process ends. The
+        first repair replaced that with a closed list of the two endings that
+        print nothing - SIGTERM and `os._exit` - and a closed list is the same
+        overstatement pointing the other way: measured one subprocess per
+        ending, six of them print nothing, and the two named were not the ones
+        a long paid phase is likeliest to take. SIGKILL is `kill -9`, the
+        out-of-memory killer and a container eviction; SIGHUP is a dropped SSH
+        session. None of the six runs an `atexit` handler at all.
 
-        The other half is what the assistant does with a phase that printed
-        nothing, which is the part an unqualified claim never had to answer.
+        So the guidance states the rule - an ending that never reaches
+        `atexit` prints nothing - with the measured endings under it as
+        examples rather than as the population. The half that is actionable
+        keys on the LINE being absent rather than on which signal fired, which
+        is what makes it hold for an ending nobody has measured yet.
         """
         endings = {
             "SIGTERM": "os.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(5)",
+            "SIGKILL": "os.kill(os.getpid(), signal.SIGKILL)\ntime.sleep(5)",
+            "SIGHUP": "os.kill(os.getpid(), signal.SIGHUP)\ntime.sleep(5)",
+            "SIGQUIT": "os.kill(os.getpid(), signal.SIGQUIT)\ntime.sleep(5)",
             "os._exit": "os._exit(0)",
+            "os.abort": "os.abort()",
         }
         for label, ending in sorted(endings.items()):
             with self.subTest(ending=label):
@@ -15952,13 +16119,13 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         # Both documents, because the claim was made in both and an
         # unqualified copy is what a reader acts on.
         for document in (safety, SDK_EXECUTION.read_text()):
-            for named in ("SIGTERM", "os._exit"):
+            for named in sorted(endings):
                 self.assertIn(
                     named,
                     document,
-                    f"a document promises a ledger line on every ending and "
-                    f"{named} does not print one, which is the ending a killed "
-                    "paid phase actually takes",
+                    f"a document states which endings leave no ledger line "
+                    f"and {named} is not among them, though it was measured "
+                    "printing nothing",
                 )
         # And the half a qualified claim owes the reader: what to carry
         # forward out of a phase that printed no figure at all.
@@ -16051,16 +16218,30 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "SystemExit": 'raise SystemExit("managed optimization stopped")',
             "unhandled exception": 'raise RuntimeError("provider gave up")',
             "failed assert": 'assert False, "no best configuration selected"',
+            # Both named in the guidance and neither measured until now: the
+            # status a phase exits with does not change whether the line is
+            # printed, and SIGINT is the one signal that does reach `atexit`,
+            # which is why it sits on this side of the pair of tests.
+            "sys.exit(3)": "sys.exit(3)",
+            "SIGINT": "os.kill(os.getpid(), signal.SIGINT)\ntime.sleep(5)",
         }
         for label, ending in sorted(endings.items()):
             with self.subTest(ending=label):
-                program = self.spend_report_program(
-                    ceiling=5.00,
-                    spent=2.00,
-                    per_call=0.05,
-                    placed=[0.40, 0.50],
-                    refused=[0.10],
-                    ending=ending,
+                program = "\n".join(
+                    [
+                        "import os",
+                        "import signal",
+                        "import sys",
+                        "import time",
+                        self.spend_report_program(
+                            ceiling=5.00,
+                            spent=2.00,
+                            per_call=0.05,
+                            placed=[0.40, 0.50],
+                            refused=[0.10],
+                            ending=ending,
+                        ),
+                    ]
                 )
                 with tempfile.TemporaryDirectory() as directory:
                     script = Path(directory) / "phase.py"

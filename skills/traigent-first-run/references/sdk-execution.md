@@ -974,10 +974,11 @@ def report_run_spend() -> None:
     the whole ceiling and call the difference remaining.
 
     What it does not cover is measured, one subprocess per ending: finishing,
-    `sys.exit`, an uncaught exception, `SystemExit` and SIGINT each printed it
-    once; SIGTERM and `os._exit` printed nothing, because neither runs
-    `atexit` at all, so a `kill` on a long paid phase leaves no figure behind.
-    `references/run-safety.md` owns what is carried forward when it is absent.
+    `sys.exit` with any status, an uncaught exception, `SystemExit` and SIGINT
+    each printed it once; SIGTERM, SIGKILL, SIGHUP, SIGQUIT, `os._exit` and
+    `os.abort` printed nothing, because none of them runs `atexit` at all - so
+    a `kill -9` or an out-of-memory kill on a long paid phase leaves no figure
+    behind. `references/run-safety.md` owns what is carried forward without it.
     """
     spent_here = sum(RUN_SPEND_USD)
     print(
@@ -1003,8 +1004,32 @@ def record_call_spend(cost: float | None) -> None:
     RUN_SPEND_USD.append(UNTRACKED_CALL_COST_USD if cost is None else cost)
 
 
+# Every litellm knob that turns one invocation into several provider requests
+# is named for what it does: it retries, or it falls back.
+# `worst_case_requests` below sizes three of them and can read no others, so a
+# request carrying any other is REFUSED rather than priced at one request.
+#
+# The test is the NAME rather than a list of the knobs known today, because
+# such a list is what failed here: `retry_policy` sat outside one, litellm
+# honoured it on plain `completion` all the same, and a rate-limited call
+# reserved for 1 request placed 6. Measured against the installed release: of
+# the 174 names in litellm's own `all_litellm_params`, eight carry `retry`,
+# `retries` or `fallback`; three are the ones priced here; `retry_policy`
+# placed 6 requests against a reservation of 1 and `context_window_fallback_dict`
+# placed 2 against 1; of the last three, two are read only by the router, and
+# `retry_strategy` changes the wait between attempts and not their number -
+# refused all the same, because the rule is the name. So the default is
+# closed, and a knob a later release adds is refused before it spends rather
+# than priced at one after it has.
+PRICED_REQUEST_KNOBS: frozenset[str] = frozenset(
+    {"num_retries", "max_retries", "fallbacks"}
+)
+UNPRICED_KNOB_MARKERS: tuple[str, ...] = ("retry", "retries", "fallback")
+
+
 def worst_case_requests(kwargs: dict) -> int:
-    """Billable provider requests one door invocation may leave behind.
+    """Billable provider requests one door invocation may leave behind, or a
+    refusal when the request carries a knob this cannot size.
 
     The door cannot watch them happen, so it reads what the request states.
     Measured on the installed litellm against a local server counting what
@@ -1026,7 +1051,11 @@ def worst_case_requests(kwargs: dict) -> int:
     crediting the ledger and walking the remaining above the approved total;
     floored only to zero it under-reserved, because a negative count still buys
     a round - one over the chain from a process-wide one, one per leg from a
-    caller's.
+    caller's. It is rounded UP rather than truncated, because litellm hands the
+    figure to `tenacity.stop_after_attempt`, which stops at the first attempt
+    number that reaches it: a process-wide `1.5` placed 3 requests where
+    truncation reserved 2, `2.5` placed 4 against 3, and `4.2` placed 6 against
+    5. Whole counts are unmoved by either.
 
     The pin is what makes any of this countable, and that is its remaining
     merit: an absent `max_retries` is the provider client's own default, which
@@ -1034,16 +1063,31 @@ def worst_case_requests(kwargs: dict) -> int:
     number this can assert. A caller who wants the resilience sets the count
     itself, and now pays for it here instead of spending it invisibly.
     """
+    unpriced = sorted(
+        name
+        for name in kwargs
+        if name not in PRICED_REQUEST_KNOBS
+        and any(marker in name for marker in UNPRICED_KNOB_MARKERS)
+    )
+    if unpriced:
+        raise RuntimeError(
+            f"a call setting {', '.join(unpriced)} was not placed: this "
+            "reservation reads `num_retries`, `max_retries` and `fallbacks` "
+            "and prices no other retry or fallback knob - `retry_policy` "
+            "alone placed 6 provider requests against a reservation of 1. "
+            "Express the resilience with those three alone."
+        )
     asked = kwargs.get("num_retries")
     counted = asked or getattr(litellm, "num_retries", 0) or 0
-    library_retries = max(1, int(counted)) if counted else 0
+    library_retries = max(1, math.ceil(float(counted))) if counted else 0
     client_retries = max(
-        0, int((asked if asked is not None else kwargs["max_retries"]) or 0)
+        0,
+        math.ceil(float((asked if asked is not None else kwargs["max_retries"]) or 0)),
     )
     legs = 1 + len(kwargs.get("fallbacks") or ())
     per_leg = 1 + library_retries + client_retries
     if legs > 1 and asked:
-        per_leg += max(1, int(asked))
+        per_leg += max(1, math.ceil(float(asked)))
     return per_leg * legs
 
 
@@ -1134,10 +1178,10 @@ def ledgered(place):
         #
         # So the invariant is not asserted. What is reserved instead is the
         # worst case the request states, before the call. `run-safety.md`
-        # records the pin as the one exception to preserving a caller's retry
-        # behaviour and what it trades: a transient 429 or 500 now reaches the
-        # caller instead of being absorbed, paid for and visible rather than
-        # silently, and re-running is the user's decision.
+        # records the pin as one of the two exceptions to preserving a
+        # caller's retry behaviour, and what it trades: a transient 429 or 500
+        # now reaches the caller instead of being absorbed, paid for and
+        # visible rather than silently, and re-running is the user's decision.
         kwargs.setdefault("max_retries", 0)
         if INSIDE_THE_DOOR.get():
             # A re-entry, not a new call - litellm's fallback handling calls
@@ -1696,8 +1740,9 @@ real one-row fixed configuration remains one row; never manufacture variants aro
 
 The baseline process prints its ledger on the way out, whether it finished or died on any ending
 `atexit` reaches, because `report_run_spend` is registered with it rather than written after the
-last call; SIGTERM and `os._exit` reach no handler and print nothing, and
-`references/run-safety.md` owns what to carry forward when the line is missing. The figure
+last call; an ending that reaches no handler prints nothing - SIGTERM, SIGKILL, SIGHUP, SIGQUIT,
+`os._exit` and `os.abort`, measured - and `references/run-safety.md` owns what to carry forward
+when the line is missing. The figure
 to carry forward is the one that line names as gone - what this process spent plus what it was
 launched having spent - already carrying the conservative deduction for any call its route did not
 price. That total is what the connected process is launched with as
