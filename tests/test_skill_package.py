@@ -9678,6 +9678,37 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
 
+    def test_every_ci_action_is_pinned_to_a_commit_sha(self) -> None:
+        """A version tag is a mutable pointer, and this workflow runs on
+        `pull_request`.
+
+        Whoever controls the tag chooses what executes against this checkout,
+        after the change that asked for it was reviewed here. The container
+        image in the same file is already digest-pinned, in both the pull and
+        the run, so `uses:` is held to the standard the file already sets for
+        itself, with the version kept in a trailing comment so a reader can
+        still tell which release a digest is.
+
+        Written as a rule rather than a list of the four lines that exist
+        today: the next contributor adds a step by pasting one, and a guard
+        that names yesterday's actions would watch that happen.
+        """
+        uses = re.compile(r"^-?\s*uses:\s*(?P<ref>[^#]+?)\s*(?:#.*)?$")
+        unpinned: list[str] = []
+        for workflow in CI_WORKFLOWS:
+            for number, line in enumerate(workflow.read_text().splitlines(), 1):
+                match = uses.match(line.strip())
+                if match is None:
+                    continue
+                if not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", match.group("ref")):
+                    unpinned.append(f"{workflow.name}:{number}: {line.strip()}")
+        self.assertEqual(
+            unpinned,
+            [],
+            "every `uses:` must name a 40-hex commit SHA with the version tag "
+            "in a trailing comment; these do not: " + "; ".join(unpinned),
+        )
+
     def test_ci_runs_offline_contract_in_a_fail_closed_container(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
         offline_job = workflow.split("  offline-contract:", 1)[1].split(
@@ -9692,7 +9723,7 @@ class SkillPackageTests(unittest.TestCase):
             "$GITHUB_WORKSPACE:/repo:ro",
             "$RUNNER_TEMP/traigent-offline-evidence:/evidence",
             "python tests/behavioral/harness.py --all",
-            "actions/upload-artifact@v4",
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
         ):
             self.assertIn(phrase, offline_job)
         self.assertNotIn("pip install", offline_job)
