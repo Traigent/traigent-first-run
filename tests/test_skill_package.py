@@ -21728,109 +21728,286 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
     resumed run may skip, so history appended there arrives dressed as state.
     What keeps two artifacts from becoming two homes for one rule is that they
     answer different questions - what is true now, against when it happened and
-    whether it cleared - and that nothing in a run reads the log back.
+    whether it cleared - and that nothing in a run reads the log back as input.
+
+    These assertions are structural on purpose. The first version of them was
+    eight `assertIn`s over prose, and a mutation sweep passed the whole suite
+    against seven separate edits that reversed what the section says - deleting
+    every event definition, deleting two of the redaction clauses, renaming the
+    artifact in one document and not the other, and inverting the dedup rule
+    outright. A substring that survives the deletion of the rule it guards is
+    not a guard. What is pinned below is the key set parsed out of the schema
+    table, the vocabulary each event closes over, every clause of the allowlist
+    one at a time, and one path spelled identically in three documents.
     """
 
+    EVENTS = (
+        "blocked",
+        "gate_fail",
+        "tool_fail",
+        "external_refusal",
+        "run_stop",
+        "warning",
+    )
+    LOG_PATH = "`traigent-runs/run-log.jsonl`"
+
+    def _safety(self) -> str:
+        return (SKILL_ROOT / "references" / "run-safety.md").read_text()
+
     def _log_section(self) -> str:
-        safety = (SKILL_ROOT / "references" / "run-safety.md").read_text()
+        safety = self._safety()
         heading = "### The run log"
         self.assertEqual(safety.count(heading), 1)
-        return " ".join(safety.split(heading, 1)[1].casefold().split())
+        return safety.split(heading, 1)[1]
 
-    def test_the_five_kinds_are_declared_where_the_failures_already_are(
-        self,
-    ) -> None:
-        """Recovery enumerates every failure class; the vocabulary joins it.
+    def _schema_keys(self) -> set[str]:
+        """The key set, read out of the table rather than out of a sentence."""
+        keys: set[str] = set()
+        for line in self._log_section().splitlines():
+            if not line.startswith("| `"):
+                continue
+            first_cell = line.split("|")[1]
+            keys.update(re.findall(r"`([a-z_]+)`", first_cell))
+        return keys
+
+    def _schema_rows(self) -> dict[str, str]:
+        """Key -> what the table says it holds.
+
+        The key set alone left every description free: a mutation loosening
+        `detail` to "a sentence or two with the surrounding context a reader
+        needs" - which is an instruction to write exactly what the allowlist
+        forbids - passed the whole suite.
+        """
+        rows: dict[str, str] = {}
+        for line in self._log_section().splitlines():
+            if not line.startswith("| `"):
+                continue
+            cells = line.split("|")
+            for key in re.findall(r"`([a-z_]+)`", cells[1]):
+                rows[key] = cells[2].strip()
+        return rows
+
+    def _event_bullets(self) -> dict[str, str]:
+        """Each event's own paragraph, keyed by event name."""
+        bullets: dict[str, str] = {}
+        current: str | None = None
+        for line in self._log_section().splitlines():
+            opener = re.match(r"- `([a-z_]+)` - ", line)
+            if opener:
+                current = opener.group(1)
+                bullets[current] = line
+            elif current and line.startswith("  "):
+                bullets[current] += " " + line.strip()
+            elif current and not line.strip():
+                current = None
+        return bullets
+
+    def test_the_schema_table_declares_the_whole_key_set(self) -> None:
+        """Parsed from the table, so deleting a row fails rather than passes."""
+        self.assertEqual(
+            self._schema_keys(),
+            {
+                "key",
+                "event",
+                "stage",
+                "class",
+                "detail",
+                "first_ts",
+                "last_ts",
+                "count",
+                "resolved",
+                "resolved_ts",
+            },
+        )
+        rows = self._schema_rows()
+        # The three cells that carry a rule rather than a datatype.
+        self.assertIn("one sentence", rows["detail"])
+        self.assertIn("allowlist", rows["detail"])
+        self.assertIn("closed set", rows["class"])
+        self.assertIn("never authored prose", rows["class"])
+        self.assertIn("matched whole", rows["key"])
+
+    def test_every_event_is_defined_and_not_merely_listed(self) -> None:
+        """The table row alone satisfied the old test; a definition is the point.
 
         A sixth kind invented at the moment of writing is a kind nothing
-        classifies, so the closed list is the point rather than the names.
+        classifies, so the closed list is what matters rather than the names.
         """
+        bullets = self._event_bullets()
+        self.assertEqual(set(bullets), set(self.EVENTS))
         section = self._log_section()
-        for kind in (
-            "`blocked`",
-            "`gate_fail`",
-            "`tool_fail`",
-            "`external_refusal`",
-            "`warning`",
-        ):
-            with self.subTest(kind=kind):
-                self.assertIn(kind, section)
         self.assertIn(
-            "one line per distinct problem, never one per occurrence", section
+            "one line per distinct problem, never one per occurrence",
+            " ".join(section.casefold().split()),
         )
+        for event in self.EVENTS:
+            with self.subTest(event=event):
+                # Once in the `event` row, once as its own definition.
+                self.assertGreaterEqual(section.count(f"`{event}`"), 2)
 
-    def test_a_repeat_updates_one_line_instead_of_adding_another(self) -> None:
-        """Dedup is legibility, not tidiness.
-
-        The failure that writes the most lines is a retry, and it carries the
-        fewest distinct facts; twelve identical lines bury the finding the
-        reader opened the file for.
-        """
-        section = self._log_section()
-        self.assertIn("updates its `last_ts` and `count` in place", section)
-        self.assertIn("never appends a second line", section)
-        self.assertIn("resolved`, `resolved_ts`", section)
-
-    def test_the_mandate_has_one_home_and_the_edge_case_has_another(self) -> None:
-        """SKILL.md carries the rule; the reference carries where it bends.
-
-        Looking a key up to deduplicate is the one read the log takes, and a
-        reference stating the bare mandate a second time is the defect this
-        package has already been bitten by four times.
-        """
-        skill = " ".join(SKILL.read_text().casefold().split())
-        section = self._log_section()
-        self.assertIn("no part of this one reads it back", skill)
-        self.assertNotIn("nothing in the run reads it back", section)
-        self.assertIn("is not reading it as run input", section)
-        self.assertIn(
-            "`traigent-runs/run-plan.md` remains the only resume authority", section
-        )
-
-    def test_the_file_written_to_explain_a_failure_holds_no_content(self) -> None:
-        """The likeliest place to undo a decision made three sections away.
-
-        Example content is kept out of the SDK's own local logs on purpose, and
-        a raw provider error body carries a key or a prompt as readily as a row
-        quoted to make a diagnosis concrete.
-        """
-        section = self._log_section()
-        self.assertIn("row ids, never row text", section)
-        self.assertIn("`traigent_log_example_content=false`", section)
-        self.assertIn("no raw provider error body", section)
-
-    def test_it_waits_for_the_same_consent_the_record_waits_for(self) -> None:
-        """A log before the answer is a write before the answer.
-
-        The zero-anchor gate's list is what it would have been written against,
-        so the log inherits that gate rather than earning an exception to it.
-        """
-        section = self._log_section()
-        skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("it exists once `traigent-runs/` lawfully does", section)
-        self.assertIn("never an invented earlier one", section)
-        self.assertIn("do not create `traigent-runs/`", skill)
-
-    def test_a_file_the_run_writes_is_disclosed_where_writes_are_listed(
+    def test_each_event_closes_over_a_vocabulary_the_key_can_be_spelled_from(
         self,
     ) -> None:
-        """Every file the run wrote is named at the close, and in the layout."""
-        dataset = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
-            .casefold()
-            .split()
+        """`class` is two thirds of the identity dedup matches on.
+
+        Left as authored prose, the same failure met twice spells its key two
+        ways, every count stays 1, and a `blocked` line is never found again by
+        the turn that would resolve it. So each event names the closed set its
+        class is drawn from, and `tool_fail` names the exit code instead.
+        """
+        bullets = self._event_bullets()
+        expected = {
+            "blocked": ("`approval`", "`key`", "`answer`"),
+            "gate_fail": (
+                "`credential-file-tracked`",
+                "`ignore-check`",
+                "`containment`",
+                "`readiness-cap`",
+                "`invariants`",
+            ),
+            "external_refusal": (
+                "`authentication`",
+                "`key-scope`",
+                "`account-access`",
+                "`quota`",
+                "`rate`",
+                "`validation`",
+            ),
+            "run_stop": (
+                "`timeout`",
+                "`cost-ceiling`",
+                "`outage`",
+                "`persistence`",
+                "`uncategorized`",
+            ),
+            "warning": ("`refused-trial`", "`untracked-cost`", "`cap-standing`"),
+        }
+        for event, values in expected.items():
+            for value in values:
+                with self.subTest(event=event, value=value):
+                    self.assertIn(value, bullets[event])
+        self.assertIn("exit code", bullets["tool_fail"])
+        self.assertIn("never authored prose", self._log_section())
+
+    def test_the_halt_this_file_orders_is_not_filed_as_a_warning(self) -> None:
+        """The defect this section shipped with, pinned so it cannot return.
+
+        `## Recovery` orders paid work stopped at once when tracking degrades to
+        local-only, and the first draft of this taxonomy listed that same
+        condition as a warning - defined seventy lines later as the thing that
+        does not stop the run. Green suite, opposite instructions, seventy-one
+        lines apart in one file.
+        """
+        bullets = self._event_bullets()
+        self.assertNotIn("local-only", bullets["warning"])
+        self.assertIn("local-only", bullets["run_stop"])
+        self.assertIn("persistence", bullets["run_stop"])
+        safety = " ".join(self._safety().casefold().split())
+        self.assertIn("stop paid work at once", safety)
+
+    def test_a_repeat_updates_one_line_and_the_write_survives_a_kill(
+        self,
+    ) -> None:
+        """Dedup is legibility; the rename is what makes dedup affordable.
+
+        Forbidding the append mandates read-modify-rewrite, and the section
+        directly above this one enumerates six endings that arrive without
+        warning. A kill between truncating and writing would destroy the one
+        artifact written to explain a killed run.
+        """
+        section = self._log_section()
+        normalized = " ".join(section.casefold().split())
+        self.assertIn("updates its `last_ts` and `count` in place", normalized)
+        self.assertIn("never appends a second line", normalized)
+        # The reversal a prose assertion cannot see: "never appends a second
+        # line UNLESS ... one line per occurrence".
+        self.assertEqual(normalized.count("per occurrence"), 1)
+        self.assertIn("never one per occurrence", normalized)
+        self.assertIn("rename it over the original", normalized)
+        self.assertIn("cannot parse", normalized)
+
+    def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
+        """SKILL.md carries the rule; the reference carries where it bends.
+
+        Looking a key up to deduplicate is the one read the log takes, so the
+        mandate is "not as input" rather than "not at all" - the wording the
+        README already used. The previous check banned one spelling of the
+        broader claim, which one article defeated.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        section = self._log_section()
+        self.assertIn("reads it back as input", skill)
+        normalized = " ".join(section.casefold().split())
+        self.assertIsNone(re.search(r"reads? it back", normalized))
+        self.assertIn("is not reading it as run input", normalized)
+        self.assertIn(
+            "`traigent-runs/run-plan.md` remains the only resume authority", normalized
         )
-        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
-        record = " ".join(
-            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        # The shape is loaded when the record exists, not at the reference's own
+        # stage - stage 3 can refuse before stage 4 loads the document.
+        self.assertIn("load it when the record is created", skill)
+
+    def test_a_restart_carries_the_log_with_the_record(self) -> None:
+        """A key with no run in it merges two runs into one file.
+
+        `count` becomes a cross-run count and a stale `resolved` makes a stuck
+        run read as cleared - inverting this file's own line that a line which
+        never clears is what a stuck run looks like.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "renaming `traigent-runs/run-log.jsonl` to the same stamp beside it", skill
         )
-        self.assertIn("`traigent-runs/run-log.jsonl`", dataset)
-        self.assertIn("`traigent-runs/run-log.jsonl`", readme)
-        # The record is pinned to state and to a line count that holds it
-        # there, so the log is disclosed where writes are listed rather than
-        # by spending two of those lines pointing at it.
-        self.assertNotIn("run-log", record)
+        self.assertIn(
+            "a restart carries the log with the record",
+            " ".join(self._log_section().casefold().split()),
+        )
+
+    def test_every_clause_of_the_allowlist_is_pinned_one_at_a_time(self) -> None:
+        """The highest-stakes clauses were the ones the old test left out.
+
+        A denylist inherited by reference also pointed at a section that does
+        not contain it, so the clauses are stated here and checked here.
+        """
+        normalized = " ".join(self._log_section().casefold().split())
+        for clause in (
+            "no path",
+            "no id",
+            "no session or account address",
+            "no user or machine name",
+            "no secret or access code",
+            "no provider error body",
+            "no text or identifier taken from the project's data",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, normalized)
+        self.assertIn("traigent_log_example_content=false", normalized)
+
+    def test_one_path_spelled_the_same_in_every_document_that_names_it(
+        self,
+    ) -> None:
+        """Renaming the artifact in one document passed the whole suite."""
+        documents = {
+            "SKILL.md": SKILL.read_text(),
+            "run-safety.md": self._safety(),
+            "evaluation-and-dataset.md": (
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+            ).read_text(),
+            "README.md": (ROOT / "README.md").read_text(),
+        }
+        for name, text in documents.items():
+            with self.subTest(document=name):
+                self.assertIn(self.LOG_PATH, text)
+        # The record is pinned to state and to a line count that holds it there,
+        # so the log is disclosed where writes are listed rather than by
+        # spending two of those lines pointing at it.
+        self.assertNotIn("run-log", (SKILL_ROOT / "assets" / "run-plan.md").read_text())
+        # The customer-facing row keeps the conditional it inherited: outside a
+        # Git worktree the guide creates no `.gitignore`.
+        self.assertIn(
+            "ignored when the project uses git, like the rest of `traigent-runs/`",
+            " ".join((ROOT / "README.md").read_text().casefold().split()),
+        )
 
 
 if __name__ == "__main__":

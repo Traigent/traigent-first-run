@@ -1110,50 +1110,65 @@ numeric telemetry, and keep error text and metadata recorded with the run conten
 
 ### The run log
 
-Every failure class above, and every warning that survives into the result, gets one line in
+Every stop, refusal, and result-affecting warning above gets one line in
 `traigent-runs/run-log.jsonl`, written when it happens rather than at the end of the stage - a
 recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
 handed this directory can say where the run stopped and why. SKILL.md's mandate rests on a
 division: the record says what is true now, the log says when it happened, how often, and whether
-it cleared, and neither answers the other's question. Where the record already has a field for a
-finding - the portal probe's pass/fail among them - that field keeps the value and the log carries
-only the timing.
+it cleared, and neither answers the other's question. Where the record already holds a finding - the
+portal probe's pass/fail among them - that field keeps the value and the log's line does not restate
+it.
 
 One line per distinct problem, never one per occurrence. Each line is a JSON object:
 
 | Key | What it holds |
 |---|---|
-| `key` | `<event>:<stage>:<slug>` - the identity deduplication is done on |
-| `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, or `warning` |
-| `stage` | the SKILL stage it happened in |
-| `detail` | one content-free sentence naming what happened |
+| `key` | `<event>:<stage>:<class>`, matched whole - the identity deduplication is done on |
+| `event` | `blocked`, `gate_fail`, `tool_fail`, `external_refusal`, `run_stop`, or `warning` |
+| `stage` | the run record's stage number |
+| `class` | one value from that event's own closed set below, never authored prose - two encounters with one failure have to spell its key the same way, and a sentence written twice will not |
+| `detail` | one sentence, under the allowlist below |
 | `first_ts`, `last_ts` | UTC `YYYYMMDDTHHMMSSZ` |
 | `count` | how many times that key has occurred |
 | `resolved`, `resolved_ts` | set on that same line when it clears; a line that never clears is what a stuck run looks like |
 
 A repeat of a key already in the file updates its `last_ts` and `count` in place, and never appends
 a second line: twelve identical lines from one retry loop bury the finding a reader came for, and
-the count is the fact worth keeping. Reading the file to find that key is not reading it as run
-input - nothing in it may waive a gate, decide what runs next, resume a run, or be quoted as a
-result, and `traigent-runs/run-plan.md` remains the only resume authority.
+the count is the fact worth keeping. Write the whole file to a sibling temporary path and rename it
+over the original, because this file's purpose is surviving the endings listed above - a kill
+between truncating and writing destroys the one artifact that explains the run, and the section
+above lists six signals that arrive without warning. Leave a line this run cannot parse exactly
+where it is and append beside it; a file it cannot read is not a file it may rewrite. Reading the
+file to find that key is not reading it as run input - nothing in it may waive a gate, decide what
+runs next, resume a run, or be quoted as a result, and `traigent-runs/run-plan.md` remains the only
+resume authority. A restart carries the log with the record, so no count and no `resolved` from an
+earlier run is read as this one's.
 
-The five are told apart by who has to act. `blocked` - waiting on the user for an approval, a key,
-or an answer; this is the one that says where a stuck run stopped, so it is written before the wait
-rather than after it. `gate_fail` - a gate this guide defines refused: the tracked or ignore check
-on the credential file, execution-evaluator containment, a blocking readiness cap, an invariant
-mismatch. `tool_fail` - a bundled script or command exited non-zero, with its exit code and
-sanitized class, exit 3 among them. `external_refusal` - a provider, portal, or Traigent refusal
-under the category this section already gives it: authentication, key scope, account or plan access,
-quota or funding, rate, or validation. `warning` - observed, and able to distort the result without
-stopping the run: tracking degraded to local-only, a refused truncated trial, an untracked-cost
-deduction, a cap left standing.
+The six are told apart by who has to act, and each names the closed set its `class` comes from.
 
-The sanitization rule this section applies to external error text binds here, with one clause added:
-no secret value, no confirmation or access code, no raw provider error body - which can echo a key
-or a prompt - and no example content. Row ids, never row text. A file written to explain a failed
-run is exactly where the content `TRAIGENT_LOG_EXAMPLE_CONTENT=false` keeps out of local logs gets
-reintroduced.
+- `blocked` - waiting on the user: `approval`, `key`, or `answer`. This is the one that says where a
+  stuck run stopped, so it is written before every stop-and-wait that happens after the record
+  exists. A stop before the record is reported in conversation and stays there.
+- `gate_fail` - a gate this guide defines refused: `credential-file-tracked`, `ignore-check`,
+  `containment`, `readiness-cap`, or `invariants`.
+- `tool_fail` - a bundled script or command exited non-zero; the class is its exit code.
+- `external_refusal` - a provider, portal, or Traigent refusal, under the category this file already
+  gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, or `validation`.
+- `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
+  `outage`, `persistence`, or `uncategorized`. Tracking that degraded to local-only is
+  `run_stop:<stage>:persistence` and never a warning - the halt above owns it, and a warning is by
+  definition the thing that did not stop the run.
+- `warning` - observed, and able to distort the result without stopping the run: `refused-trial`,
+  `untracked-cost`, or `cap-standing`.
 
-It lives under the record's consent gate: it exists once `traigent-runs/` lawfully does. A failure
-before that is reported in conversation and written when the directory is created, under the time it
-is written at - never an invented earlier one.
+`detail` and the `class` beside it carry the event and nothing else: one sentence naming what
+happened, with no path, no id, no session or account address, no user or machine name, no secret or
+access code, no provider error body, and no text or identifier taken from the project's data. This
+guide prints absolute paths to the user and writes ids into the record because both are useful
+there; this is the file a user may hand to somebody else, so it names the class of thing that failed
+rather than the instance. It is also where the content
+`TRAIGENT_LOG_EXAMPLE_CONTENT=false` keeps out of local logs would come back, one quoted row at a
+time, if the sentence were allowed to carry an example.
+
+It exists once `traigent-runs/` lawfully does, which is the record's own consent gate. Nothing is
+written before that, and nothing is backdated into it afterwards.
