@@ -1562,16 +1562,37 @@ def litellm_symbol(tree: ast.Module, dotted: str) -> ast.AST:
     return node
 
 
-def litellm_provider_branches(literal: str) -> list[ast.Module]:
-    """The bodies of every `custom_llm_provider == <literal>` branch.
+def litellm_provider_branches(literal: str) -> list[ast.AST]:
+    """Where a route's key is resolved: its dispatch branch, and what that calls.
 
     `litellm.completion` dispatches through one long comparison chain, and the
     branch a route lands in is where that route's key is resolved out of the
     environment. Matched on the comparison rather than a line number because
     the pinned version and whatever a contributor has installed are not the
     same file, and a line number would report that as a defect in this package.
+
+    The branch body alone stopped being the answer in 1.93.0, which moved every
+    body out into a `_complete_<route>(ctx)` function beside `completion` and
+    left the branch a single call. Read as the bodies only, five routes then
+    resolved on no name at all - the check written to notice a missing
+    credential reported that litellm accepts none, which is not a fact about
+    litellm and not one about this package either. So the calls a branch makes
+    to functions defined beside it in `main.py` are followed, transitively, and
+    both versions read the identical set of names for every route.
+
+    Following widens what is read, so it is worth saying what stops it running
+    away: a helper that resolved some other route's key would surface as a name
+    this package neither accepts nor excludes, and the equality below fails on
+    it by name. The answer gets wider only where somebody agrees in writing
+    that it should.
     """
-    completion = litellm_symbol(litellm_source("main.py"), "completion")
+    module = litellm_source("main.py")
+    beside_it = {
+        node.name: node
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    completion = litellm_symbol(module, "completion")
     bodies = []
     for node in ast.walk(completion):
         if not isinstance(node, ast.If):
@@ -1595,14 +1616,28 @@ def litellm_provider_branches(literal: str) -> list[ast.Module]:
             "branch. Either the route moved or the dispatch was rewritten; "
             "either way the names it accepts have to be re-sourced."
         )
-    return bodies
+    resolution: list[ast.AST] = [*bodies]
+    pending, followed = [*bodies], set()
+    while pending:
+        for node in ast.walk(pending.pop()):
+            called = (
+                node.func.id
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                else None
+            )
+            if called in beside_it and called not in followed:
+                followed.add(called)
+                resolution.append(beside_it[called])
+                pending.append(beside_it[called])
+    return resolution
 
 
 # Where the installed litellm resolves each route's credential.
 #
 # `branch` is the `custom_llm_provider` literal `litellm.completion` dispatches
-# on. `delegates` are the definitions that branch hands the resolution to, and
-# they are not decoration: two routes keep a second name there and nowhere
+# on; whatever that branch calls in `main.py` is followed from it. `delegates`
+# are the resolvers in OTHER modules, which nothing can follow to from here,
+# and they are not decoration: two routes keep a second name there and nowhere
 # else. The Anthropic branch reads only `ANTHROPIC_API_KEY`, and the token that
 # also authenticates it is resolved inside the model-info helpers; the Gemini
 # branch calls `get_api_key_from_env()`, which is where both of Google's
@@ -1613,10 +1648,14 @@ def litellm_provider_branches(literal: str) -> list[ast.Module]:
 # pattern separates those from a credential without also dropping the next
 # credential that fails to match the pattern - which is the silent narrowing
 # this whole check exists to remove. So every name read on the path is either
-# accepted or listed here with the reason it is not a credential. A name that
-# is neither fails the suite, and so does a name listed here that the path has
-# stopped reading, because a stale exclusion is how a real name would come to
-# be masked later.
+# accepted or listed here with the reason it is not a credential, and a name
+# that is neither fails the suite.
+#
+# The list is the union over litellm versions, not a picture of one of them.
+# It has to be: a name an older version reads has to stay excluded or that
+# version's run fails, and the reason written against it is what the exclusion
+# is checked on. Which of these a given version still reads is litellm's
+# plumbing rather than this package's business, so nothing asserts it.
 LITELLM_CREDENTIAL_SOURCES = {
     "openrouter": SimpleNamespace(
         branch="openrouter",
@@ -8402,6 +8441,20 @@ class SkillPackageTests(unittest.TestCase):
         name. `PALM_API_KEY` is still honoured on the Gemini branch, appears in
         no current Google documentation, and nobody reviewing a hand-written
         table would have known to put it there.
+
+        What this asks litellm has since been narrowed to credentials, which is
+        the only half that is about this package. The first version bump under
+        it, 1.87.1 to the pinned 1.93.0, moved the resolution one call away and
+        this failed twice over: once because it was reading a dispatch stub
+        instead of the resolution, which `litellm_provider_branches` now
+        follows, and once because it also demanded that every name excluded as
+        not-a-credential still be read. That second demand is unsatisfiable
+        across versions - the exclusions have to cover every version the
+        equality runs against, and can only be read by one - and it is a
+        question about endpoints and org ids rather than about keys. A suite
+        that goes red over which base-URL variable a release consults teaches
+        its readers to reach past it, and the name it would have masked on the
+        way is the one thing here worth protecting.
         """
         if importlib.util.find_spec("litellm") is None:
             # The offline-socket contract's policy, for its reason: skipping is
@@ -8441,13 +8494,23 @@ class SkillPackageTests(unittest.TestCase):
                         ),
                     ]
                 )
+                # Only the exclusions this version still reads are asserted on.
+                # An exclusion it has stopped reading is inert - it silences a
+                # name nothing produces - and demanding otherwise would require
+                # the list to be one version's set while the equality below
+                # requires it to be every version's, which no list can be.
                 self.assertEqual(
-                    sorted(set(source.not_credentials) - read),
+                    sorted(
+                        name
+                        for name in set(source.not_credentials) & read
+                        if not source.not_credentials[name].strip()
+                    ),
                     [],
-                    f"the {route} path no longer reads a name excluded from it "
-                    "as not-a-credential. An exclusion nothing reads is a hole "
-                    "kept open: the next name to appear under it would be "
-                    "dropped before this check ever saw it.",
+                    f"a name the {route} path reads is excluded from it with no "
+                    "reason written against it. Excluding is the one way a name "
+                    "litellm reads leaves this comparison, so it is also the "
+                    "one way a real credential could be dropped from both "
+                    "inventories without anyone arguing for it.",
                 )
                 accepted = read - set(source.not_credentials)
                 self.assertEqual(
