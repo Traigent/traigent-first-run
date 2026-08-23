@@ -658,9 +658,10 @@ the card shows. `references/sdk-execution.md` owns what the wrapper does with th
 Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process, which
 is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
 optimization-call limit, but it does not yet share one cumulative budget with calibration and other
-calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
-cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked,
-and pass the result to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
+calls. Until it does, keep a single running total rather than a phase ledger: each paid phase ends
+by printing what it spent against the figures it was launched with, and that printed total - not the
+SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is added to the
+running total and passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
 Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not.
 
@@ -673,9 +674,13 @@ one already spent.
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
 `TRAIGENT_VENDOR_MAX_RETRIES` for the first run. Preserve retry behavior already present in the
-user's agent/provider client. Generated walkthrough provider calls add no explicit retries. When
-the preserved client has bounded retries, include their possible extra calls in the internal
-runtime/spend estimate without asking the user to configure them.
+user's agent/provider client, with one exception the spend ledger requires: retries the provider
+client would take underneath the wrapper are turned off, because a call it repeats down there costs
+real money the ledger never sees and the running total never moves for. An explicit retry count the
+caller set is kept, and `references/sdk-execution.md` owns the mechanism and what it trades away -
+a transient failure now surfaces instead of being absorbed. Generated walkthrough provider calls add
+no explicit retries. When the preserved client has bounded retries, include their possible extra
+calls in the internal runtime/spend estimate without asking the user to configure them.
 
 After the approved live probe, calculate internal request and SDK optimization bounds from
 observed latency, rows, trials, calls per example, and concurrency, with a reasonable completion

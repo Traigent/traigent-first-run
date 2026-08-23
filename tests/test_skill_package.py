@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import http.server
 import importlib.util
 import io
 import itertools
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tokenize
 import traceback
 import unittest
@@ -831,9 +833,12 @@ DOOR_INSTALL_MARKER = "_first_run_ledgered"
 # That gap is what the re-decision narrowed rather than closed. Moving the gate
 # off `place_call` and onto the attribute means a caller cannot decline it, so
 # a new entry point through `completion` or `acompletion` is ledgered without
-# anyone remembering to route it - but `litellm` exposes other ways to spend
-# (`text_completion`, `batch_completion`), and reaching one of those is the
-# same money leaving through a name nothing here wraps.
+# anyone remembering to route it - and so is anything that resolves one of them
+# when it calls, `batch_completion` and a configured `Router` among them. What
+# stays outside is a name with its own route to the provider (`text_completion`,
+# `completion_with_retries`, `embedding`), and reaching one of those is the same
+# money leaving through a name nothing here wraps. Both halves were measured by
+# patching a sentinel over `litellm.completion` and calling each entry point.
 LEDGERED_ENTRY_POINTS = frozenset({"completion", "acompletion"})
 
 
@@ -13421,12 +13426,18 @@ class SkillPackageTests(unittest.TestCase):
         # `build_request`, and an inlined `call_agent` would drift past it.
         namespace["build_request"] = lambda message, config: {"probe": "sentinel"}
         namespace["call_agent"]("task", base)
+        # Every key `build_request` produced, and one the door adds on its way
+        # past: it holds an invocation to a single billable attempt, so it is a
+        # transport setting rather than a search dimension. Asserting the pair
+        # separately keeps this test about routing while still failing if the
+        # door starts editing the request itself.
         self.assertEqual(
-            requests[-1],
+            {key: value for key, value in requests[-1].items() if key != "max_retries"},
             {"probe": "sentinel"},
             "call_agent must build its request with build_request, or the "
             "fence's wiring assert guards code the agent no longer calls",
         )
+        self.assertEqual(requests[-1].get("max_retries"), 0)
 
     def _wiring_probe_namespace(self, **overrides) -> dict:
         """Execute the fence's wiring probe with pieces of it swapped out."""
@@ -15291,6 +15302,361 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertIn(
             "cannot reach from the baseline process into the connected one", sdk
         )
+
+    @staticmethod
+    def retrying_provider(attempts: list[dict], cost: float = 0.004):
+        """A `litellm` whose client retries a timeout, the way the real one does.
+
+        litellm hands the OpenAI-shaped client a nonzero `max_retries` and a
+        timeout sits in that client's own retry set, so the retries happen
+        below `completion` where the wrapper cannot see them. Measured against
+        a local HTTP server on litellm 1.87.1: one call on an `openai/` or
+        `azure/` route placed three provider requests, and the same call
+        passing `max_retries=0` placed one.
+
+        The stand-in applies the shape rather than that count - `max_retries`
+        attempts after the first, defaulting to more than one - because the
+        count is the client's default and moves between releases, while the
+        property being asserted does not: whatever the default is, one wrapped
+        invocation has to leave exactly one billable request behind it.
+
+        The first attempt times out AFTER the provider generated its tokens: it
+        is billable and brings no cost home. A retry answers, and its answer is
+        priced at `cost`. So a run that retries is billed twice and told once.
+        """
+
+        def completion(**kwargs):
+            allowed = kwargs.get("max_retries", 2)
+            for attempt in range(allowed + 1):
+                attempts.append(dict(kwargs))
+                if attempt:
+                    return SimpleNamespace(
+                        usage=SimpleNamespace(cost=cost, total_tokens=18),
+                        choices=[
+                            SimpleNamespace(message=SimpleNamespace(content="late"))
+                        ],
+                    )
+            raise TimeoutError("generated, then the client stopped waiting")
+
+        return litellm_module(completion)
+
+    def compiled_door(self, module, **bindings) -> dict:
+        """The door, installed on `module`, reading cost the way the run does."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        namespace = {
+            "litellm": module,
+            "math": math,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(
+                    ast.Module(
+                        body=[
+                            *sdk_wrapper_state_nodes(text),
+                            functions["provider_reported_cost"],
+                            *sdk_wrapper_spend_gate(text),
+                        ],
+                        type_ignores=[],
+                    )
+                ),
+                "<door>",
+                "exec",
+            ),
+            namespace,
+        )
+        return namespace
+
+    def test_one_wrapped_invocation_is_held_to_one_billable_attempt(self) -> None:
+        """The debit is per invocation, so the invocation has to be one call.
+
+        The door debits exactly once for each time it is entered, and the
+        provider client underneath it does not agree: it retries where the
+        wrapper cannot see, so one entry can be several billable requests.
+        Two ways that goes wrong, and only one of them ever raises.
+
+        Every attempt fails: one conservative debit covers every billable
+        request the invocation made, and the remaining overstates itself by
+        all but the first.
+
+        The sharp one is the case below, because nothing raises. The first
+        attempt times out after the provider generated the tokens - billable,
+        and the wrapper asks for that timeout itself - the retry returns 200,
+        and the ledger books the retry's exact cost. No conservative branch
+        runs, so the shortfall arrives wearing a measured figure.
+
+        Setting the default outward is the fix rather than debiting
+        `1 + max_retries` on the exception path, which would do nothing here:
+        this path never reaches the exception path at all.
+        """
+        for door in ("completion", "acompletion"):
+            with self.subTest(door=door):
+                attempts: list[dict] = []
+                namespace = self.compiled_door(
+                    self.retrying_provider(attempts),
+                    ceiling=1.00,
+                    remaining=1.00,
+                    per_call=0.05,
+                )
+                entry = getattr(namespace["litellm"], door)
+                surfaced = None
+                try:
+                    if door == "completion":
+                        entry(model="provider/m", messages=[])
+                    else:
+                        asyncio.run(entry(model="provider/m", messages=[]))
+                except TimeoutError as timeout:
+                    surfaced = timeout
+                self.assertEqual(
+                    len(attempts),
+                    len(namespace["RUN_SPEND_USD"]),
+                    f"one invocation of `{door}` left "
+                    f"{len(attempts)} billable provider request(s) behind and "
+                    f"{len(namespace['RUN_SPEND_USD'])} ledger entr(y/ies); a "
+                    "debit per invocation only bounds the total while those are "
+                    "the same number",
+                )
+                self.assertEqual(len(attempts), 1)
+                self.assertEqual(attempts[0]["max_retries"], 0)
+                self.assertIsNotNone(
+                    surfaced,
+                    "the timeout was retried below the ledger, so the caller "
+                    "was told the call succeeded",
+                )
+                # The billable attempt is deducted, conservatively, because it
+                # came back with no price on it.
+                self.assertEqual(namespace["RUN_SPEND_USD"], [0.05])
+                self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+
+        # A caller that asked for retries keeps them: `setdefault` is a default,
+        # not an override, and the debit is then conservative-low by design
+        # rather than by accident.
+        deliberate: list[dict] = []
+        namespace = self.compiled_door(
+            self.retrying_provider(deliberate), ceiling=1.00, remaining=1.00
+        )
+        namespace["litellm"].completion(model="provider/m", messages=[], max_retries=1)
+        self.assertEqual(len(deliberate), 2)
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.004])
+
+    @staticmethod
+    def resolves_completion_at_call_time(name: str) -> bool:
+        """Does this litellm entry point go through a patched `completion`?
+
+        The door's whole edge is this question, so it is answered by asking the
+        installed library rather than by trusting a list of names: a sentinel
+        replaces the package attribute exactly as the wrapper's install does,
+        the entry point is called, and a hit means the money would have been
+        seen. Every request that goes round the sentinel lands on a local
+        server, so nothing here reaches a provider or spends anything.
+        """
+        import litellm
+        from litellm.types.utils import ModelResponse
+
+        requests: list[int] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                requests.append(1)
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                body = b'{"error": {"message": "local"}}'
+                self.send_response(500)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        hits: list[str] = []
+
+        def sentinel(*args, **kwargs):
+            hits.append(kwargs.get("model", ""))
+            return ModelResponse(
+                **{
+                    "id": "x",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "sentinel"},
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            )
+
+        messages = [{"role": "user", "content": "hi"}]
+        shared = {"api_key": "k", "api_base": base, "max_retries": 0}
+        calls = {
+            "completion": lambda: litellm.completion(
+                model="openai/gpt-4o-mini", messages=messages, **shared
+            ),
+            "batch_completion": lambda: litellm.batch_completion(
+                model="openai/gpt-4o-mini", messages=[messages], **shared
+            ),
+            "Router": lambda: litellm.Router(
+                model_list=[
+                    {
+                        "model_name": "m",
+                        "litellm_params": {
+                            "model": "openai/gpt-4o-mini",
+                            "api_key": "k",
+                            "api_base": base,
+                        },
+                    }
+                ]
+            ).completion(model="m", messages=messages),
+            "text_completion": lambda: litellm.text_completion(
+                model="openai/gpt-3.5-turbo-instruct", prompt="hi", **shared
+            ),
+            "completion_with_retries": lambda: litellm.completion_with_retries(
+                model="openai/gpt-4o-mini", messages=messages, **shared
+            ),
+            "embedding": lambda: litellm.embedding(
+                model="openai/text-embedding-3-small", input=["hi"], **shared
+            ),
+        }
+        original = litellm.completion
+        litellm.completion = sentinel
+        try:
+            calls[name]()
+        except Exception:  # noqa: BLE001 - a 500 from the local server is fine
+            pass
+        finally:
+            litellm.completion = original
+            server.shutdown()
+        return bool(hits)
+
+    def test_the_doors_edge_is_stated_as_a_rule_and_gets_every_name_right(
+        self,
+    ) -> None:
+        """No document here may deny coverage of a caller the door reaches.
+
+        The edge used to be an enumeration, and on the version it was checked
+        against two of its four names were wrong: `batch_completion` submits
+        `litellm.completion` to a thread pool of its own and a configured
+        `Router` calls `litellm.completion(...)`, so both resolve the wrapped
+        attribute when they call and the money is seen either way.
+        That is not a cosmetic slip. A later passage branches a preserved
+        evaluator on exactly this question and warns that hand-debiting a call
+        the door already saw would charge the approved total twice and refuse a
+        run that fits, so a reader with a `Router`-based agent was routed into
+        the wrong half of it.
+
+        A list of names also has to track a library nobody here controls, so
+        the guidance states the rule and this asserts nothing about which names
+        satisfy it. It measures them against whatever litellm is installed -
+        the pinned one under CI, some other one locally - and then requires
+        every sentence written here to agree with that measurement in both
+        directions. A release that moved an entry point across the line fails
+        this on the worked example that stopped being true, which is the report
+        that is actually wanted; a hard-coded table would instead fail on the
+        version and say nothing about the guidance.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        measured = {
+            name: self.resolves_completion_at_call_time(name)
+            for name in (
+                "batch_completion",
+                "Router",
+                "text_completion",
+                "completion_with_retries",
+                "embedding",
+            )
+        }
+        self.assertTrue(
+            self.resolves_completion_at_call_time("completion"),
+            "the sentinel never fired on `completion` itself, so the probe "
+            "below is measuring nothing",
+        )
+        # A clause may deny that the door reaches a name, or say that it does.
+        # Which of the two is a defect depends on the measurement, never on
+        # what anyone remembers about the library.
+        denials = (
+            "nothing here wraps",
+            "nothing wraps",
+            "the door cannot see",
+            "the door is not on",
+            "not wrapped",
+            "not ledgered",
+            "outside it",
+            "outside the door",
+            "not covered",
+        )
+        claims = (
+            "go through the door",
+            "goes through the door",
+            "is ledgered",
+            "are ledgered",
+            "the door reaches",
+            "refused and debited",
+        )
+        for path, prose in sorted(self.coverage_prose().items()):
+            for clause in re.split(r"[.:;]\s", prose):
+                for name, covered in sorted(measured.items()):
+                    if name not in clause:
+                        continue
+                    wrong = [
+                        phrase
+                        for phrase in (denials if covered else claims)
+                        if phrase in clause
+                    ]
+                    with self.subTest(document=path, entry_point=name):
+                        self.assertFalse(
+                            wrong,
+                            f"{path} puts `{name}` in a clause that "
+                            f"{'denies' if covered else 'claims'} the door "
+                            f"reaches it, and the sentinel probe measured the "
+                            f"opposite on the installed litellm: "
+                            f"{clause.strip()!r}",
+                        )
+
+    @staticmethod
+    def coverage_prose() -> dict[str, str]:
+        """Every place in this repository that describes the door's reach.
+
+        The guidance the assistant reads, the ledger entry that recorded the
+        decision, and the comments in this file that restate it - the wrong
+        enumeration was in all three, and a check over only the first would
+        have left the other two to be believed instead.
+        """
+        prose = {
+            path.name: " ".join(path.read_text(encoding="utf-8").split())
+            for path in (
+                *assistant_facing_documents(),
+                *GUIDANCE_BUDGET_LEDGER.glob("*.md"),
+            )
+        }
+        # Comment lines only. A docstring or a name in code is this file
+        # describing a test, not asserting anything about the door.
+        comments: list[str] = []
+        for line in Path(__file__).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                comments.append(stripped.lstrip("#").strip())
+            elif comments and comments[-1]:
+                comments.append("")
+        prose["test_skill_package.py comments"] = " ".join(" ".join(comments).split())
+        return prose
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
