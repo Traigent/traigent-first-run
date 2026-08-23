@@ -208,7 +208,8 @@ reaches your portal — and save it when it appears, because it is shown only on
 
 The Traigent key must be able to write experiments, not only read them. The connected optimization,
 and an exact baseline sync when the installed public API supports one, need that scope. A read-only
-key can be rejected at submit time while the optimization drops to local-only tracking. This governs
+key can be rejected at submit time while the optimization drops to local-only tracking - the run
+stops there and the trials it already paid for appear nowhere. This governs
 the user's very first key, not just a later one, because registration hands over no key at all.
 A manually created key defaults to read-only, so grant it full access rather than accepting
 the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
@@ -723,9 +724,9 @@ SDK-managed baseline/search cost.
 The connected run's most damaging failure is not a missing key - it is a present key that silently
 stops tracking. A permanent trial rejection (HTTP 400 for a config the backend will not accept) or a
 present-but-unscoped key (HTTP 403 when the key lacks the `experiment.write` scope) can drop the run
-to local-only tracking: `results.cloud_url` is `None`, no experiment reaches the portal, yet paid
-trials keep running and a results table still prints - so a user with a valid key reasonably believes
-the run reached the portal when it did not.
+to local-only tracking: `results.cloud_url` is `None`, no experiment reaches the portal, and the SDK
+warns once and proposes the next trial anyway - so a user with a valid key reasonably believes the
+run reached the portal when it did not.
 
 Prove the tracking path before connected spending, with a zero-LLM probe:
 
@@ -742,10 +743,13 @@ Prove the tracking path before connected spending, with a zero-LLM probe:
 This probe is general readiness, not a workaround for any single validation rule: the installed SDK
 owns the local pre-checks (config-in-space, numeric-type, `example_id` uniqueness) and the loud
 local-only signal; the skill's job is only to confirm at `$0` that tracking actually attaches before
-paying, and to keep confirming it during the run. If tracking degrades to local-only at any later
-point in the connected run - a missing `cloud_url`, a `rejected` persistence state, or a mid-run
-403/400 - halt further paid work at once and report the degradation in the consolidated result. Never
-let a connected run finish spending and only then reveal that nothing reached the portal.
+paying, and to keep confirming it during the run. A mid-run 403/400, and the `rejected` persistence
+state a permanent rejection leaves, are stamped on the run's own configuration where
+`references/sdk-execution.md` reads them: every later provider call is refused, so the trial already
+evaluated when the backend broke is the last one paid for. A missing `cloud_url` is not visible
+while the search runs - it exists only on the returned result - so that one is read the moment the
+search returns and stops the run before the next paid pass rather than after it. Report the
+degradation in the consolidated result with what it had already cost.
 
 The probe answers whether tracking attaches, at the moment it runs. It cannot answer whether the
 managed brain is still reachable when the paid search starts a moment later, and the two failures
@@ -968,8 +972,8 @@ Before claiming success, verify:
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to
-    local-only during
-    the run; any such degradation halted further paid work rather than surfacing only at the end.
+    local-only during the run; a degradation refused every provider call after it, and an absent
+    `cloud_url` stopped the run before the next paid pass rather than at the end.
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
     named before any generalization claim, and the held-out score SKILL stage 8 discloses appears
     beside them.
@@ -1073,8 +1077,12 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
   reason; do not replace it with a guessed explanation or claim portal success.
-- Tracking degraded to local-only during a connected run: apply the Connected-run readiness halt -
-  stop paid work at once, surface a sanitized backend reason, and report the degradation.
+- Tracking degraded to local-only during a connected run: the wrapper has already refused every
+  provider call since the stamp appeared, so report the degradation with a sanitized backend reason
+  and the spend it cost, and do not restart the phase to recover the link.
+- Tracking degraded to local-only during a connected run: stop paid work at once - the door
+  refuses the next call already, so surface a sanitized backend reason and report the
+  degradation rather than re-deciding whether to continue.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
   the stop reason; do not report it as a failure or silently drop the paid trials.
