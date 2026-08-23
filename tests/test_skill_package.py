@@ -2809,6 +2809,7 @@ class SkillPackageTests(unittest.TestCase):
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
             "scripts/validate_run_log.py",
+            "scripts/verify_sandbox.py",
             "assets/run-plan.md",
             "assets/requirements-first-run.txt",
         }
@@ -18854,6 +18855,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "preflight.py",
                 "readiness.py",
                 "validate_run_log.py",
+                "verify_sandbox.py",
             ],
             "the bundled scripts have changed; this ban covers whatever this "
             "glob finds, so a script outside it is a script nobody checks",

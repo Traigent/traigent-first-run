@@ -1901,7 +1901,7 @@ def check_evaluator(path: Path) -> None:
         )
         return
     try:
-        ast.parse(source, filename=str(path))
+        tree = ast.parse(source, filename=str(path))
     except SyntaxError as error:
         emit(
             "evaluator-shape",
@@ -1938,6 +1938,106 @@ def check_evaluator(path: Path) -> None:
         f"{path} parses as valid Python; this proves nothing about its "
         "scoring behavior, which is not executed here",
         {"exists": True, "parses": True},
+    )
+    check_evaluator_execution_path(path, tree)
+
+
+# The sinks that put a scorer on the path `references/run-safety.md` describes:
+# one that "executes or imports candidate/model output as code, shells out with
+# it, or submits it to a code or SQL engine". Mapped to what the reader has to
+# be told, because "found `exec`" is not a finding anybody can act on.
+EXECUTION_SINKS: dict[str, str] = {
+    "compile": "compiles a string as Python",
+    "eval": "evaluates a string as Python",
+    "exec": "executes a string as Python",
+    "executescript": "submits a script to a SQL engine",
+    "executemany": "submits statements to a SQL engine",
+    "execute": "submits a statement to a SQL engine or a process",
+    "import_module": "imports a module chosen at runtime",
+    "run_path": "runs a Python file",
+    "run_module": "runs a Python module",
+    "system": "runs a shell command",
+    "popen": "runs a shell command",
+    "Popen": "starts a process",
+    "check_output": "runs a process",
+    "check_call": "runs a process",
+    "call": "runs a process",
+    "run": "runs a process",
+}
+# `call` and `run` are ordinary words for a method, so they count only when the
+# thing they are called on is one of these. Without it, `self.run(case)` in any
+# scorer reads as a subprocess.
+PROCESS_MODULES = frozenset({"subprocess", "os", "runpy", "importlib"})
+
+
+def sinks_in_evaluator(tree: ast.AST) -> list[str]:
+    """Every execution sink the evaluator's own syntax tree names.
+
+    A FLOOR, never a clearance. This reads one file, and the contract is about
+    a scorer's complete call path - a sink two imports away is invisible here,
+    and so is one reached through a name this cannot resolve. So a detection is
+    reported and an absence is not: emitting "no execution sink" as a PASS
+    would manufacture exactly the false assurance the containment rules exist
+    to refuse.
+    """
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name in EXECUTION_SINKS and name not in {"call", "run"}:
+                found.add(name)
+        elif isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+            if name not in EXECUTION_SINKS:
+                continue
+            if name in {"call", "run"}:
+                root = node.func.value
+                if not (isinstance(root, ast.Name) and root.id in PROCESS_MODULES):
+                    continue
+            found.add(name)
+    return sorted(found)
+
+
+def check_evaluator_execution_path(path: Path, tree: ast.AST) -> None:
+    """Say when this evaluator looks like one that needs a proven boundary.
+
+    `run-safety.md` requires an OS-enforced boundary before a scorer executes
+    model-written code or SQL, and asks the assistant to identify such a scorer
+    from its call path. That identification was the whole gate and nothing
+    performed it, so a customer with a code-generation or text-to-SQL evaluator
+    met the requirement only if somebody noticed it applied to them.
+
+    WARN and not FAIL: an execution evaluator is a normal thing to bring, not a
+    defect. What is missing is not the evaluator, it is the boundary - and
+    whether one exists is a question no static check can answer, because
+    answering it means running something inside it. `verify_sandbox.py` is
+    where that half is settled.
+    """
+    sinks = sinks_in_evaluator(tree)
+    if not sinks:
+        # SKIP rather than PASS, and the two are not interchangeable here: a
+        # downstream reader counts SKIP as unchecked, which is what this is.
+        emit(
+            "evaluator-execution-path",
+            SKIP,
+            f"no execution sink appears in {path} itself; a scorer that reaches "
+            "one through a helper module or a runtime-chosen name is not "
+            "visible to a single-file parse, so read the complete call path",
+            {"sinks": []},
+        )
+        return
+    emit(
+        "evaluator-execution-path",
+        WARN,
+        f"{path} names {len(sinks)} execution sink(s) - "
+        + "; ".join(f"`{sink}` {EXECUTION_SINKS[sink]}" for sink in sinks)
+        + ". If any of them receives model-written content, it needs the "
+        "execution-evaluator containment contract in references/run-safety.md "
+        "before it runs anywhere. Prove the boundary with verify_sandbox.py "
+        "and record it; if it cannot be proven, do not run this evaluator",
+        {"sinks": sinks},
     )
 
 

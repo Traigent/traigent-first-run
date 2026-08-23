@@ -295,9 +295,14 @@ distinct outcomes; never retry one outside containment. A virtual environment, s
 removed keys, proxy blackholing, an ordinary subprocess, or a timeout alone is not a sandbox.
 Resource limits alone do not provide isolation from the filesystem, network, or secrets. The
 calibration helper's child process separates scorer imports from the assistant, but a scorer that
-executes candidate content must still delegate that execution to the declared sandbox. If no
-available boundary enforces these properties, do not run the execution evaluator or paid
-optimization against it; use non-executing static/parser/compile checks or pause for a safe runner.
+executes candidate content must still delegate that execution to the declared sandbox.
+
+Prove the declared boundary rather than assuming it. Run `scripts/verify_sandbox.py`, the way this
+reference runs every bundled script, with the command that enters the boundary after `--`: it runs
+a probe inside that command and reports what the probe observed, and its docstring states what each
+exit means and which properties above it cannot reach. If it does not exit 0, or no available
+boundary enforces these properties, do not run the execution evaluator or paid optimization against
+it; use non-executing static/parser/compile checks or pause for a safe runner.
 
 ### Deterministic calibration and mock plumbing
 
