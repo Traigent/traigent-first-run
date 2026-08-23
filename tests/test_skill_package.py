@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import contextlib
+import contextvars
+import http.server
 import importlib.util
 import io
 import itertools
@@ -14,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tokenize
 import traceback
 import unittest
@@ -797,6 +801,180 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
                 if node.target.id.isupper():
                     nodes.append(node)
     return nodes
+
+
+SPEND_GATE_FUNCTIONS = frozenset(
+    {
+        "run_remaining_usd",
+        # Kept for the one caller the door cannot reach: a preserved evaluator
+        # on another client, hand-debiting once per call it makes.
+        "record_call_spend",
+        "refuse_unless_it_fits",
+        # The door is these four plus the install below: `worst_case_requests`
+        # sizes one invocation, `reserve_call_spend` refuses or commits it
+        # before the call, `settle_call_spend` replaces that reservation with
+        # what came back, and `ledgered` is what puts them on
+        # `litellm.completion`.
+        "worst_case_requests",
+        "reserve_call_spend",
+        "settle_call_spend",
+        "ledgered",
+        "ledgered_async",
+        # Still collected, though it no longer holds the gate: `call_agent` and
+        # `call_judge` are one line delegating here, and a fixture that
+        # compiles either needs it.
+        "place_call",
+    }
+)
+
+# The statement that installs the door. Identified by the flag it sets rather
+# than by position, because position is what a reordering edit changes.
+DOOR_INSTALL_MARKER = "_first_run_ledgered"
+
+# The litellm attributes the door is installed on. `SPEND_GATE_FUNCTIONS` above
+# is a different guard and does not cover this one: it fails when a gate
+# function is renamed or deleted, and passes cleanly while the wrapper calls
+# money through an attribute the install never wrapped.
+#
+# That gap is what the re-decision narrowed rather than closed. Moving the gate
+# off `place_call` and onto the attribute means a caller cannot decline it, so
+# a new entry point through `completion` or `acompletion` is ledgered without
+# anyone remembering to route it - and so is anything that resolves one of them
+# when it calls, `batch_completion` and a configured `Router` among them. What
+# stays outside is a name with its own route to the provider, and this is the
+# one enumeration: `text_completion`, `completion_with_retries`, `embedding`,
+# `responses`, `image_generation`. Reaching one of those is the same money
+# leaving through a name nothing here wraps. Every name in it is measured
+# rather than remembered, by patching a sentinel over `litellm.completion` and
+# calling the entry point, and the guidance carries the same five.
+LEDGERED_ENTRY_POINTS = frozenset({"completion", "acompletion"})
+
+
+def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
+    """The ledger every paid path in the wrapper passes through.
+
+    Taken from the document for the reason `sdk_wrapper_state_nodes` above is:
+    a fixture that supplies its own `def run_remaining_usd(): return 1.0` runs
+    green against a wrapper whose gate has been deleted, which is the state
+    this package was in before the approved total reached any code at all.
+    Absent names raise rather than yielding a shorter list, so a rename cannot
+    silently leave `call_agent` compiled without its gate.
+
+    The module-level install is collected too, and that is not a detail. The
+    gate is no longer a function every caller is asked to call - it is a wrap
+    on `litellm.completion`, applied by a bare `if` at module level. Collecting
+    only `FunctionDef`s would compile every one of these fixtures against a
+    `litellm` nobody had wrapped, which is precisely the state the wrap exists
+    to end, and every ledger assertion below would then be measuring the old
+    design while reading as though it tested the new one.
+    """
+    nodes: list[ast.stmt] = []
+    install: list[ast.stmt] = []
+    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef) and node.name in SPEND_GATE_FUNCTIONS:
+                nodes.append(node)
+            elif isinstance(node, ast.If) and DOOR_INSTALL_MARKER in ast.unparse(
+                node.test
+            ):
+                install.append(node)
+    found = {node.name for node in nodes}
+    if found != SPEND_GATE_FUNCTIONS:
+        raise AssertionError(
+            f"the wrapper defines {sorted(found)} of the spend gate "
+            f"{sorted(SPEND_GATE_FUNCTIONS)}; every paid path reads all of them"
+        )
+    if len(install) != 1:
+        raise AssertionError(
+            f"the wrapper installs the door {len(install)} times; it is one "
+            f"module-level `if` guarded on {DOOR_INSTALL_MARKER}, and without "
+            "it every fixture here calls an unwrapped litellm"
+        )
+    # After the definitions it calls, which is also the document's own order.
+    return nodes + install
+
+
+def litellm_module(completion) -> SimpleNamespace:
+    """The `litellm` module a fixture's own `completion` stands in for.
+
+    `acompletion` comes with it because the wrapper installs its ledger on both
+    entry points, and a fixture offering only one fails while executing that
+    install rather than in the assertion it was written for. Build the module
+    here rather than inline, so adding a third entry point is one edit and not
+    a hunt through every fixture.
+
+    Build a fresh one per compile. The door is installed ON this object and
+    guards itself with a flag it sets there, so a module shared between two
+    compiles is wrapped once and a module built twice is not wrapped twice.
+    """
+
+    async def acompletion(*args, **kwargs):
+        return completion(*args, **kwargs)
+
+    return SimpleNamespace(completion=completion, acompletion=acompletion)
+
+
+def fake_litellm(
+    placed: list[dict], content: str = "a", raises: BaseException | None = None
+) -> SimpleNamespace:
+    """A `litellm` whose `completion` records the request and answers.
+
+    `raises` makes it record the request and then fail, which is the other
+    thing a real provider call does: litellm surfaces a timeout, a rate limit,
+    a dropped connection and a mid-stream failure as an exception rather than
+    as a degraded response. The request is billable either way, so the
+    recording happens first - "did this reach the provider" is then the same
+    question whichever way the stand-in was built.
+    """
+
+    def completion(**kwargs):
+        placed.append(kwargs)
+        if raises is not None:
+            raise raises
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+        )
+
+    return litellm_module(completion)
+
+
+def spend_gate_bindings(
+    *, ceiling: float = 5.00, remaining: float = 5.00, per_call: float = 0.05
+) -> dict:
+    """The approved figures a compiled `call_agent` needs in its module.
+
+    These come from the environment the paid process is launched with, so no
+    document can supply them and a fixture has to. The defaults are generous on
+    purpose: a fixture testing truncation or request construction should not
+    fail because a gate about money ran out mid-way. The gate's own edges are
+    exercised in `TheApprovedTotalReachesTheCodeTests`, where the numbers are
+    chosen to make it fire.
+
+    The two stdlib modules come with them because the door's own state is built
+    from them - one lock and one context variable - and a fixture missing
+    either fails while executing that state rather than in the assertion it was
+    written for.
+    """
+    return {
+        "RUN_COST_CEILING_USD": ceiling,
+        "RUN_COST_SPENT_USD": ceiling - remaining,
+        "RUN_COST_REMAINING_USD": remaining,
+        "UNTRACKED_CALL_COST_USD": per_call,
+        "threading": threading,
+        "contextvars": contextvars,
+    }
+
+
+# The approved figures a paid process is launched with. Any fixture that
+# executes the wrapper's pre-import block needs them, because that block now
+# refuses to go any further without them - which is the behaviour, not an
+# inconvenience: a paid phase that starts without the approved total runs on a
+# per-optimization default nobody agreed to.
+APPROVED_LAUNCH_ENV = {
+    "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "5.00",
+    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.05",
+}
 
 
 # Spelled forms of the counts a search space could plausibly have. The prose
@@ -3062,6 +3240,7 @@ class SkillPackageTests(unittest.TestCase):
             ast.Module(
                 body=[
                     *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
                     functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
@@ -3070,10 +3249,11 @@ class SkillPackageTests(unittest.TestCase):
         )
         current = None
         namespace = {
-            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "litellm": litellm_module(lambda **_: current),
             "build_request": lambda message, config: {},
             "require_nonzero_token_usage": lambda response: None,
             "provider_reported_cost": lambda response: 0.01,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<truncation-guard>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -3162,7 +3342,14 @@ class SkillPackageTests(unittest.TestCase):
             "the wrapper must declare REFUSED_TRIAL_COSTS exactly once",
         )
         module = ast.fix_missing_locations(
-            ast.Module(body=[*state, functions["call_agent"]], type_ignores=[])
+            ast.Module(
+                body=[
+                    *state,
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
         )
         current = None
         refuse: str | None = None
@@ -3176,11 +3363,12 @@ class SkillPackageTests(unittest.TestCase):
                 raise RuntimeError("did not report nonzero token usage")
 
         namespace = {
-            "litellm": SimpleNamespace(completion=lambda **_: current),
+            "litellm": litellm_module(lambda **_: current),
             "build_request": lambda message, config: {},
             "require_nonzero_token_usage": usage_guard,
             "require_untruncated_completion": truncation_guard,
             "provider_reported_cost": lambda response: 0.02,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<refused-trial-cost>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -7679,10 +7867,17 @@ class SkillPackageTests(unittest.TestCase):
             )
 
         module = ast.fix_missing_locations(
-            ast.Module(body=call_path_nodes, type_ignores=[])
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    *call_path_nodes,
+                ],
+                type_ignores=[],
+            )
         )
         namespace = {
-            "litellm": SimpleNamespace(completion=fake_completion),
+            "litellm": litellm_module(fake_completion),
             "provider_reported_cost": lambda response: 0.01,
             "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
@@ -7690,6 +7885,7 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": "high",
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            **spend_gate_bindings(),
         }
         exec(compile(module, "<sdk-call-agent>", "exec"), namespace)
         call_agent = namespace["call_agent"]
@@ -7751,7 +7947,27 @@ class SkillPackageTests(unittest.TestCase):
             "do not set `traigent_vendor_max_retries`",
         ):
             self.assertIn(phrase, normalized)
-        self.assertNotIn("num_retries=", text)
+        # Over the fenced code rather than over the whole document. As a
+        # substring this also refused the PROSE naming the spelling, and the
+        # document now has to name it: a preserved caller sets `num_retries`,
+        # it overrides the pin the ledger depends on, and a rule the reader
+        # cannot be told about is a rule the reader breaks. The AST form is
+        # also the stricter one - it catches the keyword however it is spaced.
+        passed_retries = {
+            keyword.arg
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg in {"num_retries", "TRAIGENT_VENDOR_MAX_RETRIES"}
+        }
+        self.assertEqual(
+            passed_retries,
+            set(),
+            "generated walkthrough code passes a retry count of its own; the "
+            "SDK and the provider client own retries, and the one exception "
+            "is the door pinning `max_retries` to 0",
+        )
         self.assertNotIn("HOLDOUT_PHASE_TIMEOUT_SECONDS", text)
         self.assertNotIn("PROVIDER_RETRY_COUNT", text)
 
@@ -8056,6 +8272,7 @@ class SkillPackageTests(unittest.TestCase):
             ast.Module(
                 body=[
                     *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
                     functions["provider_reported_cost"],
                     functions["require_nonzero_token_usage"],
                     functions["require_untruncated_completion"],
@@ -8071,8 +8288,9 @@ class SkillPackageTests(unittest.TestCase):
 
         call_namespace = {
             "math": __import__("math"),
-            "litellm": SimpleNamespace(completion=completion),
+            "litellm": litellm_module(completion),
             "build_request": lambda message, config: {},
+            **spend_gate_bindings(),
         }
         exec(compile(call_module, "<provider-call>", "exec"), call_namespace)
         call_agent = call_namespace["call_agent"]
@@ -8141,7 +8359,13 @@ class SkillPackageTests(unittest.TestCase):
         holdout_node = functions["evaluate_holdout"]
         holdout_module = ast.fix_missing_locations(
             ast.Module(
-                body=[functions["holdout_agent_input"], holdout_node], type_ignores=[]
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["holdout_agent_input"],
+                    holdout_node,
+                ],
+                type_ignores=[],
             )
         )
         examples = [
@@ -8175,8 +8399,13 @@ class SkillPackageTests(unittest.TestCase):
                 loaded_paths.append(path)
                 return SimpleNamespace(examples=examples)
 
+        # The stub debits the ledger because the real `call_agent` does, and
+        # `evaluate_holdout` reads this pass's cost off the ledger rather than
+        # off the agent call's own return - a stub that skipped the debit would
+        # be testing a pass whose calls never happened.
         def call_agent(message, config):
             agent_calls.append((message, config))
+            namespace["record_call_spend"](0.25)
             return "urgent" if message == "classify this" else "normal", 0.25
 
         def task_score(output, expected, input_data):
@@ -8185,9 +8414,13 @@ class SkillPackageTests(unittest.TestCase):
 
         namespace = {
             "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            # The door is part of the gate, so compiling the gate installs it
+            # on this module even where the fixture's `call_agent` is a stub.
+            "litellm": litellm_module(lambda **_: None),
             "call_agent": call_agent,
             "task_score": task_score,
             "traigent": SimpleNamespace(Dataset=Dataset),
+            **spend_gate_bindings(),
         }
         exec(compile(holdout_module, "<sdk-holdout>", "exec"), namespace)
 
@@ -8221,7 +8454,9 @@ class SkillPackageTests(unittest.TestCase):
 
         def call_agent_with_untracked_cost(message, config):
             output = "urgent" if message == "classify this" else "normal"
-            return output, next(untracked_costs)
+            cost = next(untracked_costs)
+            namespace["record_call_spend"](cost)
+            return output, cost
 
         namespace["call_agent"] = call_agent_with_untracked_cost
         score, cost = namespace["evaluate_holdout"](config)
@@ -11201,6 +11436,7 @@ class SkillPackageTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ,
                 {
+                    **APPROVED_LAUNCH_ENV,
                     "TRAIGENT_FIRST_RUN_PHASE": "baseline",
                     "TRAIGENT_REQUIRE_CLOUD": "0",
                 },
@@ -11211,7 +11447,7 @@ class SkillPackageTests(unittest.TestCase):
 
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"},
                 clear=True,
             ):
                 with self.assertRaises(SystemExit) as stopped:
@@ -11371,7 +11607,7 @@ class SkillPackageTests(unittest.TestCase):
             script.parent.mkdir()
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "baseline"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"},
                 clear=True,
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
@@ -11381,7 +11617,7 @@ class SkillPackageTests(unittest.TestCase):
             # baseline assignment never mutates the parent shell.
             with mock.patch.dict(
                 os.environ,
-                {"TRAIGENT_FIRST_RUN_PHASE": "connected"},
+                {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "connected"},
                 clear=True,
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
@@ -13149,15 +13385,13 @@ class SkillPackageTests(unittest.TestCase):
 
         requests: list[dict] = []
 
-        class _Stub:
-            @staticmethod
-            def completion(**kwargs):
-                requests.append(kwargs)
-                message = SimpleNamespace(content="answer")
-                return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        def completion(**kwargs):
+            requests.append(kwargs)
+            message = SimpleNamespace(content="answer")
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
         namespace = {
-            "litellm": _Stub,
+            "litellm": litellm_module(completion),
             "provider_reported_cost": lambda response: 0.0,
             "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
@@ -13166,10 +13400,20 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
+            **spend_gate_bindings(),
         }
         exec(
             compile(
-                ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+                ast.fix_missing_locations(
+                    ast.Module(
+                        body=[
+                            *sdk_wrapper_state_nodes(SDK_EXECUTION.read_text()),
+                            *sdk_wrapper_spend_gate(SDK_EXECUTION.read_text()),
+                            *selected,
+                        ],
+                        type_ignores=[],
+                    )
+                ),
                 "<sdk-call-agent>",
                 "exec",
             ),
@@ -13218,12 +13462,18 @@ class SkillPackageTests(unittest.TestCase):
         # `build_request`, and an inlined `call_agent` would drift past it.
         namespace["build_request"] = lambda message, config: {"probe": "sentinel"}
         namespace["call_agent"]("task", base)
+        # Every key `build_request` produced, and one the door adds on its way
+        # past: it holds an invocation to a single billable attempt, so it is a
+        # transport setting rather than a search dimension. Asserting the pair
+        # separately keeps this test about routing while still failing if the
+        # door starts editing the request itself.
         self.assertEqual(
-            requests[-1],
+            {key: value for key, value in requests[-1].items() if key != "max_retries"},
             {"probe": "sentinel"},
             "call_agent must build its request with build_request, or the "
             "fence's wiring assert guards code the agent no longer calls",
         )
+        self.assertEqual(requests[-1].get("max_retries"), 0)
 
     def _wiring_probe_namespace(self, **overrides) -> dict:
         """Execute the fence's wiring probe with pieces of it swapped out."""
@@ -14011,6 +14261,1920 @@ class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
         text = self.close()
         self.assertIn("only on collected data", text)
         self.assertIn("on generated rows a high flat score measures material", text)
+
+
+class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
+    """The ceiling the user approves has to govern the calls, not the prose.
+
+    It did not. `run-safety.md` described the whole discipline - lower the
+    per-optimization limit to the remaining, stop before a phase that does not
+    fit - and nothing wrote it anywhere: neither `optimize_sync` call passed a
+    cost argument and no document named `TRAIGENT_RUN_COST_LIMIT`, so each phase
+    independently got the SDK's own default in a process that knew nothing about
+    what the earlier phase spent. Held-out scoring was worse than governed
+    badly; it was not governed at all, because it calls `litellm.completion`
+    directly and no permit ever sees it.
+
+    So this executes the two gates rather than reading for them. A sentence
+    about a ceiling is exactly what was already there.
+    """
+
+    @staticmethod
+    def launch_program(label: str):
+        """The wrapper's pre-import block, compiled - everything before litellm."""
+        fence = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        prefix: list[ast.stmt] = []
+        for node in ast.parse(fence).body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        return compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            label,
+            "exec",
+        )
+
+    # What a real project root holds, which the fixture used not to. The
+    # walkthrough tells the user to create `.env` for their provider key, so a
+    # run with no `.env` at all is a condition that never holds - and this
+    # file's figures are deliberately not the approved ones, so anything that
+    # reads them instead of the process environment fails an assertion below
+    # rather than passing on the wrong number.
+    STALE_ENV_FILE = "\n".join(
+        (
+            "OPENROUTER_API_KEY=sk-or-example",
+            "TRAIGENT_FIRST_RUN_COST_CEILING_USD=500.00",
+            "TRAIGENT_FIRST_RUN_COST_SPENT_USD=0",
+            "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=0.01",
+            "",
+        )
+    )
+
+    def launch(
+        self, environment: dict[str, str], *, env_file: str | None = None
+    ) -> dict:
+        """Run the pre-import block under `environment`, returning its globals.
+
+        `env_file` defaults to a `.env` carrying all three approved figures,
+        because that is what the project root of a real run looks like and a
+        fixture that omits it cannot see the failure this class exists for.
+        """
+        program = self.launch_program("<approved-total>")
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "traigent-runs" / "walkthrough.py"
+            script.parent.mkdir()
+            (Path(directory) / ".env").write_text(
+                self.STALE_ENV_FILE if env_file is None else env_file,
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, environment, clear=True):
+                namespace: dict = {"__file__": str(script)}
+                exec(program, namespace)  # noqa: S102
+                namespace["_environment"] = dict(os.environ)
+                return namespace
+
+    def test_a_paid_phase_without_the_approved_figures_never_starts(self) -> None:
+        """Fail closed, so the SDK's own default can never quietly govern.
+
+        Each figure is dropped on its own. Dropping all three at once passes
+        against a wrapper that only checks the first one it reads, and the
+        first one is the one an author remembers.
+
+        Every one of these launches over a `.env` that names all three, which
+        is the condition this used to be blind to. `load_dotenv(override=False)`
+        fills an ABSENT process variable from the file, so a figure the user
+        never approved was arriving as the ceiling and the refusal below found
+        it present: measured against an empty process environment, the block
+        ran to completion on the file's $500.00 and wrote it into
+        `TRAIGENT_RUN_COST_LIMIT`. A fixture that leaves out the input which
+        breaks the thing is the defect, not only the code.
+        """
+        for missing in sorted(APPROVED_LAUNCH_ENV):
+            with self.subTest(missing=missing):
+                environment = {
+                    **APPROVED_LAUNCH_ENV,
+                    "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+                }
+                del environment[missing]
+                with self.assertRaises(SystemExit) as stopped:
+                    self.launch(environment)
+                self.assertIn(missing, str(stopped.exception))
+                self.assertIn("spends real money", str(stopped.exception))
+
+        # And with none of them in the process at all, which is what a launch
+        # that forgot the approval entirely looks like.
+        with self.assertRaises(SystemExit) as stopped:
+            self.launch({"TRAIGENT_FIRST_RUN_PHASE": "baseline"})
+        self.assertIn("never in .env", str(stopped.exception))
+
+    def test_the_approved_figures_are_read_before_dotenv_can_supply_them(
+        self,
+    ) -> None:
+        """A stale file may not out-vote the approval, or raise it.
+
+        `.env` outlives the approval that set it, which is the whole reason the
+        phase flag is read before `load_dotenv` and popped after. The three
+        money figures were read after it, so the file governed whenever the
+        process did not - and it governed silently, because a figure that is
+        present is a figure that passes.
+
+        Both directions are asserted. The file's $500.00 must not become the
+        ceiling when the process supplies $5.00, and the file's figures must
+        not be left behind in the environment for a child process to inherit
+        as an approval nobody gave it.
+        """
+        namespace = self.launch(
+            {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"}
+        )
+        self.assertAlmostEqual(namespace["RUN_COST_CEILING_USD"], 5.00, places=6)
+        self.assertAlmostEqual(namespace["UNTRACKED_CALL_COST_USD"], 0.05, places=6)
+        self.assertAlmostEqual(
+            float(namespace["_environment"]["TRAIGENT_RUN_COST_LIMIT"]), 5.00, places=6
+        )
+        for name in sorted(APPROVED_LAUNCH_ENV):
+            self.assertNotIn(name, namespace["_environment"])
+
+    def test_the_remaining_total_becomes_the_limit_the_sdk_enforces(self) -> None:
+        """The approved figures, minus what is spent, in the SDK's own variable.
+
+        Set before the SDK is imported, because that is when it reads it, and
+        `TRAIGENT_COST_APPROVED` beside it so the SDK's interactive handshake -
+        whose third option raises its limit to the estimate times 1.5 - can
+        never move the number past what the user agreed to.
+        """
+        namespace = self.launch(
+            {
+                **APPROVED_LAUNCH_ENV,
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "1.25",
+                "TRAIGENT_FIRST_RUN_PHASE": "connected",
+            }
+        )
+        environment = namespace["_environment"]
+        self.assertAlmostEqual(
+            float(environment["TRAIGENT_RUN_COST_LIMIT"]), 3.75, places=6
+        )
+        self.assertEqual(environment["TRAIGENT_COST_APPROVED"], "true")
+        self.assertAlmostEqual(namespace["RUN_COST_REMAINING_USD"], 3.75, places=6)
+        # The baseline is the same wrapper with nothing spent yet, so its limit
+        # is the whole approved total rather than a per-phase share of it.
+        baseline = self.launch(
+            {**APPROVED_LAUNCH_ENV, "TRAIGENT_FIRST_RUN_PHASE": "baseline"}
+        )
+        self.assertAlmostEqual(
+            float(baseline["_environment"]["TRAIGENT_RUN_COST_LIMIT"]), 5.00, places=6
+        )
+
+    def test_a_remaining_too_small_for_one_call_stops_before_the_phase(self) -> None:
+        """A near-zero remaining is the shape that produces a silent 0-trial run.
+
+        Floating-point subtraction of two nearly equal figures leaves a
+        positive number the SDK accepts and no trial can fit under, so the run
+        completes having measured nothing. Refusing below one conservative call
+        is a floor with a reason rather than an epsilon.
+        """
+        with self.assertRaises(SystemExit) as stopped:
+            self.launch(
+                {
+                    **APPROVED_LAUNCH_ENV,
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "4.99",
+                    "TRAIGENT_FIRST_RUN_PHASE": "connected",
+                }
+            )
+        self.assertIn("does not cover one", str(stopped.exception))
+        self.assertIn("larger total back to the user", str(stopped.exception))
+
+    def compiled_call_agent(self, **bindings):
+        """`call_agent` with its ledger, plus the stubs it calls out to."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+        reported: float | None = bindings.pop("reported_cost", 0.04)
+        namespace = {
+            "litellm": fake_litellm(placed),
+            "build_request": lambda message, config: {"model": config.get("model")},
+            "provider_reported_cost": lambda response: reported,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(compile(module, "<approved-total-call>", "exec"), namespace)  # noqa: S102
+        return namespace, placed
+
+    def test_call_agent_refuses_once_the_approved_total_is_exhausted(self) -> None:
+        """The gate is on the wrapped attribute, and this is the agent caller.
+
+        `call_agent` is one line delegating to `place_call`, which places
+        through the door like anything else - a design that replaced asking
+        callers to come to a gate function, so this exercises the agent caller
+        and the judge caller separately rather than trusting that one door
+        serves both. The refusal places no call at all - the remaining is
+        checked and reserved against before `litellm.completion`, not after -
+        so an exhausted total costs nothing more to discover.
+        """
+        namespace, placed = self.compiled_call_agent(
+            ceiling=1.00, remaining=0.10, per_call=0.04
+        )
+        call_agent = namespace["call_agent"]
+
+        self.assertEqual(call_agent("first", {}), ("a", 0.04))
+        self.assertEqual(call_agent("second", {}), ("a", 0.04))
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.02, places=6)
+        with self.assertRaises(RuntimeError) as refused:
+            call_agent("third", {})
+        self.assertIn("was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 2, "the refused call still reached the provider")
+
+    def compiled_scorer_path(
+        self,
+        *,
+        reported_cost: float | None = 0.03,
+        raises: BaseException | None = None,
+        **bindings,
+    ):
+        """`call_judge` and `check_scorer_calls`, compiled with their ledger.
+
+        `raises` is handed to the stand-in `litellm`, for the tests where the
+        call reaches the provider and then fails instead of answering.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_judge"],
+                    functions["check_scorer_calls"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+        namespace = {
+            "litellm": fake_litellm(placed, content="4", raises=raises),
+            "provider_reported_cost": lambda response: reported_cost,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(compile(module, "<judge-scorer>", "exec"), namespace)  # noqa: S102
+        return namespace, placed
+
+    def test_a_judge_inside_the_scorer_spends_from_the_same_ledger(self) -> None:
+        """The claim three documents made, executed instead of written down.
+
+        `task_score` is wired into the decorator, so it runs on every baseline
+        trial, every search trial, and every held-out row. When the evaluator
+        is an LLM judge - what `references/evaluation-and-dataset.md`
+        prescribes for summary, explanation, writing, and story tasks - it
+        places a provider call of its own, and the `metric_functions` contract
+        `(prediction, expected, input_data) -> float` threads no ledger for it
+        to debit. Nothing routed it, and the run's remaining did not move for
+        money it had spent: three calls at $0.01 left `run_remaining_usd()`
+        reporting the whole of a $0.03 remaining.
+
+        The SDK cannot close it either. At the pinned 0.26.0 its local
+        evaluator settles a trial's cost before it applies the metric
+        functions, so a call made inside one is already past that trial's
+        accounting.
+        """
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.03
+        )
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+        call_judge = namespace["call_judge"]
+        check_scorer_calls = namespace["check_scorer_calls"]
+
+        def judging_task_score(prediction, expected, input_data) -> float:
+            """A generated scorer of the shape the guide now prescribes."""
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            verdict, _cost = call_judge(
+                f"Grade {prediction!r} against {expected!r}. Reply 0-5."
+            )
+            check_scorer_calls(placed_before)
+            return float(verdict) / 5
+
+        self.assertEqual(judging_task_score("an answer", "the answer", "ask"), 0.8)
+        self.assertEqual(len(placed), 1, "the judge did not reach a provider")
+        # The whole finding, inverted: the ledger sees the judge's money.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.03])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.06, places=6)
+        # And the judge's request is the judge's, not the trial's: no swept
+        # knob, and the model it grades on is fixed for the run.
+        self.assertEqual(placed[0]["model"], "provider/judge")
+
+        # It is the same total, so a judge exhausts it like any other caller.
+        judging_task_score("an answer", "the answer", "ask")
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.03, places=6)
+        judging_task_score("an answer", "the answer", "ask")
+        with self.assertRaises(RuntimeError) as refused:
+            judging_task_score("an answer", "the answer", "ask")
+        # The refusal names the MODEL, not the caller's label. The gate moved
+        # onto `litellm.completion`, where it answers to callers this guide
+        # never wrote and has no label from them - so it reports what it can
+        # read off the request, which is also the more useful half.
+        self.assertIn("a call to provider/judge was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 3, "the refused judge call reached a provider")
+
+    def test_a_judge_that_never_heard_of_this_wrapper_is_ledgered_anyway(
+        self,
+    ) -> None:
+        """The re-decision, stated as the thing that is no longer possible.
+
+        This test used to assert the opposite half: a judge reaching
+        `litellm.completion` around `place_call` moved the ledger by nothing,
+        and all that could be done about it was to notice afterwards that a
+        declared count no longer matched. Two patches were written in that
+        shape and the second one was defeated by a judge that made its declared
+        call properly and one more directly.
+
+        The door is now on `litellm.completion` itself, so the caller below -
+        which does exactly what a hand-written judge does, and knows nothing
+        about this file - is refused and debited like any other. There is no
+        instruction here for it to disobey.
+        """
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.03
+        )
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+        check_scorer_calls = namespace["check_scorer_calls"]
+
+        def unrouted_task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            namespace["litellm"].completion(model="provider/judge", messages=[])
+            check_scorer_calls(placed_before)
+            return 1.0
+
+        self.assertEqual(unrouted_task_score("an answer", "the answer", "ask"), 1.0)
+        self.assertEqual(len(placed), 1)
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.03], "it spent off the ledger")
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.06, places=6)
+
+        # And it is the same total, so it refuses this caller too rather than
+        # only accounting for it.
+        unrouted_task_score("an answer", "the answer", "ask")
+        unrouted_task_score("an answer", "the answer", "ask")
+        with self.assertRaises(RuntimeError) as refused:
+            unrouted_task_score("an answer", "the answer", "ask")
+        self.assertIn("a call to provider/judge was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 3, "the refused call reached a provider")
+
+    def test_a_judge_that_routes_its_declared_call_and_makes_one_more(self) -> None:
+        """The case that got through the second patch, and the counter for it.
+
+        The judge here is compliant on the face of it: `SCORER_CALLS_PER_ROW`
+        declares one, and it places one through `call_judge`. Then it makes a
+        second call directly - a re-ask, a second opinion, a rubric pass, all
+        of which a real judge does. Against a wrapper whose ledger only saw
+        routed calls, the count matched, `task_score` returned a number, and
+        `run_remaining_usd()` reported a total that was short by that call.
+
+        Both halves are asserted, because only one of them is the class. The
+        ledger now holds BOTH calls, so the money is right whatever the check
+        does - and the check fires as well, because the declaration it protects
+        sizes the held-out refusal.
+        """
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=1.00, per_call=0.02, reported_cost=0.01
+        )
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+
+        def task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            verdict, _cost = namespace["call_judge"](f"Grade {prediction!r}. 0-5.")
+            namespace["litellm"].completion(
+                model="provider/judge",
+                messages=[{"role": "user", "content": "and again"}],
+            )
+            namespace["check_scorer_calls"](placed_before)
+            return float(verdict) / 5
+
+        with self.assertRaises(RuntimeError) as stopped:
+            task_score("an answer", "the answer", "ask")
+        message = str(stopped.exception)
+        self.assertIn("placed 2 provider call(s)", message)
+        self.assertIn("SCORER_CALLS_PER_ROW declares 1", message)
+        self.assertIn("correct the count, or stop placing them", message)
+        # The half that is the class rather than the instance: this used to
+        # read [0.01] and 0.99 with both calls placed and one of them unseen.
+        self.assertEqual(len(placed), 2)
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.01, 0.01])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.98, places=6)
+
+        # Declaring what it actually places is all that was ever missing, and
+        # then the run proceeds - the check is a declaration check, not a ban.
+        namespace["SCORER_CALLS_PER_ROW"] = 2
+        # 0.8 is the number the counter reported this scorer returning while
+        # one of its two calls was invisible; here it is returned honestly.
+        self.assertEqual(task_score("an answer", "the answer", "ask"), 0.8)
+        self.assertEqual(len(placed), 4)
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.96, places=6)
+
+    def test_a_call_the_door_cannot_see_still_stops_the_run(self) -> None:
+        """The gap the door leaves named, and the backstop that covers it.
+
+        Wrapping `litellm.completion` reaches every caller that RESOLVES that
+        attribute when it calls. It does not reach a module that bound the
+        function first - `from litellm import completion`, taken before setup -
+        and it does not reach a client that is not litellm at all. Claiming
+        otherwise would be the overstated safeguard this whole seam keeps
+        producing, so the claim is exactly this narrow and `check_scorer_calls`
+        is what still notices the rest.
+        """
+        namespace, placed = self.compiled_scorer_path()
+        # The binding an earlier import would hold: captured from the fixture
+        # before the door was installed on the module object.
+        pre_bound = placed.append
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+        check_scorer_calls = namespace["check_scorer_calls"]
+
+        def task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            pre_bound({"model": "provider/judge", "messages": []})
+            check_scorer_calls(placed_before)
+            return 1.0
+
+        with self.assertRaises(RuntimeError) as stopped:
+            task_score("an answer", "the answer", "ask")
+        message = str(stopped.exception)
+        self.assertIn("placed 0 provider call(s)", message)
+        self.assertIn("SCORER_CALLS_PER_ROW declares 1", message)
+        self.assertIn("place it with call_judge", message)
+        self.assertIn("debit it with record_call_spend", message)
+        self.assertEqual(len(placed), 1, "the unseen call still spent money")
+        self.assertEqual(namespace["RUN_SPEND_USD"], [], "it spent off the ledger")
+
+        # A deterministic evaluator declares none, and is held to placing none.
+        namespace["SCORER_CALLS_PER_ROW"] = 0
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        placed_before = len(namespace["RUN_SPEND_USD"])
+        namespace["call_judge"]("grade this")
+        with self.assertRaises(RuntimeError) as surprised:
+            check_scorer_calls(placed_before)
+        self.assertIn("placed 1 provider call(s)", str(surprised.exception))
+
+    def test_the_door_survives_a_later_interceptor_and_installs_once(self) -> None:
+        """The order that actually happens, and the way to debit twice.
+
+        The SDK patches `litellm.completion` and `litellm.acompletion` for
+        metadata capture at EVALUATION setup, which is after the wrapper's own
+        install - so the SDK's wrapper is the outer one and the door is what it
+        calls through to. That order is not a detail: if the door only worked
+        while it was outermost, every real run would have it in the position it
+        does not work in. Here the interceptor goes on afterwards, exactly as
+        the SDK's does, and the debit still happens once.
+
+        What this does not claim: that an interceptor installed BEFORE the door
+        survives. It does, because the door wraps whatever the attribute holds
+        when it runs - but that is the same statement as calling through at
+        all, which every assertion in this class already depends on, so there
+        is no separate thing here to test.
+
+        Installing twice is the other direction and is worse: one call would
+        debit twice, overstating spend and refusing a run that fits. The guard
+        lives on the litellm module rather than in the wrapper's namespace,
+        because it is a second execution of the wrapper that would double it.
+        """
+        seen: list[str] = []
+        namespace, placed = self.compiled_scorer_path(reported_cost=0.03)
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        litellm = namespace["litellm"]
+
+        # An interceptor installed AFTER the door, as the SDK's is.
+        inner = litellm.completion
+
+        def capture(**kwargs):
+            seen.append(kwargs["model"])
+            return inner(**kwargs)
+
+        litellm.completion = capture
+
+        namespace["call_judge"]("grade this")
+        self.assertEqual(seen, ["provider/judge"], "the interceptor did not run")
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.03], "one call, one debit")
+
+        # Re-running the install against the same module is a no-op.
+        self.assertTrue(getattr(litellm, "_first_run_ledgered", False))
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(
+                    ast.Module(body=self.door_install(), type_ignores=[])
+                ),
+                "<second-install>",
+                "exec",
+            ),
+            namespace,
+        )
+        namespace["call_judge"]("grade this")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.03, 0.03], "the second install debited twice"
+        )
+
+    def test_the_async_entry_point_is_a_door_too(self) -> None:
+        """`acompletion` is the same money through a different name.
+
+        Nothing this guide generates awaits it, which is exactly why it is easy
+        to leave out - and an entry point left unwrapped is not a smaller gap
+        than the one being closed, it is the same gap under an `a`. A preserved
+        agent that is async reaches it, and the SDK patches both for the same
+        reason. So it refuses and debits identically, and this test is what
+        fails when a future edit wraps only the sync one.
+
+        The boundary is inclusive and that is the behaviour, not a gap to close:
+        a call the remaining exactly covers is placed, because the per-call
+        figure is already the conservative rounded-up rate, so one more
+        genuinely fits. These figures leave the second await short of it - one
+        call at $0.03 against a $0.03 remaining, then $0.00 against a $0.02 rate
+        - rather than level with it, where the refusal asserted below would be
+        the wrong answer.
+        """
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.03, per_call=0.02, reported_cost=0.03
+        )
+        acompletion = namespace["litellm"].acompletion
+
+        response = asyncio.run(acompletion(model="provider/judge", messages=[]))
+        self.assertEqual(response.choices[0].message.content, "4")
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.03], "the await went undebited")
+        self.assertEqual(len(placed), 1)
+
+        with self.assertRaises(RuntimeError) as refused:
+            asyncio.run(acompletion(model="provider/judge", messages=[]))
+        self.assertIn("a call to provider/judge was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 1, "the refused await reached a provider")
+
+    def test_a_call_that_fails_after_reaching_the_provider_is_still_debited(
+        self,
+    ) -> None:
+        """The same class as the judge, one layer down at the transport.
+
+        Every other fixture in this class hands the door a response, so every
+        assertion about the ledger is an assertion about the path where the
+        call succeeded. litellm does not only take that path: a timeout, a rate
+        limit, a dropped connection and a mid-stream failure all arrive as
+        exceptions, and the call reached the provider and is billable before
+        any of them is raised. Debiting only what returns leaves
+        `run_remaining_usd()` overstating the remaining by one call per
+        failure, on exactly the routes that fail more than once.
+
+        So the answer is the one the design already gives an unreadable cost -
+        a call was placed, its price is unknown, deduct conservatively - and
+        the exception is not the door's to touch: it propagates as the same
+        object the caller would otherwise have caught.
+        """
+        error = RuntimeError("litellm.Timeout: provider did not respond in 120s")
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        namespace["JUDGE_MODEL"] = "provider/judge"
+
+        with self.assertRaises(RuntimeError) as failed:
+            namespace["call_judge"]("grade this")
+        self.assertIs(
+            failed.exception, error, "the door changed what the caller sees fail"
+        )
+        self.assertEqual(len(placed), 1, "the failing call never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "a billable call was debited nothing"
+        )
+        # Bounded by the conservative rate, and reported as what it is: the
+        # provider named no cost, so nothing here may present one as measured.
+        self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.07, places=6)
+
+        # And it is the same total, so failures exhaust it like anything else -
+        # which is the half that would have been a runaway: a route failing
+        # every call would have spent without ever moving the remaining.
+        for _ in range(3):
+            with self.assertRaises(RuntimeError):
+                namespace["call_judge"]("grade this")
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.01, places=6)
+        with self.assertRaises(RuntimeError) as refused:
+            namespace["call_judge"]("grade this")
+        self.assertIn("a call to provider/judge was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 4, "the refused call reached a provider")
+
+    def test_a_failing_await_is_debited_by_the_async_door_too(self) -> None:
+        """The failing call through the entry point nothing generated awaits.
+
+        `acompletion` is where a preserved async agent lands, and it is the
+        door that gets an edit wrong first, because no generated line exercises
+        it. The two halves below are separate failures, not one restated: the
+        first is the same billable-and-unpriced case as the sync door, the
+        second is why the door catches `BaseException` rather than `Exception`
+        at all. An awaited call cancelled in flight - a surrounding
+        `wait_for`, a cancelled task - raises `CancelledError`, which has not
+        been an `Exception` since Python 3.8, and the call it interrupts had
+        already reached the provider.
+        """
+        error = RuntimeError("litellm.APIConnectionError: connection reset")
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        acompletion = namespace["litellm"].acompletion
+
+        with self.assertRaises(RuntimeError) as failed:
+            asyncio.run(acompletion(model="provider/judge", messages=[]))
+        self.assertIs(
+            failed.exception, error, "the door changed what the caller sees fail"
+        )
+        self.assertEqual(len(placed), 1, "the failing await never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "the failed await was debited nothing"
+        )
+        self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.07, places=6)
+
+        cancelled = asyncio.CancelledError()
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=cancelled
+        )
+        with self.assertRaises(asyncio.CancelledError) as stopped:
+            asyncio.run(namespace["litellm"].acompletion(model="m", messages=[]))
+        self.assertIs(stopped.exception, cancelled)
+        self.assertEqual(len(placed), 1, "the cancelled await never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "an `except Exception` would miss this"
+        )
+
+    def test_no_provider_call_reaches_litellm_by_a_name_the_door_is_not_on(
+        self,
+    ) -> None:
+        """The entry point nobody wrapped, which no other test here notices.
+
+        Every ledger assertion in this class drives money through `completion`
+        or `acompletion` and proves the door holds there. None of them says
+        those are the ONLY names money leaves by, so a wrapper that grew a
+        `litellm.text_completion` path would take the whole suite green with an
+        undebited provider call in it - verified by adding exactly that and
+        watching 359 tests pass. The old `place_call` gate did not cover this
+        either; it was a list of gate FUNCTIONS, and it still is.
+
+        So this asserts the two halves that together close it, over the
+        document rather than over a fixture:
+
+        Wrapped is exactly `LEDGERED_ENTRY_POINTS`. Dropping one is already
+        caught for `acompletion` by the test above, but that test knows the
+        name; this one fails for whichever name goes missing. Adding a wrap
+        fails here too, and deliberately - the new name has to be written into
+        `LEDGERED_ENTRY_POINTS` and into `litellm_module`, which the fixtures
+        build from, or every fixture meets an attribute its stand-in module
+        does not have.
+
+        Called is a subset of wrapped. This is the half that catches the new
+        entry point: any `litellm.<name>(...)` in the generated wrapper has to
+        be a name the install put the ledger on.
+        """
+        sources = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )
+
+        wrapped = set()
+        for node in self.door_install():
+            for statement in ast.walk(node):
+                if not isinstance(statement, ast.Assign):
+                    continue
+                for target in statement.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "litellm"
+                        and target.attr != DOOR_INSTALL_MARKER
+                    ):
+                        wrapped.add(target.attr)
+        self.assertEqual(
+            wrapped,
+            set(LEDGERED_ENTRY_POINTS),
+            "the door is installed on litellm attributes that are not the ones "
+            "this package claims it covers; wrapping a new one also means "
+            "naming it in LEDGERED_ENTRY_POINTS and giving litellm_module a "
+            "stand-in for it",
+        )
+
+        called = {
+            node.func.attr
+            for source in sources
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "litellm"
+        }
+        self.assertEqual(
+            called - wrapped,
+            set(),
+            "the wrapper calls litellm by a name the door is not installed on, "
+            "so that call is neither refused when the approved total is gone "
+            "nor debited when it spends; wrap it in the install above or place "
+            "it through one of "
+            f"{sorted(LEDGERED_ENTRY_POINTS)}",
+        )
+        self.assertIn(
+            "completion",
+            called,
+            "no litellm call was found at all, so this test proved nothing - "
+            "the fences moved or the wrapper stopped placing calls",
+        )
+
+    def test_the_wrapper_never_asks_the_sdk_for_concurrent_execution(self) -> None:
+        """The unstated premise under two ledger reads, made a failing test.
+
+        `check_scorer_calls` takes a delta over `RUN_SPEND_USD`, and
+        `evaluate_holdout` sums a slice of `RUN_CALL_COSTS`. Both are windows
+        on a shared list, and both are exact only while this process places one
+        call at a time. It does, but only because nothing asks otherwise: the
+        SDK resolves an unspecified `parallel_config` to sequential execution,
+        with `trial_concurrency`, `example_concurrency` and `thread_workers`
+        all 1, and the generated calls pass no such argument.
+
+        That was a fact about the document nothing checked, which is the shape
+        of premise that gets edited away by someone speeding a run up. So the
+        argument is asserted where it can be broken - the generated calls - and
+        recorded in the wrapper beside the list both reads share.
+
+        Money is not what this protects, and the reason has changed twice, so
+        it is stated as measured rather than as remembered. It once read that
+        way because the debit was thought to bound a concurrent run; it did
+        not, because a check followed by a call with nothing held between them
+        lets N callers pass one remaining, measured at eight requests reaching
+        a local server against a remaining that funded one. The door commits
+        the money before it places the call now, so the same fan-out places one
+        request and stops. What concurrency still costs is the exactness of
+        these two windows: the failure is a scorer stopped for a neighbour's
+        call.
+        """
+        text = SDK_EXECUTION.read_text()
+        concurrency = {"parallel_config", "parallel_trials", "trial_concurrency"}
+        optimize_calls = [
+            node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "optimize_sync"
+        ]
+        self.assertEqual(
+            len(optimize_calls), 2, "the document runs a baseline and a search"
+        )
+        for call in optimize_calls:
+            passed = {keyword.arg for keyword in call.keywords} & concurrency
+            self.assertEqual(
+                passed,
+                set(),
+                f"an optimize_sync call passes {sorted(passed)}. Two reads of "
+                "RUN_SPEND_USD assume this process places one call at a time; "
+                "make those reads correct under concurrency before asking for "
+                "it, or the run stops a scorer for a neighbour's call.",
+            )
+        # And the premise is written down where the reads are, so the next
+        # editor meets it before the failure rather than after.
+        self.assertIn("parallel_config", text)
+
+    def door_install(self) -> list[ast.stmt]:
+        """The module-level statement that installs the door, on its own."""
+        return [
+            node
+            for source in re.findall(
+                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+            )
+            for node in ast.parse(source).body
+            if isinstance(node, ast.If)
+            and DOOR_INSTALL_MARKER in ast.unparse(node.test)
+        ]
+
+    def test_a_judge_without_a_model_never_borrows_the_trials(self) -> None:
+        """A grader that moves with what it grades measures both at once.
+
+        The cheapest wrong fix for a missing judge model is the configuration
+        already in hand, which is the one under test - so the run would grade
+        each trial with that trial's own model and report the difference as
+        the agent's.
+        """
+        namespace, placed = self.compiled_scorer_path()
+        self.assertIsNone(
+            namespace["JUDGE_MODEL"],
+            "the walkthrough's own evaluator is deterministic, so it declares "
+            "no judge model",
+        )
+        with self.assertRaises(RuntimeError) as stopped:
+            namespace["call_judge"]("grade this")
+        self.assertIn("JUDGE_MODEL unset", str(stopped.exception))
+        self.assertIn(
+            "never fall back to the configuration under test", str(stopped.exception)
+        )
+        self.assertEqual(placed, [], "a judge with no model still called a provider")
+
+    def test_the_calls_a_scored_row_pays_for_are_derived_not_maintained(self) -> None:
+        """Two hand-kept numbers drift, and this pair drifts unnoticed.
+
+        `CALLS_PER_SCORED_ROW` sizes the held-out refusal and is read once, in
+        the last paid pass of the run. Left as its own literal it was a comment
+        asking an author to remember to set it to 2 when a judge grades; a
+        forgotten one funds half the calls the pass places and the refusal that
+        exists to stop a partial pass lets one start.
+        """
+        text = SDK_EXECUTION.read_text()
+        derived = {
+            node.target.id: ast.unparse(node.value)
+            for node in sdk_wrapper_state_nodes(text)
+        }
+        self.assertEqual(derived["SCORER_CALLS_PER_ROW"], "0")
+        self.assertEqual(derived["CALLS_PER_SCORED_ROW"], "1 + SCORER_CALLS_PER_ROW")
+
+    def test_an_unpriced_call_is_debited_rather_than_treated_as_free(self) -> None:
+        """Otherwise the ledger is a no-op on exactly the routes that need it.
+
+        A route that reports no cost still spends. Debiting `0` there holds the
+        remaining flat forever, so every gate reading it passes and the whole
+        mechanism is decorative on the one path it was built for.
+        """
+        namespace, placed = self.compiled_call_agent(
+            ceiling=1.00, remaining=0.10, per_call=0.04, reported_cost=None
+        )
+        call_agent = namespace["call_agent"]
+
+        self.assertEqual(call_agent("first", {}), ("a", None))
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.06, places=6)
+        self.assertEqual(call_agent("second", {}), ("a", None))
+        with self.assertRaises(RuntimeError):
+            call_agent("third", {})
+        self.assertEqual(len(placed), 2)
+
+    def test_held_out_scoring_is_all_of_the_rows_or_none_of_them(self) -> None:
+        """A partial held-out pass is a different measurement wearing its name.
+
+        Its whole output is one number over a reserved split, so a mean over
+        the four rows the money reached is not a smaller version of it. The fit
+        is decided before the first row, and a refusal spends nothing.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["holdout_agent_input"],
+                    functions["evaluate_holdout"],
+                ],
+                type_ignores=[],
+            )
+        )
+        examples = [
+            SimpleNamespace(input_data=f"row {index}", expected_output="ok")
+            for index in range(4)
+        ]
+        calls: list[str] = []
+        built: dict = {}
+
+        def call_agent(message, config):
+            calls.append(message)
+            built["namespace"]["record_call_spend"](0.04)
+            return "ok", 0.04
+
+        def build(**bindings):
+            namespace = {
+                "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+                # The door is installed on it even though this fixture's
+                # `call_agent` is a stub that debits by hand: the install is
+                # part of the gate now, so every compile of the gate runs it.
+                "litellm": fake_litellm([]),
+                "call_agent": call_agent,
+                "task_score": lambda output, expected, input_data: 1.0,
+                "traigent": SimpleNamespace(
+                    Dataset=SimpleNamespace(
+                        from_jsonl=lambda path: SimpleNamespace(examples=examples)
+                    )
+                ),
+                **spend_gate_bindings(**bindings),
+            }
+            exec(  # noqa: S102
+                compile(module, "<approved-total-holdout>", "exec"), namespace
+            )
+            built["namespace"] = namespace
+            return namespace
+
+        # Four rows at the conservative rate need more than is left.
+        refusing = build(ceiling=5.00, remaining=0.10, per_call=0.04)
+        with self.assertRaises(RuntimeError) as stopped:
+            refusing["evaluate_holdout"]({"model": "recommended"})
+        self.assertIn("held-out scoring", str(stopped.exception))
+        self.assertEqual(calls, [], "a refused pass paid for rows anyway")
+
+        # And it is the fit that refuses, not the rows: the same pass runs when
+        # the remaining covers all four.
+        allowing = build(ceiling=5.00, remaining=0.40, per_call=0.04)
+        score, cost = allowing["evaluate_holdout"]({"model": "recommended"})
+        self.assertEqual(score, 1.0)
+        self.assertAlmostEqual(cost, 0.16, places=6)
+        self.assertEqual(len(calls), 4)
+
+    def compiled_judged_holdout(
+        self,
+        *,
+        rows: int,
+        remaining: float,
+        scorer_calls: int = 1,
+        agent_usd: float = 0.04,
+        judge_usd: float = 0.01,
+        per_call: float = 0.05,
+    ):
+        """A held-out pass whose evaluator is an LLM judge, compiled whole.
+
+        `call_agent` and `call_judge` both come out of the document here rather
+        than being stubbed, because the claim under test is that those two
+        callers share one ledger - a fixture that supplies either of them
+        proves nothing about the door it was supposed to pass through. Only
+        `task_score` is written by the caller: the guide generates its body from
+        the wired evaluator, so the document holds a shape and not a scorer.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        state = sdk_wrapper_state_nodes(text)
+        # Declared in the source before the count derived from it is computed,
+        # which is how an author declares it. Rebinding it in the namespace
+        # afterwards would leave `CALLS_PER_SCORED_ROW` holding the number it
+        # was derived from at import - the exact drift the derivation prevents,
+        # reintroduced by the fixture that is supposed to catch it.
+        declared = [node for node in state if node.target.id == "SCORER_CALLS_PER_ROW"]
+        if len(declared) != 1:
+            raise AssertionError(
+                "the wrapper declares SCORER_CALLS_PER_ROW exactly once or this "
+                f"fixture declares nothing at all; found {len(declared)}"
+            )
+        declared[0].value = ast.Constant(scorer_calls)
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *state,
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                    functions["call_judge"],
+                    functions["check_scorer_calls"],
+                    functions["holdout_agent_input"],
+                    functions["evaluate_holdout"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+
+        def completion(**request):
+            placed.append(request)
+            judging = request["model"] == "provider/judge"
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="5" if judging else "ok")
+                    )
+                ],
+                # The two calls are priced apart so the ledger below shows which
+                # of them it saw, rather than a total that a single caller could
+                # equally have produced.
+                reported_usd=judge_usd if judging else agent_usd,
+            )
+
+        examples = [
+            SimpleNamespace(input_data=f"row {index}", expected_output="ok")
+            for index in range(rows)
+        ]
+        namespace = {
+            "litellm": litellm_module(completion),
+            "build_request": lambda message, config: {"model": config["model"]},
+            "provider_reported_cost": lambda response: response.reported_usd,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda path: SimpleNamespace(examples=examples)
+                )
+            ),
+            **spend_gate_bindings(ceiling=5.00, remaining=remaining, per_call=per_call),
+        }
+        exec(compile(module, "<judged-holdout>", "exec"), namespace)  # noqa: S102
+        # Nothing is derived from this one, so the namespace is where a run sets
+        # it, and where the two tests below need it to differ from the
+        # walkthrough's deterministic `None`.
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        return namespace, placed
+
+    def test_a_judged_pass_debits_the_agent_call_and_the_judge_call(self) -> None:
+        """One scored row is two provider calls, and one ledger sees both.
+
+        This is the claim four passages made while nothing executed it. The
+        agent call is placed by `evaluate_holdout`; the judge call is placed
+        inside `task_score`, whose `metric_functions` contract threads no
+        ledger through - so before `place_call` was the single door, the pass
+        returned the agent's spend as the row's and the remaining moved by
+        less than the run had paid.
+
+        The pass is also funded for both. `CALLS_PER_SCORED_ROW` derives from
+        the declared count, so the refusal that decides the pass fits is sized
+        for the calls it will actually place rather than for half of them.
+        """
+        namespace, placed = self.compiled_judged_holdout(rows=3, remaining=0.40)
+
+        def judging_scorer(namespace):
+            """A generated scorer of the shape an LLM-judge evaluator has."""
+
+            def task_score(prediction, expected, input_data) -> float:
+                placed_before = len(namespace["RUN_SPEND_USD"])
+                verdict, _cost = namespace["call_judge"](
+                    f"Grade {prediction!r} against {expected!r}. Reply 0-5."
+                )
+                namespace["check_scorer_calls"](placed_before)
+                return float(verdict) / 5
+
+            return task_score
+
+        self.assertEqual(namespace["SCORER_CALLS_PER_ROW"], 1)
+        self.assertEqual(namespace["CALLS_PER_SCORED_ROW"], 2)
+        namespace["task_score"] = judging_scorer(namespace)
+        score, cost = namespace["evaluate_holdout"]({"model": "recommended"})
+
+        self.assertEqual(score, 1.0)
+        # Two calls per row, in the order the row places them: the trial's
+        # model for the answer, the run's fixed grader for the grade.
+        self.assertEqual(
+            [request["model"] for request in placed],
+            ["recommended", "provider/judge"] * 3,
+        )
+        # And every one of them on the ledger. $0.12 is what this pass reported
+        # while the judge spent beside it rather than through it.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.04, 0.01] * 3)
+        self.assertAlmostEqual(cost, 0.15, places=6)
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.25, places=6)
+
+        # The same pass, against a remaining that funds one call per row and
+        # not the grading: refused before the first row rather than stopped
+        # halfway through, and $0.15 of it would have started had the sizing
+        # counted the agent calls alone.
+        underfunded, unspent = self.compiled_judged_holdout(rows=3, remaining=0.20)
+        underfunded["task_score"] = judging_scorer(underfunded)
+        with self.assertRaises(RuntimeError) as refused:
+            underfunded["evaluate_holdout"]({"model": "recommended"})
+        self.assertIn("needs 6 provider calls", str(refused.exception))
+        self.assertEqual(unspent, [], "a refused judged pass paid for a row anyway")
+
+    def test_an_unrouted_judge_costs_the_holdout_pass_nothing_unseen(self) -> None:
+        """The same pass, with the judge written the way it is easiest to write.
+
+        This scorer reaches `litellm.completion` rather than `call_judge` -
+        which is what the guide's own judge advice used to have to forbid,
+        because that call spent money the ledger could not see and the pass
+        reported a held-out cost short by one call per row. The door makes the
+        difference disappear: this judge is refused and debited exactly as a
+        routed one is, and the reported cost is the whole of what was spent.
+
+        The routing rule survives, for what it is actually for - the judge's
+        own model and the two response checks - and not for the ledger.
+        """
+        namespace, placed = self.compiled_judged_holdout(rows=3, remaining=1.00)
+
+        def unrouted_task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            namespace["litellm"].completion(
+                model="provider/judge",
+                messages=[{"role": "user", "content": f"Grade {prediction!r}"}],
+            )
+            namespace["check_scorer_calls"](placed_before)
+            return 1.0
+
+        namespace["task_score"] = unrouted_task_score
+        score, cost = namespace["evaluate_holdout"]({"model": "recommended"})
+
+        self.assertEqual(score, 1.0)
+        self.assertEqual(
+            [request["model"] for request in placed],
+            ["recommended", "provider/judge"] * 3,
+        )
+        # $0.12 is what this pass reported while a judge spent beside it.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.04, 0.01] * 3)
+        self.assertAlmostEqual(cost, 0.15, places=6)
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.85, places=6)
+
+    def test_the_launch_figures_are_named_where_the_approval_is_owned(self) -> None:
+        """The code reads three names; the document that sets them says which.
+
+        `run-safety.md` owns the approval, so the names live there and
+        `sdk-execution.md` owns what the wrapper does with them. A figure the
+        wrapper requires and no document names is a phase that stops with an
+        error nobody was told how to answer.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        for name in sorted(APPROVED_LAUNCH_ENV):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", safety)
+        self.assertIn("None of the three has a default", safety)
+        self.assertIn("supplied by the process and never by `.env`", safety)
+        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn("TRAIGENT_RUN_COST_LIMIT", sdk)
+        # The rejected alternative, recorded where the mechanism is, so the next
+        # reader does not re-propose it: one Python object cannot span the two
+        # processes the walkthrough deliberately runs the phases in.
+        self.assertIn("`ExecutionBudget`", sdk)
+        self.assertIn(
+            "cannot reach from the baseline process into the connected one", sdk
+        )
+
+    @staticmethod
+    def retrying_provider(attempts: list[dict], cost: float = 0.004):
+        """A `litellm` whose client retries a timeout, the way the real one does.
+
+        litellm hands the OpenAI-shaped client a nonzero `max_retries` and a
+        timeout sits in that client's own retry set, so the retries happen
+        below `completion` where the wrapper cannot see them. Measured against
+        a local HTTP server on the installed litellm: one call on an `openai/`
+        or `azure/` route placed three provider requests, and the same call
+        passing `max_retries=0` placed one.
+
+        The stand-in applies the shape rather than that count - `max_retries`
+        attempts after the first, defaulting to more than one - because the
+        count is the client's default and moves between releases, while the
+        property being asserted does not: whatever the default is, the door
+        pins it to zero, which is what makes the retries the door CAN read
+        countable rather than guessed at.
+
+        The first attempt times out AFTER the provider generated its tokens: it
+        is billable and brings no cost home. A retry answers, and its answer is
+        priced at `cost`. So a run that retries is billed twice and told once.
+        """
+
+        def completion(**kwargs):
+            allowed = kwargs.get("max_retries", 2)
+            for attempt in range(allowed + 1):
+                attempts.append(dict(kwargs))
+                if attempt:
+                    return SimpleNamespace(
+                        usage=SimpleNamespace(cost=cost, total_tokens=18),
+                        choices=[
+                            SimpleNamespace(message=SimpleNamespace(content="late"))
+                        ],
+                    )
+            raise TimeoutError("generated, then the client stopped waiting")
+
+        return litellm_module(completion)
+
+    def compiled_door(self, module, **bindings) -> dict:
+        """The door, installed on `module`, reading cost the way the run does."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        namespace = {
+            "litellm": module,
+            "math": math,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(
+                    ast.Module(
+                        body=[
+                            *sdk_wrapper_state_nodes(text),
+                            functions["provider_reported_cost"],
+                            *sdk_wrapper_spend_gate(text),
+                        ],
+                        type_ignores=[],
+                    )
+                ),
+                "<door>",
+                "exec",
+            ),
+            namespace,
+        )
+        return namespace
+
+    def test_the_client_retries_the_door_cannot_see_are_pinned_off(self) -> None:
+        """The pin, and the case that never raises and so never looked wrong.
+
+        The provider client underneath the door retries where the wrapper
+        cannot watch, so one invocation can be several billable requests. Every
+        attempt failing is the mild half. The sharp one is below, because
+        nothing raises: the first attempt times out after the provider
+        generated the tokens - billable, and the wrapper asks for that timeout
+        itself - the retry returns 200, and the ledger books the retry's exact
+        cost. No conservative branch runs, so the shortfall arrives wearing a
+        measured figure.
+
+        Pinning rather than counting, because an absent `max_retries` is the
+        client's own default, which moves between releases and cannot be read
+        off the request. `0` is the one value the door can assert, and it is
+        what makes everything the door DOES count countable.
+        """
+        for door in ("completion", "acompletion"):
+            with self.subTest(door=door):
+                attempts: list[dict] = []
+                namespace = self.compiled_door(
+                    self.retrying_provider(attempts),
+                    ceiling=1.00,
+                    remaining=1.00,
+                    per_call=0.05,
+                )
+                entry = getattr(namespace["litellm"], door)
+                surfaced = None
+                try:
+                    if door == "completion":
+                        entry(model="provider/m", messages=[])
+                    else:
+                        asyncio.run(entry(model="provider/m", messages=[]))
+                except TimeoutError as timeout:
+                    surfaced = timeout
+                self.assertEqual(
+                    len(attempts),
+                    1,
+                    f"one invocation of `{door}` left {len(attempts)} billable "
+                    "provider request(s) behind, so the client retried beneath "
+                    "the pin and the reservation above it was sized for one",
+                )
+                self.assertEqual(attempts[0]["max_retries"], 0)
+                self.assertIsNotNone(
+                    surfaced,
+                    "the timeout was retried below the ledger, so the caller "
+                    "was told the call succeeded",
+                )
+                # The billable attempt is deducted, conservatively, because it
+                # came back with no price on it.
+                self.assertEqual(namespace["RUN_SPEND_USD"], [0.05])
+                self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+
+        # A caller that asked for retries keeps them - `setdefault` is a
+        # default, not an override - and now pays for them: two attempts are
+        # reserved before the call at the conservative rate, and the settlement
+        # afterwards is the price the one response came back with.
+        deliberate: list[dict] = []
+        namespace = self.compiled_door(
+            self.retrying_provider(deliberate), ceiling=1.00, remaining=1.00
+        )
+        namespace["litellm"].completion(model="provider/m", messages=[], max_retries=1)
+        self.assertEqual(len(deliberate), 2)
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.004])
+
+    @staticmethod
+    def counting_server():
+        """A local HTTP server that counts what arrives and refuses all of it.
+
+        Every request a probe places lands here, so nothing reaches a provider
+        and nothing is spent. A 500 makes the whole invocation fail, which is
+        the path the reservation is exact on.
+        """
+        arrived: list[int] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                arrived.append(1)
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                body = b'{"error": {"message": "local"}}'
+                self.send_response(500)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, arrived
+
+    @contextlib.contextmanager
+    def door_on_the_installed_litellm(self, *, num_retries=None, **bindings):
+        """Install the door on the real library, then put the module back.
+
+        The door is a wrap on module attributes, so a probe that installs it
+        has to restore them or every later test in this process runs through a
+        ledger it never asked for.
+        """
+        import litellm
+
+        saved = (
+            litellm.completion,
+            litellm.acompletion,
+            litellm.num_retries,
+            getattr(litellm, DOOR_INSTALL_MARKER, None),
+        )
+        if hasattr(litellm, DOOR_INSTALL_MARKER):
+            delattr(litellm, DOOR_INSTALL_MARKER)
+        litellm.num_retries = num_retries
+        server, arrived = self.counting_server()
+        try:
+            namespace = self.compiled_door(litellm, **bindings)
+            namespace["_arrived"] = arrived
+            namespace["_api_base"] = f"http://127.0.0.1:{server.server_address[1]}"
+            yield namespace
+        finally:
+            server.shutdown()
+            litellm.completion, litellm.acompletion, litellm.num_retries = saved[:3]
+            if saved[3] is None:
+                if hasattr(litellm, DOOR_INSTALL_MARKER):
+                    delattr(litellm, DOOR_INSTALL_MARKER)
+            else:
+                setattr(litellm, DOOR_INSTALL_MARKER, saved[3])
+
+    def test_what_one_invocation_reserves_is_what_it_can_really_place(
+        self,
+    ) -> None:
+        """The invariant that was asserted and is not true, replaced by a bound.
+
+        `max_retries=0` was said to make one wrapped call one billable request.
+        Measured on the installed litellm against a local server counting what
+        arrived, it does not: a caller passing `num_retries=2` placed five
+        requests through the door, a process-wide `litellm.num_retries=2`
+        placed three, and each `fallbacks` entry adds another attempt. litellm
+        copies `num_retries` over the client's `max_retries` and runs a retry
+        loop of its own above it, so the pin is overridden and doubled.
+        `setdefault("num_retries", 0)` does not help either: litellm reads that
+        as `kwargs.get("num_retries") or litellm.num_retries`, where a literal
+        `0` is falsy - and it DOES suppress the global on `acompletion`, which
+        is worse than useless, a safeguard that works on the entry point
+        nothing generates and not on the one every generated line uses.
+
+        So the claim is no longer that the invocation is one request. It is
+        that the ledger holds what the invocation can place, reserved before it
+        places any of it - which is what a ceiling needs and what a debit taken
+        afterwards never gave. Every case here is measured against the
+        installed library rather than asserted from the design, because the
+        design has been wrong about this library twice.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        messages = [{"role": "user", "content": "hi"}]
+        cases = (
+            ("nothing set", None, {}),
+            ("a caller's max_retries", None, {"max_retries": 2}),
+            ("a process-wide num_retries", 2, {}),
+            ("a caller's num_retries", None, {"num_retries": 2}),
+            ("one fallback", None, {"fallbacks": ["openai/gpt-4o-mini"]}),
+        )
+        for label, global_retries, extra in cases:
+            with self.subTest(case=label):
+                with self.door_on_the_installed_litellm(
+                    num_retries=global_retries,
+                    ceiling=100.00,
+                    remaining=100.00,
+                    per_call=0.05,
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=messages,
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                            **extra,
+                        )
+                    placed = len(namespace["_arrived"])
+                    self.assertEqual(
+                        len(namespace["RUN_SPEND_USD"]),
+                        1,
+                        "one invocation has to be one ledger entry, or "
+                        "`check_scorer_calls` counts a caller that complied",
+                    )
+                    self.assertAlmostEqual(
+                        sum(namespace["RUN_SPEND_USD"]),
+                        placed * 0.05,
+                        places=6,
+                        msg=f"{label} placed {placed} billable provider "
+                        f"request(s) and reserved "
+                        f"${sum(namespace['RUN_SPEND_USD']):.4f} at $0.0500 "
+                        "each; a reservation only bounds the total while it "
+                        "covers what the invocation can place",
+                    )
+
+    def test_a_fallback_re_entry_does_not_charge_the_total_twice(self) -> None:
+        """The over-debit that stopped a compliant scorer, measured and closed.
+
+        litellm's `fallbacks` handling re-enters `litellm.completion` once per
+        attempt, so every attempt resolved the wrapped name and so did the
+        invocation above them. Debiting each of them left the ledger holding
+        one entry more than the run placed requests - three against two with
+        one fallback - and `check_scorer_calls` compares a declared count
+        against exactly that number, so a judge declaring what it really placed
+        was stopped mid-row by a false red.
+
+        Resolving the attribute is therefore necessary and not sufficient: the
+        door also has to count an invocation once. A re-entry taken while
+        another invocation is in flight is part of it.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        for extra_fallbacks in (1, 2):
+            with self.subTest(fallbacks=extra_fallbacks):
+                with self.door_on_the_installed_litellm(
+                    ceiling=100.00, remaining=100.00, per_call=0.05
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=[{"role": "user", "content": "hi"}],
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                            fallbacks=["openai/gpt-4o-mini"] * extra_fallbacks,
+                        )
+                    self.assertEqual(len(namespace["_arrived"]), 1 + extra_fallbacks)
+                    self.assertEqual(
+                        len(namespace["RUN_SPEND_USD"]),
+                        1,
+                        "the re-entries were ledgered as separate calls, so a "
+                        "scorer that declared its calls correctly is stopped",
+                    )
+
+    def spend_report_program(
+        self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending
+    ) -> str:
+        """A runnable file holding the ledger, its report, and a way to die."""
+        text = SDK_EXECUTION.read_text()
+        wanted = {"report_run_spend", "run_remaining_usd"}
+        collected: list[ast.stmt] = []
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.FunctionDef) and node.name in wanted:
+                    collected.append(node)
+                elif isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(
+                    node
+                ):
+                    collected.append(node)
+        self.assertEqual(
+            len([node for node in collected if isinstance(node, ast.Expr)]),
+            1,
+            "the ledger line is registered to run on the way out exactly once",
+        )
+        return "\n".join(
+            [
+                "import atexit",
+                "import contextvars",
+                "import threading",
+                *(ast.unparse(node) for node in sdk_wrapper_state_nodes(text)),
+                f"RUN_COST_CEILING_USD = {ceiling!r}",
+                f"RUN_COST_SPENT_USD = {spent!r}",
+                f"RUN_COST_REMAINING_USD = {ceiling - spent!r}",
+                f"UNTRACKED_CALL_COST_USD = {per_call!r}",
+                *(ast.unparse(node) for node in collected),
+                f"RUN_SPEND_USD.extend({placed!r})",
+                f"REFUSED_TRIAL_COSTS.extend({refused!r})",
+                ending,
+            ]
+        )
+
+    def test_the_spend_line_is_printed_by_a_phase_that_died(self) -> None:
+        """The report used to run only where nothing went wrong.
+
+        It was a bare statement after `optimize_sync`, and in the connected
+        phase it sat below five asserts including one on the portal URL, while
+        the failure handler above it raised `SystemExit`. So the phase that
+        most needs this line - a transient 429 or 500 out of trial nine, which
+        the retry pin above made likelier by design - printed nothing, and the
+        next process was launched believing nothing had been spent.
+
+        Run rather than read: each ending below is a real process that exits
+        that way, and the line has to be on its output exactly once.
+        """
+        endings = {
+            "finished": "pass",
+            "SystemExit": 'raise SystemExit("managed optimization stopped")',
+            "unhandled exception": 'raise RuntimeError("provider gave up")',
+            "failed assert": 'assert False, "no best configuration selected"',
+        }
+        for label, ending in sorted(endings.items()):
+            with self.subTest(ending=label):
+                program = self.spend_report_program(
+                    ceiling=5.00,
+                    spent=2.00,
+                    per_call=0.05,
+                    placed=[0.40, 0.50],
+                    refused=[0.10],
+                    ending=ending,
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    script = Path(directory) / "phase.py"
+                    script.write_text(program, encoding="utf-8")
+                    finished = subprocess.run(
+                        [sys.executable, str(script)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                lines = [
+                    line
+                    for line in finished.stdout.splitlines()
+                    if "provider call(s)" in line
+                ]
+                self.assertEqual(
+                    len(lines),
+                    1,
+                    f"a phase that ended on {label} printed {len(lines)} ledger "
+                    f"line(s): {finished.stdout!r}",
+                )
+                # And the four figures agree with each other, which they did
+                # not: this printed the process's own spend against the whole
+                # approved total and called the difference remaining, so a
+                # phase launched having already spent $2.00 reported spending
+                # $0.90 of $5.00 with $2.10 left.
+                figures = [
+                    float(found) for found in re.findall(r"\$(\d+\.\d+)", lines[0])
+                ]
+                self.assertEqual(
+                    len(figures),
+                    6,
+                    "the ledger line names "
+                    f"{len(figures)} figures rather than six, so one of the "
+                    f"four the close asks for is missing: {lines[0]!r}",
+                )
+                spent_here, before, gone, ceiling, remains, unmeasured = figures
+                self.assertAlmostEqual(spent_here, 0.90, places=4)
+                self.assertAlmostEqual(before, 2.00, places=4)
+                self.assertAlmostEqual(gone, before + spent_here, places=4)
+                self.assertAlmostEqual(ceiling, 5.00, places=4)
+                self.assertAlmostEqual(remains, ceiling - gone, places=4)
+                self.assertAlmostEqual(unmeasured, 0.10, places=4)
+                self.assertIn("2 provider call(s)", lines[0])
+
+    def test_nothing_calls_the_spend_report_a_second_time(self) -> None:
+        """One line out, so the handoff figure is never two figures.
+
+        `atexit` runs the report however the process ends, and a statement left
+        beside it would print again on the paths where both fire - two totals
+        on one output, and the reader has to guess which is the running one.
+        """
+        called = [
+            node
+            for source in re.findall(
+                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+            )
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "report_run_spend"
+        ]
+        self.assertEqual(
+            called,
+            [],
+            "the ledger line is called directly as well as registered to run "
+            "on the way out, so a phase that finishes prints it twice",
+        )
+
+    def test_the_remaining_is_read_and_taken_in_one_step(self) -> None:
+        """The concurrency exposure, closed by reserving instead of debiting.
+
+        The refusal used to be a check followed by a call with nothing held
+        between them, so N callers reading one remaining all passed it and all
+        placed. Measured by fanning `batch_completion` - a thread pool of its
+        own, which a reader reaches without opting into anything - eight ways
+        against a remaining that funded exactly one call: eight requests
+        reached the local server and the total finished below zero.
+
+        The reservation is taken under a lock held across the read and the
+        append and released before the provider call, so it never stalls the
+        async door's event loop. One request survives the same fan-out.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        with self.door_on_the_installed_litellm(
+            ceiling=1.00, remaining=0.05, per_call=0.05
+        ) as namespace:
+            import litellm
+
+            with contextlib.suppress(Exception):
+                litellm.batch_completion(
+                    model="openai/gpt-4o-mini",
+                    messages=[[{"role": "user", "content": "hi"}]] * 8,
+                    api_key="k",
+                    api_base=namespace["_api_base"],
+                )
+            self.assertEqual(
+                len(namespace["_arrived"]),
+                1,
+                "the remaining funded one call and more than one was placed",
+            )
+            self.assertGreaterEqual(
+                namespace["run_remaining_usd"](),
+                0.0,
+                "the approved total finished below zero",
+            )
+
+        # The half above is what closed the exposure, and it is not the lock:
+        # moving the debit in front of the call is. Removing the lock and
+        # running the same fan-out still places one request, because what is
+        # left between the read and the append is microseconds of bytecode
+        # rather than a provider round trip - measured, by deleting it. So the
+        # lock is asserted where it can be checked instead of pretended to be
+        # exercised: a test that could force that window would need a hook in
+        # the door put there for the test, and a door with a test-shaped hole
+        # in it is not the door that ships.
+        reserve = next(
+            node
+            for source in re.findall(
+                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+            )
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "reserve_call_spend"
+        )
+        guarded = [
+            ast.unparse(node)
+            for node in ast.walk(reserve)
+            if isinstance(node, ast.With)
+            and any("LEDGER_LOCK" in ast.unparse(item) for item in node.items)
+        ]
+        self.assertEqual(
+            len(guarded), 1, "the reservation is taken outside the ledger lock"
+        )
+        self.assertIn("run_remaining_usd()", guarded[0])
+        self.assertIn("RUN_SPEND_USD.append", guarded[0])
+        self.assertNotIn(
+            "place(",
+            guarded[0],
+            "the lock reaches the provider call, which is the thing it must "
+            "never be held across - it would serialise the concurrency being "
+            "asked for and stall the async door's event loop",
+        )
+
+    @staticmethod
+    def resolves_completion_at_call_time(name: str) -> bool:
+        """Does this litellm entry point go through a patched `completion`?
+
+        The door's whole edge is this question, so it is answered by asking the
+        installed library rather than by trusting a list of names: a sentinel
+        replaces the package attribute exactly as the wrapper's install does,
+        the entry point is called, and a hit means the money would have been
+        seen. Every request that goes round the sentinel lands on a local
+        server, so nothing here reaches a provider or spends anything.
+        """
+        import litellm
+        from litellm.types.utils import ModelResponse
+
+        requests: list[int] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                requests.append(1)
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                body = b'{"error": {"message": "local"}}'
+                self.send_response(500)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        hits: list[str] = []
+
+        def sentinel(*args, **kwargs):
+            hits.append(kwargs.get("model", ""))
+            return ModelResponse(
+                **{
+                    "id": "x",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "sentinel"},
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            )
+
+        messages = [{"role": "user", "content": "hi"}]
+        shared = {"api_key": "k", "api_base": base, "max_retries": 0}
+        calls = {
+            "completion": lambda: litellm.completion(
+                model="openai/gpt-4o-mini", messages=messages, **shared
+            ),
+            "batch_completion": lambda: litellm.batch_completion(
+                model="openai/gpt-4o-mini", messages=[messages], **shared
+            ),
+            "Router": lambda: litellm.Router(
+                model_list=[
+                    {
+                        "model_name": "m",
+                        "litellm_params": {
+                            "model": "openai/gpt-4o-mini",
+                            "api_key": "k",
+                            "api_base": base,
+                        },
+                    }
+                ]
+            ).completion(model="m", messages=messages),
+            "text_completion": lambda: litellm.text_completion(
+                model="openai/gpt-3.5-turbo-instruct", prompt="hi", **shared
+            ),
+            "completion_with_retries": lambda: litellm.completion_with_retries(
+                model="openai/gpt-4o-mini", messages=messages, **shared
+            ),
+            "embedding": lambda: litellm.embedding(
+                model="openai/text-embedding-3-small", input=["hi"], **shared
+            ),
+            # Asserted by the guidance and, until this line, never probed - so
+            # two of the five names it enumerates were claims about the library
+            # rather than measurements of it.
+            "responses": lambda: litellm.responses(
+                model="openai/gpt-4o-mini", input="hi", **shared
+            ),
+            "image_generation": lambda: litellm.image_generation(
+                model="openai/dall-e-3", prompt="hi", **shared
+            ),
+        }
+        original = litellm.completion
+        litellm.completion = sentinel
+        try:
+            calls[name]()
+        except Exception:  # noqa: BLE001 - a 500 from the local server is fine
+            pass
+        finally:
+            litellm.completion = original
+            server.shutdown()
+        return bool(hits)
+
+    def test_the_doors_edge_is_stated_as_a_rule_and_gets_every_name_right(
+        self,
+    ) -> None:
+        """No document here may deny coverage of a caller the door reaches.
+
+        The edge used to be an enumeration, and on the version it was checked
+        against two of its four names were wrong: `batch_completion` submits
+        `litellm.completion` to a thread pool of its own and a configured
+        `Router` calls `litellm.completion(...)`, so both resolve the wrapped
+        attribute when they call and the money is seen either way.
+        That is not a cosmetic slip. A later passage branches a preserved
+        evaluator on exactly this question and warns that hand-debiting a call
+        the door already saw would charge the approved total twice and refuse a
+        run that fits, so a reader with a `Router`-based agent was routed into
+        the wrong half of it.
+
+        A list of names also has to track a library nobody here controls, so
+        the guidance states the rule and this asserts nothing about which names
+        satisfy it. It measures them against whatever litellm is installed -
+        the pinned one under CI, some other one locally - and then requires
+        every sentence written here to agree with that measurement in both
+        directions. A release that moved an entry point across the line fails
+        this on the worked example that stopped being true, which is the report
+        that is actually wanted; a hard-coded table would instead fail on the
+        version and say nothing about the guidance.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        measured = {
+            name: self.resolves_completion_at_call_time(name)
+            for name in (
+                "batch_completion",
+                "Router",
+                "text_completion",
+                "completion_with_retries",
+                "embedding",
+                "responses",
+                "image_generation",
+            )
+        }
+        self.assertTrue(
+            self.resolves_completion_at_call_time("completion"),
+            "the sentinel never fired on `completion` itself, so the probe "
+            "below is measuring nothing",
+        )
+        # A clause may deny that the door reaches a name, or say that it does.
+        # Which of the two is a defect depends on the measurement, never on
+        # what anyone remembers about the library.
+        denials = (
+            "nothing here wraps",
+            "nothing wraps",
+            "the door cannot see",
+            "the door is not on",
+            "not wrapped",
+            "not ledgered",
+            "outside it",
+            "outside the door",
+            "not covered",
+        )
+        claims = (
+            "go through the door",
+            "goes through the door",
+            "is ledgered",
+            "are ledgered",
+            "the door reaches",
+            "refused and debited",
+        )
+        for path, prose in sorted(self.coverage_prose().items()):
+            for clause in re.split(r"[.:;]\s", prose):
+                for name, covered in sorted(measured.items()):
+                    if name not in clause:
+                        continue
+                    wrong = [
+                        phrase
+                        for phrase in (denials if covered else claims)
+                        if phrase in clause
+                    ]
+                    with self.subTest(document=path, entry_point=name):
+                        self.assertFalse(
+                            wrong,
+                            f"{path} puts `{name}` in a clause that "
+                            f"{'denies' if covered else 'claims'} the door "
+                            f"reaches it, and the sentinel probe measured the "
+                            f"opposite on the installed litellm: "
+                            f"{clause.strip()!r}",
+                        )
+
+    @staticmethod
+    def coverage_prose() -> dict[str, str]:
+        """Every place in this repository that describes the door's reach.
+
+        The guidance the assistant reads, the ledger entry that recorded the
+        decision, and the prose in this file that restates it - the wrong
+        enumeration was in all three, and a check over only the first would
+        have left the other two to be believed instead.
+
+        Docstrings are read as well as comments, and that is a correction. The
+        rule used to be that a docstring is this file describing a test rather
+        than asserting anything, and it is not: two docstrings survived a round
+        that rewrote every comment saying the same thing, one still describing
+        a gate function that no longer holds the gate and one still crediting
+        the debit with a bound it did not have. A stale twin lives wherever the
+        check is not looking, so this looks at both.
+        """
+        prose = {
+            path.name: " ".join(path.read_text(encoding="utf-8").split())
+            for path in (
+                *assistant_facing_documents(),
+                *GUIDANCE_BUDGET_LEDGER.glob("*.md"),
+            )
+        }
+        source = Path(__file__).read_text(encoding="utf-8")
+        comments: list[str] = []
+        for line in source.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                comments.append(stripped.lstrip("#").strip())
+            elif comments and comments[-1]:
+                comments.append("")
+        prose["test_skill_package.py comments"] = " ".join(" ".join(comments).split())
+        docstrings = [
+            text
+            for node in ast.walk(ast.parse(source))
+            if isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            and (text := ast.get_docstring(node))
+        ]
+        prose["test_skill_package.py docstrings"] = " ".join(
+            " ".join(docstrings).split()
+        )
+        return prose
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):

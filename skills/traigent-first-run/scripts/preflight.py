@@ -613,7 +613,8 @@ def check_cost_settings(
         emit(
             "cost-cap",
             PASS,
-            "no custom per-optimization cap; the installed SDK default applies",
+            "no per-optimization cap set here; each paid process derives its own from the "
+            "approved figures it is launched with",
         )
     else:
         try:
@@ -625,6 +626,30 @@ def check_cost_settings(
                 emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be positive")
             else:
                 emit("cost-cap", PASS, f"custom per-optimization cap: ${cap:.2f}")
+
+    # Same mechanism, extended to the figures that now govern spending: each is
+    # supplied per approved process, and a copy in .env is a number that
+    # outlives the approval which set it. The run reads them before .env is
+    # loaded, so one here changes nothing today - it is failed because a stale
+    # approved total sitting in a file is what a later change to that reading
+    # order would silently start enforcing.
+    persisted = [
+        name
+        for name in (
+            "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+            "TRAIGENT_FIRST_RUN_COST_SPENT_USD",
+            "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD",
+            "TRAIGENT_RUN_COST_LIMIT",
+        )
+        if key_present(file_values.get(name))
+    ]
+    if persisted:
+        emit(
+            "cost-figures-in-file",
+            FAIL,
+            f"{', '.join(persisted)} persisted in .env; remove and supply the approved "
+            "figures per paid process",
+        )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
     if key_present(approved_in_file) and approved_in_file.strip().lower() in {

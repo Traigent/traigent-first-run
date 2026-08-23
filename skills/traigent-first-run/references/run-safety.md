@@ -606,7 +606,9 @@ After showing the baseline result, give the connected stage a preview and approv
   more agent calls score that configuration - and only that configuration - against the reserved
   held-out rows, joined by ten judge calls when an LLM judge grades them. Include those calls in
   this same approval rather than asking again afterward, and add their tracked cost to the single
-  running total.
+  running total. They are the walkthrough's only paid calls the SDK never sees, so the wrapper
+  refuses the whole held-out pass rather than starting one the remaining cannot fund to the last
+  row; say that here, because a pass that is refused returns no held-out score at all.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
@@ -640,21 +642,49 @@ that preview disclosed recipients, effects, bounds, and cost.
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
 
-Use the installed SDK's default per-optimization cost limit unless it is greater than the
-walkthrough's remaining total ceiling; then lower it for that process. Do not persist
-`TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process. The SDK enforces its
+The approved total is not a number the assistant carries in its head between phases. Launch every
+paid process with three figures in its environment, supplied by the process and never by `.env`,
+exactly as `TRAIGENT_FIRST_RUN_PHASE` is: `TRAIGENT_FIRST_RUN_COST_CEILING_USD` is the total
+approved above; `TRAIGENT_FIRST_RUN_COST_SPENT_USD` is the single running total at the moment that
+process starts, which is `0` only while nothing has been spent yet - a live probe or a judge
+calibration that already ran is in it; and `TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD` is the
+conservative amount one provider call is deducted for when its route reports no cost, rounded up
+from the observed per-call cost once the probe has one and from the estimate the approval card was
+priced with until then. None of the three has a default, so a paid phase launched
+without them stops before its first call instead of running on a per-optimization limit that knows
+nothing about this walkthrough. State the three on the approval that sets them, in the same numbers
+the card shows. `references/sdk-execution.md` owns what the wrapper does with them.
+
+Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process, which
+is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
 optimization-call limit, but it does not yet share one cumulative budget with calibration and other
-calls. Until it does, keep a single running total rather than a phase ledger: add reliable tracked
-cost after each paid phase, or deduct that phase's conservative estimate when cost is untracked.
+calls. Until it does, keep a single running total rather than a phase ledger: each paid phase prints
+what it spent against the figures it was launched with, and the combined figure that line names -
+not the SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is the
+running total, passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
 Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or not.
+
+A phase that reaches the remaining stops there and is reported as what it is: the trials it
+completed, its stop reason, and the work that did not run. The way past it is a fresh approval for
+a larger total, taken back to the user with what has been spent so far - never a larger figure
+handed to the same process, and never a second attempt at the same phase on top of what the first
+one already spent. A phase that DIED having spent is the same arithmetic and not a fresh start:
+every paid process prints its ledger on the way out however it ends, so take the running total from
+that line, carry it into whatever runs next, and report the phase as stopped part-way rather than
+as not having happened.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
 `TRAIGENT_VENDOR_MAX_RETRIES` for the first run. Preserve retry behavior already present in the
-user's agent/provider client. Generated walkthrough provider calls add no explicit retries. When
-the preserved client has bounded retries, include their possible extra calls in the internal
-runtime/spend estimate without asking the user to configure them.
+user's agent/provider client, with one exception the spend ledger requires: retries the provider
+client would take underneath the wrapper are turned off, because a call it repeats down there costs
+real money the ledger never sees and the running total never moves for. An explicit retry count the
+caller set is kept and is charged for rather than absorbed, and `references/sdk-execution.md` owns
+the mechanism and what it trades away - a transient failure now surfaces instead of being retried
+silently. Generated walkthrough provider calls add
+no explicit retries. When the preserved client has bounded retries, include their possible extra
+calls in the internal runtime/spend estimate without asking the user to configure them.
 
 After the approved live probe, calculate internal request and SDK optimization bounds from
 observed latency, rows, trials, calls per example, and concurrency, with a reasonable completion
@@ -938,6 +968,9 @@ Before claiming success, verify:
 13. Every reported frontier carries measured costs, a score claim the paired counts support, and no
     point below the floor. Trials that came back without reported cost carry no cost claim: report
     that, not a number.
+14. Each paid process ran against the approved figures it was launched with, and the close reports
+    them: the approved total, what this run spent against it, and what is left. A phase that
+    refused to start, or stopped at the remaining, is named with the work it did not do.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
