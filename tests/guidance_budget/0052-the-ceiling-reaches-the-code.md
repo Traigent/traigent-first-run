@@ -3,8 +3,8 @@
 follows: 0051
 resident-ceiling: 84_760
 resident-measured: 84_714
-total-ceiling: 411_391
-total-measured: 411_332
+total-ceiling: 413_682
+total-measured: 413_623
 
 Every word about the spend ceiling was already correct and none of it was
 wired. `run-safety.md` set out the whole discipline - lower the per-optimization
@@ -305,6 +305,18 @@ an assistant meets for the first time in an error message. Where a scorer places
 its calls is a detail of writing the wrapper, so it belongs to the reference
 that stage loads and can leave.
 
+Part of the count below is a second pass over the same seam, and it buys
+corrections rather than new rules. The worst case one invocation reserves was
+sized by multiplying two separately measured rules together, and the library
+does not compose them that way: a caller who passes a retry count AND a fallback
+list was billed half again what had been put aside for it, on eighteen of
+thirty-two cells counted against a local server. A count written as a negative
+number reserved less than nothing and handed the run money back, and floored
+only at nothing it still fell short, because such a count buys a round anyway.
+And the line the next phase is launched from was promised on any way a process
+can finish, while two of them print none: the signal a bare kill sends, and an
+immediate exit. Each now says what it measures, and names what it leaves out.
+
 Where the measured figures come from:
 
     0051 resident measured                                  84_474
@@ -312,7 +324,7 @@ Where the measured figures come from:
     resident measured here                                  84_714
 
     0051 total measured                                    369_593
-    sdk-execution.md                                      +38_532
+    sdk-execution.md                                      +40_179
       the approved figures, their three refusals, and
         the two SDK settings with what one of them
         gives up, all before the import                5_886
@@ -372,7 +384,16 @@ Where the measured figures come from:
         statements the measurements corrected          5_860
       the retry rule extended to the caller the
         door exists for                                  418
-    run-safety.md                                           +2_967
+      the retry law the product of the two separate
+        rules missed, and the floors under a count
+        litellm reads as set                           1_030
+      the ledger line's claim narrowed to the endings
+        that run it, and the two it does not              394
+      the registration moved under the guard that
+        stops a second wrap                               55
+      the pointer to what a missing line leaves for
+        the phase after it                               168
+    run-safety.md                                           +3_611
       the three launch figures, replacing the sentence
         that stated the discipline and wired none of it   1_060
       what happens when a phase reaches the remaining       404
@@ -387,8 +408,13 @@ Where the measured figures come from:
         absorbed                                            474
       what a phase that died having spent leaves
         for the next one                                    299
+      the held-out calls no longer called the only
+        unseen ones, pointing instead at the copy
+        that is right                                        99
+      what to carry forward out of a phase that
+        printed no ledger line at all                       545
     SKILL.md                                                 +240
-    total measured here                                   411_332
+    total measured here                                   413_623
 
 Both ceilings sit under sixty bytes above their measurement, in line with the
 57 that 0051 left: enough to reword a sentence without a successor entry, too

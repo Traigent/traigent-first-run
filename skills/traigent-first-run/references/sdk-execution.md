@@ -957,7 +957,7 @@ def run_remaining_usd() -> float:
 
 
 def report_run_spend() -> None:
-    """Print what THIS process spent, however this process ends.
+    """Print what THIS process spent, on every ending `atexit` reaches.
 
     The ledger dies with the process, so a figure nothing emits reaches neither
     the close nor the next phase's `TRAIGENT_FIRST_RUN_COST_SPENT_USD`. It is
@@ -972,6 +972,12 @@ def report_run_spend() -> None:
     spent as well as what it spent, because without that the line did not add
     up: a process already carrying earlier spend cannot report its own against
     the whole ceiling and call the difference remaining.
+
+    What it does not cover is measured, one subprocess per ending: finishing,
+    `sys.exit`, an uncaught exception, `SystemExit` and SIGINT each printed it
+    once; SIGTERM and `os._exit` printed nothing, because neither runs
+    `atexit` at all, so a `kill` on a long paid phase leaves no figure behind.
+    `references/run-safety.md` owns what is carried forward when it is absent.
     """
     spent_here = sum(RUN_SPEND_USD)
     print(
@@ -982,11 +988,6 @@ def report_run_spend() -> None:
         f"remains; ${sum(REFUSED_TRIAL_COSTS):.4f} of this process's spend "
         "bought no measurement"
     )
-
-
-# Once, whichever way the process ends - and it ends once, so a phase that
-# raises does not print a second line under the one it already printed.
-atexit.register(report_run_spend)
 
 
 def record_call_spend(cost: float | None) -> None:
@@ -1008,10 +1009,24 @@ def worst_case_requests(kwargs: dict) -> int:
     The door cannot watch them happen, so it reads what the request states.
     Measured on the installed litellm against a local server counting what
     arrived, with the pin below applied: nothing set placed 1 request,
-    `max_retries` of N placed N+1, a process-wide `litellm.num_retries` of N
-    placed N+1, a caller's own `num_retries` of N placed 2N+1 - litellm copies
-    it over the client's `max_retries` and runs a retry loop of its own above
-    that - and each `fallbacks` entry multiplies the whole by one more attempt.
+    `max_retries` of N and a process-wide `litellm.num_retries` of N each
+    placed N+1, and a caller's own `num_retries` of R placed 2R+1 - litellm
+    copies it over the client's `max_retries` and runs a retry loop of its own
+    above that. F `fallbacks` entries put the request on F+1 legs with the
+    client's own retries on each, and the two rules do NOT multiply: a caller's
+    own R across those legs placed (1+3R)(F+1), one retry round per leg more
+    than the product, so the ordinary `num_retries=2, fallbacks=["backup"]`
+    billed 14 requests where that product reserved 10. The extra round is per
+    leg and only for a count the CALLER passed: a process-wide N retried the
+    whole chain N times instead, and reserving that per leg is over rather
+    than under.
+
+    A count is floored at zero, and at ONE wherever litellm reads it as set.
+    Unfloored, a negative `num_retries` reserved a NEGATIVE number of requests,
+    crediting the ledger and walking the remaining above the approved total;
+    floored only to zero it under-reserved, because a negative count still buys
+    a round - one over the chain from a process-wide one, one per leg from a
+    caller's.
 
     The pin is what makes any of this countable, and that is its remaining
     merit: an absent `max_retries` is the provider client's own default, which
@@ -1020,11 +1035,16 @@ def worst_case_requests(kwargs: dict) -> int:
     itself, and now pays for it here instead of spending it invisibly.
     """
     asked = kwargs.get("num_retries")
-    library_retries = int(asked or getattr(litellm, "num_retries", 0) or 0)
-    client_retries = int((asked if asked is not None else kwargs["max_retries"]) or 0)
-    return (1 + library_retries + client_retries) * (
-        1 + len(kwargs.get("fallbacks") or ())
+    counted = asked or getattr(litellm, "num_retries", 0) or 0
+    library_retries = max(1, int(counted)) if counted else 0
+    client_retries = max(
+        0, int((asked if asked is not None else kwargs["max_retries"]) or 0)
     )
+    legs = 1 + len(kwargs.get("fallbacks") or ())
+    per_leg = 1 + library_retries + client_retries
+    if legs > 1 and asked:
+        per_leg += max(1, int(asked))
+    return per_leg * legs
 
 
 def reserve_call_spend(args: tuple, kwargs: dict) -> int:
@@ -1189,6 +1209,10 @@ def ledgered_async(place):
 if not getattr(litellm, "_first_run_ledgered", False):
     litellm.completion = ledgered(litellm.completion)
     litellm.acompletion = ledgered_async(litellm.acompletion)
+    # Inside this guard rather than beside it: a second execution registered a
+    # second handler, measured as two ledger lines out, the second reporting
+    # $0.0000 from its own blind namespace.
+    atexit.register(report_run_spend)
     # On the module, not in this file's namespace: a second execution of this
     # wrapper in one process would otherwise wrap again and debit every call
     # twice, which overstates spend and refuses a run that fits.
@@ -1670,8 +1694,10 @@ existing user-owned baseline, replace the generated example's
 `BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A
 real one-row fixed configuration remains one row; never manufacture variants around it.
 
-The baseline process prints its ledger on the way out, whether it finished or died, because
-`report_run_spend` is registered with `atexit` rather than written after the last call. The figure
+The baseline process prints its ledger on the way out, whether it finished or died on any ending
+`atexit` reaches, because `report_run_spend` is registered with it rather than written after the
+last call; SIGTERM and `os._exit` reach no handler and print nothing, and
+`references/run-safety.md` owns what to carry forward when the line is missing. The figure
 to carry forward is the one that line names as gone - what this process spent plus what it was
 launched having spent - already carrying the conservative deduction for any call its route did not
 price. That total is what the connected process is launched with as

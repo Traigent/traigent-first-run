@@ -606,9 +606,10 @@ After showing the baseline result, give the connected stage a preview and approv
   more agent calls score that configuration - and only that configuration - against the reserved
   held-out rows, joined by ten judge calls when an LLM judge grades them. Include those calls in
   this same approval rather than asking again afterward, and add their tracked cost to the single
-  running total. They are the walkthrough's only paid calls the SDK never sees, so the wrapper
-  refuses the whole held-out pass rather than starting one the remaining cannot fund to the last
-  row; say that here, because a pass that is refused returns no held-out score at all.
+  running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
+  cannot fund to the last row; say that here, because a pass that is refused returns no held-out
+  score at all. `references/sdk-execution.md` owns which of this run's paid calls no permit covers -
+  a judge's are among them, on every scored row of the search as well as these.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
@@ -670,9 +671,14 @@ completed, its stop reason, and the work that did not run. The way past it is a 
 a larger total, taken back to the user with what has been spent so far - never a larger figure
 handed to the same process, and never a second attempt at the same phase on top of what the first
 one already spent. A phase that DIED having spent is the same arithmetic and not a fresh start:
-every paid process prints its ledger on the way out however it ends, so take the running total from
-that line, carry it into whatever runs next, and report the phase as stopped part-way rather than
-as not having happened.
+a paid process prints its ledger on every ending that runs `atexit` - finishing, `sys.exit`, an
+uncaught exception, `SystemExit` and SIGINT are each measured printing it once - so take the
+running total from that line, carry it into whatever runs next, and report the phase as stopped
+part-way rather than as not having happened. Two endings print nothing, measured: SIGTERM, which is
+what a plain `kill` sends, and `os._exit`. When no ledger line was printed, that phase's spend is
+not recoverable and the SDK's tracked cost is a floor rather than the figure - so carry the whole
+of what that phase was approved to spend forward as spent, say to the user that it was killed and
+its exact spend is unknown, and take any further work back to them as a fresh approval.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set

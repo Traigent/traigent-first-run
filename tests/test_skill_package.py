@@ -806,6 +806,10 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
 SPEND_GATE_FUNCTIONS = frozenset(
     {
         "run_remaining_usd",
+        # Collected because the install below registers it, not because a paid
+        # path calls it: a fixture without it meets a NameError while executing
+        # the door rather than in the assertion it was written for.
+        "report_run_spend",
         # Kept for the one caller the door cannot reach: a preserved evaluator
         # on another client, hand-debiting once per call it makes.
         "record_call_spend",
@@ -938,6 +942,32 @@ def fake_litellm(
     return litellm_module(completion)
 
 
+class RecordingAtexit:
+    """`atexit` for a door compiled in THIS process: records, never registers.
+
+    The install registers the ledger line, so a fixture handed the real module
+    leaves a handler behind that fires when the suite exits - one stray ledger
+    line per fixture, on the output of a run that is measuring something else,
+    reporting a namespace nobody is reading any more. Recording keeps the same
+    call and drops the process-wide effect, and it is readable, so a fixture
+    can assert what the door registered.
+
+    What actually happens on the way out is measured where it can be: a real
+    subprocess, a real `atexit`, and the printed line counted.
+    """
+
+    def __init__(self) -> None:
+        self.registered: list = []
+
+    def register(self, function, *args, **kwargs):
+        self.registered.append(function)
+        return function
+
+    def unregister(self, function) -> None:
+        while function in self.registered:
+            self.registered.remove(function)
+
+
 def spend_gate_bindings(
     *, ceiling: float = 5.00, remaining: float = 5.00, per_call: float = 0.05
 ) -> dict:
@@ -953,7 +983,8 @@ def spend_gate_bindings(
     The two stdlib modules come with them because the door's own state is built
     from them - one lock and one context variable - and a fixture missing
     either fails while executing that state rather than in the assertion it was
-    written for.
+    written for. `atexit` comes with them for the same reason and as a stand-in
+    rather than the module, for the reason `RecordingAtexit` above states.
     """
     return {
         "RUN_COST_CEILING_USD": ceiling,
@@ -962,6 +993,7 @@ def spend_gate_bindings(
         "UNTRACKED_CALL_COST_USD": per_call,
         "threading": threading,
         "contextvars": contextvars,
+        "atexit": RecordingAtexit(),
     }
 
 
@@ -15623,14 +15655,23 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         Measured on the installed litellm against a local server counting what
         arrived, it does not: a caller passing `num_retries=2` placed five
         requests through the door, a process-wide `litellm.num_retries=2`
-        placed three, and each `fallbacks` entry adds another attempt. litellm
+        placed three, and one `fallbacks` entry on its own placed two. litellm
         copies `num_retries` over the client's `max_retries` and runs a retry
         loop of its own above it, so the pin is overridden and doubled.
+
         `setdefault("num_retries", 0)` does not help either: litellm reads that
         as `kwargs.get("num_retries") or litellm.num_retries`, where a literal
         `0` is falsy - and it DOES suppress the global on `acompletion`, which
         is worse than useless, a safeguard that works on the entry point
         nothing generates and not on the one every generated line uses.
+
+        The last case is here because the five above it each move ONE of those
+        knobs, and the reservation was sized by multiplying their separate laws
+        together - which is not what the library does. A caller's own
+        `num_retries=2` with one fallback placed 14 requests, not the 10 that
+        product predicts: an extra retry round on every fallback leg, and 18 of
+        32 measured cells under-reserved because of it. A grid that varies one
+        axis at a time cannot see that, so one crossed cell rides with them.
 
         So the claim is no longer that the invocation is one request. It is
         that the ledger holds what the invocation can place, reserved before it
@@ -15648,6 +15689,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             ("a process-wide num_retries", 2, {}),
             ("a caller's num_retries", None, {"num_retries": 2}),
             ("one fallback", None, {"fallbacks": ["openai/gpt-4o-mini"]}),
+            (
+                "a fallback and a caller's num_retries",
+                None,
+                {"num_retries": 2, "fallbacks": ["openai/gpt-4o-mini"]},
+            ),
         )
         for label, global_retries, extra in cases:
             with self.subTest(case=label):
@@ -15683,6 +15729,61 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         f"${sum(namespace['RUN_SPEND_USD']):.4f} at $0.0500 "
                         "each; a reservation only bounds the total while it "
                         "covers what the invocation can place",
+                    )
+
+    def test_a_negative_retry_count_still_places_a_round_it_is_reserved_for(
+        self,
+    ) -> None:
+        """A negative count looks like no retries and does not behave like one.
+
+        Flooring the counts at zero closes the credit - a negative count can no
+        longer hand the approved total money back - and on its own it leaves a
+        second hole, because litellm does not read a negative count as an
+        absent one. Measured against a local server counting what arrived:
+        `num_retries=-5` with one fallback placed four requests where a floor
+        of zero reserved two, and a process-wide `litellm.num_retries=-5`
+        placed two where it reserved one. So the floor is one wherever the
+        count is set, and the assertion here is the bound rather than equality
+        - a pathological count is reserved for conservatively, not exactly.
+        """
+        if importlib.util.find_spec("litellm") is None:
+            self.skipTest("litellm is not installed; the pinned stack supplies it")
+        cases = (
+            ("a negative caller num_retries", None, {"num_retries": -5}),
+            (
+                "a negative caller num_retries on a fallback",
+                None,
+                {"num_retries": -5, "fallbacks": ["openai/gpt-4o-mini"]},
+            ),
+            ("a negative process-wide num_retries", -5, {}),
+            ("a negative max_retries", None, {"max_retries": -3}),
+        )
+        for label, global_retries, extra in cases:
+            with self.subTest(case=label):
+                with self.door_on_the_installed_litellm(
+                    num_retries=global_retries,
+                    ceiling=100.00,
+                    remaining=100.00,
+                    per_call=0.05,
+                ) as namespace:
+                    import litellm
+
+                    with contextlib.suppress(Exception):
+                        litellm.completion(
+                            model="openai/gpt-4o-mini",
+                            messages=[{"role": "user", "content": "hi"}],
+                            api_key="k",
+                            api_base=namespace["_api_base"],
+                            **extra,
+                        )
+                    placed = len(namespace["_arrived"])
+                    self.assertGreaterEqual(
+                        sum(namespace["RUN_SPEND_USD"]) + 1e-9,
+                        placed * 0.05,
+                        f"{label} placed {placed} billable provider request(s) "
+                        f"and reserved ${sum(namespace['RUN_SPEND_USD']):.4f} "
+                        "at $0.0500 each, so the run spent money the approved "
+                        "total was never asked for",
                     )
 
     def test_a_fallback_re_entry_does_not_charge_the_total_twice(self) -> None:
@@ -15725,6 +15826,169 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         "scorer that declared its calls correctly is stopped",
                     )
 
+    def test_a_negative_retry_count_cannot_reserve_negative_money(self) -> None:
+        """A reservation is a debit, so a negative one pays the run back.
+
+        Neither count had a floor. `num_retries=-5` sized one invocation at -9
+        provider requests, so the reservation CREDITED the ledger and the
+        remaining walked UP through the approved total - $499.83 to $500.10 on
+        one call, further on every call after it - while the line the next
+        phase is launched from reported a negative spend. `max_retries=-3` did
+        the same. Nothing in litellm asks for a negative count; a caller
+        computing one from a configuration file produces one, and the door
+        answers to callers it did not write.
+
+        The floor is on the counts rather than on the total, and it is one
+        rather than zero wherever litellm reads the count as set: a floor of
+        zero stopped the credit and still under-reserved, because a negative
+        count buys a round. The test below measures that half on the library.
+        """
+        for label, extra in (
+            ("a negative num_retries", {"num_retries": -5, "max_retries": 0}),
+            ("a negative max_retries", {"max_retries": -3}),
+            (
+                "a negative num_retries with fallbacks",
+                {
+                    "num_retries": -5,
+                    "max_retries": 0,
+                    "fallbacks": ["provider/backup"],
+                },
+            ),
+        ):
+            with self.subTest(case=label):
+                placed: list[dict] = []
+                namespace = self.compiled_door(
+                    fake_litellm(placed, raises=RuntimeError("the provider refused")),
+                    ceiling=500.00,
+                    remaining=499.83,
+                    per_call=0.03,
+                )
+                self.assertGreaterEqual(
+                    namespace["worst_case_requests"](dict(extra)),
+                    1,
+                    f"{label} sized one invocation below a single provider "
+                    "request, so placing it hands the approved total money "
+                    "back and every gate reading the remaining passes",
+                )
+                start = namespace["run_remaining_usd"]()
+                for _ in range(3):
+                    with contextlib.suppress(RuntimeError):
+                        namespace["litellm"].completion(
+                            model="provider/m", messages=[], **extra
+                        )
+                self.assertEqual(len(placed), 3)
+                self.assertLessEqual(
+                    namespace["run_remaining_usd"](),
+                    start - 3 * 0.03,
+                    f"three calls with {label} left the remaining at "
+                    f"${namespace['run_remaining_usd']():.4f} against a "
+                    f"${start:.4f} start - a reservation that runs backwards "
+                    "walks the remaining above the approved total",
+                )
+                self.assertGreater(
+                    min(namespace["RUN_SPEND_USD"]),
+                    0,
+                    "a ledger entry paid the run back rather than debiting it",
+                )
+
+    def test_the_ledger_line_is_absent_on_two_endings_and_both_are_named(
+        self,
+    ) -> None:
+        """The safeguard's edge, measured, because the guidance now states it.
+
+        Three sentences claimed the line prints however the process ends, and
+        two endings do not print it: SIGTERM, which is what a plain `kill`
+        sends, and `os._exit`. Neither runs an `atexit` handler at all. A
+        `kill` on a long paid phase is exactly what the guidance around this
+        is written for, so the gap is named there and measured here rather
+        than left as a claim that holds on five endings out of seven.
+
+        The other half is what the assistant does with a phase that printed
+        nothing, which is the part an unqualified claim never had to answer.
+        """
+        endings = {
+            "SIGTERM": "os.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(5)",
+            "os._exit": "os._exit(0)",
+        }
+        for label, ending in sorted(endings.items()):
+            with self.subTest(ending=label):
+                program = "\n".join(
+                    [
+                        "import os",
+                        "import signal",
+                        "import time",
+                        self.spend_report_program(
+                            ceiling=5.00,
+                            spent=2.00,
+                            per_call=0.05,
+                            placed=[0.40, 0.50],
+                            refused=[0.10],
+                            ending=ending,
+                        ),
+                    ]
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    script = Path(directory) / "killed.py"
+                    script.write_text(program, encoding="utf-8")
+                    finished = subprocess.run(
+                        [sys.executable, str(script)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                lines = [
+                    line
+                    for line in finished.stdout.splitlines()
+                    if "provider call(s)" in line
+                ]
+                self.assertEqual(
+                    len(lines),
+                    0,
+                    f"{label} printed the ledger line, so the guidance below "
+                    "names a gap that is no longer there and sends the "
+                    "assistant to a fallback it does not need",
+                )
+        safety = RUN_SAFETY.read_text()
+        # Both documents, because the claim was made in both and an
+        # unqualified copy is what a reader acts on.
+        for document in (safety, SDK_EXECUTION.read_text()):
+            for named in ("SIGTERM", "os._exit"):
+                self.assertIn(
+                    named,
+                    document,
+                    f"a document promises a ledger line on every ending and "
+                    f"{named} does not print one, which is the ending a killed "
+                    "paid phase actually takes",
+                )
+        # And the half a qualified claim owes the reader: what to carry
+        # forward out of a phase that printed no figure at all.
+        self.assertIn("not recoverable", safety)
+
+    def test_the_claim_about_uncovered_paid_calls_is_made_once(self) -> None:
+        """One claim in two documents drifts, and this pair already had.
+
+        `run-safety.md` called the held-out agent and judge calls the
+        walkthrough's only paid calls the SDK never sees. `task_score` places
+        `SCORER_CALLS_PER_ROW` calls on EVERY scored row, the search included,
+        and the SDK cannot see those either - it settles a trial's cost before
+        it applies the metric functions - so the "only" was false for any run
+        an LLM judge grades. Both sentences arrived together; the one that
+        stayed is the one that is true, and the other points at it rather than
+        restating it in its own words a second time.
+        """
+        owner = "the walkthrough's only paid calls that no permit covers"
+        self.assertIn(owner, " ".join(SDK_EXECUTION.read_text().split()))
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertNotIn(
+            "only paid calls",
+            safety,
+            "the claim about which paid calls go unseen is written out in two "
+            "documents, which is how it drifted: the held-out pass is not the "
+            "only one, because a judge grades every scored row of the search "
+            "as well",
+        )
+        self.assertIn("which of this run's paid calls no permit covers", safety)
+
     def spend_report_program(
         self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending
     ) -> str:
@@ -15732,16 +15996,23 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         text = SDK_EXECUTION.read_text()
         wanted = {"report_run_spend", "run_remaining_usd"}
         collected: list[ast.stmt] = []
+        registered: list[ast.stmt] = []
         for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
-            for node in ast.parse(source).body:
+            tree = ast.parse(source)
+            for node in tree.body:
                 if isinstance(node, ast.FunctionDef) and node.name in wanted:
                     collected.append(node)
-                elif isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(
+            # Walked rather than read off the module body: the registration
+            # sits inside the door's install guard, so a second execution of
+            # the fence cannot add a second handler.
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(
                     node
                 ):
-                    collected.append(node)
+                    registered.append(node)
+        collected += registered
         self.assertEqual(
-            len([node for node in collected if isinstance(node, ast.Expr)]),
+            len(registered),
             1,
             "the ledger line is registered to run on the way out exactly once",
         )
@@ -15858,6 +16129,90 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "the ledger line is called directly as well as registered to run "
             "on the way out, so a phase that finishes prints it twice",
         )
+
+    def test_a_second_execution_registers_one_ledger_line_and_not_two(self) -> None:
+        """The guard the wrap had and the report line did not.
+
+        The wrap is guarded because a second execution of the fence in one
+        process would otherwise wrap again and debit every call twice. The
+        registration sat outside that guard, so the same second execution
+        registered a second handler on a ledger nobody was writing to -
+        measured, two lines out, the second reporting `0 provider call(s) and
+        spent $0.0000` from its own blind namespace. A reader taking the
+        handoff figure off the last line takes the empty one.
+
+        Run rather than read: two real executions of the fence in one real
+        process against one `litellm`, ended normally, with the printed lines
+        counted.
+        """
+        text = SDK_EXECUTION.read_text()
+        # Any registration left at module level comes with them, so this
+        # measures where the call actually is rather than where it should be:
+        # collecting only the install would report a registration moved back
+        # outside it as no line at all instead of as two.
+        beside = [
+            node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(node)
+        ]
+        door = "\n".join(
+            ast.unparse(node)
+            for node in (
+                *sdk_wrapper_state_nodes(text),
+                *sdk_wrapper_spend_gate(text),
+                *beside,
+            )
+        )
+        program = "\n".join(
+            [
+                "import atexit",
+                "import contextvars",
+                "import threading",
+                "from types import SimpleNamespace",
+                "def completion(*args, **kwargs):",
+                "    raise RuntimeError('no provider here')",
+                "async def acompletion(*args, **kwargs):",
+                "    raise RuntimeError('no provider here')",
+                "litellm = SimpleNamespace(",
+                "    completion=completion, acompletion=acompletion, num_retries=0",
+                ")",
+                f"DOOR = {door!r}",
+                "def install():",
+                "    namespace = {",
+                "        'litellm': litellm, 'atexit': atexit,",
+                "        'threading': threading, 'contextvars': contextvars,",
+                "        'RUN_COST_CEILING_USD': 5.0, 'RUN_COST_SPENT_USD': 2.0,",
+                "        'RUN_COST_REMAINING_USD': 3.0,",
+                "        'UNTRACKED_CALL_COST_USD': 0.05,",
+                "    }",
+                "    exec(compile(DOOR, '<door>', 'exec'), namespace)",
+                "    return namespace",
+                "first = install()",
+                "second = install()",
+                "first['RUN_SPEND_USD'].append(0.4)",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "twice.py"
+            script.write_text(program, encoding="utf-8")
+            finished = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        lines = [
+            line for line in finished.stdout.splitlines() if "provider call(s)" in line
+        ]
+        self.assertEqual(
+            len(lines),
+            1,
+            "executing the fence twice in one process printed "
+            f"{len(lines)} ledger line(s), so the handoff figure is two "
+            f"figures and one of them is blind: {finished.stdout!r}",
+        )
+        self.assertIn("$0.4000", lines[0], "the one line printed is the blind one")
 
     def test_the_remaining_is_read_and_taken_in_one_step(self) -> None:
         """The concurrency exposure, closed by reserving instead of debiting.
