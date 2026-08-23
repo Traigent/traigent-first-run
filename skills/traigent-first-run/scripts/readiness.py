@@ -7380,6 +7380,22 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             # and only a structurally unreadable document is refused. Nothing
             # here is unreadable - the options simply are not in the line the
             # author cited for them, so they earn nothing and the card says so.
+            #
+            # It carries the remedy as well as the symptom, and for the same
+            # reason the unknown-field message above does: naming what is wrong
+            # without naming what to write instead is half a message. It is
+            # owed here more than there, because the rule it states lives in
+            # `component-creation.md`, which SKILL.md loads after this gate -
+            # so at the moment this fires, the sentence that would fix it is
+            # not in the reader's context and this line is.
+            #
+            # It names the DEFINING line because that is the half that was
+            # actually missing. Across ~50 blinded runs every failure did quote
+            # verbatim - and quoted the line where the parameter is USED,
+            # `TONES[tone] + ...` rather than `TONES = {"terse": ..., "warm":
+            # ...}`, which is the only one of the two that holds an option
+            # value. "Quote the options" was already being obeyed off the wrong
+            # line, so naming the line is the only part that changes an outcome.
             return DiscoveredKnob(
                 name,
                 "categorical",
@@ -7390,7 +7406,10 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
                 + " which the evidence given for it does not show, so this "
                 "score has not seen them; the options a search varies get "
                 "added at the enhanced run, and this read records the ones "
-                "the source already has",
+                "the source already has; quote the line that spells the "
+                "options out, not just the line that uses the parameter, in "
+                "this parameter's own 'evidence' - that string is all this "
+                "check reads, and it matches whole tokens",
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
