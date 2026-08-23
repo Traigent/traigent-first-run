@@ -41,10 +41,9 @@ scoring one is reported. Only after task intent is anchored, copy
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
 Keep it concise and internal; do not ask the user to complete or review it.
-Beside it, append every blocking failure, every stop-and-wait, and every warning that survives
-into the result to `traigent-runs/run-log.jsonl`, one line when it happens and one if it clears.
-`references/run-safety.md` owns that line's shape; load it before the first line is written
-rather than at its own stage, and rename the log beside any record this run retires.
+Beside it, append every event `references/run-safety.md` names to `traigent-runs/run-log.jsonl`,
+in the shape that reference gives them; load it before the first line is written rather than at
+its own stage, and rename the log beside any record this run retires.
 Keep its stage-status block current from the moment the record exists: at every stage boundary and
 before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
 next stage is always the first neither marked done nor skipped. A session finding
@@ -102,8 +101,8 @@ unversioned `traigent` package.
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
   invent progress/ETA.
-- Explain a blocked step in plain language and give one recommended recovery. Wherever this run
-  stops for good, check the run log as `references/run-safety.md` requires and name its path.
+- Explain a blocked step in plain language and give one recommended recovery. At the close, and wherever
+  this run stops for good, check the run log as `references/run-safety.md` requires and name its path.
 - Never silently rewrite real examples, expected answers, or grading policy. Repair a working copy
   and preserve provenance; ask before any judgment-dependent change.
 - Never expose secrets in chat, commands, logs, diffs, or metadata.

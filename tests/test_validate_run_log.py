@@ -189,6 +189,20 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
         # provider refusal gets written.
         self.assertIsNone(pattern.search("returned a ServiceUnavailableError"))
 
+    def test_both_straight_quote_forms(self) -> None:
+        """The double form is refused through `detail`; the single had no case.
+
+        A model answer arrives in whichever quote the assistant reached for, so
+        deleting the single-quote alternative left both suites green.
+        """
+        pattern = self._pattern("quoted content")
+        self.assertTrue(
+            pattern.search('the judge returned "the capital of France is Paris"')
+        )
+        self.assertTrue(
+            pattern.search("the judge returned 'the capital of France is Paris'")
+        )
+
     def test_both_curly_quote_forms(self) -> None:
         pattern = self._pattern("quoted content")
         self.assertTrue(pattern.search("it said \u201c" + "a" * 30 + "\u201d"))
@@ -224,6 +238,212 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
         sentence = "the connected optimization stopped early " * 8
         self.assertLess(len(sentence), validate_run_log.DETAIL_LIMIT)
         self.assertEqual(findings(line(detail=sentence)), [])
+
+
+class TheRegisterAProviderRefusalIsWrittenInTests(unittest.TestCase):
+    """The sentences a run really writes about a refusal it cannot categorise.
+
+    Naming the provider's error class is exactly what the contract asks for
+    when the refusal is `uncategorized`, and three separate rules have refused
+    that sentence across as many rounds: an opening apostrophe, a paired one,
+    and a twenty-letter run. Vendor prefixes front-load their digits, which is
+    what tells `OAuth2AuthenticationError` from an identifier.
+    """
+
+    def test_a_class_name_carrying_a_vendor_digit_is_not_an_identifier(self) -> None:
+        for name in (
+            "OAuth2AuthenticationError",
+            "Sha256SignatureMismatch",
+            "Base64DecodePayloadError",
+            "Http2StreamClosedError",
+            "Utf8DecodeFailureError",
+            "Md5ChecksumMismatchError",
+            "Iso8601TimestampError",
+            "X509CertificateError",
+            "Tls13HandshakeFailure",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    findings(
+                        line(detail=f"the refusal was a {name} on the first trial")
+                    ),
+                    [],
+                    f"{name} was refused",
+                )
+
+    def test_an_identifier_that_scatters_its_digits_is_still_refused(self) -> None:
+        for token in (
+            "a3f91c2b11de4d0b",
+            "A7f3Kq9ZmX2bLp0RtYuI",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        ):
+            with self.subTest(token=token):
+                self.assertTrue(
+                    findings(line(detail=f"the request {token} was rejected")),
+                    f"{token} was accepted",
+                )
+
+    def test_a_possessive_on_a_token_ending_in_a_digit(self) -> None:
+        """A model id or a version ends in a digit, and the bound missed those."""
+        for detail in (
+            "gpt-4's refusal arrived before the rows' totals were counted",
+            "python 3.12's resolver refused and the customers' rows were dropped",
+            "the o1's answer was truncated before the evaluators' checks ran",
+        ):
+            with self.subTest(detail=detail):
+                self.assertEqual(findings(line(detail=detail)), [])
+
+    def test_two_short_quoted_terms_do_not_pair_across_the_gap(self) -> None:
+        """The closing quote of one term paired with the opener of the next."""
+        self.assertEqual(
+            findings(
+                line(detail='the "open" line arrived before the "cleared" line did')
+            ),
+            [],
+        )
+
+    def test_a_version_is_not_a_host(self) -> None:
+        self.assertEqual(
+            findings(line(detail="the pinned httpx version 1.0.dev was refused")), []
+        )
+
+    def test_a_carrier_after_punctuation_is_still_refused(self) -> None:
+        """A boundary class misses every carrier that is not a space or a quote.
+
+        The guide's own register prints paths in backticks and addresses in
+        parentheses, so both were invisible to the check written for them.
+        """
+        for detail in (
+            "the file `/home/user/clients/rows.csv` was missing",
+            # A host whose TLD is outside the host rule's list, so only the
+            # address rule can catch it - otherwise the lookbehind is untested
+            # and reverting it stays green.
+            "the account (anna.k@acme-health.co.uk) was refused",
+            "the account <anna.k@acme-health.co.uk> was refused",
+            "the account: anna.k@acme-health.co.uk was refused",
+            "path=/home/user/proj/.env was tracked",
+        ):
+            with self.subTest(detail=detail):
+                self.assertTrue(findings(line(detail=detail)), f"{detail!r} passed")
+
+
+class TheSurvivorsOfTheSweepTests(unittest.TestCase):
+    """One assertion per rule a 179-edit sweep could break in silence.
+
+    Every case here failed on the mutant that found it and passed on the tree.
+    They are grouped rather than scattered because what they have in common is
+    the reason they were missing: each rule had a representative example and no
+    boundary, so any narrowing that spared the example survived.
+    """
+
+    def _pattern(self, label: str):
+        for name, pattern in validate_run_log.LEAKS:
+            if name == label:
+                return pattern
+        raise AssertionError(f"no pattern named {label}")
+
+    def test_the_path_rule_does_not_fire_on_a_relative_path(self) -> None:
+        """Widening its left boundary would refuse the guide's own directory."""
+        self.assertEqual(
+            findings(line(detail="the cap under traigent-runs/readiness/ is standing")),
+            [],
+        )
+
+    def test_every_slack_prefix_the_pattern_claims(self) -> None:
+        for prefix in ("xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"):
+            with self.subTest(prefix=prefix):
+                self.assertTrue(
+                    self._pattern("a credential").search(prefix + "EXAMPLE-NOT-A-KEY")
+                )
+
+    def test_the_local_part_is_bounded(self) -> None:
+        self.assertIsNone(
+            self._pattern("an email address").search(
+                "the account " + "a" * 70 + "@example.com"
+            )
+        )
+
+    def test_every_tld_the_host_rule_lists(self) -> None:
+        pattern = self._pattern("a host or address")
+        for tld in ("com", "net", "org", "io", "ai", "dev"):
+            with self.subTest(tld=tld):
+                self.assertTrue(
+                    pattern.search(f"could not reach portal.example.{tld} at all")
+                )
+
+    def test_the_detail_limit_and_its_boundary(self) -> None:
+        """`>` not `>=`: a detail of exactly the limit is a sentence."""
+        # Not "a": a long run of hex characters is a session id by another
+        # rule, which is the fixture failing rather than the boundary.
+        self.assertEqual(validate_run_log.DETAIL_LIMIT, 400)
+        self.assertEqual(findings(line(detail="the run stopped " + "z" * 384)), [])
+        self.assertTrue(
+            any(
+                "past the" in p
+                for p in findings(line(detail="the run stopped " + "z" * 385))
+            )
+        )
+
+    def test_the_identity_is_all_three_fields(self) -> None:
+        """`open` on one identity must not clear another."""
+        self.assertTrue(
+            any(
+                "without an open line" in p
+                for p in findings(
+                    line(), line(ts="20260823T151205Z", stage=7, state="cleared")
+                )
+            )
+        )
+        self.assertTrue(
+            any(
+                "without an open line" in p
+                for p in findings(
+                    line(),
+                    line(ts="20260823T151205Z", state="cleared", **{"class": "answer"}),
+                )
+            )
+        )
+
+    def test_the_docstring_states_the_exit_codes_it_ships(self) -> None:
+        doc = validate_run_log.__doc__ or ""
+        for clause in (
+            "Exits 0",
+            "1 when any line is rejected",
+            "2 when the file itself cannot be read",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, doc)
+
+    def test_a_rejected_line_names_everything_it_carries(self) -> None:
+        """One finding per carrier, so a reader fixes the line once."""
+        problems = findings(
+            line(
+                detail="the file /home/user/proj/.env and https://example.com/api both failed"
+            )
+        )
+        self.assertTrue(any("an absolute path" in p for p in problems))
+        self.assertTrue(any("a URL" in p for p in problems))
+
+    def test_the_file_is_untouched_byte_for_byte_and_stat_for_stat(self) -> None:
+        """ "A checker, never a writer" - compared by inode, not by text."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run-log.jsonl"
+            log.write_text(
+                json.dumps(line(**{"class": "nope"})) + "\n", encoding="utf-8"
+            )
+            before = log.stat()
+            subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log)],
+                capture_output=True,
+                check=False,
+            )
+            after = log.stat()
+        self.assertEqual(
+            (before.st_ino, before.st_size, before.st_mtime_ns),
+            (after.st_ino, after.st_size, after.st_mtime_ns),
+        )
 
 
 class TheAppendOnlySequenceIsCheckedTests(unittest.TestCase):
@@ -445,15 +665,18 @@ class TheProseAndTheScriptDeclareOneVocabularyTests(unittest.TestCase):
         text = BASE_REFERENCE.read_text().split("### The run log", 1)[1]
         bullets: dict[str, str] = {}
         current = None
+        blank_run = 0
         for row in text.splitlines():
-            opener = re.match(r"- `([a-z_]+)` - ", row)
+            opener = re.match(r"-\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", row)
             if opener:
                 current = opener.group(1)
                 bullets[current] = row
-            elif current and row.startswith("  "):
+            elif current and (row.startswith("  ") or blank_run == 0 and row.strip()):
                 bullets[current] += " " + row.strip()
             elif current and not row.strip():
-                current = None
+                blank_run += 1
+                if blank_run > 1:
+                    current = None
         return bullets
 
     def test_every_event_the_script_closes_over_is_declared_in_the_prose(
@@ -626,6 +849,80 @@ class TheScriptItselfBehavesTests(unittest.TestCase):
         # The stack stays behind the switch the sibling scripts already use.
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_a_malformed_line_never_reports_the_check_as_broken(self) -> None:
+        """`json.loads` raises RecursionError, which is not a ValueError.
+
+        A deeply nested line is a finding about the log; reporting it as exit 3
+        has the guide route its own checker as a tool failure.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run-log.jsonl"
+            log.write_text('{"a":' + "[" * 60_000 + "\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_a_stamp_in_other_digits_is_not_a_stamp(self) -> None:
+        """Python's `\\d` is Unicode; the format this guide writes is not."""
+        problems = findings(
+            line(
+                ts="\u0662\u0660\u0662\u0666\u0660\u0668\u0662\u0663T\u0662\u0660\u0661\u0668\u0665\u0661Z"
+            )
+        )
+        self.assertTrue(any("YYYYMMDDTHHMMSSZ" in p for p in problems))
+
+    def test_a_trailing_newline_does_not_satisfy_a_pattern(self) -> None:
+        """`$` admits one; `fullmatch` is what the contract meant."""
+        self.assertTrue(findings(line(ts="20260823T151204Z\n")))
+        self.assertTrue(findings(line(event="tool_fail", **{"class": "1\n"})))
+
+    def test_the_json_contract_holds_on_every_exit(self) -> None:
+        """`--json` promised a parseable stdout and broke it on the commonest exit."""
+        import tempfile
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--log",
+                str(ROOT / "absent.jsonl"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["status"], "absent")
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run-log.jsonl"
+            log.mkdir()
+            unreadable = subprocess.run(
+                [sys.executable, str(SCRIPT), "--log", str(log), "--json"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(unreadable.returncode, 2)
+        self.assertEqual(json.loads(unreadable.stdout)["status"], "unreadable")
+
+    def test_a_usage_error_is_the_check_failing_not_the_log(self) -> None:
+        """argparse exits 2, which this tool spends on an unreadable log."""
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--not-a-real-flag"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 3)
+
     def test_it_never_writes_to_the_log(self) -> None:
         import tempfile
 
@@ -653,7 +950,11 @@ class TheGuidanceRoutesToItTests(unittest.TestCase):
         )
         self.assertIn("scripts/validate_run_log.py --log", text)
         self.assertIn("exit 1 names the lines", text)
-        self.assertIn("exit 3 means the check itself could not run", text)
+        self.assertIn("exit 2 says the file exists and could not be read", text)
+        # Exit 3 is one rule for every bundled script, stated once where
+        # the other three already route it.
+        self.assertIn("exit 3 routes as it does for every bundled script", text)
+        self.assertIn("exit 3 from any bundled script", text)
 
     def test_a_rejected_line_is_reported_rather_than_rewritten(self) -> None:
         """Append-only survives its own checker.
@@ -669,9 +970,12 @@ class TheGuidanceRoutesToItTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        self.assertIn("is not rewritten", text)
+        self.assertIn(
+            "a rejected line is reported to the user with what it carries", text
+        )
         self.assertNotIn("may rewrite a line", text)
-        self.assertIn("append-only is what makes this file worth reading", text)
+        # The append-only claim itself stays where it is stated once.
+        self.assertIn("a line, once written, is never rewritten", text)
 
 
 if __name__ == "__main__":

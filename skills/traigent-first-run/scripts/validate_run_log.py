@@ -74,11 +74,11 @@ CLASSES: dict[str, frozenset[str]] = {
 # `tool_fail` closes over the exit codes a command can return rather than over a
 # hand-written list, so it is checked by shape.
 # 1 through 255: `0` is a success and nothing above 255 is a wait status.
-EXIT_CODE_CLASS = re.compile(r"^(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$")
+EXIT_CODE_CLASS = re.compile(r"(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])")
 EVENTS = frozenset(CLASSES) | {"tool_fail"}
 STATES = frozenset({"open", "cleared"})
 FIELDS = frozenset({"ts", "event", "stage", "class", "state", "detail"})
-TIMESTAMP = re.compile(r"^\d{8}T\d{6}Z$")
+TIMESTAMP = re.compile(r"[0-9]{8}T[0-9]{6}Z")
 
 # What `detail` may not carry. The allowlist in run-safety.md is written as a
 # sentence; these are the shapes that sentence decomposes into, and they are the
@@ -94,7 +94,10 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Requires a boundary before the slash, so `3/5`, `and/or` and `input/output`
     # stay ordinary prose. The Windows branch takes one escaped backslash: two
     # matches a literal `C:\\`, which no JSON-decoded path contains.
-    ("an absolute path", re.compile(r"(?:^|[\s\"'(])(?:/[^\s\"']*/|~/|[A-Za-z]:\\)")),
+    (
+        "an absolute path",
+        re.compile(r"(?<![A-Za-z0-9])(?:/[^\s\"']*/|~/|[A-Za-z]:\\)"),
+    ),
     (
         "a credential",
         re.compile(
@@ -104,26 +107,28 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     # Bounded on both sides of the `@`: unbounded, this backtracks
     # quadratically on a long token containing no `@`, which is exactly the
-    # pasted error body or base64 blob the rule exists to catch. The lookbehind
-    # keeps a decorator such as `@traigent.optimize` out of it.
+    # pasted error body or base64 blob the rule exists to catch. A decorator
+    # such as `@traigent.optimize` has nothing before the `@`, so it never
+    # matched: the lookbehind is what lets an address follow a bracket.
     (
         "an email address",
         re.compile(
-            r"(?<![^\s@])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}"
+            r"(?<![A-Za-z0-9._%+\-@])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}"
         ),
     ),
     (
         "a session or request id",
         re.compile(
             r"\b(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-            r"[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}|(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{20,})\b"
+            r"[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}"
+            r"|(?=[A-Za-z0-9]{8}[A-Za-z0-9]*[0-9])[A-Za-z0-9]{20,})\b"
         ),
     ),
     ("a URL", re.compile(r"\bhttps?://\S+")),
     (
         "a host or address",
         re.compile(
-            r"\b(?:\d{1,3}(?:\.\d{1,3}){3}\b|[a-z0-9-]+\.(?:com|net|org|io|ai|dev)\b)"
+            r"\b(?:\d{1,3}(?:\.\d{1,3}){3}\b|[a-z][a-z0-9-]*\.(?:com|net|org|io|ai|dev)\b)"
         ),
     ),
     # A quoted span this long is a row, a prompt, or a model answer. The quotes
@@ -132,13 +137,15 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "quoted content",
         re.compile(
-            # The single-quote form is bounded on both sides by a
-            # non-letter, because an apostrophe between two letters is a
-            # possessive or a contraction. Without that bound, "the user's
-            # approval before the provider's trial" reads as one quoted
-            # span twenty-six characters long.
-            '"[^"]{25,}"'
-            "|(?<![A-Za-z])'[^']{25,}'(?![A-Za-z])"
+            # Both straight forms are bounded on each side by a character
+            # a word can end with, because an apostrophe between two of
+            # those is a possessive or a contraction: without it "the
+            # user's approval before the provider's trial" reads as one
+            # span, and so does a closing quote pairing with the opening
+            # quote of the next quoted term. Digits count - a model id or a
+            # version ends in one.
+            '(?<![A-Za-z0-9])"[^"]{25,}"(?![A-Za-z0-9])'
+            "|(?<![A-Za-z0-9])'[^']{25,}'(?![A-Za-z0-9])"
             "|\u201c[^\u201d]{25,}\u201d"
             "|\u2018[^\u2019]{25,}\u2019"
         ),
@@ -167,7 +174,7 @@ class Finding:
 
 def _check_class(event: str, value: Any, number: int, out: list[Finding]) -> None:
     if event == "tool_fail":
-        if not isinstance(value, str) or not EXIT_CODE_CLASS.match(value):
+        if not isinstance(value, str) or not EXIT_CODE_CLASS.fullmatch(value):
             out.append(
                 Finding(
                     number,
@@ -240,7 +247,7 @@ def _check_line(record: Any, number: int, out: list[Finding]) -> tuple[str, str]
     if not FIELDS <= present:
         return None
 
-    if not TIMESTAMP.match(str(record["ts"])):
+    if not TIMESTAMP.fullmatch(str(record["ts"])):
         out.append(
             Finding(
                 number, f"ts {record['ts']!r} is not YYYYMMDDTHHMMSSZ", "restamp it"
@@ -293,7 +300,7 @@ def validate(text: str) -> list[Finding]:
             continue
         try:
             record = json.loads(raw)
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
             findings.append(
                 Finding(number, f"line is not JSON ({error})", "write one JSON object")
             )
@@ -315,8 +322,22 @@ def validate(text: str) -> list[Finding]:
     return findings
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit as the check breaking, not as an unreadable log.
+
+    argparse's own exit code is 2, which this tool spends on "the file exists
+    and could not be read" - so a misspelled flag reported a false fact about
+    the customer's log.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: {message}", file=sys.stderr)
+        raise SystemExit(INTERNAL_ERROR_EXIT)
+
+
 def run(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         description=(
             "Check a run log against the contract in references/run-safety.md. "
             "Read-only: it never writes to the log."
@@ -329,30 +350,40 @@ def run(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     path = Path(args.log)
-    if not path.exists():
-        # Reporting an absent log as unreadable would have the guide open a
-        # file to complain that one is missing.
-        print(f"{path}: no run log was written")
-        return 0
-    try:
-        # utf-8-sig so a byte-order mark is not reported as broken JSON.
-        text = path.read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeDecodeError) as error:
-        print(f"run log cannot be read: {error}", file=sys.stderr)
-        return 2
 
-    findings = validate(text)
-    if args.json:
+    def envelope(status: str, findings: list[Finding]) -> None:
+        """The `--json` contract holds on every exit, not only the found one."""
         print(
             json.dumps(
                 {
                     "log": str(path),
-                    "status": "ok" if not findings else "rejected",
+                    "status": status,
                     "findings": [finding.as_dict() for finding in findings],
                 },
                 indent=2,
             )
         )
+
+    if not path.exists():
+        # Reporting an absent log as unreadable would have the guide open a
+        # file to complain that one is missing.
+        if args.json:
+            envelope("absent", [])
+        else:
+            print(f"{path}: no run log was written")
+        return 0
+    try:
+        # utf-8-sig so a byte-order mark is not reported as broken JSON.
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as error:
+        if args.json:
+            envelope("unreadable", [])
+        print(f"run log cannot be read: {error}", file=sys.stderr)
+        return 2
+
+    findings = validate(text)
+    if args.json:
+        envelope("ok" if not findings else "rejected", findings)
     elif findings:
         lines = len({finding.line_number for finding in findings})
         print(f"{len(findings)} finding(s) on {lines} line(s) in {path}:")

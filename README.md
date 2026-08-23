@@ -307,7 +307,15 @@ example ids and metrics but writes those three content fields as `null`, and kee
 assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined
 results folder is honored and named.
 
-The walkthrough also writes `traigent-runs/run-log.jsonl`, a local record of where the run waited or stopped. Each line carries a class name and one sentence, and never your data — no path, no id, no address, no credential, no quoted row. `skills/traigent-first-run/scripts/validate_run_log.py` checks that before the run names the file to you, and refuses every carrier with a recognisable shape; two things it cannot check mechanically, a person's name and a machine's, are the assistant's to honour. Nothing sends the file anywhere; it is yours to read, share, or delete.
+When there is anything to record, the walkthrough also writes `traigent-runs/run-log.jsonl` — a
+local note of where the run waited, stopped, or met something that can bend the result. Each line
+carries a class name and one sentence, and never your data: no path, no id, no address, no
+credential, no quoted row. `skills/traigent-first-run/scripts/validate_run_log.py` backstops that
+before the run names the file to you, refusing the carriers that have a shape a checker can
+settle — paths, credentials, links, long ids, long quoted spans. What it cannot settle stays the
+assistant's to honour: a person's name, a machine's, an access code, a provider error body, and
+short or unquoted text from your data. Nothing sends the file anywhere; it is yours to read,
+share, or delete.
 
 The selected LLM provider still receives the content the agent normally sends during model calls.
 Your assistant explains which services receive data and asks before paid calls or private-data

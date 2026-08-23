@@ -21770,10 +21770,12 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """The key set, read out of the table rather than out of a sentence."""
         keys: set[str] = set()
         for line in self._log_section().splitlines():
-            if not line.startswith("| `"):
+            if not line.startswith("|"):
                 continue
-            first_cell = line.split("|")[1]
-            keys.update(re.findall(r"`([a-z_]+)`", first_cell))
+            cells = line.split("|")
+            if len(cells) < 3:
+                continue
+            keys.update(re.findall(r"`([a-z_]+)`", cells[1]))
         return keys
 
     def _schema_rows(self) -> dict[str, str]:
@@ -21786,9 +21788,11 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """
         rows: dict[str, str] = {}
         for line in self._log_section().splitlines():
-            if not line.startswith("| `"):
+            if not line.startswith("|"):
                 continue
             cells = line.split("|")
+            if len(cells) < 3:
+                continue
             for key in re.findall(r"`([a-z_]+)`", cells[1]):
                 rows[key] = cells[2].strip().casefold()
         return rows
@@ -21797,15 +21801,21 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         """Each event's own paragraph, keyed by event name."""
         bullets: dict[str, str] = {}
         current: str | None = None
+        blank_run = 0
         for line in self._log_section().splitlines():
-            opener = re.match(r"- `([a-z_]+)` - ", line)
+            # Any dash, any spacing: an em dash for the hyphen is a
+            # legitimate edit that made every event invisible while both
+            # suites stayed green.
+            opener = re.match(r"-\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", line)
             if opener:
                 current = opener.group(1)
                 bullets[current] = line
-            elif current and line.startswith("  "):
+            elif current and (line.startswith("  ") or blank_run == 0 and line.strip()):
                 bullets[current] += " " + line.strip()
             elif current and not line.strip():
-                current = None
+                blank_run += 1
+                if blank_run > 1:
+                    current = None
         return bullets
 
     def test_the_schema_table_declares_the_whole_key_set(self) -> None:
@@ -21955,7 +21965,15 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn(
             "flapping survives while a silent retry loop does not", normalized
         )
-        self.assertIn("last line is `open` is what a stuck run looks like", normalized)
+        self.assertIn(
+            "a `blocked` or `gate_fail` identity left `open` is where the run stopped",
+            normalized,
+        )
+        # Two of the six never stop applying, so a finished run ends with
+        # them standing - which the earlier reading rule called stuck.
+        self.assertIn(
+            "a run that finished normally ends with some standing", normalized
+        )
 
     def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
         """SKILL.md carries the rule; the reference carries the shape.
@@ -21971,10 +21989,13 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # assertion satisfied, so the guard stayed green over a package with
         # no mandate in it at all.
         self.assertIn(
-            "append every blocking failure, every stop-and-wait, and every warning",
+            "append every event `references/run-safety.md` names to "
+            "`traigent-runs/run-log.jsonl`",
             skill,
         )
-        self.assertIn("one line when it happens and one if it clears", skill)
+        # One vocabulary, named where it is defined - two paraphrases of it
+        # did not partition the same way.
+        self.assertIn("in the shape that reference gives them", skill)
         # The write discipline is part of the shape the reference owns, and
         # that reference loads before the first line is written. Stating it
         # in both documents was one rule with two homes, and 78 bytes.
@@ -22011,8 +22032,8 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         skill = " ".join(SKILL.read_text().casefold().split())
         self.assertIn("rename the log beside any record this run retires", skill)
         self.assertIn(
-            "wherever skill.md retires a record - a mismatch, a historical "
-            "artifact, a finished run - the log is renamed",
+            "where skill.md renames a record the log takes the same stamp, and "
+            "where a run starts a fresh record it starts a fresh log",
             " ".join(self._log_section().casefold().split()),
         )
 
@@ -22034,6 +22055,73 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, normalized)
+
+    def test_the_customer_facing_promise_is_pinned_where_a_customer_reads_it(
+        self,
+    ) -> None:
+        """Five of eight README mutations survived, and this is why.
+
+        The whole privacy paragraph - the sentence telling a customer this file
+        never carries their data, naming the checker, and saying nothing sends
+        it anywhere - could be deleted with both suites green. Only the path
+        and the git caveat were pinned, which are the two facts a customer does
+        not need to trust.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for clause in (
+            # The opening clause too: deleting the paragraph's first sentence
+            # left every other pin satisfied by the layout row.
+            "when there is anything to record, the walkthrough also writes",
+            "`traigent-runs/run-log.jsonl` — a local note of where the run waited",
+            "append-only: one line each time the run waits for you",
+            "never rewritten and never read back as run state",
+            "no path, no id, no address, no credential, no quoted row",
+            "validate_run_log.py` backstops that",
+            "nothing sends the file anywhere",
+            "yours to read, share, or delete",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, readme)
+
+    def test_the_reference_enumerates_every_check_the_script_makes(self) -> None:
+        """A checker whose description drifts is a promise again.
+
+        Two carriers were added to the script in one round and named in the
+        prose in another, and nothing compared the lists.
+        """
+        section = " ".join(self._log_section().casefold().split())
+        for check in (
+            "a class outside its event's set",
+            "a state that is neither",
+            "a field the schema does not have",
+            "a `cleared` with no `open` before it",
+            "longer than one sentence needs",
+            "a path",
+            "a credential",
+            "an email address",
+            "a host or ip",
+            "a session or request id",
+            "a link",
+            "a quoted span",
+        ):
+            with self.subTest(check=check):
+                self.assertIn(check, section)
+
+    def test_the_reference_pins_the_exits_and_the_honesty_carve_out(self) -> None:
+        """Exit 2 and the absent-log path had no pin, and the script has both."""
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("exit 2 says the file exists and could not be read", section)
+        self.assertIn("wrote no file, and that exits 0 with nothing to report", section)
+        self.assertIn("opens the log read-only", section)
+        self.assertIn("before this run names the file to the user", section)
+        # What the checker cannot settle, said where the claim is made.
+        self.assertIn("stay yours to honour", section)
+        self.assertIn("a person's name, a machine's", section)
+        # The consent gate and the no-backdating rule.
+        self.assertIn("under that record's own consent gate", section)
+        self.assertIn("nothing is backdated into it afterwards", section)
+        # The scope of what gets a line, in the document that owns it.
+        self.assertIn("every event named below gets a line", section)
 
     def test_one_path_spelled_the_same_in_every_document_that_names_it(
         self,

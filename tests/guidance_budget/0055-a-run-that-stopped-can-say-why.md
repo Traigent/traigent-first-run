@@ -1,10 +1,10 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
-resident-ceiling: 85_264
-resident-measured: 85_209
-total-ceiling: 427_725
-total-measured: 427_670
+resident-ceiling: 85_176
+resident-measured: 85_121
+total-ceiling: 427_675
+total-measured: 427_620
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -20,8 +20,9 @@ question they actually paid for is why it is a second file. Fields on the
 record would have been cheaper by a line. They would also have been wrong: the
 record is re-read top to bottom when a session resumes, and it is authoritative
 for what a resumed run may skip, so history appended there arrives dressed as
-state. That is the shape #305 records in a different ledger - an entry
-standing after a predecessor whose figures moved underneath it - and putting a timeline inside
+state. That is the shape a predecessor's moved figures produce in any
+append-only record - a later entry standing on numbers that shifted under it - and putting a
+timeline inside
 the one document a resume trusts would have manufactured more of it.
 
 What makes a second artifact safe under one-decision-one-home is that it
@@ -106,8 +107,8 @@ dropping two redaction clauses, and renaming the artifact in one document but
 not the other. They now parse the field set out of the table, read the cells
 that carry a rule rather than a type, check each clause of the allowlist on its
 own, refuse the two spellings a rewrite comes back as, and require one path
-spelled identically in four documents. Every mutation written against them has
-gone red.
+spelled identically in four documents. Every mutation written against them at
+that point had gone red.
 
 A third round bought a script rather than a sentence. Every rule above was
 executed by the assistant and enforced by nothing, which is this repository's
@@ -151,7 +152,7 @@ checking, because it teaches people to write around the checker. Collapsing on
 the identity answers the same either way, so deduplication stays guidance and
 the sequence check keeps only what is wrong however it arose.
 
-Resident buys one more line than it did, and it is the line that makes the file
+Resident buys the fifth line, and it is the line that makes the file
 worth writing: the close is the only place that named this file to the user, and
 a run that stops never reaches the close. The file written to explain a stopped
 run was invisible on exactly those runs. It is named wherever the run stops now,
@@ -219,3 +220,94 @@ writes no file, and reporting that as unreadable had the guide route a missing
 log as a tool failure, opening a file to complain that one was missing. It exits
 zero with nothing to report, and exit 2 keeps the case it was for - a file that
 exists and cannot be read.
+
+A seventh round ran four readers over disjoint halves of the change at once,
+and the two that read the prose and the checker each found the previous round's
+fix carrying the previous round's defect forward in a narrower form. The quote
+rule had been bounded against a letter, so a possessive on a token ending in a
+digit still opened a span - `gpt-4's refusal ... the rows'` - and the
+double-quote alternative had no bound at all, so one quoted term's closing mark
+paired with the next term's opening one. The identifier rule had been given a
+digit test on the reasoning that a class name carries none; vendor prefixes
+front-load digits, and nine of twenty realistic provider error class names were
+refused, which is exactly the sentence an uncategorised refusal is written as.
+Both rules are bounded on characters a word can end with now, and the digit has
+to sit past the eighth character.
+
+Two carriers the contract names first were never reachable. The path rule keyed
+on a boundary CHARACTER class of whitespace and quotes, so a path in backticks -
+the register this guide itself prints paths in - walked past it, and the address
+rule demanded whitespace before the local part, so an address in parentheses did
+too. Both are negative lookbehinds now, which is the difference between listing
+the punctuation you thought of and excluding the characters that cannot precede
+a carrier.
+
+The rest of the round was the checker's own contract. A deeply nested line
+raises `RecursionError` rather than `ValueError`, so a malformed line reported
+the check as broken - the same parser-blowup shape `preflight.py` already
+catches around its own parser. `--json` promised a parseable stdout and emitted
+prose on the two commonest exits. A misspelled flag exited 2, the code this tool
+spends on an unreadable log, so a mistyped argument reported a false fact about
+the customer's file. And `\d` is Unicode, so a stamp in Arabic-Indic digits
+satisfied a format this guide writes in ASCII.
+
+One residual is accepted rather than closed, and it is worth naming because a
+reader will otherwise assume a mechanism exists. The visibility guard scans
+every tracked file, `.py` included - it has refused a bare identifier in a test
+before - but it matches names, and what shipped in an earlier commit on this
+branch was a sentence describing how this repository reviews itself. No name, no
+host, no repository: a keyword gate for that class would refuse honest prose as
+readily as it caught the case, so the guard is not extended and the discipline
+stays a reading one. The commit is published and stays published; the shipped
+tree says what it should.
+
+A seventh round ran four readers over disjoint halves of the change at once,
+and the two that read the prose and the checker each found the previous round's
+fix carrying the previous round's defect forward in a narrower form. The quote
+rule had been bounded against a letter, so a possessive on a token ending in a
+digit still opened a span - `gpt-4's refusal ... the rows'` - and the
+double-quote alternative had no bound at all, so one quoted term's closing mark
+paired with the next term's opening one. The identifier rule had been given a
+digit test on the reasoning that a class name carries none; vendor prefixes
+front-load digits, and nine of twenty realistic provider error class names were
+refused, which is exactly the sentence an uncategorised refusal is written as.
+Both rules are bounded on characters a word can end with now, and the digit has
+to sit past the eighth character.
+
+Two carriers the contract names first were never reachable. The path rule keyed
+on a boundary CHARACTER class of whitespace and quotes, so a path in backticks -
+the register this guide itself prints paths in - walked past it, and the address
+rule demanded whitespace before the local part, so an address in parentheses did
+too. Both are negative lookbehinds now, which is the difference between listing
+the punctuation you thought of and excluding the characters that cannot precede
+a carrier.
+
+The rest of the round was the checker's own contract. A deeply nested line
+raises `RecursionError` rather than `ValueError`, so a malformed line reported
+the check as broken - the same parser-blowup shape `preflight.py` already
+catches around its own parser. `--json` promised a parseable stdout and emitted
+prose on the two commonest exits. A misspelled flag exited 2, the code this tool
+spends on an unreadable log, so a mistyped argument reported a false fact about
+the customer's file. And `\d` is Unicode, so a stamp in Arabic-Indic digits
+satisfied a format this guide writes in ASCII.
+
+One residual is accepted rather than closed, and it is worth naming because a
+reader will otherwise assume a mechanism exists. The visibility guard scans
+every tracked file, `.py` included - it has refused a bare identifier in a test
+before - but it matches names, and what shipped in an earlier commit on this
+branch was a sentence describing how this repository reviews itself. No name, no
+host, no repository: a keyword gate for that class would refuse honest prose as
+readily as it caught the case, so the guard is not extended and the discipline
+stays a reading one. The commit is published and stays published; the shipped
+tree says what it should.
+
+One last thing this round is worth recording, because it is the same defect the
+whole entry is about, committed by the verification rather than by the guidance.
+Every mutation sweep quoted above ran in a copied tree that omitted `tools/`, so
+`tests/test_skill_package.py` failed to import and returned non-zero for every
+mutation put to it. A non-zero exit is what a caught mutation looks like, so the
+guidance half of those sweeps reported a kill for each one and proved nothing.
+It surfaced only because three edits that should have PASSED came back red, and
+a false red is the half of a gate nobody looks at. The harness copies `tools/`
+now and raises on an import error rather than counting it, and the figures here
+are from the re-run.

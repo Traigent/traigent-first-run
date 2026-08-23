@@ -401,7 +401,7 @@ belongs are malformed, not absent, and are refused rather than read as an empty 
 any value the documented type admits is accepted however it was written, so a document that scores
 does not become an exit 2 because a writer emitted `12.0` instead of `12`.
 
-Exit 3 from any of the three scripts is a different statement and must be routed differently: it
+Exit 3 from any bundled script is a different statement and must be routed differently: it
 means the script itself failed, not that the user's material is wrong. Nothing was checked or
 scored, so present no result and no band; say the check could not run, and never relay it as a
 finding about their dataset, evaluator, or agent.
@@ -1110,7 +1110,7 @@ numeric telemetry, and keep error text and metadata recorded with the run conten
 
 ### The run log
 
-Every stop, refusal, and result-affecting warning above gets a line in
+Every event named below gets a line in
 `traigent-runs/run-log.jsonl`, appended when it happens rather than at the end of the stage - a
 recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
 handed this directory can say where the run stopped and why. SKILL.md's mandate rests on a
@@ -1135,37 +1135,37 @@ was first met.
 
 `event`, `stage`, and `class` together are the identity. Write one `open` line when that identity first occurs and one `cleared` line
 if it later clears; nothing else is ever written for it. A retry that meets the same refusal twelve
-times adds nothing after the first, because nothing about it changed - that is the deduplication,
-and it costs no lookup, since what is already open is something this run did a moment ago rather
-than something it has to go and find. A problem that recurs after clearing opens again and is
+times adds nothing after the first, because nothing about it changed - that is the deduplication. A problem that recurs after clearing opens again and is
 visible as the second `open` line, so flapping survives while a silent retry loop does not. A
 resumed session that no longer remembers appends `open` again, which is a fact and not a duplicate:
 it was open again in a new session.
 
-Read it by collapsing on that identity, last line wins. An identity whose last line is `open` is
-what a stuck run looks like. Nothing in the file may waive a gate, decide what runs next, resume a
-run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. Wherever
-SKILL.md retires a record - a mismatch, a historical artifact, a finished run - the log is renamed
-to the same stamp beside it and a fresh one starts, so no `cleared` from an earlier run is read as
-this one's.
+Read it by collapsing on that identity, last line wins. A `blocked` or `gate_fail` identity left
+`open` is where the run stopped. A `warning` never stops applying, so a run that finished
+normally ends with some standing, and that is the file working rather than a run that hung. Nothing in the file may waive a gate, decide what runs next, resume a
+run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. The log belongs to the
+record beside it: where SKILL.md renames a record the log takes the same stamp, and where a run
+starts a fresh record it starts a fresh log - so no `cleared` from an earlier run is read as this
+one's.
 
 The six are told apart by who has to act, and each names what its `class` may be.
 
 - `blocked` - waiting on the user: `approval`, `key`, or `answer`. This is the one that says where a
   stuck run stopped, so it is written before every stop-and-wait that happens after the record
-  exists. A stop before the record is reported in conversation and stays there.
+  exists.
 - `gate_fail` - a gate this guide defines refused: `credential-file-tracked`, `ignore-check`,
   `containment`, `readiness-cap`, `invariants`, or `uncategorized`.
 - `tool_fail` - a bundled script could not run at all, or a command failed to execute; the class
   is its exit code. Exit 3 from a bundled script is the shape this event is for: a non-zero exit is
   the healthy answer where the credential handoff continues on exit 1, and a finding about the
-  customer's own material where `preflight.py` exits 1 or 2.
+  customer's own material where `preflight.py` exits 1.
 - `external_refusal` - a provider, portal, or Traigent refusal, under the category this file already
   gives it: `authentication`, `key-scope`, `account-access`, `quota`, `rate`, `validation`, or
   `uncategorized` - which is the class for the provider error this file elsewhere says to surface
   without guessing a category.
 - `run_stop` - the run or a phase ended early and nothing above fits: `timeout`, `cost-ceiling`,
-  `outage`, `persistence`, or `uncategorized`. Tracking that degraded to local-only is
+  `outage`, `persistence`, or `uncategorized`. A refusal that halts the run is recorded as the
+  stop rather than as the refusal, so the mid-run 400 or 403 above lands here once. Tracking that degraded to local-only is
   `run_stop:persistence` and never a warning - the halt above owns it, and a warning is by
   definition the thing that did not stop the run.
 - `warning` - observed, and able to distort the result without stopping the run:
@@ -1189,9 +1189,9 @@ under the resolved skill directory. It opens the log read-only and checks what t
 only state: a class outside its event's set, a state that is neither, a field the schema does not
 have, a `cleared` with no `open` before it, and a `detail` longer than one sentence needs or
 carrying a path, a credential, an email address, a host or IP, a session or request id, a link,
-or a quoted span long enough to be somebody's row. Two clauses of the allowlist have no
-mechanical shape and stay yours to honour: a person's name, and a machine's.
-Exit 1 names the lines, exit 2 says the file exists and could not be read, and exit 3 means
-the check itself could not run, which is never a finding about the log. A run that met nothing
-worth logging wrote no file, and that exits 0 with nothing to report. A rejected line is reported to the user with what it
-carries, and is not rewritten: append-only is what makes this file worth reading.
+or a quoted span long enough to be somebody's row. Five clauses of the allowlist have no shape a checker can settle and stay yours to honour: a
+person's name, a machine's, an access or confirmation code, a provider error body, and
+unquoted text taken from the project.
+Exit 1 names the lines and exit 2 says the file exists and could not be read; exit 3 routes as
+it does for every bundled script. A run that met nothing worth logging wrote no file, and that
+exits 0 with nothing to report. A rejected line is reported to the user with what it carries.
