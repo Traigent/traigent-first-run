@@ -202,6 +202,31 @@ def guidance_budget_reason_defect(reason: str) -> str | None:
             f"{BUDGET_REASON_DISTINCT_WORDS} floor - long enough only because "
             "it repeats itself"
         )
+    # Both floors above measure a reason against ITSELF, and the overlap check
+    # measures it against OTHER entries - so an entry that appends its own text
+    # twice passes all three. This one shipped: an updater run twice left 39
+    # identical lines in the tracked tree of a public repository, and the
+    # doubling made both floors easier rather than harder to clear.
+    paragraphs = [block.strip() for block in reason.split("\n\n") if block.strip()]
+    seen: dict[str, int] = {}
+    for block in paragraphs:
+        # A quotation and a code block are repeated ON PURPOSE - an entry whose
+        # subject is one fact in three homes has to be able to show the three.
+        if block.startswith((">", "```", "    ")):
+            continue
+        seen[block] = seen.get(block, 0) + 1
+    duplicated = sum(
+        len(block) * (count - 1) for block, count in seen.items() if count > 1
+    )
+    # A proportion, not a length: the fixed floor exempted exactly the doubling
+    # this exists for, because an entry near the character floor has paragraphs
+    # under it and doubling only helps an author who is near it.
+    if duplicated and duplicated * 4 >= len(reason):
+        repeated = sorted(block for block, count in seen.items() if count > 1)
+        return (
+            f"{duplicated} of {len(reason)} characters are a repeat, starting "
+            f"{repeated[0][:60]!r} - an entry appended to itself"
+        )
     return None
 
 
@@ -2778,6 +2803,7 @@ class SkillPackageTests(unittest.TestCase):
             "scripts/preflight.py",
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
+            "scripts/validate_run_log.py",
             "assets/run-plan.md",
             "assets/requirements-first-run.txt",
         }
@@ -18474,7 +18500,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))
         self.assertEqual(
             [path.name for path in scripts],
-            ["calibrate_evaluator.py", "preflight.py", "readiness.py"],
+            [
+                "calibrate_evaluator.py",
+                "preflight.py",
+                "readiness.py",
+                "validate_run_log.py",
+            ],
             "the bundled scripts have changed; this ban covers whatever this "
             "glob finds, so a script outside it is a script nobody checks",
         )
@@ -19757,6 +19788,54 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
 
 
 class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
+
+    def test_an_entry_appended_to_itself_is_a_defect(self) -> None:
+        """The guard added after a doubling shipped, probed both ways.
+
+        Deleting it, neutering its threshold, or weakening it to require three
+        copies each left the whole suite green - it was the one rule in
+        `guidance_budget_reason_defect` with no probe.
+        """
+        paragraph = (
+            "A reason long enough to clear both floors on its own, written out "
+            "at the length a real entry runs to so the proportion this guard "
+            "measures is the proportion a real doubling would produce, and not "
+            "an artefact of a fixture too short to be representative of one."
+        )
+        self.assertGreater(len(paragraph), BUDGET_REASON_FLOOR)
+        self.assertIsNone(guidance_budget_reason_defect(paragraph))
+        doubled = paragraph + "\n\n" + paragraph
+        defect = guidance_budget_reason_defect(doubled)
+        self.assertIsNotNone(defect)
+        self.assertIn("appended to itself", defect or "")
+
+    def test_a_short_entry_doubled_is_caught_too(self) -> None:
+        """The fixed 200-character floor exempted exactly this shape.
+
+        An entry near the character floor has paragraphs under 200, and
+        doubling only helps an author who is near it - so the one length the
+        skip protected was the one the guard was written for.
+        """
+        short = (
+            "A paragraph under two hundred characters, which the first version "
+            "of this guard skipped outright, and which doubling is precisely "
+            "what would carry past the floor."
+        )
+        self.assertLess(len(short), 200)
+        self.assertIsNotNone(guidance_budget_reason_defect(short + "\n\n" + short))
+
+    def test_a_passage_quoted_twice_on_purpose_is_not_a_defect(self) -> None:
+        """The expensive direction: an entry whose subject is one fact in three
+        homes has to be able to show the three."""
+        quote = "> " + ("the same sentence, quoted to be compared with itself " * 5)
+        body = (
+            "An entry comparing two documents states what each of them says, "
+            "and the whole of its argument is that the two are not the same, "
+            "which it cannot make without showing both of them to a reader."
+        )
+        reason = f"{body}\n\n{quote}\n\n{body[:80]} again\n\n{quote}"
+        self.assertIsNone(guidance_budget_reason_defect(reason))
+
     """The ledger rules, run against invented ledgers rather than the real one.
 
     Checking the rules against `tests/guidance_budget/` alone would only ever
@@ -21711,6 +21790,506 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         # hundred resident bytes.
         self.assertNotIn(
             "rather than a must-have", " ".join(SKILL.read_text().casefold().split())
+        )
+
+
+def _normalise_punctuation(text: str) -> str:
+    """Dashes and apostrophes a writer may legitimately swap.
+
+    Three probes of meaning-preserving edits went red on this class: a hyphen
+    for an em dash, a `*` list marker for a `-`, and a typographic apostrophe.
+    A pin corpus is supposed to refuse a changed rule, not a changed keystroke.
+    """
+    for glyph in ("\u2014", "\u2013"):
+        text = text.replace(glyph, "-")
+    for glyph in ("\u2019", "\u2018"):
+        text = text.replace(glyph, "'")
+    return text
+
+
+class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
+    """Two questions about an unfinished run, and one artifact behind neither.
+
+    The record answers which stage, but only for a session that resumes: a run
+    abandoned mid-stage is read by nobody who was not already continuing it.
+    What refused, when, and how many times was answered nowhere at all - a
+    blocking refusal reached the customer as a sentence in a conversation that
+    is gone by the time anybody asks about it.
+
+    The log is a second file rather than more fields on the record because the
+    record is re-read top to bottom on resume and is authoritative for what a
+    resumed run may skip, so history appended there arrives dressed as state.
+    What keeps two artifacts from becoming two homes for one rule is that they
+    answer different questions - what is true now, against when it happened and
+    whether it cleared - and that nothing in a run reads the log back as input.
+
+    These assertions are structural on purpose. The first version of them was
+    eight `assertIn`s over prose, and a mutation sweep passed the whole suite
+    against seven separate edits that reversed what the section says - deleting
+    every event definition, deleting two of the redaction clauses, renaming the
+    artifact in one document and not the other, and inverting the dedup rule
+    outright. A substring that survives the deletion of the rule it guards is
+    not a guard. What is pinned below is the key set parsed out of the schema
+    table, the vocabulary each event closes over, every clause of the allowlist
+    one at a time, and one path spelled identically in four documents.
+    """
+
+    EVENTS = ("blocked", "stopped", "warning")
+    LOG_PATH = "`traigent-runs/run-log.jsonl`"
+
+    def _safety(self) -> str:
+        return (SKILL_ROOT / "references" / "run-safety.md").read_text()
+
+    def _log_section(self) -> str:
+        safety = self._safety()
+        heading = "### The run log"
+        self.assertEqual(safety.count(heading), 1)
+        return safety.split(heading, 1)[1]
+
+    def _schema_keys(self) -> set[str]:
+        """The key set, read out of the table rather than out of a sentence."""
+        keys: set[str] = set()
+        for line in self._log_section().splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = line.split("|")
+            if len(cells) < 3:
+                continue
+            keys.update(re.findall(r"`([a-z_]+)`", cells[1]))
+        return keys
+
+    def _schema_rows(self) -> dict[str, str]:
+        """Key -> what the table says it holds.
+
+        The key set alone left every description free: a mutation loosening
+        `detail` to "a sentence or two with the surrounding context a reader
+        needs" - which is an instruction to write exactly what the allowlist
+        forbids - passed the whole suite.
+        """
+        rows: dict[str, str] = {}
+        for line in self._log_section().splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = line.split("|")
+            if len(cells) < 3:
+                continue
+            for key in re.findall(r"`([a-z_]+)`", cells[1]):
+                rows[key] = cells[2].strip().casefold()
+        return rows
+
+    def _event_bullets(self) -> dict[str, str]:
+        """Each event's own paragraph, keyed by event name."""
+        bullets: dict[str, str] = {}
+        current: str | None = None
+        blank_run = 0
+        for line in self._log_section().splitlines():
+            # Any dash, any spacing: an em dash for the hyphen is a
+            # legitimate edit that made every event invisible while both
+            # suites stayed green.
+            opener = re.match(r"[-*+]\s+`([a-z_]+)`\s*[-\u2013\u2014]\s", line)
+            if opener:
+                current = opener.group(1)
+                bullets[current] = line
+            elif current and (line.startswith("  ") or blank_run == 0 and line.strip()):
+                bullets[current] += " " + line.strip()
+            elif current and not line.strip():
+                blank_run += 1
+                if blank_run > 1:
+                    current = None
+        return bullets
+
+    def test_the_schema_table_declares_the_whole_key_set(self) -> None:
+        """Parsed from the table, so deleting a row fails rather than passes."""
+        self.assertEqual(
+            self._schema_keys(),
+            {"ts", "event", "stage", "class", "state", "detail"},
+        )
+        rows = self._schema_rows()
+        # The three cells that carry a rule rather than a datatype.
+        self.assertIn("one sentence", rows["detail"])
+        self.assertIn("allowlist", rows["detail"])
+        self.assertIn("closed set", rows["class"])
+        self.assertIn("never authored prose", rows["class"])
+        self.assertEqual(
+            set(re.findall(r"`([a-z]+)`", rows["event"])), set(self.EVENTS)
+        )
+        self.assertIn("`open` when it happens", rows["state"])
+        self.assertIn("yyyymmddthhmmssz", rows["ts"])
+        self.assertIn("`cleared` when it stops applying", rows["state"])
+
+    def test_every_event_is_defined_and_not_merely_listed(self) -> None:
+        """The table row alone satisfied the old test; a definition is the point.
+
+        A sixth kind invented at the moment of writing is a kind nothing
+        classifies, so the closed list is what matters rather than the names.
+        """
+        bullets = self._event_bullets()
+        self.assertEqual(set(bullets), set(self.EVENTS))
+        section = self._log_section()
+        self.assertIn(
+            "write one `open` line when that identity first occurs",
+            " ".join(section.casefold().split()),
+        )
+        for event in self.EVENTS:
+            with self.subTest(event=event):
+                # Once in the `event` row, once as its own definition.
+                self.assertGreaterEqual(section.count(f"`{event}`"), 2)
+
+    def test_each_event_closes_over_a_vocabulary_the_key_can_be_spelled_from(
+        self,
+    ) -> None:
+        """`class` is one of the three fields the identity is spelled from.
+
+        Left as authored prose, the same failure met twice spells itself two
+        ways, so a reader collapsing on the identity sees two problems where
+        there was one, and the turn that clears a `blocked` line cannot name
+        what it is clearing. Each event names the closed set its class comes
+        from; `tool_fail` names an exit code instead.
+        """
+        bullets = self._event_bullets()
+        expected = {
+            "blocked": ("`approval`", "`key`", "`answer`"),
+            "stopped": (
+                "`credential-file-tracked`",
+                "`ignore-check`",
+                "`containment`",
+                "`readiness-cap`",
+                "`invariants`",
+                "`tool`",
+                "`authentication`",
+                "`key-scope`",
+                "`account-access`",
+                "`quota`",
+                "`rate`",
+                "`validation`",
+                "`timeout`",
+                "`cost-ceiling`",
+                "`outage`",
+                "`persistence`",
+                "`uncategorized`",
+            ),
+            "warning": (
+                "`refused-trial`",
+                "`untracked-cost`",
+                "`cap-standing`",
+                "`uncategorized`",
+            ),
+        }
+        for event, values in expected.items():
+            for value in values:
+                with self.subTest(event=event, value=value):
+                    self.assertIn(value, bullets[event])
+        # A non-zero exit was the healthy answer on two paths this guide
+        # defines and a finding about the customer's material on a third, so
+        # nothing keys on it: a script that could not run is one `stopped`
+        # class among seventeen, and the exit code lives in `detail`.
+        for group in (
+            "a gate this guide defines refused",
+            "a bundled script could not run, or a command failed to execute",
+            "a provider, portal, or traigent refusal",
+            "the run or a phase ended early for its own reasons",
+        ):
+            with self.subTest(group=group):
+                self.assertIn(group, bullets["stopped"].casefold())
+        # The catch-all is for anything the four groups do not name; narrowing
+        # it to the provider error left eight enumerated failures homeless.
+        self.assertIn(
+            "for anything the four groups above do not name", bullets["stopped"]
+        )
+        # One mid-run 403 is a refusal category and a degradation at once, and
+        # at class level nothing else chooses between them.
+        self.assertIn("a refusal that halts the run keeps its own", bullets["stopped"])
+        self.assertIn("`tool`", bullets["stopped"])
+        # The routing rule the collapse thinned rather than deleted.
+        self.assertIn(
+            "under the category this file already gives it",
+            bullets["stopped"].casefold(),
+        )
+        # The clause the moved invocation now rides on.
+        self.assertIn(
+            "written before every stop-and-wait", bullets["blocked"].casefold()
+        )
+        self.assertNotIn("exit code", bullets["stopped"])
+        self.assertIn("never authored prose", self._log_section().casefold())
+
+    def test_the_halt_this_file_orders_is_not_filed_as_a_warning(self) -> None:
+        """The defect this section shipped with, pinned so it cannot return.
+
+        `## Recovery` orders paid work stopped at once when tracking degrades to
+        local-only, and the first draft of this taxonomy listed that same
+        condition as a warning - defined seventy lines later as the thing that
+        does not stop the run. Green suite, opposite instructions, seventy-one
+        lines apart in one file.
+        """
+        bullets = self._event_bullets()
+        # Under three events there is no boundary to argue: a halt is a stop.
+        self.assertIn("`persistence`", bullets["stopped"])
+        self.assertIn("degrades to local-only", bullets["warning"].casefold())
+        self.assertIn(
+            "nothing that halts the run is one of these", bullets["warning"].casefold()
+        )
+        safety = " ".join(self._safety().casefold().split())
+        self.assertIn("stop paid work at once", safety)
+
+    def test_the_file_is_append_only_and_never_re_emitted(self) -> None:
+        """The mechanism, and the one it was chosen over.
+
+        Keeping exactly one line per problem accurate means reading the file,
+        holding every line, and re-emitting all of them to change one number -
+        which is what this assistant is least reliable at, on the artifact
+        whose whole value is being trustworthy about a run that went wrong. A
+        corrupted line in a file nobody rereads is undetectable and is the line
+        somebody is later shown. Append-only removes the operation rather than
+        hardening it, and the section says what that costs.
+        """
+        normalized = " ".join(self._log_section().casefold().split())
+        self.assertIn("the file is append-only", normalized)
+        self.assertIn(
+            "never rewritten, and nothing in the run reads it back as run state",
+            normalized,
+        )
+        # No re-emission anywhere: the two spellings a rewrite comes back as.
+        self.assertNotIn("in place", normalized)
+        self.assertNotIn("rewrite the file", normalized)
+        # Deduplication without a lookup, and what it gives up.
+        self.assertIn(
+            "what that gives up is a count and the time of the latest encounter",
+            normalized,
+        )
+        self.assertIn("collapsing on that identity, last line wins", normalized)
+        self.assertIn(
+            "`event`, `stage`, and `class` together are the identity", normalized
+        )
+
+    def test_a_recurrence_after_clearing_is_still_visible(self) -> None:
+        """Collapsing a retry storm must not also collapse a flap.
+
+        A problem that comes back after clearing is a state change and gets its
+        own `open` line; only a silent repeat of something already open is
+        dropped.
+        """
+        normalized = " ".join(self._log_section().casefold().split())
+        self.assertIn("recurs after clearing opens again", normalized)
+        self.assertIn(
+            "flapping survives while a silent retry loop does not", normalized
+        )
+        self.assertIn(
+            "a `blocked` or `stopped` identity left `open` is where the run stopped",
+            normalized,
+        )
+        # A warning never stops applying, so a finished run ends with
+        # them standing - which the earlier reading rule called stuck.
+        self.assertIn(
+            "a `cap-standing` clears when the revalidation gate lifts that cap",
+            normalized,
+        )
+
+    def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
+        """SKILL.md carries the rule; the reference carries the shape.
+
+        An earlier draft had to say "not as input", because deduplication read
+        the file. Nothing reads it now, so the mandate is the plain one, and
+        the reference states what the file may not decide.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        section = self._log_section()
+        # The obligation itself, which the first version of this class never
+        # pinned: deleting the two lines that create it left every other
+        # assertion satisfied, so the guard stayed green over a package with
+        # no mandate in it at all.
+        self.assertIn(
+            "append every event `references/run-safety.md` names to "
+            "`traigent-runs/run-log.jsonl`",
+            skill,
+        )
+        # One vocabulary, named where it is defined - two paraphrases of it
+        # did not partition the same way.
+        self.assertIn("in the shape that reference gives them", skill)
+        # The write discipline is part of the shape the reference owns, and
+        # that reference loads before the first line is written. Stating it
+        # in both documents was one rule with two homes, and 78 bytes.
+        self.assertNotIn("never rewrites it and never reads it back", skill)
+        normalized = " ".join(section.casefold().split())
+        self.assertIn(
+            "`traigent-runs/run-plan.md` remains the only resume authority", normalized
+        )
+        # The shape is loaded when the record exists, not at the reference's own
+        # stage - stage 3 can refuse before stage 4 loads the document.
+        self.assertIn("load it before the first line is written", skill)
+        # The line the last round bought resident bytes for: deleting it
+        # left both suites green, which is the class this branch spent a
+        # round closing for the mandate itself.
+        self.assertIn("check the run log", skill)
+        self.assertIn("when `references/run-safety.md` requires it", skill)
+        # The timing rule, and the stage scale the script enforces.
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn(
+            "appended when it happens rather than at the end of the stage", section
+        )
+        self.assertIn("1 to 8", section)
+
+    def test_a_restart_carries_the_log_with_the_record(self) -> None:
+        """A key with no run in it merges two runs into one file.
+
+        A previous run's `cleared` collapses onto this run's `open` and the
+        file reports an abandoned run as cleared - inverting its own line
+        that an identity whose last line is `open` is a stuck run.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("rename the log beside any record this run retires", skill)
+        # The reference states what FOLLOWS from that mandate, not the mandate:
+        # stating it twice was the defect this branch spent rounds removing.
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("a fresh record starts a fresh log", section)
+        self.assertNotIn("skill.md retires a record", section)
+
+    def test_every_clause_of_the_allowlist_is_pinned_one_at_a_time(self) -> None:
+        """The highest-stakes clauses were the ones the old test left out.
+
+        A denylist inherited by reference also pointed at a section that does
+        not contain it, so the clauses are stated here and checked here.
+        """
+        normalized = " ".join(self._log_section().casefold().split())
+        for clause in (
+            "no path",
+            "no id",
+            "no session or account address",
+            "no user or machine name",
+            "no secret or access code",
+            "no provider error body",
+            "no text or identifier taken from the project's data",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, normalized)
+
+    def test_the_customer_facing_promise_is_pinned_where_a_customer_reads_it(
+        self,
+    ) -> None:
+        """Five of eight README mutations survived, and this is why.
+
+        The whole privacy paragraph - the sentence telling a customer this file
+        never carries their data, naming the checker, and saying nothing sends
+        it anywhere - could be deleted with both suites green. Only the path
+        and the git caveat were pinned, which are the two facts a customer does
+        not need to trust.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for clause in (
+            # The opening clause too: deleting the paragraph's first sentence
+            # left every other pin satisfied by the layout row.
+            "when there is anything to record, the walkthrough also writes",
+            "`traigent-runs/run-log.jsonl` — a local note of where the run waited",
+            # All seven carriers the checker settles: naming five of them let a
+            # customer file addresses and hosts under honour-only.
+            "paths, credentials, addresses, hosts and ips, links, long ids, long quoted spans",
+            "append-only: one line the first time the run waits for you",
+            "a repeat that changed nothing adds none",
+            "no path, no id, no address, no credential, no quoted row",
+            "validate_run_log.py` backstops that",
+            "nothing sends the file anywhere",
+            "yours to read, share, or delete",
+            "described under [privacy](#privacy)",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, readme)
+
+    def test_the_docstring_enumerates_every_check_the_script_makes(self) -> None:
+        """One home for the list, and it is the file that implements it.
+
+        The reference carried a third copy of it - after the paragraphs that
+        state each rule, and after the script that enforces them - so a carrier
+        added to the code had two documents to drift from. It points now.
+        """
+        checker = ast.parse(
+            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
+        )
+        doc = " ".join((ast.get_docstring(checker) or "").casefold().split())
+        for carrier in (
+            "paths",
+            "credentials",
+            "addresses",
+            "identifiers",
+            "links",
+            "quoted spans",
+        ):
+            with self.subTest(carrier=carrier):
+                self.assertIn(carrier, doc)
+        doc_text = " ".join((ast.get_docstring(checker) or "").casefold().split())
+        # The reference POINTS here for the read-only guarantee, so the far
+        # end of that pointer needs its own pin.
+        self.assertIn("a checker, never a writer", doc_text)
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("its own docstring carries the list", section)
+
+    def test_the_reference_pins_the_exits_and_the_honesty_carve_out(self) -> None:
+        """Exit 2 and the absent-log path had no pin, and the script has both."""
+        section = " ".join(self._log_section().casefold().split())
+        self.assertIn("opens the log read-only", section)
+        self.assertIn("before this run names the file to the user", section)
+        # What the checker cannot settle, said where the claim is made.
+        # The consent gate and the no-backdating rule.
+        self.assertIn("under the same anchoring condition", section)
+        self.assertIn("nothing is backdated into it afterwards", section)
+        # The scope of what gets a line, in the document that owns it.
+        self.assertIn("every event named below gets a line", section)
+
+    def test_the_unsettleable_list_is_one_list_in_both_homes(self) -> None:
+        """Extracted and compared, not pinned three times.
+
+        The previous version asserted a different literal in each of three
+        documents and happened to pin the README's divergent wording, so an
+        edit making them agree failed the test. A gate that forbids its own fix
+        is worse than the drift it was written for - and one of the three homes
+        has since become a pointer, which is the better fix again.
+        """
+
+        def items(text: str) -> list[str]:
+            """The list itself, from wherever each document introduces it."""
+            flat = " ".join(text.casefold().split())
+            after = flat[flat.index("a person's name") :]
+            return [
+                part.strip(" .`")
+                for part in re.split(r",| and ", after.split(".", 1)[0])
+                if part.strip(" .`")
+            ]
+
+        checker = ast.parse(
+            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
+        )
+        readme = items((ROOT / "README.md").read_text())
+        docstring = items(ast.get_docstring(checker) or "")
+        # Two homes: the reference points at the docstring rather than carrying
+        # a third copy of the same five things.
+        self.assertEqual(len(docstring), 5, docstring)
+        self.assertEqual(docstring, readme)
+
+    def test_one_path_spelled_the_same_in_every_document_that_names_it(
+        self,
+    ) -> None:
+        """Renaming the artifact in one document passed the whole suite.
+
+        Four documents name it; the check is that they agree.
+        """
+        documents = {
+            "SKILL.md": SKILL.read_text(),
+            "run-safety.md": self._safety(),
+            "evaluation-and-dataset.md": (
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+            ).read_text(),
+            "README.md": (ROOT / "README.md").read_text(),
+        }
+        for name, text in documents.items():
+            with self.subTest(document=name):
+                self.assertIn(self.LOG_PATH, text)
+        # The record is pinned to state and to a line count that holds it there,
+        # so the log is disclosed where writes are listed rather than by
+        # spending two of those lines pointing at it.
+        self.assertNotIn("run-log", (SKILL_ROOT / "assets" / "run-plan.md").read_text())
+        # The customer-facing row keeps the conditional it inherited: outside a
+        # Git worktree the guide creates no `.gitignore`.
+        self.assertIn(
+            "ignored when the project uses git, like the rest of `traigent-runs/`",
+            " ".join((ROOT / "README.md").read_text().casefold().split()),
         )
 
 
