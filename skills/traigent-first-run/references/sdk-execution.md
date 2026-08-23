@@ -515,8 +515,9 @@ STRONG_REASONING_EFFORT = (
 )
 SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
 # Every name litellm will authenticate a route on, any one of which is enough.
-# The same inventory `preflight.py` opens the run with, route for route and
-# name for name, because a gate that admits a credential in front of a run that
+# The same inventory `preflight.py` opens the run with, name for name on every
+# route a variable settles - Bedrock is the one it does not, and its reason is
+# below - because a gate that admits a credential in front of a run that
 # refuses it stops a customer on a call that would have succeeded. Neither copy
 # is the authority and neither is checked against the other alone: the suite
 # reads the names out of the installed client's own resolution code, so a route
@@ -526,8 +527,8 @@ PROVIDER_KEY_NAMES = {
     "openrouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
     "openai": ("OPENAI_API_KEY",),
     "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
-    "mistral": ("MISTRAL_API_KEY",),
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "PALM_API_KEY"),
+    "mistral": ("MISTRAL_API_KEY", "MISTRAL_AZURE_API_KEY"),
     "cohere": ("COHERE_API_KEY", "CO_API_KEY"),
     "huggingface": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
     # Empty because no environment name settles it: Bedrock signs through the
@@ -613,7 +614,11 @@ def require_current_route_credential() -> None:
             f"No first-run credential mapping is declared for the inspected "
             f"provider route {SELECTED_CURRENT_PROVIDER!r}"
         )
-    if key_names and not any(os.environ.get(name, "").strip() for name in key_names):
+    # A placeholder is not a credential: `NAME=# paste your key here` survives
+    # `.strip()`, and the gate that opened this run already refuses it.
+    if key_names and not any(
+        os.environ.get(name, "").strip().partition("#")[0] for name in key_names
+    ):
         # One name reads as one name. "none of OPENAI_API_KEY is set" was
         # grammatical nonsense at exactly the moment the reader is stuck.
         missing = (

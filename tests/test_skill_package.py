@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import http.server
 import importlib.util
+import inspect
 import io
 import itertools
 import json
@@ -1632,16 +1633,156 @@ def litellm_provider_branches(literal: str) -> list[ast.AST]:
     return resolution
 
 
+# The module where every call is a credential question. `get_llm_provider` runs
+# BEFORE dispatch and returns a `dynamic_api_key`, which `completion` assigns
+# over `api_key` - so a route resolved there arrives at its branch with the key
+# already found and the branch's own `or get_secret(...)` never evaluates. Read
+# the branch alone and such a route reports the name it does not use, while the
+# name it does use is unreachable. That is the shape both readers below exist to
+# separate: unreachable and absent are the same answer to a reader, and only one
+# of them is agreement.
+LITELLM_PREDISPATCH = "litellm_core_utils/get_llm_provider_logic.py"
+
+
+def require_litellm(case: unittest.TestCase) -> None:
+    """The pinned client, or an honest reason there is nothing to compare against.
+
+    The offline-socket contract's policy, for its reason: skipping is right for
+    a contributor without the pinned stack and wrong for CI, where these are
+    the only checks that read the authority at all.
+    """
+    if importlib.util.find_spec("litellm") is not None:
+        return
+    if os.environ.get("CI"):
+        case.fail(
+            "litellm is missing under CI, so the credential inventories were "
+            f"never compared against it. Install {REQUIREMENTS} before the "
+            "suite; this must not degrade to a skip."
+        )
+    case.skipTest(
+        "litellm is not installed here; install the pinned version from "
+        f"{REQUIREMENTS} to compare the credential inventories against the "
+        "client that actually resolves them"
+    )
+
+
+def litellm_predispatch_branches(literal: str) -> list[ast.Module]:
+    """A route's branches in the resolution that runs before any dispatch.
+
+    Empty is a real answer here, unlike `litellm_provider_branches`. Most
+    routes are not pre-resolved at all, so demanding a branch would turn "this
+    route is dispatched like the others" into a failure - which is why the
+    guard built on this asks what the branches reach, never that they exist.
+    """
+    module = litellm_source(LITELLM_PREDISPATCH)
+    return [
+        ast.Module(body=node.body, type_ignores=[])
+        for node in ast.walk(module)
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(test, ast.Compare)
+            # The chain is written over `custom_llm_provider` and, in the
+            # helpers that rewrite one route into another, over the same name
+            # with a leading underscore. Matching only the bare spelling would
+            # read half the chain and call the other half absent.
+            and isinstance(test.left, ast.Name)
+            and test.left.id.lstrip("_") == "custom_llm_provider"
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == literal
+            for test in ast.walk(node.test)
+        )
+    ]
+
+
+def litellm_predispatch_literals() -> set[str]:
+    """Every route literal that chain compares against - the reader's own pulse.
+
+    A reader that has stopped matching returns nothing for every route and the
+    guard below passes by reading nothing, which is the failure it exists to
+    refuse. This is what that guard checks itself against.
+    """
+    module = litellm_source(LITELLM_PREDISPATCH)
+    return {
+        node.comparators[0].value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id.lstrip("_") == "custom_llm_provider"
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and isinstance(node.comparators[0].value, str)
+    }
+
+
+def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
+    """The credential resolvers a route is handed to before dispatch.
+
+    Derived rather than listed, which is the whole point. Every
+    `litellm.<Config>().<method>()` call a pre-dispatch branch makes is a
+    credential resolver by construction - that module's return value is the
+    provider, the api_base and the dynamic api key, and nothing else - so the
+    site can be NAMED from the call instead of remembered, in the same
+    `(module, Class.method)` shape `delegates` is written in.
+
+    Following the same calls out of `main.py` was measured and rejected: two
+    routes reach a `get_config()` there, which resolves no credential, so the
+    guard would have demanded citations for config getters and taught its
+    readers to cite anything to make it quiet.
+    """
+    import litellm
+
+    root = Path(litellm.__file__).resolve().parent
+    found: set[tuple[str, str]] = set()
+    for branch in litellm_predispatch_branches(literal):
+        for node in ast.walk(branch):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            owner = node.func.value
+            if isinstance(owner, ast.Call):
+                # `litellm.MistralConfig()._resolve(...)`: the instance is
+                # constructed in the same expression that calls the method.
+                owner = owner.func
+            dotted = dotted_name(owner)
+            if dotted is None or not dotted.startswith("litellm."):
+                continue
+            held: Any = litellm
+            for part in dotted.split(".")[1:]:
+                held = getattr(held, part, None)
+                if held is None:
+                    break
+            member = getattr(held, node.func.attr, None) if held is not None else None
+            if member is None:
+                continue
+            member = inspect.unwrap(member)
+            source_file = inspect.getsourcefile(member)
+            if source_file is None:
+                continue
+            try:
+                relative = Path(source_file).resolve().relative_to(root)
+            except ValueError:
+                # Resolved outside the client: not a site this package can
+                # cite, and not one it can read either.
+                continue
+            found.add((relative.as_posix(), member.__qualname__))
+    return found
+
+
 # Where the installed litellm resolves each route's credential.
 #
 # `branch` is the `custom_llm_provider` literal `litellm.completion` dispatches
-# on; whatever that branch calls in `main.py` is followed from it. `delegates`
+# on, and the same literal the chain BEFORE dispatch compares against; whatever
+# either one calls in its own module is followed from it. `delegates`
 # are the resolvers in OTHER modules, which nothing can follow to from here,
-# and they are not decoration: two routes keep a second name there and nowhere
-# else. The Anthropic branch reads only `ANTHROPIC_API_KEY`, and the token that
-# also authenticates it is resolved inside the model-info helpers; the Gemini
-# branch calls `get_api_key_from_env()`, which is where both of Google's
-# current names live.
+# and they are not decoration: three routes keep a second name there and
+# nowhere else. The Anthropic branch reads only `ANTHROPIC_API_KEY`, and the
+# token that also authenticates it is resolved inside the model-info helpers;
+# the Gemini branch calls `get_api_key_from_env()`, which is where both of
+# Google's current names live. The third is cited from the chain that runs
+# before the branch does, and `litellm_predispatch_resolvers` derives that one
+# rather than trusting anybody to have remembered it.
 #
 # `not_credentials` is the half that keeps this honest. Those branches read
 # endpoints, organisation ids and project ids beside the key, and no name
@@ -1686,7 +1827,7 @@ LITELLM_CREDENTIAL_SOURCES = {
             "ANTHROPIC_BASE_URL": "the same endpoint under its newer name",
         },
     ),
-    "google": SimpleNamespace(
+    "gemini": SimpleNamespace(
         branch="gemini",
         delegates=(("llms/gemini/common_utils.py", "get_api_key_from_env"),),
         not_credentials={
@@ -1702,8 +1843,21 @@ LITELLM_CREDENTIAL_SOURCES = {
     ),
     "mistral": SimpleNamespace(
         branch="mistral",
-        delegates=(),
-        not_credentials={"MISTRAL_API_BASE": "the endpoint"},
+        # The one route of the eight that is resolved before dispatch. Its
+        # branch's own `or get_secret("MISTRAL_API_KEY")` is dead code for
+        # anyone whose key sits in the Azure name: `get_llm_provider` has
+        # already returned it as `dynamic_api_key` and `completion` assigns
+        # that over `api_key` before the branch runs.
+        delegates=(
+            (
+                "llms/mistral/chat/transformation.py",
+                "MistralConfig._get_openai_compatible_provider_info",
+            ),
+        ),
+        not_credentials={
+            "MISTRAL_API_BASE": "the endpoint",
+            "MISTRAL_AZURE_API_BASE": "that endpoint's other name, not a key for it",
+        },
     ),
     "cohere": SimpleNamespace(
         branch="cohere",
@@ -8455,22 +8609,13 @@ class SkillPackageTests(unittest.TestCase):
         that goes red over which base-URL variable a release consults teaches
         its readers to reach past it, and the name it would have masked on the
         way is the one thing here worth protecting.
+
+        What it reads has since widened once more, for the reason the check
+        below carries: the dispatch branch is not the only place a route's key
+        is found. The resolution that runs before dispatch is read here too, so
+        a name that never reaches a branch is compared rather than missed.
         """
-        if importlib.util.find_spec("litellm") is None:
-            # The offline-socket contract's policy, for its reason: skipping is
-            # right for a contributor without the pinned stack and wrong for
-            # CI, where this is the only check that reads the authority at all.
-            if os.environ.get("CI"):
-                self.fail(
-                    "litellm is missing under CI, so the credential inventories "
-                    f"were never compared against it. Install {REQUIREMENTS} "
-                    "before the suite; this must not degrade to a skip."
-                )
-            self.skipTest(
-                "litellm is not installed here; install the pinned version from "
-                f"{REQUIREMENTS} to compare the credential inventories against "
-                "the client that actually resolves them"
-            )
+        require_litellm(self)
         gate = {
             label.split()[0].casefold(): set(names)
             for label, names in preflight_constant("VENDOR_KEYS").items()
@@ -8488,6 +8633,9 @@ class SkillPackageTests(unittest.TestCase):
                 read = environment_names_read(
                     [
                         *litellm_provider_branches(source.branch),
+                        # Before the branch: a route resolved here never
+                        # reaches the branch's own read at all.
+                        *litellm_predispatch_branches(source.branch),
                         *(
                             litellm_symbol(litellm_source(module), symbol)
                             for module, symbol in source.delegates
@@ -8532,6 +8680,209 @@ class SkillPackageTests(unittest.TestCase):
                         f"{sorted(gate[route])}. The gate is what tells a "
                         "customer they are ready before anything is spent.",
                     )
+
+    def test_every_route_resolved_before_dispatch_cites_the_resolver_it_reaches(
+        self,
+    ) -> None:
+        """The half the reader above structurally cannot see.
+
+        `litellm.completion` is not always where a route's credential is
+        resolved. `get_llm_provider` runs first and returns a
+        `dynamic_api_key`; `completion` assigns that over `api_key` before any
+        branch executes. So a route resolved there arrives at its branch with
+        the key already found, the branch's own `or get_secret(...)` never
+        evaluates, and a reader that follows the branch reports the name that
+        route does not use.
+
+        One of the eight is such a route, and the cost was exactly the defect
+        this file exists for: a customer whose key sits in the Azure AI name
+        was authenticated by the client and refused by the wrapper, seconds
+        before the first paid call, while all three checks above were green.
+        They were green because a name they cannot reach and a name that does
+        not exist are the same answer to them, so invisibility read as
+        agreement. Three patches had already landed at this seam - compare the
+        two lists, read the client's branch, follow what that branch calls -
+        which makes this a mechanism rather than three oversights in a row.
+
+        So the fourth one is a derived guard rather than another row. Every
+        `litellm.<Config>().<method>()` call a pre-dispatch branch makes is a
+        credential resolver by construction - that module returns the provider,
+        the base URL and the dynamic key, and nothing else - so the site is
+        named from the call. A route that acquires one and is not amended here
+        fails by this name, instead of waiting for the customer who holds that
+        credential.
+        """
+        require_litellm(self)
+        self.assertTrue(
+            litellm_predispatch_literals(),
+            f"{LITELLM_PREDISPATCH} no longer compares `custom_llm_provider` "
+            "against any route literal, so this reads nothing and every route "
+            "below reports no pre-dispatch resolver. That is the answer a "
+            "route with an uncited resolver also gives, which is why it has to "
+            "be re-sourced rather than believed.",
+        )
+        for route, source in LITELLM_CREDENTIAL_SOURCES.items():
+            with self.subTest(route=route):
+                self.assertEqual(
+                    sorted(
+                        litellm_predispatch_resolvers(source.branch)
+                        - set(source.delegates)
+                    ),
+                    [],
+                    f"the {route} route is handed to a credential resolver "
+                    "before any dispatch branch runs, and that resolver is not "
+                    "cited in `delegates`, so every name it reads is invisible "
+                    "to the comparison above. Cite it there - the tuple this "
+                    "failure prints is the shape that entry takes - or a key "
+                    "the client authenticates on stays a key the run refuses.",
+                )
+
+    def test_the_route_literal_the_client_dispatches_on_is_one_the_wrapper_takes(
+        self,
+    ) -> None:
+        """Which spelling goes into the environment variable, settled by a check.
+
+        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, casefolded, and
+        looked up, and a value that is not a key raises before anything is
+        spent. No document says which values are keys, so the value comes from
+        wherever the route was read: the model string, or the client's own
+        `custom_llm_provider`. Both say the same word, and for one route that
+        word was not the key - so the assistant that derived it correctly was
+        the one that halted.
+
+        Nothing here asks anybody to write the spelling down. The accepted key
+        IS the literal the client dispatches on, and this is what holds that
+        for the next route somebody adds.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        self.assertEqual(
+            sorted(
+                source.branch
+                for source in LITELLM_CREDENTIAL_SOURCES.values()
+                if source.branch not in published
+            ),
+            [],
+            "a route is accepted under a name the client does not dispatch on, "
+            "so the value derived from the model string or from "
+            "`custom_llm_provider` - the two places a route can be read - is "
+            "refused as an unmapped route before the first paid call, and "
+            "nothing the assistant can read says which other word to use",
+        )
+
+    def test_the_gate_and_the_wrapper_agree_on_what_counts_as_present(self) -> None:
+        """Same names, and now the same answer about a value under one.
+
+        The two inventories were made to agree name for name, and a customer
+        could still clear one and be stopped by the other, because agreeing
+        about names is not agreeing about values. Measured with a `.env` line
+        `GEMINI_API_KEY=# paste your key here`: the gate refuses the
+        placeholder, the wrapper's `.strip()` reads it as a credential, and the
+        wrapper loads that same file - two programs, one set of bytes, opposite
+        answers.
+
+        Which side is wrong is not a matter of taste. No vendor issues a key
+        beginning `#`, and that line is what a half-edited example file leaves
+        behind, so the reading that says "credential" is the wrong one and the
+        program that spends money is where it mattered.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+
+        def refusal_for(route: str, environment: dict[str, str]):
+            return guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                },
+            )
+
+        def wrapper_accepts(route: str, value: str) -> bool:
+            for name in published[route]:
+                try:
+                    refusal_for(route, {name: value})()
+                except RuntimeError:
+                    return False
+            return True
+
+        mapped = next(route for route, names in sorted(published.items()) if names)
+        for value in (
+            "",
+            " ",
+            "\t\n ",
+            "#",
+            "# paste your key here",
+            "   # paste your key here   ",
+            "not-a-real-key",
+            "   not-a-real-key   ",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    wrapper_accepts(mapped, value),
+                    PREFLIGHT.key_present(value),
+                    f"the opening gate and the paid wrapper disagree about "
+                    f"{value!r} under a credential name. The gate reads the "
+                    "customer's `.env` and so does the wrapper, so a value one "
+                    "calls a credential and the other calls absent stops a run "
+                    "that was told it was ready - or starts one that was told "
+                    "it was not.",
+                )
+        # The any() itself, probed where it decides: several names, every one
+        # of them blank, and the refusal has to come from the values rather
+        # than from a name being missing from the environment.
+        several = next(
+            route for route, names in sorted(published.items()) if len(names) > 1
+        )
+        with self.assertRaises(RuntimeError):
+            refusal_for(several, {name: "   " for name in published[several]})()
+
+    def test_the_credential_line_is_named_by_its_variable_not_by_a_value(self) -> None:
+        """The handoff has to name a line for every name the run accepts.
+
+        It named one shape: a `sk-`/`sk-or-` value sitting after an
+        `..._API_KEY=` line. Two of the names the run now accepts end in
+        neither, their values begin with neither, and one route has no line in
+        that file at all - so a customer following the instruction looks for
+        something that is not there, and is stopped by the instruction rather
+        than by a missing credential. Both halves are derived from the
+        inventory here, so the next name that does not fit the shape fails
+        rather than waiting to be noticed.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        accepted = sorted({name for names in published.values() for name in names})
+        handoff = next(
+            bullet
+            for bullet in RUN_SAFETY.read_text().split("\n- ")
+            if "Name the target line" in bullet
+        )
+        for suffix in re.findall(r"`\.\.\.([A-Z_]+)=`", handoff):
+            self.assertEqual(
+                [name for name in accepted if not name.endswith(suffix)],
+                [],
+                f"the handoff names the line to fill in as `...{suffix}=`, and "
+                "the run accepts names that do not end that way. The customer "
+                "holding one of them is told to find a line their file does "
+                "not have.",
+            )
+        self.assertNotIn(
+            "sk-",
+            handoff,
+            "the handoff names the target line by what its value starts with. "
+            "Vendors do not agree on that prefix, the run accepts names whose "
+            "values start with something else entirely, and the assistant is "
+            "forbidden to read the value in the first place - so the line has "
+            "to be named by its variable.",
+        )
+        if any(not names for names in published.values()):
+            self.assertIn(
+                "no line",
+                handoff,
+                "a route the run accepts with no credential name at all keeps "
+                "its credential outside this file, and the handoff sends the "
+                "customer to look for a line that was never going to be there",
+            )
 
     def test_preflight_and_readiness_share_the_resolved_evaluator_method(self) -> None:
         preflight = (SKILL_ROOT / "scripts" / "preflight.py").read_text()

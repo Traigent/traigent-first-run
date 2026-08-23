@@ -222,6 +222,55 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("does not select or change", result.detail)
         self.assertNotIn("select one", result.detail)
 
+    def test_the_absent_credential_warning_does_not_stop_a_signed_route(self) -> None:
+        """An empty environment is not evidence for every route.
+
+        This gate emitted one instruction for all of them - do not begin paid
+        work until that route's credential is present - and one route has no
+        credential to make present. Bedrock signs through the AWS chain, so a
+        shared profile, an SSO session or an instance role runs a fully
+        credentialed customer whose environment looks exactly like this. The
+        paid wrapper was deliberately built not to refuse that customer, in a
+        comment that calls refusing them the defect rebuilt on purpose - and
+        the gate in front of it told them to stop anyway.
+
+        So the stop has to name what it applies to. The report is unchanged:
+        finding no names is worth saying, and saying it is not the same as
+        telling somebody to halt.
+        """
+        MODULE.RESULTS.clear()
+        MODULE.check_keys({})
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "provider-credentials"
+        )
+        self.assertEqual(result.status, MODULE.WARN)
+        stops = [
+            sentence
+            for sentence in re.split(r"(?<=[.;])\s+", result.detail)
+            if "do not begin paid work" in sentence
+        ]
+        self.assertTrue(
+            stops,
+            "the absent-credential warning no longer tells anyone to wait for a "
+            "credential, which is the half of it that was right",
+        )
+        for sentence in stops:
+            self.assertIn(
+                "environment variable",
+                sentence,
+                "the gate instructs a stop over absent environment variables "
+                "without saying that is what it is about, so a customer whose "
+                "route signs through a cloud credential chain reads it as an "
+                "instruction to stop a run that would have succeeded",
+            )
+        self.assertIn(
+            "AWS credential chain",
+            result.detail,
+            "nothing here tells the customer which route this absence does not "
+            "settle, so the one route that authenticates with nothing set is "
+            "invisible in the message that concerns it most",
+        )
+
     def test_both_backend_origin_overrides_are_reported(self) -> None:
         """The SDK resolves its backend from either name, so one is not enough.
 
