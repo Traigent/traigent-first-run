@@ -210,14 +210,22 @@ def guidance_budget_reason_defect(reason: str) -> str | None:
     paragraphs = [block.strip() for block in reason.split("\n\n") if block.strip()]
     seen: dict[str, int] = {}
     for block in paragraphs:
-        if len(block) < 200:
-            continue  # a short line may legitimately recur
+        # A quotation and a code block are repeated ON PURPOSE - an entry whose
+        # subject is one fact in three homes has to be able to show the three.
+        if block.startswith((">", "```", "    ")):
+            continue
         seen[block] = seen.get(block, 0) + 1
-    repeated = sorted(block for block, count in seen.items() if count > 1)
-    if repeated:
+    duplicated = sum(
+        len(block) * (count - 1) for block, count in seen.items() if count > 1
+    )
+    # A proportion, not a length: the fixed floor exempted exactly the doubling
+    # this exists for, because an entry near the character floor has paragraphs
+    # under it and doubling only helps an author who is near it.
+    if duplicated and duplicated * 4 >= len(reason):
+        repeated = sorted(block for block, count in seen.items() if count > 1)
         return (
-            f"{len(repeated)} paragraph(s) appear more than once, starting "
-            f"{repeated[0][:60]!r} - an entry appended to itself twice"
+            f"{duplicated} of {len(reason)} characters are a repeat, starting "
+            f"{repeated[0][:60]!r} - an entry appended to itself"
         )
     return None
 
@@ -19780,6 +19788,54 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
 
 
 class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
+
+    def test_an_entry_appended_to_itself_is_a_defect(self) -> None:
+        """The guard added after a doubling shipped, probed both ways.
+
+        Deleting it, neutering its threshold, or weakening it to require three
+        copies each left the whole suite green - it was the one rule in
+        `guidance_budget_reason_defect` with no probe.
+        """
+        paragraph = (
+            "A reason long enough to clear both floors on its own, written out "
+            "at the length a real entry runs to so the proportion this guard "
+            "measures is the proportion a real doubling would produce, and not "
+            "an artefact of a fixture too short to be representative of one."
+        )
+        self.assertGreater(len(paragraph), BUDGET_REASON_FLOOR)
+        self.assertIsNone(guidance_budget_reason_defect(paragraph))
+        doubled = paragraph + "\n\n" + paragraph
+        defect = guidance_budget_reason_defect(doubled)
+        self.assertIsNotNone(defect)
+        self.assertIn("appended to itself", defect or "")
+
+    def test_a_short_entry_doubled_is_caught_too(self) -> None:
+        """The fixed 200-character floor exempted exactly this shape.
+
+        An entry near the character floor has paragraphs under 200, and
+        doubling only helps an author who is near it - so the one length the
+        skip protected was the one the guard was written for.
+        """
+        short = (
+            "A paragraph under two hundred characters, which the first version "
+            "of this guard skipped outright, and which doubling is precisely "
+            "what would carry past the floor."
+        )
+        self.assertLess(len(short), 200)
+        self.assertIsNotNone(guidance_budget_reason_defect(short + "\n\n" + short))
+
+    def test_a_passage_quoted_twice_on_purpose_is_not_a_defect(self) -> None:
+        """The expensive direction: an entry whose subject is one fact in three
+        homes has to be able to show the three."""
+        quote = "> " + ("the same sentence, quoted to be compared with itself " * 5)
+        body = (
+            "An entry comparing two documents states what each of them says, "
+            "and the whole of its argument is that the two are not the same, "
+            "which it cannot make without showing both of them to a reader."
+        )
+        reason = f"{body}\n\n{quote}\n\n{body[:80]} again\n\n{quote}"
+        self.assertIsNone(guidance_budget_reason_defect(reason))
+
     """The ledger rules, run against invented ledgers rather than the real one.
 
     Checking the rules against `tests/guidance_budget/` alone would only ever
@@ -21989,7 +22045,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # Two of the six never stop applying, so a finished run ends with
         # them standing - which the earlier reading rule called stuck.
         self.assertIn(
-            "a run that finished normally ends with some standing", normalized
+            "any warning a finished run met is still standing at its close", normalized
         )
 
     def test_the_mandate_is_stated_positively_where_it_belongs(self) -> None:
@@ -22049,7 +22105,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         skill = " ".join(SKILL.read_text().casefold().split())
         self.assertIn("rename the log beside any record this run retires", skill)
         self.assertIn(
-            "where skill.md renames a record the log takes the same stamp, and "
+            "where skill.md retires a record the log is renamed with it, and "
             "where a run starts a fresh record it starts a fresh log",
             " ".join(self._log_section().casefold().split()),
         )
@@ -22090,7 +22146,11 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             # left every other pin satisfied by the layout row.
             "when there is anything to record, the walkthrough also writes",
             "`traigent-runs/run-log.jsonl` — a local note of where the run waited",
-            "append-only: one line each time the run waits for you",
+            # All seven carriers the checker settles: naming five of them let a
+            # customer file addresses and hosts under honour-only.
+            "paths, credentials, addresses, hosts and ips, links, long ids, long quoted spans",
+            "append-only: one line the first time the run waits for you",
+            "a repeat that changed nothing adds none",
             "never rewritten and never read back as run state",
             "no path, no id, no address, no credential, no quoted row",
             "validate_run_log.py` backstops that",
@@ -22112,6 +22172,9 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "a state that is neither",
             "a field the schema does not have",
             "a `cleared` with no `open` before it",
+            "or is missing",
+            "a `ts` outside the stamp",
+            "a line that is not a json object",
             "longer than one sentence needs",
             "a path",
             "a credential",
@@ -22133,27 +22196,40 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         self.assertIn("before this run names the file to the user", section)
         # What the checker cannot settle, said where the claim is made.
         self.assertIn("stay yours to honour", section)
-        self.assertIn("a person's name, a machine's", section)
-        # The same count in all three homes: the reference, the README and
-        # the docstring inside the artifact that implements it. Read as text
-        # rather than imported - a guidance test has no business importing a
-        # bundled script into its own process.
-        checker = ast.parse(
-            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
-        )
-        self.assertIn(
-            "five clauses of the allowlist",
-            " ".join((ast.get_docstring(checker) or "").casefold().split()),
-        )
-        self.assertIn(
-            "a person's name, a machine's, an access code",
-            " ".join((ROOT / "README.md").read_text().casefold().split()),
-        )
         # The consent gate and the no-backdating rule.
-        self.assertIn("under that record's own consent gate", section)
+        self.assertIn("under the same anchoring condition", section)
         self.assertIn("nothing is backdated into it afterwards", section)
         # The scope of what gets a line, in the document that owns it.
         self.assertIn("every event named below gets a line", section)
+
+    def test_the_unsettleable_list_is_one_list_in_three_homes(self) -> None:
+        """Extracted and compared, not pinned three times.
+
+        The previous version asserted a different literal in each document and
+        happened to pin the README's divergent wording, so an edit making the
+        three agree failed the test. A gate that forbids its own fix is worse
+        than the drift it was written for.
+        """
+
+        def items(text: str) -> list[str]:
+            """The list itself, from wherever each document introduces it."""
+            flat = " ".join(text.casefold().split())
+            after = flat[flat.index("a person's name") :]
+            return [
+                part.strip(" .`")
+                for part in re.split(r",| and ", after.split(".", 1)[0])
+                if part.strip(" .`")
+            ]
+
+        checker = ast.parse(
+            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
+        )
+        reference = items(self._log_section())
+        readme = items((ROOT / "README.md").read_text())
+        docstring = items(ast.get_docstring(checker) or "")
+        self.assertEqual(len(reference), 5, reference)
+        self.assertEqual(reference, docstring)
+        self.assertEqual(reference, readme)
 
     def test_one_path_spelled_the_same_in_every_document_that_names_it(
         self,

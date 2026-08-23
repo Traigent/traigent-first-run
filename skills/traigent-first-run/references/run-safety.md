@@ -1113,16 +1113,13 @@ numeric telemetry, and keep error text and metadata recorded with the run conten
 Every event named below gets a line in
 `traigent-runs/run-log.jsonl`, appended when it happens rather than at the end of the stage - a
 recovery that never returns is exactly the run nobody can explain afterwards. It exists so a person
-handed this directory can say where the run stopped and why. SKILL.md's mandate rests on a
-division: the record says what is true now, the log says when it happened and whether it cleared,
-and neither answers the other's question. Where the record already holds a finding - the portal
+handed this directory can say where the run stopped and why. The record says what is true now, the log says when it happened and
+whether it cleared. Where the record already holds a finding - the portal
 probe's pass/fail among them - that field keeps the value and the log's line does not restate it.
 
 **The file is append-only: a line, once written, is never rewritten, and nothing in the run reads
-it back as run state.** Re-emitting a file to correct one number is what this assistant is least
-reliable at, and a wrong character in a line nobody rereads is the line somebody is later shown.
-What that gives up is a count and the time of the latest encounter: a problem is stamped when it
-was first met.
+it back as run state.** What that gives up is a count and the time of the latest encounter: a problem is stamped when
+it was first met.
 
 | Key | What it holds |
 |---|---|
@@ -1136,15 +1133,14 @@ was first met.
 `event`, `stage`, and `class` together are the identity. Write one `open` line when that identity first occurs and one `cleared` line
 if it later clears; nothing else is ever written for it. A retry that meets the same refusal twelve
 times adds nothing after the first, because nothing about it changed - that is the deduplication. A problem that recurs after clearing opens again and is
-visible as the second `open` line, so flapping survives while a silent retry loop does not. A
-resumed session that no longer remembers appends `open` again, which is a fact and not a duplicate:
-it was open again in a new session.
+visible as the second `open` line, so flapping survives while a silent retry loop does not.
 
 Read it by collapsing on that identity, last line wins. A `blocked` or `gate_fail` identity left
-`open` is where the run stopped. A `warning` never stops applying, so a run that finished
-normally ends with some standing, and that is the file working rather than a run that hung. Nothing in the file may waive a gate, decide what runs next, resume a
+`open` is where the run stopped. A `warning` never stops applying, so any warning a
+finished run met is still standing at its close, which is the file working rather than a run
+that hung. Nothing in the file may waive a gate, decide what runs next, resume a
 run, or be quoted as a result: `traigent-runs/run-plan.md` remains the only resume authority. The log belongs to the
-record beside it: where SKILL.md renames a record the log takes the same stamp, and where a run
+record beside it: where SKILL.md retires a record the log is renamed with it, and where a run
 starts a fresh record it starts a fresh log - so no `cleared` from an earlier run is read as this
 one's.
 
@@ -1174,12 +1170,10 @@ The six are told apart by who has to act, and each names what its `class` may be
 
 `detail` and the `class` beside it carry the event and nothing else: one sentence naming what
 happened, with no path, no id, no session or account address, no user or machine name, no secret or
-access code, no provider error body, and no text or identifier taken from the project's data. This
-guide prints absolute paths to the user and writes ids into the record because both are useful
-there; this is the file a user may hand to somebody else, so it names the class of thing that failed
-rather than the instance.
+access code, no provider error body, and no text or identifier taken from the project's data. This is the file a user may hand to somebody else, so it names the class of thing that
+failed rather than the instance.
 
-It exists once the record does, under that record's own consent gate, and nothing is
+It exists once the record does, under the same anchoring condition, and nothing is
 backdated into it afterwards.
 
 Before this run names the file to the user - at the close, or wherever it stops - run
@@ -1187,11 +1181,12 @@ Before this run names the file to the user - at the close, or wherever it stops 
 traigent-runs/run-log.jsonl` through the selected Python, from the script's literal absolute path
 under the resolved skill directory. It opens the log read-only and checks what the paragraphs above
 only state: a class outside its event's set, a state that is neither, a field the schema does not
-have, a `cleared` with no `open` before it, and a `detail` longer than one sentence needs or
+have or is missing, a `ts` outside the stamp, an `event` or `stage` outside its range, a line
+that is not a JSON object, a `cleared` with no `open` before it, and a `detail` longer than one sentence needs or
 carrying a path, a credential, an email address, a host or IP, a session or request id, a link,
-or a quoted span long enough to be somebody's row. Five clauses of the allowlist have no shape a checker can settle and stay yours to honour: a
-person's name, a machine's, an access or confirmation code, a provider error body, and
-unquoted text taken from the project.
+or a quoted span long enough to be somebody's row. Five things the allowlist names have no shape a checker can settle and stay yours to
+honour: a person's name, a machine's, an access or confirmation code, a provider
+error body, and short or unquoted text from the project.
 Exit 1 names the lines and exit 2 says the file exists and could not be read; exit 3 routes as
 it does for every bundled script. A run that met nothing worth logging wrote no file, and that
 exits 0 with nothing to report. A rejected line is reported to the user with what it carries.

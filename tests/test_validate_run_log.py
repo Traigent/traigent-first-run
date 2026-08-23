@@ -189,36 +189,70 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
         somewhere, not at its head - and `1.0.dev` still has none.
         """
         pattern = self._pattern("a host or address")
-        for host in ("1password.com", "3m.com", "0auth.dev", "7-eleven.com"):
+        for host in ("1password.com", "3m.com", "0auth.dev", "9to5mac.com"):
             with self.subTest(host=host):
                 self.assertTrue(pattern.search(f"could not reach {host} at all"), host)
-        self.assertEqual(
-            findings(line(detail="the pinned httpx version 1.0.dev was refused")), []
-        )
+        # PEP 440 pre-release-plus-dev pins, which a guide about pinning an SDK
+        # writes about constantly: a label after digit-then-dot is a version.
+        for version in ("1.0.dev", "1.0.0rc1.dev", "2.1.0b3.dev", "0.9.0a2.dev"):
+            with self.subTest(version=version):
+                self.assertEqual(
+                    findings(
+                        line(detail=f"the pinned httpx version {version} was refused")
+                    ),
+                    [],
+                    version,
+                )
 
-    def test_an_identifier_whose_digits_sit_at_the_front(self) -> None:
-        """The digit-position bound bought class names and sold ids.
+    def test_the_identifier_shapes_that_are_settled_and_the_one_that_is_not(
+        self,
+    ) -> None:
+        """Case separates an id from a class name; digit position never did.
 
-        Requiring a digit past the eighth character let a token whose digits
-        are all at the front through, and README puts "long ids" in the column
-        the checker settles. The latest digit in any real class name sits at
-        index 6, and no class name is single-case.
+        Two rounds moved the digit boundary and each traded one error for
+        another - the second refused eight of thirteen realistic class names,
+        `AzureOpenAIGpt4Error` among them, to catch tokens the single-case
+        branch catches anyway. The mixed-case token is the residual, and the
+        docstring states it rather than the checker pretending otherwise.
         """
         for identifier in (
             "1A2B3C4DEFGHIJKLMNOPQRST",
             "20260823abcdefghijklm",
-            "a1b2c3d4EFGHIJKLMNOPQRSTUVWX",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "a3f91c2b11de4d0b",
         ):
-            with self.subTest(identifier=identifier):
+            with self.subTest(settled=identifier):
                 self.assertTrue(
                     findings(line(detail=f"the request {identifier} was rejected")),
                     f"{identifier} was accepted",
                 )
+        for class_name in (
+            "AzureOpenAIGpt4Error",
+            "ChatGpt4TurboUnavailableError",
+            "AnthropicClaude3OverloadedError",
+            "BedrockClaude35SonnetError",
+        ):
+            with self.subTest(class_name=class_name):
+                self.assertEqual(
+                    findings(
+                        line(detail=f"the provider raised {class_name} and stopped")
+                    ),
+                    [],
+                    class_name,
+                )
+        # The residual, pinned so it is a decision rather than a surprise.
+        self.assertEqual(
+            findings(line(detail="the request a1b2c3d4EFGHIJKLMNOPQRSTUVWX failed")), []
+        )
+        self.assertIn(
+            "a mixed-case token escapes",
+            " ".join(SCRIPT.read_text().casefold().split()),
+        )
 
     def test_both_branches_of_the_session_id_rule(self) -> None:
         pattern = self._pattern("a session or request id")
         self.assertTrue(pattern.search("request a3f91c2b11de4d0b failed"))
-        self.assertTrue(pattern.search("request A7f3Kq9ZmX2bLp0RtYuI failed"))
+        self.assertTrue(pattern.search("request 01ARZ3NDEKTSV4RRFFQ69G5FAV failed"))
         # A class name is letters only, and naming one is how an uncategorised
         # provider refusal gets written.
         self.assertIsNone(pattern.search("returned a ServiceUnavailableError"))
@@ -308,10 +342,10 @@ class TheRegisterAProviderRefusalIsWrittenInTests(unittest.TestCase):
     def test_an_identifier_that_scatters_its_digits_is_still_refused(self) -> None:
         # Named `identifier` rather than `token`: these are request and session
         # id shapes, and the narrower word is both truer and what a secret
-        # scanner reads as a credential assignment.
+        # scanner reads as a credential assignment. Mixed-case shapes are the
+        # documented residual and are covered by the settled/unsettled test.
         for identifier in (
             "a3f91c2b11de4d0b",
-            "A7f3Kq9ZmX2bLp0RtYuI",
             "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         ):
             with self.subTest(identifier=identifier):

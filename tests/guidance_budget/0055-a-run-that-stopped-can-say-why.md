@@ -3,8 +3,8 @@
 follows: 0054
 resident-ceiling: 85_176
 resident-measured: 85_121
-total-ceiling: 427_675
-total-measured: 427_620
+total-ceiling: 427_300
+total-measured: 427_245
 
 Two questions open every conversation about a first run that did not finish -
 which step, and what refused - and until now neither had an artifact behind it.
@@ -116,8 +116,8 @@ own recurring defect wearing the one shape it can least afford: a privacy
 promise, on a file written into somebody's real project and meant to be handed
 to a stranger. `scripts/validate_run_log.py` reads the log and refuses a class
 outside its event's set, a state that is neither, a field the schema does not
-have, a sequence that clears something never opened or repeats a state already
-standing, and a sentence carrying a path, a credential, an address, an
+have, a sequence that clears something never opened - the repeat check went, for
+the reason the round below gives - and a sentence carrying a path, a credential, an address, an
 identifier, a link, or a quoted span long enough to be somebody's row. It
 cannot prove a sentence is free of customer data; it refuses every carrier
 anyone has actually leaked through, which is what the clause decomposes into.
@@ -126,8 +126,7 @@ closed vocabularies become safe to keep.
 
 The same round closed three holes the vocabulary still had. `warning` had no
 catch-all while its sibling did, and the guide mandates warnings - a no-lift
-delta, rows nothing could score, a model swapped for being unavailable - that
-were none of its three values, leaving an assistant to invent a class it is
+delta, and rows nothing could score - that were none of its three values, leaving an assistant to invent a class it is
 forbidden to invent. `tool_fail` keyed on a non-zero exit, which is the healthy
 answer where the credential handoff continues on exit 1, and is a finding about
 the customer's own material where preflight exits 1 - the exact relay that
@@ -290,3 +289,59 @@ alternative keeps all of them and refuses the ids again. The docstring inside
 the checker still said two allowlist clauses had no mechanical shape while the
 reference and the README said five - one fact in three homes, and the round
 edited two of them.
+
+A ninth reader read only for truth, and found twelve sentences that were not.
+Four were the round-by-round record drifting past the tree: a check described
+after it was removed, a mandated warning the guide does not mandate, a fraction
+that counted two of three, and a rename asserted in the document that does not
+own it. Five were customer-facing, and those are the ones that matter here - the
+layout row promised a line per occurrence when the whole design is a line per
+identity, and the carrier list named five of the seven shapes the checker
+settles, so a reader filed addresses and hosts under honour-only. Two more were
+this entry's own arithmetic of rounds.
+
+The same reader confirmed by execution what the prose only asserted: every exit
+path, all seven carriers, all five class sets byte-identical to the code, the
+stamp regex ASCII-only, the identity, and the two boundary claims about class
+names - digit at index six passes, index seven is refused. What it could not
+reproduce it declined to count, and said so: the sweep figures quoted above are
+scratch tooling this repository does not ship, and they stand on their author's
+word rather than on anything a reader can run.
+
+The subtraction this entry recorded twice is finally done. Four passages it had
+claimed were cut were still in the reference - the append-only rationale, the
+sentence defending a check nobody built, the division argument for why two files
+exist, and the aside justifying that paths are printed elsewhere. A record that
+says a thing was cut is worth less than the cut.
+
+A tenth reader read the ninth round itself, and every one of its findings was
+about that round rather than about the change. The pattern is the finding: two
+consecutive rounds spent their effort on the previous round's fixes, at roughly
+the rate they closed them.
+
+Three of them were one mistake with three faces. Trying to tell a provider's
+error class name from an identifier by WHERE its digit sits does not work, and
+each attempt to place the boundary traded one error for the other: at index
+eight, tokens whose digits sat at the front walked through; at seven, eight of
+thirteen realistic class names were refused, `AzureOpenAIGpt4Error` among them,
+because a class name carrying a model name puts its digit anywhere. Case
+separates them and position never did - a class name is CamelCase and an
+identifier rarely is - so the mixed-case branch is gone. A mixed-case token now
+escapes, and the docstring says so rather than the checker implying otherwise.
+That is one shape unsettled against eight false refusals removed, and the
+unsettled one is stated where a reader will look.
+
+The guard added last round for a doubled entry had no probe of its own, which
+made it the one rule in that function nobody had watched fail; its fixed
+character floor exempted exactly the doubling it was written for, because an
+entry near the floor has paragraphs under it; and it refused an entry that
+quotes one passage twice on purpose, which is what an entry about one fact in
+three homes has to do. It measures a proportion now, skips quotations and code,
+and has probes in both directions.
+
+The five things the allowlist cannot settle were also not one list. The word
+`clauses` miscounted them - the allowlist has seven clauses and these five items
+span four - and the three homes said them three ways, with the round's own test
+pinning the README's divergent wording, so an edit making them agree failed. A
+gate that forbids its own fix is worse than the drift it was written for. The
+lists are extracted and compared now instead of pinned three times.

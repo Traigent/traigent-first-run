@@ -312,9 +312,9 @@ local note of where the run waited, stopped, or met something that can bend the 
 carries a class name and one sentence, and never your data: no path, no id, no address, no
 credential, no quoted row. `skills/traigent-first-run/scripts/validate_run_log.py` backstops that
 before the run names the file to you, refusing the carriers that have a shape a checker can
-settle — paths, credentials, links, long ids, long quoted spans. What it cannot settle stays the
-assistant's to honour: a person's name, a machine's, an access code, a provider error body, and
-short or unquoted text from your data. Nothing sends the file anywhere; it is yours to read,
+settle — paths, credentials, addresses, hosts and IPs, links, long ids, long quoted spans. What it cannot settle stays the
+assistant's to honour: a person's name, a machine's, an access or confirmation code, a provider
+error body, and short or unquoted text from the project. Nothing sends the file anywhere; it is yours to read,
 share, or delete.
 
 The selected LLM provider still receives the content the agent normally sends during model calls.
@@ -329,7 +329,7 @@ egress.
 | [`skills/traigent-first-run/`](skills/traigent-first-run/) | Self-contained installable skill |
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
-| `traigent-runs/run-log.jsonl` (created during a run) | Append-only: one line each time the run waits for you or meets something that blocks it or bends the result, one more when that clears. Lines are never rewritten and never read back as run state. What it may contain is described under [Privacy](#privacy). Ignored when the project uses Git, like the rest of `traigent-runs/` |
+| `traigent-runs/run-log.jsonl` (created during a run, when there is anything to record) | Append-only: one line the first time the run waits for you or meets something that blocks it or bends the result — a repeat that changed nothing adds none — and one more when it clears. Lines are never rewritten and never read back as run state. What it may contain is described under [Privacy](#privacy). Ignored when the project uses Git, like the rest of `traigent-runs/` |
 | `traigent-runs/readiness/<timestamp>/` | What one readiness scoring read to reach its score, one directory per scoring. Kept, never re-read as input, and named to you with the card |
 | [`reports/`](reports/) | Field-test evidence and methodology research behind the safeguards |
 | [`tests/`](tests/) | The guide's own quality gates — for example, a hermetic check that the documented local mock path attempts no outbound sockets. They test the guide, not your project; you never need to run them |
