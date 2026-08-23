@@ -800,7 +800,15 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
 
 
 SPEND_GATE_FUNCTIONS = frozenset(
-    {"run_remaining_usd", "record_call_spend", "refuse_unless_it_fits"}
+    {
+        "run_remaining_usd",
+        "record_call_spend",
+        "refuse_unless_it_fits",
+        # The door itself, not only the ledger behind it. `call_agent` and
+        # `call_judge` are both one line delegating here, so a fixture that
+        # compiles either without this compiles a call path with no gate in it.
+        "place_call",
+    }
 )
 
 
@@ -8262,8 +8270,13 @@ class SkillPackageTests(unittest.TestCase):
                 loaded_paths.append(path)
                 return SimpleNamespace(examples=examples)
 
+        # The stub debits the ledger because the real `call_agent` does, and
+        # `evaluate_holdout` reads this pass's cost off the ledger rather than
+        # off the agent call's own return - a stub that skipped the debit would
+        # be testing a pass whose calls never happened.
         def call_agent(message, config):
             agent_calls.append((message, config))
+            namespace["record_call_spend"](0.25)
             return "urgent" if message == "classify this" else "normal", 0.25
 
         def task_score(output, expected, input_data):
@@ -8309,7 +8322,9 @@ class SkillPackageTests(unittest.TestCase):
 
         def call_agent_with_untracked_cost(message, config):
             output = "urgent" if message == "classify this" else "normal"
-            return output, next(untracked_costs)
+            cost = next(untracked_costs)
+            namespace["record_call_spend"](cost)
+            return output, cost
 
         namespace["call_agent"] = call_agent_with_untracked_cost
         score, cost = namespace["evaluate_holdout"](config)
@@ -14265,10 +14280,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         return namespace, placed
 
     def test_call_agent_refuses_once_the_approved_total_is_exhausted(self) -> None:
-        """The gate is on the call, so every caller passes it.
+        """The gate is on `place_call`, so every caller passes it.
 
-        A search trial, a held-out row, and a judge routed through here all
-        arrive at the same door. The refusal places no call at all - it is
+        `call_agent` is one line delegating there, which is why this exercises
+        the agent caller and the judge caller separately rather than trusting
+        that one door serves both. The refusal places no call at all - it is
         checked before `litellm.completion`, not after - so an exhausted total
         costs nothing more to discover.
         """
@@ -14284,6 +14300,173 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             call_agent("third", {})
         self.assertIn("was not placed", str(refused.exception))
         self.assertEqual(len(placed), 2, "the refused call still reached the provider")
+
+    def compiled_scorer_path(self, *, reported_cost: float | None = 0.03, **bindings):
+        """`call_judge` and `check_scorer_calls`, compiled with their ledger."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_judge"],
+                    functions["check_scorer_calls"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+        namespace = {
+            "litellm": SimpleNamespace(
+                completion=lambda **kwargs: placed.append(kwargs)
+                or SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="4"))]
+                )
+            ),
+            "provider_reported_cost": lambda response: reported_cost,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(compile(module, "<judge-scorer>", "exec"), namespace)  # noqa: S102
+        return namespace, placed
+
+    def test_a_judge_inside_the_scorer_spends_from_the_same_ledger(self) -> None:
+        """The claim three documents made, executed instead of written down.
+
+        `task_score` is wired into the decorator, so it runs on every baseline
+        trial, every search trial, and every held-out row. When the evaluator
+        is an LLM judge - what `references/evaluation-and-dataset.md`
+        prescribes for summary, explanation, writing, and story tasks - it
+        places a provider call of its own, and the `metric_functions` contract
+        `(prediction, expected, input_data) -> float` threads no ledger for it
+        to debit. Nothing routed it, and the run's remaining did not move for
+        money it had spent: three calls at $0.01 left `run_remaining_usd()`
+        reporting the whole of a $0.03 remaining.
+
+        The SDK cannot close it either. At the pinned 0.26.0 its local
+        evaluator settles a trial's cost before it applies the metric
+        functions, so a call made inside one is already past that trial's
+        accounting.
+        """
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.03
+        )
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+        call_judge = namespace["call_judge"]
+        check_scorer_calls = namespace["check_scorer_calls"]
+
+        def judging_task_score(prediction, expected, input_data) -> float:
+            """A generated scorer of the shape the guide now prescribes."""
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            verdict, _cost = call_judge(
+                f"Grade {prediction!r} against {expected!r}. Reply 0-5."
+            )
+            check_scorer_calls(placed_before)
+            return float(verdict) / 5
+
+        self.assertEqual(judging_task_score("an answer", "the answer", "ask"), 0.8)
+        self.assertEqual(len(placed), 1, "the judge did not reach a provider")
+        # The whole finding, inverted: the ledger sees the judge's money.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.03])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.06, places=6)
+        # And the judge's request is the judge's, not the trial's: no swept
+        # knob, and the model it grades on is fixed for the run.
+        self.assertEqual(placed[0]["model"], "provider/judge")
+
+        # It is the same total, so a judge exhausts it like any other caller.
+        judging_task_score("an answer", "the answer", "ask")
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.03, places=6)
+        judging_task_score("an answer", "the answer", "ask")
+        with self.assertRaises(RuntimeError) as refused:
+            judging_task_score("an answer", "the answer", "ask")
+        self.assertIn("a judge call was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 3, "the refused judge call reached a provider")
+
+    def test_a_judge_that_skips_the_door_stops_the_run(self) -> None:
+        """Fail closed, because the guide cannot compile the code it generates.
+
+        Routing is an instruction to whoever writes `task_score`, and the
+        instruction is exactly the one that was already written down three
+        times while nothing obeyed it. So the declared count is checked against
+        the ledger on every row scored: a judge that reaches `litellm` around
+        `place_call` moves the ledger by nothing, and the run stops on the
+        first row rather than under-counting every row after it.
+        """
+        namespace, placed = self.compiled_scorer_path()
+        namespace["SCORER_CALLS_PER_ROW"] = 1
+        check_scorer_calls = namespace["check_scorer_calls"]
+
+        def unrouted_task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            namespace["litellm"].completion(model="provider/judge", messages=[])
+            check_scorer_calls(placed_before)
+            return 1.0
+
+        with self.assertRaises(RuntimeError) as stopped:
+            unrouted_task_score("an answer", "the answer", "ask")
+        message = str(stopped.exception)
+        self.assertIn("placed 0 provider call(s)", message)
+        self.assertIn("SCORER_CALLS_PER_ROW declares 1", message)
+        self.assertIn("place it with call_judge", message)
+        self.assertEqual(len(placed), 1, "the unrouted call still spent money")
+        self.assertEqual(namespace["RUN_SPEND_USD"], [], "it spent off the ledger")
+
+        # A deterministic evaluator declares none, and is held to placing none.
+        namespace["SCORER_CALLS_PER_ROW"] = 0
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        placed_before = len(namespace["RUN_SPEND_USD"])
+        namespace["call_judge"]("grade this")
+        with self.assertRaises(RuntimeError) as surprised:
+            check_scorer_calls(placed_before)
+        self.assertIn("placed 1 provider call(s)", str(surprised.exception))
+
+    def test_a_judge_without_a_model_never_borrows_the_trials(self) -> None:
+        """A grader that moves with what it grades measures both at once.
+
+        The cheapest wrong fix for a missing judge model is the configuration
+        already in hand, which is the one under test - so the run would grade
+        each trial with that trial's own model and report the difference as
+        the agent's.
+        """
+        namespace, placed = self.compiled_scorer_path()
+        self.assertIsNone(
+            namespace["JUDGE_MODEL"],
+            "the walkthrough's own evaluator is deterministic, so it declares "
+            "no judge model",
+        )
+        with self.assertRaises(RuntimeError) as stopped:
+            namespace["call_judge"]("grade this")
+        self.assertIn("JUDGE_MODEL unset", str(stopped.exception))
+        self.assertIn(
+            "never fall back to the configuration under test", str(stopped.exception)
+        )
+        self.assertEqual(placed, [], "a judge with no model still called a provider")
+
+    def test_the_calls_a_scored_row_pays_for_are_derived_not_maintained(self) -> None:
+        """Two hand-kept numbers drift, and this pair drifts unnoticed.
+
+        `CALLS_PER_SCORED_ROW` sizes the held-out refusal and is read once, in
+        the last paid pass of the run. Left as its own literal it was a comment
+        asking an author to remember to set it to 2 when a judge grades; a
+        forgotten one funds half the calls the pass places and the refusal that
+        exists to stop a partial pass lets one start.
+        """
+        text = SDK_EXECUTION.read_text()
+        derived = {
+            node.target.id: ast.unparse(node.value)
+            for node in sdk_wrapper_state_nodes(text)
+        }
+        self.assertEqual(derived["SCORER_CALLS_PER_ROW"], "0")
+        self.assertEqual(derived["CALLS_PER_SCORED_ROW"], "1 + SCORER_CALLS_PER_ROW")
 
     def test_an_unpriced_call_is_debited_rather_than_treated_as_free(self) -> None:
         """Otherwise the ledger is a no-op on exactly the routes that need it.
@@ -14334,9 +14517,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             for index in range(4)
         ]
         calls: list[str] = []
+        built: dict = {}
 
         def call_agent(message, config):
             calls.append(message)
+            built["namespace"]["record_call_spend"](0.04)
             return "ok", 0.04
 
         def build(**bindings):
@@ -14354,6 +14539,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             exec(  # noqa: S102
                 compile(module, "<approved-total-holdout>", "exec"), namespace
             )
+            built["namespace"] = namespace
             return namespace
 
         # Four rows at the conservative rate need more than is left.
@@ -14370,6 +14556,200 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertEqual(score, 1.0)
         self.assertAlmostEqual(cost, 0.16, places=6)
         self.assertEqual(len(calls), 4)
+
+    def compiled_judged_holdout(
+        self,
+        *,
+        rows: int,
+        remaining: float,
+        scorer_calls: int = 1,
+        agent_usd: float = 0.04,
+        judge_usd: float = 0.01,
+        per_call: float = 0.05,
+    ):
+        """A held-out pass whose evaluator is an LLM judge, compiled whole.
+
+        `call_agent` and `call_judge` both come out of the document here rather
+        than being stubbed, because the claim under test is that those two
+        callers share one ledger - a fixture that supplies either of them
+        proves nothing about the door it was supposed to pass through. Only
+        `task_score` is written by the caller: the guide generates its body from
+        the wired evaluator, so the document holds a shape and not a scorer.
+        """
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        state = sdk_wrapper_state_nodes(text)
+        # Declared in the source before the count derived from it is computed,
+        # which is how an author declares it. Rebinding it in the namespace
+        # afterwards would leave `CALLS_PER_SCORED_ROW` holding the number it
+        # was derived from at import - the exact drift the derivation prevents,
+        # reintroduced by the fixture that is supposed to catch it.
+        declared = [node for node in state if node.target.id == "SCORER_CALLS_PER_ROW"]
+        if len(declared) != 1:
+            raise AssertionError(
+                "the wrapper declares SCORER_CALLS_PER_ROW exactly once or this "
+                f"fixture declares nothing at all; found {len(declared)}"
+            )
+        declared[0].value = ast.Constant(scorer_calls)
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *state,
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                    functions["call_judge"],
+                    functions["check_scorer_calls"],
+                    functions["holdout_agent_input"],
+                    functions["evaluate_holdout"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+
+        def completion(**request):
+            placed.append(request)
+            judging = request["model"] == "provider/judge"
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="5" if judging else "ok")
+                    )
+                ],
+                # The two calls are priced apart so the ledger below shows which
+                # of them it saw, rather than a total that a single caller could
+                # equally have produced.
+                reported_usd=judge_usd if judging else agent_usd,
+            )
+
+        examples = [
+            SimpleNamespace(input_data=f"row {index}", expected_output="ok")
+            for index in range(rows)
+        ]
+        namespace = {
+            "litellm": SimpleNamespace(completion=completion),
+            "build_request": lambda message, config: {"model": config["model"]},
+            "provider_reported_cost": lambda response: response.reported_usd,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda path: SimpleNamespace(examples=examples)
+                )
+            ),
+            **spend_gate_bindings(ceiling=5.00, remaining=remaining, per_call=per_call),
+        }
+        exec(compile(module, "<judged-holdout>", "exec"), namespace)  # noqa: S102
+        # Nothing is derived from this one, so the namespace is where a run sets
+        # it, and where the two tests below need it to differ from the
+        # walkthrough's deterministic `None`.
+        namespace["JUDGE_MODEL"] = "provider/judge"
+        return namespace, placed
+
+    def test_a_judged_pass_debits_the_agent_call_and_the_judge_call(self) -> None:
+        """One scored row is two provider calls, and one ledger sees both.
+
+        This is the claim four passages made while nothing executed it. The
+        agent call is placed by `evaluate_holdout`; the judge call is placed
+        inside `task_score`, whose `metric_functions` contract threads no
+        ledger through - so before `place_call` was the single door, the pass
+        returned the agent's spend as the row's and the remaining moved by
+        less than the run had paid.
+
+        The pass is also funded for both. `CALLS_PER_SCORED_ROW` derives from
+        the declared count, so the refusal that decides the pass fits is sized
+        for the calls it will actually place rather than for half of them.
+        """
+        namespace, placed = self.compiled_judged_holdout(rows=3, remaining=0.40)
+
+        def judging_scorer(namespace):
+            """A generated scorer of the shape an LLM-judge evaluator has."""
+
+            def task_score(prediction, expected, input_data) -> float:
+                placed_before = len(namespace["RUN_SPEND_USD"])
+                verdict, _cost = namespace["call_judge"](
+                    f"Grade {prediction!r} against {expected!r}. Reply 0-5."
+                )
+                namespace["check_scorer_calls"](placed_before)
+                return float(verdict) / 5
+
+            return task_score
+
+        self.assertEqual(namespace["SCORER_CALLS_PER_ROW"], 1)
+        self.assertEqual(namespace["CALLS_PER_SCORED_ROW"], 2)
+        namespace["task_score"] = judging_scorer(namespace)
+        score, cost = namespace["evaluate_holdout"]({"model": "recommended"})
+
+        self.assertEqual(score, 1.0)
+        # Two calls per row, in the order the row places them: the trial's
+        # model for the answer, the run's fixed grader for the grade.
+        self.assertEqual(
+            [request["model"] for request in placed],
+            ["recommended", "provider/judge"] * 3,
+        )
+        # And every one of them on the ledger. $0.12 is what this pass reported
+        # while the judge spent beside it rather than through it.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.04, 0.01] * 3)
+        self.assertAlmostEqual(cost, 0.15, places=6)
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.25, places=6)
+
+        # The same pass, against a remaining that funds one call per row and
+        # not the grading: refused before the first row rather than stopped
+        # halfway through, and $0.15 of it would have started had the sizing
+        # counted the agent calls alone.
+        underfunded, unspent = self.compiled_judged_holdout(rows=3, remaining=0.20)
+        underfunded["task_score"] = judging_scorer(underfunded)
+        with self.assertRaises(RuntimeError) as refused:
+            underfunded["evaluate_holdout"]({"model": "recommended"})
+        self.assertIn("needs 6 provider calls", str(refused.exception))
+        self.assertEqual(unspent, [], "a refused judged pass paid for a row anyway")
+
+    def test_an_unrouted_judge_stops_the_pass_on_its_first_row(self) -> None:
+        """The backstop, on the shape this guide's own judge advice produces.
+
+        Routing is an instruction to whoever writes `task_score`, and an
+        instruction is what was already there while nothing obeyed it. A judge
+        that reaches `litellm.completion` around `place_call` spends money the
+        ledger cannot see, so the declared count is checked against the ledger
+        on every row: the mismatch stops the run on the first row, where it
+        costs one unseen call to find, instead of under-counting every row
+        after it and completing with a total that is short by one call per row.
+        """
+        namespace, placed = self.compiled_judged_holdout(rows=3, remaining=1.00)
+
+        def unrouted_task_score(prediction, expected, input_data) -> float:
+            placed_before = len(namespace["RUN_SPEND_USD"])
+            namespace["litellm"].completion(
+                model="provider/judge",
+                messages=[{"role": "user", "content": f"Grade {prediction!r}"}],
+            )
+            namespace["check_scorer_calls"](placed_before)
+            return 1.0
+
+        namespace["task_score"] = unrouted_task_score
+        with self.assertRaises(RuntimeError) as stopped:
+            namespace["evaluate_holdout"]({"model": "recommended"})
+        message = str(stopped.exception)
+        self.assertIn("placed 0 provider call(s)", message)
+        self.assertIn("SCORER_CALLS_PER_ROW declares 1", message)
+        self.assertIn("place it with call_judge", message)
+        # One row's calls, not three rows' worth: the pass stopped where the
+        # mismatch was, and rows two and three were never paid for.
+        self.assertEqual(
+            [request["model"] for request in placed],
+            ["recommended", "provider/judge"],
+        )
+        # The judge's money is exactly what the ledger missed, which is why the
+        # count and not the ledger is what catches it.
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.04])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.96, places=6)
 
     def test_the_launch_figures_are_named_where_the_approval_is_owned(self) -> None:
         """The code reads three names; the document that sets them says which.
