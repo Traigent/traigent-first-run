@@ -985,6 +985,13 @@ CALLS_PER_SCORED_ROW: int = 1 + SCORER_CALLS_PER_ROW
 # The judge's own model, fixed for the whole run and never the trial's. `None`
 # while the wired evaluator is deterministic, as this walkthrough's is.
 JUDGE_MODEL: str | None = None
+# The decorated function the paid phases run. `optimize_sync` binds this run's
+# own config object to it, and the SDK's session manager stamps THAT object the
+# moment backend tracking fails - measured: the same `id()` on both, and the
+# stamp readable from inside the door on the very next call. Assigned beside
+# the decorator rather than looked up by name, so a preserved agent under its
+# own name is read too and the door reads `None` before any run exists.
+TRACKED_RUN: object | None = None
 # Held across "is there room, and take it" and across nothing else - never
 # across a provider call, which is what made a lock look impossible here.
 LEDGER_LOCK: threading.Lock = threading.Lock()
@@ -1145,8 +1152,35 @@ def worst_case_requests(kwargs: dict) -> int:
     return per_leg * legs
 
 
+def tracking_stopped() -> str | None:
+    """Why this run no longer reaches the portal, or `None` while it does.
+
+    A read of what the SDK already publishes, never a second detector. Its
+    session manager flags a mid-run trial rejection or submission failure,
+    stamps the run's config `result_source="local_fallback"` with the reason,
+    and adds `persistence_reason="rejected"` when the backend rejected rather
+    than went missing. Both land before the next trial places a call, which is
+    what makes the door able to stop a run that is still spending.
+
+    It reads no `cloud_url`: that exists only on the returned result, so a
+    missing one is a between-phases check and cannot be this one.
+    """
+    config = getattr(TRACKED_RUN, "traigent_config", None)
+    if getattr(config, "result_source", None) == "local_fallback":
+        return getattr(config, "fallback_reason", None) or "backend tracking failed"
+    if getattr(config, "persistence_reason", None) == "rejected":
+        return "the backend rejected this run's trials"
+    return None
+
+
 def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     """Commit one invocation's worst case BEFORE it is placed, or refuse it.
+
+    It refuses for the other reason too. A run whose tracking has dropped to
+    local-only is buying trials no portal will hold, and this is the one place
+    every paid call passes before it is placed - so the halt the connected-run
+    rules require is a refusal here, rather than a per-trial hook that one
+    blocking `optimize_sync` does not offer.
 
     Reserving rather than debiting afterwards is the whole of this design's
     third answer at this seam. A debit taken after the call is always one call
@@ -1182,6 +1216,13 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     in flight and by nothing afterwards. That gap is the reason the invariant
     above is stated as the pin's reach and not as a property of every caller.
     """
+    stopped = tracking_stopped()
+    if stopped:
+        raise RuntimeError(
+            f"backend tracking dropped to local-only during this run "
+            f"({stopped}), so nothing further reaches the portal and this call "
+            "was not placed. Report the trials that completed and what it cost."
+        )
     requests = worst_case_requests(kwargs)
     try:
         needed = requests * UNTRACKED_CALL_COST_USD
@@ -1598,6 +1639,9 @@ def agent(message: str) -> str:
     config = traigent.get_config()
     output, _cost = call_agent(message, config)
     return output
+
+
+TRACKED_RUN = agent
 ```
 
 Two gates hold the approved total, and they are different gates because the spending happens two
@@ -1969,6 +2013,17 @@ except BaseException as exc:
     ) from None
 assert optimized_results.trials, "optimization did not execute"
 Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
+# Here rather than beside the closing checks: held-out scoring is the next
+# paid pass, and a run that reached no portal must not buy it.
+tracking_loss = tracking_stopped() or (
+    None if optimized_results.cloud_url is not None else "no portal link came back"
+)
+if tracking_loss:
+    raise SystemExit(
+        f"The connected search did not reach the portal ({tracking_loss}); no "
+        f"further paid work runs. Report the trials in {OPTIMIZED_RESULTS}, the "
+        "spend this process printed, and the baseline still standing."
+    )
 ```
 
 Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is
@@ -2176,7 +2231,6 @@ assert baseline_results.trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
 assert baseline_results.best_config is not None, "no baseline winner selected"
 assert optimized_results.best_config is not None, "no best configuration selected"
-assert optimized_results.cloud_url is not None, "optimization is not available in the portal"
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline

@@ -840,6 +840,11 @@ SPEND_GATE_FUNCTIONS = frozenset(
         # on another client, hand-debiting once per call it makes.
         "record_call_spend",
         "refuse_unless_it_fits",
+        # The door's second refusal reads through this one. Collected with the
+        # rest because `reserve_call_spend` calls it on every invocation: a
+        # fixture without it meets a NameError in the gate rather than the
+        # assertion it was written for.
+        "tracking_stopped",
         # The door is these four plus the install below: `worst_case_requests`
         # sizes one invocation, `reserve_call_spend` refuses or commits it
         # before the call, `settle_call_spend` replaces that reservation with
@@ -9653,7 +9658,7 @@ class SkillPackageTests(unittest.TestCase):
             "do not delete portal experiments as walkthrough cleanup", guide_text
         )
         self.assertNotIn("assert baseline_results.cloud_url is not none", sdk_text)
-        self.assertIn("assert optimized_results.cloud_url is not none", sdk_text)
+        self.assertIn("optimized_results.cloud_url is not none", sdk_text)
         self.assertIn("comes from the successful sync json", sdk_text)
         self.assertIn("otherwise label it local-only", sdk_text)
         self.assertIn(
@@ -14200,7 +14205,28 @@ class SkillPackageTests(unittest.TestCase):
                     ),
                     "CONFIG_SPACE_DOCUMENT": str(document),
                     "RUN_DIR": document.parent,
+                    # No run has degraded in any case below, so the reader
+                    # answers `None` - but it has to be the document's own
+                    # reader answering. A fixture supplying `lambda: None`
+                    # here would run green against a stop that was deleted.
+                    "TRACKED_RUN": None,
                 }
+            )
+            reader = next(
+                node
+                for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef) and node.name == "tracking_stopped"
+            )
+            exec(  # noqa: S102
+                compile(
+                    ast.fix_missing_locations(
+                        ast.Module(body=[reader], type_ignores=[])
+                    ),
+                    "<sdk-tracking-reader>",
+                    "exec",
+                ),
+                namespace,
             )
             exec(block, namespace)
 
@@ -14208,10 +14234,15 @@ class SkillPackageTests(unittest.TestCase):
             raise RuntimeError("provider error")
 
         stale = '{"knobs": {"stale": [1, 2]}}\n'
+        # A search that reached the portal, which is the only shape that gets
+        # as far as writing the document.
+        LINK = "https://portal.example/experiments/1"
         with tempfile.TemporaryDirectory() as directory:
             document = Path(directory) / "config-space.json"
 
-            run(document, lambda: SimpleNamespace(trials=[{"trial": 1}]))
+            run(
+                document, lambda: SimpleNamespace(trials=[{"trial": 1}], cloud_url=LINK)
+            )
             self.assertEqual(
                 document.read_text(),
                 expected,
@@ -14240,7 +14271,9 @@ class SkillPackageTests(unittest.TestCase):
 
             # A corrected retry succeeds. Its current result must not sit
             # beside the prior attempt's singular failure record.
-            run(document, lambda: SimpleNamespace(trials=[{"trial": 2}]))
+            run(
+                document, lambda: SimpleNamespace(trials=[{"trial": 2}], cloud_url=LINK)
+            )
             self.assertFalse(
                 error_artifact.exists(),
                 "a successful retry must remove the previous attempt's failure artifact",
@@ -14251,7 +14284,10 @@ class SkillPackageTests(unittest.TestCase):
             error_artifact.mkdir()
             calls_before = len(searched)
             with self.assertRaises(SystemExit) as stale_error:
-                run(document, lambda: SimpleNamespace(trials=[{"trial": 3}]))
+                run(
+                    document,
+                    lambda: SimpleNamespace(trials=[{"trial": 3}], cloud_url=LINK),
+                )
             self.assertEqual(len(searched), calls_before)
             self.assertIn("could not be removed", str(stale_error.exception))
             error_artifact.rmdir()
@@ -17906,6 +17942,232 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             " ".join(docstrings).split()
         )
         return prose
+
+
+class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
+    """The connected-run halt, executed rather than promised.
+
+    `run-safety.md` said a connected run halts the moment tracking degrades to
+    local-only, and nothing halted. The SDK's session manager flags the
+    degradation and warns once, by its own docstring, so every remaining trial
+    was billed to the customer's provider key and the run ended by telling them
+    nothing had reached the portal - the exact outcome the sentence forbade.
+
+    The whole paid search is one blocking `optimize_sync` with no per-trial
+    hook, so the halt cannot live between trials. It lives where every paid
+    call already passes: the door on `litellm.completion`, which was already
+    refusing an exhausted total. What it reads is what the SDK publishes - the
+    session manager stamps the run's own configuration object, and the
+    decorated function holds that same object - so this is a read, not a second
+    detector.
+
+    Measured against the pinned SDK, with no network and no provider: driving
+    the genuine `_flag_backend_degraded` on a live run's own session manager
+    left `result_source="local_fallback"`, `fallback_reason="trial submission"`
+    and `persistence_reason="rejected"` on the object the decorated function
+    exposes, readable from inside a `litellm.completion` wrapper on the very
+    next call, and the same run then authorised three further paid calls.
+    """
+
+    def compiled_door(self, **bindings):
+        """`call_agent` with the whole door behind it, as the document has it."""
+        text = SDK_EXECUTION.read_text()
+        functions = {
+            node.name: node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        module = ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    *sdk_wrapper_state_nodes(text),
+                    *sdk_wrapper_spend_gate(text),
+                    functions["call_agent"],
+                ],
+                type_ignores=[],
+            )
+        )
+        placed: list[dict] = []
+        namespace = {
+            "litellm": fake_litellm(placed),
+            "build_request": lambda message, config: {"model": config.get("model")},
+            "provider_reported_cost": lambda response: 0.01,
+            "require_nonzero_token_usage": lambda response: None,
+            "require_untruncated_completion": lambda response: None,
+            **spend_gate_bindings(**bindings),
+        }
+        exec(compile(module, "<tracking-loss>", "exec"), namespace)  # noqa: S102
+        return namespace, placed
+
+    @staticmethod
+    def stamped(**fields):
+        """A decorated function as the SDK leaves it, stamped or not.
+
+        Only the two attributes the gate reads, because that is the whole of
+        the coupling: `optimize_sync` binds the run's config to the decorated
+        function, and the session manager mutates that object in place.
+        """
+        return SimpleNamespace(traigent_config=SimpleNamespace(**fields))
+
+    HEALTHY = {"result_source": "cloud_brain", "persistence_reason": None}
+
+    def test_a_connected_run_that_lost_the_portal_places_no_further_call(
+        self,
+    ) -> None:
+        """The finding, inverted: the next call is refused, not billed.
+
+        Both halves matter. The refusal has to happen, and it has to happen
+        before the request leaves - a stop that reports afterwards is the
+        outcome the sentence was written against, one call later.
+        """
+        namespace, placed = self.compiled_door(ceiling=5.00, remaining=5.00)
+        call_agent = namespace["call_agent"]
+
+        namespace["TRACKED_RUN"] = self.stamped(**self.HEALTHY)
+        self.assertEqual(call_agent("while tracking held", {}), ("a", 0.01))
+        self.assertEqual(len(placed), 1)
+        spent_before = list(namespace["RUN_SPEND_USD"])
+
+        namespace["TRACKED_RUN"] = self.stamped(
+            result_source="local_fallback",
+            fallback_reason="trial submission",
+            persistence_reason="rejected",
+        )
+        with self.assertRaises(RuntimeError) as refused:
+            call_agent("after the backend broke", {})
+        self.assertIn("dropped to local-only", str(refused.exception))
+        self.assertIn("trial submission", str(refused.exception))
+        self.assertEqual(len(placed), 1, "the refused call still reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"],
+            spent_before,
+            "a refused call still moved the ledger",
+        )
+
+    def test_a_rejected_persistence_state_is_refused_on_its_own(self) -> None:
+        """The second of the three states the rules name, alone.
+
+        A permanent 4xx rejection is the case where the backend was reachable
+        and said no, and it is the one the SDK marks twice - `local_fallback`
+        for the run and `rejected` for persistence. Asserting only the first
+        would pass against a gate that reads one field, and the connected-run
+        rules name both.
+        """
+        namespace, placed = self.compiled_door()
+        namespace["TRACKED_RUN"] = self.stamped(
+            result_source="cloud_brain", persistence_reason="rejected"
+        )
+        with self.assertRaises(RuntimeError) as refused:
+            namespace["call_agent"]("after the rejection", {})
+        self.assertIn("rejected this run's trials", str(refused.exception))
+        self.assertEqual(len(placed), 0)
+
+    def test_the_local_baseline_phase_is_not_mistaken_for_a_degradation(
+        self,
+    ) -> None:
+        """The gate may not stop the phase that is meant to be local.
+
+        The baseline runs backend-offline on purpose, and a gate reading
+        "anything that is not cloud-tracked" would refuse its first call and
+        take the whole first result with it. Measured on the pinned SDK: a run
+        launched the way the baseline phase launches leaves
+        `result_source="offline"`, and an ordinary local run leaves
+        `"explicit_local"` - neither is the mid-run stamp.
+        """
+        for source in ("offline", "explicit_local", None):
+            with self.subTest(result_source=source):
+                namespace, placed = self.compiled_door()
+                namespace["TRACKED_RUN"] = self.stamped(
+                    result_source=source, persistence_reason=None
+                )
+                self.assertEqual(namespace["call_agent"]("baseline", {}), ("a", 0.01))
+                self.assertEqual(len(placed), 1)
+
+    def test_a_call_placed_before_any_run_exists_is_not_refused(self) -> None:
+        """`TRACKED_RUN` is `None` until a search binds a config to it.
+
+        The approved live probe and the wiring probe place calls before the
+        decorated function has ever run, and the pinned SDK does not create the
+        attribute until then. Read as a degradation, that would refuse the
+        probe the whole approval depends on.
+        """
+        namespace, placed = self.compiled_door()
+        self.assertIsNone(namespace["TRACKED_RUN"])
+        self.assertEqual(namespace["call_agent"]("the live probe", {}), ("a", 0.01))
+        self.assertEqual(len(placed), 1)
+
+    @staticmethod
+    def connected_search_fence() -> list[ast.stmt]:
+        """The fenced block that runs the connected search, parsed."""
+        for source in re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        ):
+            if "optimized_results = agent.optimize_sync(" in source:
+                return ast.parse(source).body
+        raise AssertionError(
+            "no fenced block runs the connected search; the between-phases stop "
+            "has nowhere to be and this test is measuring nothing"
+        )
+
+    def test_the_portal_link_is_checked_before_the_next_paid_pass(self) -> None:
+        """A `cloud_url` read after held-out scoring is a read after the money.
+
+        `cloud_url` is the one state of the three that a running search cannot
+        publish - it exists only on the returned result - so the door cannot
+        see it and the check belongs between the phases. It used to sit with
+        the closing assertions, two hundred lines and one paid held-out pass
+        later, which is where the rules say it must not be: the spending was
+        already done by the time it fired.
+
+        Asserted on the document's own structure, because the stop is module
+        code in a fence rather than a function anything can call: it has to be
+        IN the connected fence, and the last paid pass has to come after it.
+        """
+        body = self.connected_search_fence()
+        searched = max(
+            index
+            for index, node in enumerate(body)
+            if "agent.optimize_sync(" in ast.unparse(node)
+        )
+        after = body[searched + 1 :]
+        self.assertTrue(
+            any(
+                isinstance(inner, ast.Raise)
+                and isinstance(inner.exc, ast.Call)
+                and getattr(inner.exc.func, "id", None) == "SystemExit"
+                for node in after
+                for inner in ast.walk(node)
+            ),
+            "the connected fence returns from the search without a stop of any "
+            "kind, so whatever the search did the next paid pass follows it",
+        )
+        guards = " ".join(ast.unparse(node) for node in after)
+        self.assertIn(
+            "tracking_stopped()",
+            guards,
+            "the connected fence ends without reading the degradation the door "
+            "reads, so a search that lost the portal buys the next paid pass",
+        )
+        self.assertIn(
+            "cloud_url",
+            guards,
+            "the connected fence never checks that a portal link came back, "
+            "which is the one degradation the door cannot see for itself",
+        )
+        text = SDK_EXECUTION.read_text()
+        self.assertLess(
+            text.index("optimized_results = agent.optimize_sync("),
+            text.index("def evaluate_holdout("),
+            "held-out scoring is defined before the search it is meant to "
+            "follow; the stop between them cannot be read off this document",
+        )
+        self.assertNotIn(
+            "assert optimized_results.cloud_url",
+            text,
+            "the portal link is still asserted with the closing checks, after "
+            "the held-out pass has been paid for",
+        )
 
 
 class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
