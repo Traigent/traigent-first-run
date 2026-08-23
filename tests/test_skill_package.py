@@ -16595,7 +16595,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         raise AssertionError(f"{name} is not defined in the document")
 
     def test_the_cost_reader_reads_the_field_litellm_actually_fills(self) -> None:
-        """The reader must consult the field the installed client populates.
+        """The reader must return the figure the installed client priced.
 
         litellm records a call's price at `_hidden_params["response_cost"]`,
         and that is what the SDK's own accounting reads. A reader that consults
@@ -16606,8 +16606,21 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         reported a run at the approved ceiling when the true spend was a
         twentieth of it, and refused the held-out pass that would have fit.
 
-        Measured here rather than asserted, against whatever litellm is
-        installed, so the day the field moves this fails and says which route.
+        The reading is compared to the client's own figure rather than merely
+        required to be present, because presence is satisfied by answers that
+        are not the cost: a reader pointed one key sideways, at the response's
+        elapsed milliseconds, debited hundreds of thousands of times the true
+        price, and a reader that answered `0.0` for every priced call
+        - a door recording every call as free - was equally present. Both are
+        worse failures than the one presence catches.
+
+        A route the installed client cannot price proves nothing either way, so
+        it is named rather than dropped in silence: litellm's pricing map has
+        holes, and when this was written it priced
+        `anthropic/claude-3-5-haiku-20241022` at None on both the release
+        installed here and the pinned one. That is also why the run has to end
+        having exercised at least one route - a rename of the field leaves
+        every route unpriced, which is otherwise indistinguishable from a pass.
         """
         try:
             import litellm
@@ -16615,11 +16628,16 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             self.skipTest("litellm is not installed")
         reader = self.door_function("provider_reported_cost")
         blind = []
+        exercised = []
+        unpriced = []
+        # One model per route this package supports.
         for model in (
             "gpt-4o-mini",
+            "anthropic/claude-sonnet-4-20250514",
             "gemini/gemini-2.0-flash",
             "mistral/mistral-small-latest",
             "cohere/command-r",
+            "openrouter/openai/gpt-4o-mini",
         ):
             response = litellm.completion(
                 model=model,
@@ -16629,16 +16647,42 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             priced = (getattr(response, "_hidden_params", {}) or {}).get(
                 "response_cost"
             )
-            if not priced:
+            if priced is None:
+                unpriced.append(model)
                 continue
-            if reader(response) is None:
+            read = reader(response)
+            if read is None:
                 blind.append(model)
+                continue
+            exercised.append(model)
+            # A relative tolerance rather than `assertAlmostEqual`'s default
+            # seven places: a call on these routes costs a fraction of a cent,
+            # and seven places calls anything under 5e-8 equal to zero, so the
+            # default would wave through the reader that answers `0.0`.
+            self.assertAlmostEqual(
+                read,
+                float(priced),
+                delta=abs(float(priced)) * 1e-9,
+                msg=(
+                    f"on {model} the door read {read!r} where the client "
+                    f"priced the call at {float(priced)!r}, so the ledger "
+                    "debits a figure that is not what the run spent"
+                ),
+            )
         self.assertEqual(
             blind,
             [],
             "the door read no cost on these routes while the client had "
             "priced the call, so every one of them would debit the flat "
             "unpriced rate instead of the real one",
+        )
+        self.assertTrue(
+            exercised,
+            "this test proved nothing: the installed client priced none of "
+            "the routes it walked, so no reading was compared to anything. "
+            f"Unpriced here: {unpriced}. Either the field this reads moved, "
+            "or every model id above has fallen out of the pricing map - "
+            "check which before believing the door is a ledger.",
         )
 
     def test_the_doors_edge_is_stated_as_a_rule_and_gets_every_name_right(

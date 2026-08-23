@@ -778,16 +778,20 @@ def provider_reported_cost(response) -> float | None:
     # every time and became a call counter. Measured end to end, that counter
     # reported a run at its approved ceiling when the true spend was a
     # twentieth of it, and refused a held-out pass that fitted many times over.
-    hidden = getattr(response, "_hidden_params", {}) or {}
-    reported = hidden.get("response_cost") if isinstance(hidden, dict) else None
+    # Normalised once rather than guarded at the first reading alone: the
+    # header reading below reaches the same object, and raised on a non-mapping.
+    hidden = getattr(response, "_hidden_params", None)
+    hidden = hidden if isinstance(hidden, dict) else {}
+    reported = hidden.get("response_cost")
     usage = getattr(response, "usage", None)
     if reported is None:
         reported = getattr(usage, "cost", None)
     if reported is None and isinstance(usage, dict):
         reported = usage.get("cost")
     if reported is None:
-        headers = hidden.get("additional_headers", {}) or {}
-        reported = headers.get("llm_provider-x-litellm-response-cost")
+        headers = hidden.get("additional_headers")
+        if isinstance(headers, dict):
+            reported = headers.get("llm_provider-x-litellm-response-cost")
     if reported is None:
         return None
     if isinstance(reported, bool):
@@ -1023,8 +1027,8 @@ def record_call_spend(cost: float | None) -> None:
 # The test is the NAME rather than a list of the knobs known today, because
 # such a list is what failed here: `retry_policy` sat outside one, litellm
 # honoured it on plain `completion` all the same, and a rate-limited call
-# reserved for 1 request placed 6. Measured against the installed release: of
-# the 174 names in litellm's own `all_litellm_params`, eight carry `retry`,
+# reserved for 1 request placed 6. Measured on the pinned litellm 1.93.0: of
+# the 214 entries in its own `all_litellm_params`, eight carry `retry`,
 # `retries` or `fallback`; three are the ones priced here; `retry_policy`
 # placed 6 requests against a reservation of 1 and `context_window_fallback_dict`
 # placed 2 against 1; of the last three, two are read only by the router, and
@@ -1088,17 +1092,23 @@ def worst_case_requests(kwargs: dict) -> int:
             "alone placed 6 provider requests against a reservation of 1. "
             "Express the resilience with those three alone."
         )
+
+    def rounded_up(count) -> int:
+        # An integer is already whole, and `float(10**400)` raises
+        # `OverflowError`, so an integer skips the cast. The cast stays for
+        # everything else: a count read out of a file arrives as text.
+        return count if isinstance(count, int) else math.ceil(float(count))
+
     asked = kwargs.get("num_retries")
     counted = asked or getattr(litellm, "num_retries", 0) or 0
-    library_retries = max(1, math.ceil(float(counted))) if counted else 0
+    library_retries = max(1, rounded_up(counted)) if counted else 0
     client_retries = max(
-        0,
-        math.ceil(float((asked if asked is not None else kwargs["max_retries"]) or 0)),
+        0, rounded_up((asked if asked is not None else kwargs["max_retries"]) or 0)
     )
     legs = 1 + len(kwargs.get("fallbacks") or ())
     per_leg = 1 + library_retries + client_retries
     if legs > 1 and asked:
-        per_leg += max(1, math.ceil(float(asked)))
+        per_leg += max(1, rounded_up(asked))
     return per_leg * legs
 
 
@@ -1140,7 +1150,13 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     above is stated as the pin's reach and not as a property of every caller.
     """
     requests = worst_case_requests(kwargs)
-    needed = requests * UNTRACKED_CALL_COST_USD
+    try:
+        needed = requests * UNTRACKED_CALL_COST_USD
+    except OverflowError:
+        # A count too large to price in floating point is still a count, and
+        # the answer to one is the refusal below rather than a traceback out of
+        # the arithmetic - clamped, it would name a figure nobody asked for.
+        needed = math.inf
     with LEDGER_LOCK:
         remaining = run_remaining_usd()
         if remaining < needed:
