@@ -2105,14 +2105,35 @@ def check_dataset(
     # This one is kept because it is a hash bucket: O(n), always complete, and
     # therefore still able to report repetition on a dataset where the bounded
     # near-duplicate join gave up. It detects; it does not score twice.
+    #
+    # The count travels with the finding, because a reader downstream needs the
+    # ARITHMETIC and not the sentence. `detail` names the repeated positions and
+    # stops at ten of them, so a scorer that wanted to know how many comparisons
+    # this file actually holds would have to parse prose that is deliberately
+    # truncated. `distinct_rows` is the same scan's other half - the buckets, not
+    # the collisions - and it is the number a resolution question is really
+    # asking for. Published on the PASS arm too: a reader must not have to infer
+    # "then they were all distinct" from the absence of a metric, and a check
+    # that answers with a count only when the news is bad is one whose silence
+    # has two meanings.
+    duplicate_metrics = {
+        "distinct_rows": len(normalized_inputs),
+        "scoreable_rows": len(rows),
+    }
     if exact_duplicates:
         emit(
             "dataset-duplicates",
             FAIL if synthetic else WARN,
             f"exact/normalized duplicate inputs at rows {exact_duplicates[:10]}",
+            duplicate_metrics,
         )
     else:
-        emit("dataset-duplicates", PASS, "no exact or normalized duplicate inputs")
+        emit(
+            "dataset-duplicates",
+            PASS,
+            "no exact or normalized duplicate inputs",
+            duplicate_metrics,
+        )
 
     threshold_percent = f"{NEAR_DUPLICATE_THRESHOLD:.0%}"
     # The INPUT, and only the input. Repeated inputs are the defect this check
@@ -2402,6 +2423,18 @@ def check_dataset(
         tuning_metrics = {
             "tuning_rows": tuning_count,
             "tuning_labelled_rows": tuning_labelled,
+            # How many DIFFERENT questions the tuning side asks. `tune_inputs`
+            # is already the set of normalized inputs on this side of the line -
+            # built above to answer whether the two sides overlap - so the count
+            # is a `len()` of something this check computed and then dropped,
+            # not a second scan of the file.
+            #
+            # It is published beside the row count rather than instead of it
+            # because the two are different true facts about the same file, and
+            # the difference is the finding: a tuning side of thirty rows asking
+            # fifteen questions is not the same comparison as one asking thirty,
+            # and only the second count can say which one this is.
+            "tuning_distinct_rows": len(tune_inputs),
         }
         if tuning_scoreable < WIRING_CHECK_EXAMPLES:
             emit(

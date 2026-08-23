@@ -3273,5 +3273,130 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         self.assertIn("invalid choice: 'demo'", process.stderr)
 
 
+class DuplicatedRowsBuyNoResolutionTests(unittest.TestCase):
+    """Copying rows must not clear the cap that asks for more comparisons.
+
+    `dataset-coarse-resolution` is the cap about RESOLUTION - whether the rows
+    can tell two configurations apart - and the remedy it carries asks for more
+    comparable examples. The cheapest way to satisfy a count of rows is to copy
+    the rows already there, and that adds no comparison whatever: both copies
+    hold the same input, so every configuration scores them identically and the
+    pair separates nothing. The fake repair was therefore the exact opposite of
+    the cap's own subject, and it used to clear it.
+
+    Nothing had to be measured to refuse it. Preflight scans the inputs for
+    repetition on its way past and reports what it found in the same JSON this
+    scorer is handed, so the evidence was already inside the document being
+    scored. These tests drive the real chain and pin that the scorer reads it.
+    """
+
+    @staticmethod
+    def _rows(copies: int) -> list[dict]:
+        """A dataset whose tuning side is `copies` copies of the same questions.
+
+        Half of `MODULE.COARSE_RESOLUTION_EXAMPLES` distinct tuning questions, so one
+        copy sits below the resolution line and two copies reach it by row count
+        alone. The held-out side is left alone and stays distinct - the cap is a
+        property of the tuning split, and a duplicate there would be a second
+        finding rather than this one.
+        """
+        distinct = MODULE.COARSE_RESOLUTION_EXAMPLES // 2
+        tuning = [
+            {
+                "input": f"summarise ticket {index} about a billing charge",
+                "output": f"billing-{index}",
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index in range(distinct)
+        ]
+        holdout = [
+            {
+                "input": f"summarise account note {index} about a refund",
+                "output": f"refund-{index}",
+                "source": "collected",
+                "split": "holdout",
+            }
+            for index in range(MODULE.WALKTHROUGH_HOLDOUT_ROWS)
+        ]
+        return tuning * copies + holdout
+
+    def _score_copies(self, copies: int) -> dict:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(copies))
+            return _score(dataset)
+
+    def test_the_honest_dataset_is_capped_on_its_resolution(self) -> None:
+        """The starting state: half the resolution line, so the cap fires.
+
+        Pinned first because the duplicated case below is only meaningful
+        against it - a cap that never fired cannot be shown to survive.
+        """
+        score = self._score_copies(1)
+        self.assertIn(
+            "dataset-coarse-resolution",
+            [cap["condition"] for cap in score["caps"]],
+        )
+        power = _dataset_subscore(score, "power")
+        self.assertEqual(power["value"], 12.0)
+        self.assertIn(
+            f"{MODULE.COARSE_RESOLUTION_EXAMPLES // 2} examples", power["evidence"]
+        )
+
+    def test_duplicating_every_tuning_row_does_not_clear_the_cap(self) -> None:
+        """The fake repair, performed exactly as a reader would perform it.
+
+        Fifteen tuning rows copied once is thirty rows and fifteen questions.
+        By row count that clears the line; by comparisons it has not moved.
+        """
+        duplicated = self._score_copies(2)
+        # Asserted by name before it is read, so the regression this test exists
+        # for reports as the cap going missing rather than as a `StopIteration`
+        # inside a helper.
+        self.assertIn(
+            "dataset-coarse-resolution",
+            [cap["condition"] for cap in duplicated["caps"]],
+        )
+        cap = _cap(duplicated, "dataset-coarse-resolution")
+        self.assertEqual(cap["ceiling"], MODULE.COARSE_RESOLUTION_CEILING)
+        # The same number the honest dataset scored. Copying rows may not move
+        # the power sub-score either, or the cap would merely be a label over a
+        # score that had already been bought.
+        self.assertEqual(_dataset_subscore(duplicated, "power")["value"], 12.0)
+
+    def test_the_card_says_which_rows_repeat_rather_than_only_refusing(
+        self,
+    ) -> None:
+        """A refusal a customer cannot act on is half an answer.
+
+        The evidence has to carry both counts: what their file holds and what a
+        comparison can resolve. Naming only the second reads as the scorer
+        losing their rows.
+        """
+        evidence = _dataset_subscore(self._score_copies(2), "power")["evidence"]
+        distinct = MODULE.COARSE_RESOLUTION_EXAMPLES // 2
+        self.assertIn(f"{MODULE.COARSE_RESOLUTION_EXAMPLES} to tune on", evidence)
+        self.assertIn(f"{distinct} of them repeat an input already counted", evidence)
+        self.assertIn(f"{distinct} examples", evidence)
+
+    def test_a_duplicate_finding_without_its_count_is_refused(self) -> None:
+        """An older payload must not read as a clean one.
+
+        The state this refuses is precisely the one where the row count
+        overstates the comparison, so scoring it on the rows would restore the
+        defect for exactly the datasets that have it.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(2))
+            records = _preflight_records(dataset)
+        for record in records:
+            if record["check"] == "dataset-duplicates":
+                self.assertEqual(record["status"], "WARN")
+                record["metrics"].pop("distinct_rows")
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("carries no distinct_rows count", process.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

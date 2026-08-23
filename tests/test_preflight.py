@@ -335,7 +335,12 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(holdout.status, MODULE.WARN)
         self.assertIn("16.7 percentage points", holdout.detail)
         self.assertEqual(
-            tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}
+            tuning.metrics,
+            {
+                "tuning_rows": 18,
+                "tuning_labelled_rows": 18,
+                "tuning_distinct_rows": 18,
+            },
         )
         self.assertEqual(
             holdout.metrics, {"holdout_rows": 6, "holdout_labelled_rows": 6}
@@ -360,7 +365,12 @@ class StaticPreflightTests(unittest.TestCase):
             "tuning-only dataset; no held-out split was declared",
         )
         self.assertEqual(
-            tuning.metrics, {"tuning_rows": 18, "tuning_labelled_rows": 18}
+            tuning.metrics,
+            {
+                "tuning_rows": 18,
+                "tuning_labelled_rows": 18,
+                "tuning_distinct_rows": 18,
+            },
         )
         self.assertFalse(
             any(
@@ -405,7 +415,14 @@ class StaticPreflightTests(unittest.TestCase):
             for result in MODULE.RESULTS
             if result.check == "dataset-holdout-resolution"
         )
-        self.assertEqual(tuning.metrics, {"tuning_rows": 8, "tuning_labelled_rows": 8})
+        self.assertEqual(
+            tuning.metrics,
+            {
+                "tuning_rows": 8,
+                "tuning_labelled_rows": 8,
+                "tuning_distinct_rows": 8,
+            },
+        )
         self.assertEqual(
             holdout.metrics, {"holdout_rows": 4, "holdout_labelled_rows": 0}
         )
@@ -489,7 +506,12 @@ class StaticPreflightTests(unittest.TestCase):
             if result.check == "dataset-holdout-resolution"
         )
         self.assertEqual(
-            tuning.metrics, {"tuning_rows": 10, "tuning_labelled_rows": 10}
+            tuning.metrics,
+            {
+                "tuning_rows": 10,
+                "tuning_labelled_rows": 10,
+                "tuning_distinct_rows": 10,
+            },
         )
         self.assertEqual(
             holdout.metrics, {"holdout_rows": 10, "holdout_labelled_rows": 10}
