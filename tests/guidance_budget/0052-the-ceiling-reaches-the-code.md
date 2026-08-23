@@ -3,8 +3,8 @@
 follows: 0051
 resident-ceiling: 84_760
 resident-measured: 84_709
-total-ceiling: 395_899
-total-measured: 395_839
+total-ceiling: 397_221
+total-measured: 397_162
 
 Every word about the spend ceiling was already correct and none of it was
 wired. `run-safety.md` set out the whole discipline - lower the per-optimization
@@ -57,14 +57,30 @@ or cut-off response into a failed trial. Each wrapper saves what the attribute
 held and calls through it, which is the shape the SDK's own metadata-capture
 patch uses, so the two compose whichever installs first.
 
+That door was still half a ledger while it debited only what came back. A
+provider call that raises after reaching the provider is billable and brings no
+cost home with it, and litellm surfaces a timeout, a rate limit, a dropped
+connection and a mid-stream failure exactly that way rather than as a degraded
+response. The wrap therefore catches, deducts at the conservative rate - the
+answer already given to a price it cannot read - and re-raises the caller's own
+exception untouched. Omitted, this overstated what was left by one call per
+failure, on precisely the routes that fail more than once; a route failing every
+time would have spent the whole approved total without moving the figure that
+governs it. `BaseException` and not `Exception`, because an awaited call
+cancelled in flight raises `CancelledError`, which is neither of those and had
+still reached the provider. The pre-call refusal stays outside the catch: it
+placed nothing, so it owes nothing.
+
 A place instead of a rule earns bytes twice over: it is fewer lines than the
 count it replaces, and the refusal message it can write is better, naming the
 model that was about to be called rather than a label the caller supplied. What
 it cost is a paragraph naming its edge, and that paragraph is the point rather
 than an apology. The wrap reaches every caller that resolves the attribute when
 it calls, and no others - not a module holding a `from litellm import
-completion` binding older than the door, and not a client that is not litellm at
-all. So the guidance says to import a preserved agent or evaluator module after
+completion` binding older than the door, not litellm's other spend-capable entry
+points (`text_completion`, `batch_completion`, `completion_with_retries`, a
+configured `Router`), which nothing here wraps, and not a client that is not
+litellm at all. So the guidance says to import a preserved agent or evaluator module after
 the door installs, and the declared count stays, no longer as a routing check
 but as the one claim nothing else can derive: it sizes the held-out refusal,
 which is settled before the calls it is sizing place any of them.
@@ -126,7 +142,7 @@ Where the measured figures come from:
     resident measured here                                  84_709
 
     0051 total measured                                    369_593
-    sdk-execution.md                                      +23_920
+    sdk-execution.md                                      +25_243
       the approved figures, their three refusals, and
         the two SDK settings with what one of them
         gives up, all before the import                5_886
@@ -134,16 +150,19 @@ Where the measured figures come from:
         the two declared counts, and what a window
         on that list depends on                        3_161
       the three functions reading the ledger           2_434
-      the door - one refusal, one debit, the two
-        wrappers, and the install that survives a
-        second execution of this wrapper               3_685
+      the door - one refusal, one debit, the debit
+        for a call that fails after reaching the
+        provider, the two wrappers, and the install
+        that survives a second execution of this
+        wrapper                                        4_772
       `place_call`, its two callers, `check_scorer_calls`
         and `task_score`, over a door they no longer
         have to be the only way to                     1_773
       the two-gate paragraph, the place-not-a-rule
-        design and the edge it does not reach, the
-        judge that made it necessary, and the
-        rejected budget                                3_324
+        design and the edge it does not reach -
+        litellm's own unwrapped spend-capable names
+        among them - the judge that made it
+        necessary, and the rejected budget             3_560
       the rule for generating a judging scorer, and
         the two shapes of preserved evaluator, one
         of which must not be debited twice             2_062
@@ -162,7 +181,7 @@ Where the measured figures come from:
       the closing check, and the running total's
         destination                                        365
     SKILL.md                                                 +235
-    total measured here                                   395_839
+    total measured here                                   397_162
 
 Both ceilings sit under sixty bytes above their measurement, in line with the
 57 that 0051 left: enough to reword a sentence without a successor entry, too

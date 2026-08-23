@@ -957,7 +957,23 @@ def ledgered(place):
 
     def placed(*args, **kwargs):
         refuse_if_exhausted(args, kwargs)
-        return debit_placed_call(place(*args, **kwargs))
+        try:
+            response = place(*args, **kwargs)
+        except BaseException:
+            # A call that fails AFTER reaching the provider is billable and
+            # brings back no cost at all: litellm surfaces a timeout, a rate
+            # limit, a dropped connection and a mid-stream failure as an
+            # exception rather than as a degraded response. That is the same
+            # situation as a cost this cannot read - a call was placed, its
+            # price is unknown - and it gets the same answer, or the remaining
+            # overstates itself by one call on exactly the routes that fail
+            # repeatedly. `BaseException`, because an awaited call cancelled in
+            # flight raises `CancelledError`, which is not an `Exception` and
+            # had still reached the provider. The refusal above stays outside
+            # this: it placed nothing, so it owes nothing.
+            record_call_spend(None)
+            raise
+        return debit_placed_call(response)
 
     return placed
 
@@ -968,7 +984,12 @@ def ledgered_async(place):
 
     async def placed(*args, **kwargs):
         refuse_if_exhausted(args, kwargs)
-        return debit_placed_call(await place(*args, **kwargs))
+        try:
+            response = await place(*args, **kwargs)
+        except BaseException:
+            record_call_spend(None)
+            raise
+        return debit_placed_call(response)
 
     return placed
 
@@ -1286,12 +1307,14 @@ the module attribute removes the outside instead: a hand-written judge that call
 `litellm.completion`, which is what a judge naturally does, is ledgered without being asked to be.
 
 State its edge exactly, because an overstated safeguard is worse than a named gap. It reaches every
-caller that RESOLVES `litellm.completion` at call time, and no others: not a module that bound the
-function with `from litellm import completion` before setup, and not a client that is not litellm at
-all - a raw provider SDK, an HTTP call, a subprocess. So import a preserved agent or evaluator
-module after the wrapper installs the door, and where that cannot be arranged, declare what the
-scorer spends: `check_scorer_calls` compares that declaration against the ledger on every row, which
-is what still notices a call the door cannot see.
+caller that RESOLVES `litellm.completion` or `litellm.acompletion` at call time, and no others: not
+a module that bound the function with `from litellm import completion` before setup; not litellm's
+other spend-capable entry points, which nothing here wraps - `text_completion`, `batch_completion`,
+`completion_with_retries`, a configured `Router`; and not a client that is not litellm at all - a
+raw provider SDK, an HTTP call, a subprocess. So import a preserved agent or evaluator module after
+the wrapper installs the door, keep generated calls on the two wrapped names, and where neither can
+be arranged, declare what the scorer spends: `check_scorer_calls` compares that declaration against
+the ledger on every row, which is what still notices a call the door cannot see.
 
 A judge is the caller that made this necessary rather than merely tidy. It runs inside `task_score`,
 whose `metric_functions` contract passes a prediction, an expectation and an input and returns a

@@ -901,11 +901,23 @@ def litellm_module(completion) -> SimpleNamespace:
     return SimpleNamespace(completion=completion, acompletion=acompletion)
 
 
-def fake_litellm(placed: list[dict], content: str = "a") -> SimpleNamespace:
-    """A `litellm` whose `completion` records the request and answers."""
+def fake_litellm(
+    placed: list[dict], content: str = "a", raises: BaseException | None = None
+) -> SimpleNamespace:
+    """A `litellm` whose `completion` records the request and answers.
+
+    `raises` makes it record the request and then fail, which is the other
+    thing a real provider call does: litellm surfaces a timeout, a rate limit,
+    a dropped connection and a mid-stream failure as an exception rather than
+    as a degraded response. The request is billable either way, so the
+    recording happens first - "did this reach the provider" is then the same
+    question whichever way the stand-in was built.
+    """
 
     def completion(**kwargs):
         placed.append(kwargs)
+        if raises is not None:
+            raise raises
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
         )
@@ -14373,8 +14385,18 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertIn("was not placed", str(refused.exception))
         self.assertEqual(len(placed), 2, "the refused call still reached the provider")
 
-    def compiled_scorer_path(self, *, reported_cost: float | None = 0.03, **bindings):
-        """`call_judge` and `check_scorer_calls`, compiled with their ledger."""
+    def compiled_scorer_path(
+        self,
+        *,
+        reported_cost: float | None = 0.03,
+        raises: BaseException | None = None,
+        **bindings,
+    ):
+        """`call_judge` and `check_scorer_calls`, compiled with their ledger.
+
+        `raises` is handed to the stand-in `litellm`, for the tests where the
+        call reaches the provider and then fails instead of answering.
+        """
         text = SDK_EXECUTION.read_text()
         functions = {
             node.name: node
@@ -14395,7 +14417,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         )
         placed: list[dict] = []
         namespace = {
-            "litellm": fake_litellm(placed, content="4"),
+            "litellm": fake_litellm(placed, content="4", raises=raises),
             "provider_reported_cost": lambda response: reported_cost,
             "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
@@ -14689,6 +14711,100 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             asyncio.run(acompletion(model="provider/judge", messages=[]))
         self.assertIn("a call to provider/judge was not placed", str(refused.exception))
         self.assertEqual(len(placed), 1, "the refused await reached a provider")
+
+    def test_a_call_that_fails_after_reaching_the_provider_is_still_debited(
+        self,
+    ) -> None:
+        """The same class as the judge, one layer down at the transport.
+
+        Every other fixture in this class hands the door a response, so every
+        assertion about the ledger is an assertion about the path where the
+        call succeeded. litellm does not only take that path: a timeout, a rate
+        limit, a dropped connection and a mid-stream failure all arrive as
+        exceptions, and the call reached the provider and is billable before
+        any of them is raised. Debiting only what returns leaves
+        `run_remaining_usd()` overstating the remaining by one call per
+        failure, on exactly the routes that fail more than once.
+
+        So the answer is the one the design already gives an unreadable cost -
+        a call was placed, its price is unknown, deduct conservatively - and
+        the exception is not the door's to touch: it propagates as the same
+        object the caller would otherwise have caught.
+        """
+        error = RuntimeError("litellm.Timeout: provider did not respond in 120s")
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        namespace["JUDGE_MODEL"] = "provider/judge"
+
+        with self.assertRaises(RuntimeError) as failed:
+            namespace["call_judge"]("grade this")
+        self.assertIs(
+            failed.exception, error, "the door changed what the caller sees fail"
+        )
+        self.assertEqual(len(placed), 1, "the failing call never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "a billable call was debited nothing"
+        )
+        # Bounded by the conservative rate, and reported as what it is: the
+        # provider named no cost, so nothing here may present one as measured.
+        self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.07, places=6)
+
+        # And it is the same total, so failures exhaust it like anything else -
+        # which is the half that would have been a runaway: a route failing
+        # every call would have spent without ever moving the remaining.
+        for _ in range(3):
+            with self.assertRaises(RuntimeError):
+                namespace["call_judge"]("grade this")
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.01, places=6)
+        with self.assertRaises(RuntimeError) as refused:
+            namespace["call_judge"]("grade this")
+        self.assertIn("a call to provider/judge was not placed", str(refused.exception))
+        self.assertEqual(len(placed), 4, "the refused call reached a provider")
+
+    def test_a_failing_await_is_debited_by_the_async_door_too(self) -> None:
+        """The failing call through the entry point nothing generated awaits.
+
+        `acompletion` is where a preserved async agent lands, and it is the
+        door that gets an edit wrong first, because no generated line exercises
+        it. The two halves below are separate failures, not one restated: the
+        first is the same billable-and-unpriced case as the sync door, the
+        second is why the door catches `BaseException` rather than `Exception`
+        at all. An awaited call cancelled in flight - a surrounding
+        `wait_for`, a cancelled task - raises `CancelledError`, which has not
+        been an `Exception` since Python 3.8, and the call it interrupts had
+        already reached the provider.
+        """
+        error = RuntimeError("litellm.APIConnectionError: connection reset")
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        acompletion = namespace["litellm"].acompletion
+
+        with self.assertRaises(RuntimeError) as failed:
+            asyncio.run(acompletion(model="provider/judge", messages=[]))
+        self.assertIs(
+            failed.exception, error, "the door changed what the caller sees fail"
+        )
+        self.assertEqual(len(placed), 1, "the failing await never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "the failed await was debited nothing"
+        )
+        self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.07, places=6)
+
+        cancelled = asyncio.CancelledError()
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=cancelled
+        )
+        with self.assertRaises(asyncio.CancelledError) as stopped:
+            asyncio.run(namespace["litellm"].acompletion(model="m", messages=[]))
+        self.assertIs(stopped.exception, cancelled)
+        self.assertEqual(len(placed), 1, "the cancelled await never reached a provider")
+        self.assertEqual(
+            namespace["RUN_SPEND_USD"], [0.02], "an `except Exception` would miss this"
+        )
 
     def test_no_provider_call_reaches_litellm_by_a_name_the_door_is_not_on(
         self,
