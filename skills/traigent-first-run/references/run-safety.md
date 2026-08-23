@@ -203,13 +203,12 @@ on the existing account brings the run back.
 Once portal registration has completed, you may show one short note - "Your
 Traigent address was already confirmed, so there is no second confirmation email; your account is
 active and your 10-day portal access period has started. Next, create your API key from the key
-control in the top bar - grant it full access, and save it when it appears, because it is shown
-only once."
+control in the top bar. Grant it full access — a read-only key still spends your money, but nothing
+reaches your portal — and save it when it appears, because it is shown only once."
 
 The Traigent key must be able to write experiments, not only read them. The connected optimization,
 and an exact baseline sync when the installed public API supports one, need that scope. A read-only
-key can be rejected at submit time while the optimization drops to local-only tracking - real money
-is spent and nothing appears in the portal. This governs
+key can be rejected at submit time while the optimization drops to local-only tracking. This governs
 the user's very first key, not just a later one, because registration hands over no key at all.
 A manually created key defaults to read-only, so grant it full access rather than accepting
 the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
