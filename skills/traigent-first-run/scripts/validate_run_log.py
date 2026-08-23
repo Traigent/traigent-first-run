@@ -10,10 +10,11 @@ value is being trustworthy about a run that already went wrong.
 
 What it cannot do is prove a sentence is free of the project's data. It refuses
 the carriers that have a recognisable shape - paths, credentials, addresses,
-identifiers, links, quoted spans - and two clauses of the allowlist have no
-mechanical shape at all: a person's name, and a machine's. Those stay the
-assistant's to honour, and are named here so nobody reads a clean exit as proof
-of more than it is.
+identifiers, links, quoted spans - and five clauses of the allowlist have no
+shape a checker can settle: a person's name, a machine's, an access or
+confirmation code, a provider error body, and unquoted text taken from the
+project. Those stay the assistant's to honour, and are named here so nobody
+reads a clean exit as proof of more than it is.
 
 It is a checker, never a writer: it opens the log read-only and never edits it.
 A rejected line is reported to the user, not rewritten. Nothing in the guided
@@ -121,14 +122,15 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"\b(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
             r"[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}"
-            r"|(?=[A-Za-z0-9]{8}[A-Za-z0-9]*[0-9])[A-Za-z0-9]{20,})\b"
+            r"|(?=[A-Za-z0-9]{7}[A-Za-z0-9]*[0-9])[A-Za-z0-9]{20,}"
+            r"|(?=[A-Za-z0-9]*[0-9])(?:[a-z0-9]{20,}|[A-Z0-9]{20,}))\b"
         ),
     ),
     ("a URL", re.compile(r"\bhttps?://\S+")),
     (
         "a host or address",
         re.compile(
-            r"\b(?:\d{1,3}(?:\.\d{1,3}){3}\b|[a-z][a-z0-9-]*\.(?:com|net|org|io|ai|dev)\b)"
+            r"\b(?:\d{1,3}(?:\.\d{1,3}){3}\b|[a-z0-9-]*[a-z][a-z0-9-]*\.(?:com|net|org|io|ai|dev)\b)"
         ),
     ),
     # A quoted span this long is a row, a prompt, or a model answer. The quotes

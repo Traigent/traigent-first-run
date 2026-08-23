@@ -181,6 +181,40 @@ class EveryAlternativeOfEveryPatternIsExercisedTests(unittest.TestCase):
         self.assertTrue(pattern.search("could not reach 203.0.113.42 at all"))
         self.assertTrue(pattern.search("could not reach portal.example.com at all"))
 
+    def test_a_host_whose_first_label_starts_with_a_digit(self) -> None:
+        """Requiring the letter FIRST made real hosts unreachable.
+
+        There is no word boundary inside `1password`, so a label that opens
+        with a digit could never be the leftmost match. A label needs a letter
+        somewhere, not at its head - and `1.0.dev` still has none.
+        """
+        pattern = self._pattern("a host or address")
+        for host in ("1password.com", "3m.com", "0auth.dev", "7-eleven.com"):
+            with self.subTest(host=host):
+                self.assertTrue(pattern.search(f"could not reach {host} at all"), host)
+        self.assertEqual(
+            findings(line(detail="the pinned httpx version 1.0.dev was refused")), []
+        )
+
+    def test_an_identifier_whose_digits_sit_at_the_front(self) -> None:
+        """The digit-position bound bought class names and sold ids.
+
+        Requiring a digit past the eighth character let a token whose digits
+        are all at the front through, and README puts "long ids" in the column
+        the checker settles. The latest digit in any real class name sits at
+        index 6, and no class name is single-case.
+        """
+        for identifier in (
+            "1A2B3C4DEFGHIJKLMNOPQRST",
+            "20260823abcdefghijklm",
+            "a1b2c3d4EFGHIJKLMNOPQRSTUVWX",
+        ):
+            with self.subTest(identifier=identifier):
+                self.assertTrue(
+                    findings(line(detail=f"the request {identifier} was rejected")),
+                    f"{identifier} was accepted",
+                )
+
     def test_both_branches_of_the_session_id_rule(self) -> None:
         pattern = self._pattern("a session or request id")
         self.assertTrue(pattern.search("request a3f91c2b11de4d0b failed"))

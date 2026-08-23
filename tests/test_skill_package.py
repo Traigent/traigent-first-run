@@ -202,6 +202,23 @@ def guidance_budget_reason_defect(reason: str) -> str | None:
             f"{BUDGET_REASON_DISTINCT_WORDS} floor - long enough only because "
             "it repeats itself"
         )
+    # Both floors above measure a reason against ITSELF, and the overlap check
+    # measures it against OTHER entries - so an entry that appends its own text
+    # twice passes all three. This one shipped: an updater run twice left 39
+    # identical lines in the tracked tree of a public repository, and the
+    # doubling made both floors easier rather than harder to clear.
+    paragraphs = [block.strip() for block in reason.split("\n\n") if block.strip()]
+    seen: dict[str, int] = {}
+    for block in paragraphs:
+        if len(block) < 200:
+            continue  # a short line may legitimately recur
+        seen[block] = seen.get(block, 0) + 1
+    repeated = sorted(block for block, count in seen.items() if count > 1)
+    if repeated:
+        return (
+            f"{len(repeated)} paragraph(s) appear more than once, starting "
+            f"{repeated[0][:60]!r} - an entry appended to itself twice"
+        )
     return None
 
 
@@ -22117,6 +22134,21 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         # What the checker cannot settle, said where the claim is made.
         self.assertIn("stay yours to honour", section)
         self.assertIn("a person's name, a machine's", section)
+        # The same count in all three homes: the reference, the README and
+        # the docstring inside the artifact that implements it. Read as text
+        # rather than imported - a guidance test has no business importing a
+        # bundled script into its own process.
+        checker = ast.parse(
+            (SKILL_ROOT / "scripts" / "validate_run_log.py").read_text()
+        )
+        self.assertIn(
+            "five clauses of the allowlist",
+            " ".join((ast.get_docstring(checker) or "").casefold().split()),
+        )
+        self.assertIn(
+            "a person's name, a machine's, an access code",
+            " ".join((ROOT / "README.md").read_text().casefold().split()),
+        )
         # The consent gate and the no-backdating rule.
         self.assertIn("under that record's own consent gate", section)
         self.assertIn("nothing is backdated into it afterwards", section)

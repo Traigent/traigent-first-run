@@ -190,9 +190,8 @@ they had to. A sweep of thirty-five edits to the script left fifteen green:
 `ts`, `stage`, `state` and the record shape had no negative coverage at all, and
 every leak pattern had exactly one example, so any narrowing that spared that
 example survived. Each rule was given boundaries and the internal-error path is executed
-rather than described, and the
-docstring names the two allowlist clauses - a person's name, a machine's - that
-have no mechanical shape and stay the assistant's to honour. A clean exit says
+rather than described, and the docstring names the five allowlist clauses that have no shape a checker
+can settle and stay the assistant's to honour. A clean exit says
 what it can prove and no more.
 
 A sixth round is the honest end of this entry, because it found the fix from the
@@ -261,46 +260,6 @@ readily as it caught the case, so the guard is not extended and the discipline
 stays a reading one. The commit is published and stays published; the shipped
 tree says what it should.
 
-A seventh round ran four readers over disjoint halves of the change at once,
-and the two that read the prose and the checker each found the previous round's
-fix carrying the previous round's defect forward in a narrower form. The quote
-rule had been bounded against a letter, so a possessive on a token ending in a
-digit still opened a span - `gpt-4's refusal ... the rows'` - and the
-double-quote alternative had no bound at all, so one quoted term's closing mark
-paired with the next term's opening one. The identifier rule had been given a
-digit test on the reasoning that a class name carries none; vendor prefixes
-front-load digits, and nine of twenty realistic provider error class names were
-refused, which is exactly the sentence an uncategorised refusal is written as.
-Both rules are bounded on characters a word can end with now, and the digit has
-to sit past the eighth character.
-
-Two carriers the contract names first were never reachable. The path rule keyed
-on a boundary CHARACTER class of whitespace and quotes, so a path in backticks -
-the register this guide itself prints paths in - walked past it, and the address
-rule demanded whitespace before the local part, so an address in parentheses did
-too. Both are negative lookbehinds now, which is the difference between listing
-the punctuation you thought of and excluding the characters that cannot precede
-a carrier.
-
-The rest of the round was the checker's own contract. A deeply nested line
-raises `RecursionError` rather than `ValueError`, so a malformed line reported
-the check as broken - the same parser-blowup shape `preflight.py` already
-catches around its own parser. `--json` promised a parseable stdout and emitted
-prose on the two commonest exits. A misspelled flag exited 2, the code this tool
-spends on an unreadable log, so a mistyped argument reported a false fact about
-the customer's file. And `\d` is Unicode, so a stamp in Arabic-Indic digits
-satisfied a format this guide writes in ASCII.
-
-One residual is accepted rather than closed, and it is worth naming because a
-reader will otherwise assume a mechanism exists. The visibility guard scans
-every tracked file, `.py` included - it has refused a bare identifier in a test
-before - but it matches names, and what shipped in an earlier commit on this
-branch was a sentence describing how this repository reviews itself. No name, no
-host, no repository: a keyword gate for that class would refuse honest prose as
-readily as it caught the case, so the guard is not extended and the discipline
-stays a reading one. The commit is published and stays published; the shipped
-tree says what it should.
-
 One last thing this round is worth recording, because it is the same defect the
 whole entry is about, committed by the verification rather than by the guidance.
 Every mutation sweep quoted above ran in a copied tree that omitted `tools/`, so
@@ -308,6 +267,26 @@ Every mutation sweep quoted above ran in a copied tree that omitted `tools/`, so
 mutation put to it. A non-zero exit is what a caught mutation looks like, so the
 guidance half of those sweeps reported a kill for each one and proved nothing.
 It surfaced only because three edits that should have PASSED came back red, and
-a false red is the half of a gate nobody looks at. The harness copies `tools/`
-now and raises on an import error rather than counting it, and the figures here
-are from the re-run.
+a false red is the half of a gate nobody looks at. The sweep is scratch tooling rather than
+anything this repository ships; it copies the whole checkout now and raises on an
+import error rather than counting it, and the figures here are from the re-run.
+
+An eighth reader found the seventh round's own carelessness. Four paragraphs
+above shipped twice, because the updater that appends them was run twice and
+nothing in this ledger could see it: both reason floors measure an entry against
+itself, where doubling makes the number easier rather than harder to clear, and
+the overlap rule compares entries to each OTHER. A repeated paragraph is a
+defect now, checked where the floors are.
+
+Two regexes it also caught were narrowed in the wrong direction by the round
+before. Requiring a hostname's letter at the head of its label made every host
+beginning with a digit unreachable - there is no word boundary inside
+`1password`, so that label can never be a leftmost match - and a label needs a
+letter somewhere rather than first. And requiring an identifier's digit past the
+eighth character bought back nine class names by letting through every token
+whose digits sit at the front; the latest digit in a real class name is at index
+six, and no class name is single-case, so seven characters plus a single-case
+alternative keeps all of them and refuses the ids again. The docstring inside
+the checker still said two allowlist clauses had no mechanical shape while the
+reference and the README said five - one fact in three homes, and the round
+edited two of them.
