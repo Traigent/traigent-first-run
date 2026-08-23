@@ -1858,6 +1858,23 @@ class DatasetFacts:
     holdout_rows: int | None = None
     tuning_labelled_rows: int | None = None
     holdout_labelled_rows: int | None = None
+    # How many DIFFERENT inputs those rows hold, as preflight counted them.
+    #
+    # A second count and not a replacement, because the two answer different
+    # questions and the card needs both: the row counts above are what the
+    # customer's file holds, and these are how much of it a search can tell
+    # apart. Duplicating a row raises the first and cannot raise the second -
+    # both copies score identically under every configuration, by construction -
+    # so a resolution question asked of the row count can be answered by copying
+    # rows, which is the one repair that adds no comparison at all.
+    #
+    # `None` is preflight not having said, never "zero" and never "the same as
+    # the rows". A payload that carries a duplicate finding and no distinct
+    # count is refused in the adapter rather than read as clean, for the reason
+    # the other version guards there give: the honest reading of an absent
+    # measurement is that it is absent.
+    distinct_rows: int | None = None
+    tuning_distinct_rows: int | None = None
     difficulty_bands: tuple[str, ...] = ()
     difficulty_tagged_rows: int | None = None
     duplicate_status: str | None = None
@@ -2595,6 +2612,45 @@ def top_up_offer(
     )
 
 
+def resolved_by_distinct(effective: int, distinct: int | None) -> tuple[int, str]:
+    """Bound a comparison count by the number of DIFFERENT things it compares.
+
+    The resolution counts above ask how finely this dataset can tell two
+    configurations apart, and every one of them was counting rows. A row copied
+    is a row counted twice and a comparison gained zero times: both copies get
+    the same input, so every configuration scores them identically, and the pair
+    can separate no two configurations at any threshold. Counting it twice
+    reports a resolution the data does not have.
+
+    That mattered because of which remedy the resolution cap carries.
+    `dataset-coarse-resolution` asks for more comparable examples, and the
+    cheapest way to satisfy a count of rows is to duplicate the rows already
+    there - so the guide's own advice, followed in the most literal available
+    way, cleared the cap about resolution using the one edit that adds no
+    resolution. The count is what has to refuse it; a warning beside a cleared
+    cap would still have cleared the cap.
+
+    Nothing here re-reads the dataset. `distinct` is preflight's own count of
+    normalized inputs, taken in the same scan that produces the duplicate
+    finding this scorer already carries, and handed over in the same JSON. The
+    evidence for refusing the fake repair was already in the document being
+    scored; this is the read of it.
+
+    `None` is preflight not having counted, and returns the number untouched -
+    an unmeasured fact may not lower a score any more than it may raise one.
+    A `distinct` at or above the count is likewise a no-op rather than a lift:
+    this only ever bounds, because rows the search cannot use are the one thing
+    a distinct count can establish and extra distinct inputs elsewhere in the
+    file are not rows on this side of the split.
+    """
+    if distinct is None or distinct >= effective:
+        return effective, ""
+    return distinct, (
+        f"{effective - distinct} of them repeat an input already counted, so "
+        f"{distinct} different example(s) are what a comparison can resolve"
+    )
+
+
 def power_ceiling(
     effective_n: int | None,
     comparable_rows: int | None = None,
@@ -3011,6 +3067,32 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
             "are whole and non-negative, so this preflight JSON was edited or "
             "predates the current preflight.py; re-run preflight.py --json "
             "from the same version as this script"
+        )
+    return value
+
+
+def _distinct_count(source: dict[str, Any], name: str) -> int | None:
+    """One distinct-input count, keeping "not measured" distinct from "zero".
+
+    `_row_count` above is the reader for the provenance counts, and it cannot
+    serve here: its `required=False` arm returns 0, which is the value that
+    means "nothing in this file can be compared". A count that is absent because
+    the payload predates it must not arrive as that verdict.
+
+    A present value is held to the same rule every other count in this adapter
+    is held to - whole and non-negative - and refused with the same sentence,
+    because a distinct count that is negative or fractional reaches the same
+    arithmetic and bounds the same ceiling.
+    """
+    if name not in source:
+        return None
+    value = source[name]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PreflightInputError(
+            f"dataset facts carry no usable {name} count - row counts are whole "
+            "and non-negative, so this preflight JSON was edited or predates "
+            "the current preflight.py; re-run preflight.py --json from the same "
+            "version as this script"
         )
     return value
 
@@ -4011,10 +4093,19 @@ def score_dataset(
         else:
             effective = scoreable(facts.tuning_rows, labelled)
             marker = f"{labelled} scoreable"
+        # Two different reasons a row may not count, reported as two clauses.
+        # Labels are why a row cannot be scored; repetition is why a scoreable
+        # row adds no comparison. Collapsing them into one number told a
+        # customer with thirty duplicated rows that fifteen were "scoreable",
+        # which is a statement about their labels and was not true of them.
+        scoreable_tuning = effective
+        effective, repeats = resolved_by_distinct(effective, facts.tuning_distinct_rows)
         points, evidence = size_points(effective)
         prefix = f"{facts.tuning_rows} to tune on / {facts.holdout_rows} held back"
-        if effective < facts.tuning_rows:
+        if scoreable_tuning < facts.tuning_rows:
             prefix = f"{prefix}, {marker}"
+        if repeats:
+            prefix = f"{prefix}, {repeats}"
         # Exempt from setting the resolution is not exempt from being reported.
         # A held-out set with nothing scoreable in it cannot check the winner
         # it exists to check, and taking it out of `effective` above is what
@@ -4030,9 +4121,13 @@ def score_dataset(
             else labelled
         )
         effective = scoreable(facts.tuning_rows, tuning_labelled)
+        scoreable_tuning = effective
+        effective, repeats = resolved_by_distinct(effective, facts.tuning_distinct_rows)
         points, evidence = size_points(effective)
         points *= 0.8
-        if effective < facts.tuning_rows:
+        if repeats:
+            evidence = f"{repeats}; {evidence}"
+        if scoreable_tuning < facts.tuning_rows:
             evidence = (
                 f"{facts.tuning_rows} tuning rows, {tuning_labelled} scoreable; "
                 f"{evidence}"
@@ -4043,9 +4138,13 @@ def score_dataset(
         )
     else:
         effective = scoreable(rows, labelled)
+        scoreable_rows = effective
+        effective, repeats = resolved_by_distinct(effective, facts.distinct_rows)
         points, evidence = size_points(effective)
         points *= 0.8
-        if effective < rows:
+        if repeats:
+            evidence = f"{repeats}; {evidence}"
+        if scoreable_rows < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
         evidence = (
             "no tuning set and held-out set, so the result would be "
@@ -4055,6 +4154,14 @@ def score_dataset(
     # The whole dataset, on the same scoreable footing the branches above use
     # for their own side of a split. This is what a top-up would add to, and it
     # is deliberately not the number the ceiling reads - see `power_ceiling`.
+    #
+    # Deliberately NOT bounded by the distinct count either, and this asymmetry
+    # is the point rather than an oversight. `effective` above is how finely the
+    # comparison resolves, which repetition genuinely reduces. This one sizes
+    # the FILE, because it is the basis for an offer to write rows into it up to
+    # a bounded total - and a duplicated row still occupies that budget. Reading
+    # the distinct count here would offer to write rows the file has no room
+    # for, which is the mirror image of the defect the clamp above removes.
     comparable_rows = scoreable(rows, labelled)
     # Deducting alone let the card say "a wiring check, not a score" and return
     # STRONG in the same breath (#88). The ceiling is what stops a result
@@ -6394,6 +6501,31 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     provenance = metrics.get("dataset-provenance", {})
     difficulty = metrics.get("dataset-difficulty-coverage", {})
     integrity = metrics.get("dataset-integrity", {})
+    duplicates = metrics.get("dataset-duplicates", {})
+    # A duplicate finding with no count beside it is refused rather than scored.
+    #
+    # This is the same guard `dataset-integrity` keeps four lines below, for the
+    # same reason and with the same sentence: preflight found something, this
+    # scorer needs the arithmetic of it, and a payload that carries the finding
+    # without the number is one written by an older preflight. Reading it as
+    # clean is the failure the guard exists to stop - it is precisely the state
+    # where the row count overstates what the file can compare, so the silent
+    # fallback would restore the defect for exactly the datasets that have it.
+    #
+    # Only when duplicates were actually FOUND. On a PASS, `distinct_rows` and
+    # the row count are the same number by construction - preflight looked at
+    # every input and no two collided - so an older payload's silence there
+    # costs nothing and refusing it would strand runs over a number that could
+    # not have changed an outcome.
+    if statuses.get("dataset-duplicates") in ("WARN", "FAIL") and (
+        "distinct_rows" not in duplicates
+    ):
+        raise PreflightInputError(
+            "dataset-duplicates reports repeated inputs but carries no "
+            "distinct_rows count - this preflight JSON predates the current "
+            "preflight.py; re-run preflight.py --json from the same version as "
+            "this script"
+        )
     # Structural integrity is about malformed rows (bad JSON, non-objects,
     # missing inputs). Rows that merely lack an expected output are unlabelled,
     # not malformed, so they must not trip the integrity cap - they are scored
@@ -6575,6 +6707,17 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         holdout_rows=holdout_metrics.get("holdout_rows"),
         tuning_labelled_rows=tuning_metrics.get("tuning_labelled_rows"),
         holdout_labelled_rows=holdout_metrics.get("holdout_labelled_rows"),
+        # Validated when present, and left as `None` when it is not.
+        #
+        # Deliberately not `_row_count(..., required=False)`, which returns 0 for
+        # an absent key. Zero is a real answer here - "no two rows ask different
+        # things" - and it is the answer that clamps a comparison to nothing, so
+        # a reader that spells absence and zero the same way would score a
+        # payload predating this count as a dataset with no comparisons in it.
+        # The conditional keeps the three states distinct: measured, measured as
+        # zero, and not measured.
+        distinct_rows=_distinct_count(duplicates, "distinct_rows"),
+        tuning_distinct_rows=_distinct_count(tuning_metrics, "tuning_distinct_rows"),
         difficulty_bands=tuple(difficulty.get("bands", ())),
         difficulty_tagged_rows=difficulty.get("tagged_rows"),
         duplicate_status=statuses.get("dataset-duplicates"),
