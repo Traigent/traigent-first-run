@@ -2816,15 +2816,58 @@ class SkillPackageTests(unittest.TestCase):
             "assets/run-plan.md",
             "assets/requirements-first-run.txt",
         }
-        actual = {
-            str(path.relative_to(SKILL_ROOT))
-            for path in SKILL_ROOT.rglob("*")
-            if path.is_file()
-        }
-        self.assertTrue(required <= actual)
+        self.assertEqual(
+            self._inventory_drift(shipped_skill_files(), required),
+            [],
+            "the bundle the installer copies is not the set of files named "
+            "here, and an inventory that does not match is not an inventory",
+        )
         for path in SKILL_ROOT.rglob("*"):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
+        # Both directions, because a subset check reported neither and this
+        # list is the thing that rots. A file joining the bundle unnamed is how
+        # `references/glossary.md` shipped for months; a name kept after its
+        # file stopped shipping is how the list becomes decoration nobody
+        # trusts. Each planted case must be reported on its own.
+        #
+        # Both probes move `SKILL.md` rather than inventing a plausible bundled
+        # path, and that is not cosmetic. An invented `references/<name>.md`
+        # here is a path-shaped token in a tracked file, which is exactly what
+        # the dangling-reference check above scans every tracked file for - so
+        # such a fixture fails that check, and the only way to keep it would be
+        # another `illustrated` exemption. A probe that needs a rule widened to
+        # hold it is a worse probe than one built from a name that ships.
+        with self.subTest(direction="a file that ships unnamed is reported"):
+            self.assertEqual(
+                self._inventory_drift(shipped_skill_files(), required - {"SKILL.md"}),
+                ["ships but is not named: SKILL.md"],
+                "a file can join the installed bundle without anyone naming "
+                "it, which is the defect this assertion was widened to catch",
+            )
+        with self.subTest(direction="a name that stopped shipping is reported"):
+            self.assertEqual(
+                self._inventory_drift(shipped_skill_files() - {"SKILL.md"}, required),
+                ["named but does not ship: SKILL.md"],
+                "a required file can stop shipping while its name stays in "
+                "the list, leaving the inventory describing a bundle nobody has",
+            )
+
+    @staticmethod
+    def _inventory_drift(shipped: set[str], required: set[str]) -> list[str]:
+        """Every way the installed bundle and its inventory stop agreeing.
+
+        Reported as one list in both directions deliberately. `required <=
+        actual` only ever looked one way, so a file that joined the bundle
+        satisfied it by definition - which is exactly how a shipped reference
+        went unnamed long enough for nobody to notice it was unguarded. The
+        other direction is the slower failure: a name outliving its file turns
+        the list into documentation of a bundle that no longer exists.
+        """
+        return sorted(
+            [f"ships but is not named: {name}" for name in shipped - required]
+            + [f"named but does not ship: {name}" for name in required - shipped]
+        )
 
     LICENCE_SET = ("LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md")
 
