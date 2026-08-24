@@ -251,6 +251,16 @@ any applicable calibration result. When rows exist, do the row-level sanity chec
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
+
+**Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
+`input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
+`--expected-field` to that opening call. A request/response log or accepted trace is a **source**
+from which rows may later be built, never a `--dataset` argument. If only such sources exist, omit
+`--dataset` so the opening card records `dataset-absent` and routes to `get-data`. After that
+recorded opening result, map a custom dataset's actual fields and re-score; when deriving rows from
+recorded calls, declare the real input separately from the generated candidate output, which is not
+an expected-answer key.
+
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided

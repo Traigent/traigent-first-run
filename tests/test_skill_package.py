@@ -13237,6 +13237,38 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(instruction, creation)
         self.assertIn("no generated row competes with it yet", skill)
 
+    def test_opening_dataset_sequence_records_both_unmapped_and_absent_states(
+        self,
+    ) -> None:
+        """#282/#283: discovery must not repair either opening before scoring.
+
+        A custom-schema file has to reach the default read before field paths
+        are supplied, or `dataset-shape-unrecognised` can never tell the
+        customer what was learned. A recorded call log is useful evidence but
+        not scoreable rows, so it has to leave `--dataset` absent until rows are
+        derived and labelled. These are one sequencing contract: inventory may
+        discover either item, while the opening call still records its own
+        evidence boundary before any repair or construction.
+        """
+        skill = " ".join(SKILL.read_text().split())
+        gate = skill.index("#### Opening readiness gate")
+        sequence = skill.index("**Opening dataset sequencing.**")
+        creation = skill.index("### 3. Complete the system")
+        self.assertLess(gate, sequence)
+        self.assertLess(sequence, creation)
+        opening = skill[sequence:creation]
+        for phrase in (
+            "default `input`/`output` fields",
+            "before any explicit field mapping",
+            "do not pass `--input-field` or `--expected-field` to that opening call",
+            "never a `--dataset` argument",
+            "omit `--dataset` so the opening card records `dataset-absent`",
+            "After that recorded opening result, map a custom dataset's actual fields and re-score",
+            "generated candidate output, which is not an expected-answer key",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, opening)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps
