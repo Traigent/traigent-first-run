@@ -4255,7 +4255,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("use this gate order", normalized_safety)
         for heading in (
             "## static and mock validation",
-            "### execution-evaluator containment",
+            "### execution evaluators are out of scope",
             "### deterministic calibration and mock plumbing",
             "### config-space document",
             "## approval and budgets",
@@ -6709,43 +6709,22 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, plan_text)
 
-    def test_mandated_semantic_review_covers_code_execution_outcomes(self) -> None:
-        """A supported code task must have explicit classes to review against."""
+    def test_code_and_sql_evaluators_are_out_of_scope_for_first_run(self) -> None:
+        """The guide stops safely rather than inventing a sandbox it cannot ship."""
         text = RUN_SAFETY.read_text().casefold()
         outcome_table = text.split("for the stage-4 semantic-coverage review", 1)[
             1
         ].split("binding is first", 1)[0]
         for phrase in (
             "code or sql",
-            "parse or compile failure",
-            "correct but materially different implementation",
-            "full test pass",
-            "partial test pass",
-            "wrong result after a clean exit",
-            "runtime error",
-            "timeout or resource-limit breach",
-            "forbidden side effect",
+            "out of scope for this first-run guide",
+            "stop before evaluator execution",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, outcome_table)
 
-    def test_execution_evaluator_permutation_pass_is_not_binding_evidence(
-        self,
-    ) -> None:
-        """Reordered code failing to execute proves nothing about value binding."""
-        skill = " ".join(SKILL.read_text().casefold().split())
-        for phrase in (
-            "on an execution evaluator",
-            "distinguished only because rearranged code is caught and scored as invalid",
-            "carries no evidence about label/value binding",
-            "a propagated parse or runtime exception is not a pass",
-            "semantic-coverage review must cover that axis for code tasks",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, skill)
-
-    def test_execution_evaluators_are_sandboxed_and_resource_bounded(self) -> None:
-        """A subprocess timeout alone cannot contain model-written code."""
+    def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
+        """The scope boundary is explicit, early, and does not invent a product feature."""
         skill_text = SKILL.read_text()
         authorization = " ".join(
             skill_text.split("## Action authorization", 1)[1]
@@ -6754,9 +6733,10 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "any path that executes or imports candidate output as code, shells out with it, or submits it to a code/sql engine",
-            "execution-evaluator containment contract on every invocation",
-            "otherwise do not run it",
+            "a path that executes or imports candidate output as code, shells out with it, or submits it to a code/sql engine",
+            "outside this first-run guide",
+            "stop before execution",
+            "manual-containment route",
         ):
             with self.subTest(authorization_phrase=phrase):
                 self.assertIn(phrase, authorization)
@@ -6765,38 +6745,27 @@ class SkillPackageTests(unittest.TestCase):
             skill_text.split("### 4.", 1)[1].split("### 5.", 1)[0].casefold().split()
         )
         for phrase in (
-            "an execution evaluator waits until the sandbox and declared local dependencies",
-            "every calibration/scored invocation uses that containment",
-            "otherwise do not run it",
+            "before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate",
+            "record the `containment` stop",
+            "before calibration, environment setup, credentials, provider calls, or paid work",
         ):
             with self.subTest(stage_four_phrase=phrase):
                 self.assertIn(phrase, stage_four)
 
         text = RUN_SAFETY.read_text()
-        section = text.split("### Execution-evaluator containment", 1)[1].split(
+        section = text.split("### Execution evaluators are out of scope", 1)[1].split(
             "### Deterministic calibration and mock plumbing", 1
         )[0]
         normalized = " ".join(section.casefold().split())
 
         for phrase in (
-            "model-written code or sql as untrusted active content",
-            "calibration and every scored callback",
-            "disposable sandbox",
-            "network disabled",
-            "no provider, traigent, or project credentials",
-            "read-only",
-            "unprivileged",
-            "wall-clock time",
-            "cpu time",
-            "memory",
-            "process count",
-            "open files",
-            "file size",
-            "captured output",
-            "terminate the whole descendant process tree",
-            "ordinary subprocess",
-            "resource limits alone do not provide isolation",
-            "do not run the execution evaluator",
+            "supports non-executing comparison evaluators",
+            "does not ship, select, or validate a sandbox",
+            "record a `stopped` `containment` event",
+            "end this guide before calibration, environment setup, credentials, provider calls, or paid work",
+            "separate manual containment design and review outside this guide",
+            "do not describe that manual work as available through this guide",
+            "local subprocess fulfils it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
@@ -6809,8 +6778,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "before environment setup, run only a non-executing evaluator",
-            "execution evaluator waits until its declared local dependencies and sandbox are available",
-            "every candidate execution must satisfy the containment contract above",
+            "an execution evaluator has already ended this guide at the scope gate above",
         ):
             with self.subTest(calibration_phrase=phrase):
                 self.assertIn(phrase, calibration)
@@ -6822,31 +6790,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "repeated model-written code or sql execution",
-            "sandbox location",
-            "tests and fixtures",
-            "limits, residual risk",
-            "external sandbox recipient",
+            "execution evaluators end this guide before an approval card",
+            "do not price, approve, or run one here",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
-
-        post_run = " ".join(
-            text.split("## Post-run verification", 1)[1]
-            .split("## Recovery", 1)[0]
-            .casefold()
-            .split()
-        )
-        for phrase in (
-            "every execution-evaluator invocation used the declared sandbox and resource limits",
-            "timeouts",
-            "limit breaches",
-            "forbidden side effects",
-            "sandbox failures were counted and reported",
-            "rather than retried outside containment",
-        ):
-            with self.subTest(post_run_phrase=phrase):
-                self.assertIn(phrase, post_run)
 
         evaluation = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -6856,12 +6804,12 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "process separation, not sandbox isolation",
-            "follow the skill stage-4 gate",
-            "`run-safety.md` owns execution-evaluator containment",
+            "stage-4 scope gate ends this guide",
+            "before any evaluator executes candidate code or sql",
         ):
             self.assertIn(phrase, evaluation)
         for duplicated_mandate in (
-            "delegate **every** probe's candidate content to that sandbox",
+            "must delegate that content to the execution-evaluator containment",
             "an execution evaluator waits for its declared dependencies",
         ):
             self.assertNotIn(duplicated_mandate, evaluation)
@@ -6872,7 +6820,10 @@ class SkillPackageTests(unittest.TestCase):
         calibrator_doc = ast.get_docstring(ast.parse(calibrator_source)) or ""
         normalized_doc = " ".join(calibrator_doc.casefold().split())
         self.assertIn("process separation is not a sandbox", normalized_doc)
-        self.assertIn("must delegate that content", normalized_doc)
+        self.assertIn(
+            "does not calibrate a scorer that executes candidate code or sql",
+            normalized_doc,
+        )
         self.assertNotIn("isolated", normalized_doc)
 
     def test_product_grading_question_is_an_ambiguity_only_gate(self) -> None:

@@ -237,7 +237,7 @@ what was examined and an absent class stays visible:
 | a classification | near-miss labels, an absent label, case and whitespace |
 | free text | omission, contradiction, added claims not in the input |
 | structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
-| code or SQL | parse or compile failure, correct but materially different implementation, full test pass, partial test pass, wrong result after a clean exit, runtime error, timeout or resource-limit breach, forbidden side effect |
+| code or SQL | out of scope for this first-run guide; stop before evaluator execution and use the manual-containment route below |
 
 Binding is first because a token comparison cannot see a correct value paired to the wrong key.
 The deterministic permutation probe asks about that one class mechanically; the rest still needs
@@ -245,8 +245,8 @@ the recorded semantic review.
 
 Identify execution evaluators from their complete call path. A scorer enters that path when it
 executes or imports candidate/model output as code, shells out with it, or submits it to a code or
-SQL engine. Apply the containment contract below before calibration; if it cannot be met, do not
-run that evaluator in calibration, mock, baseline, optimization, or validation.
+SQL engine. That is a scope stop for this first-run guide, not a sandbox request: do not run that
+evaluator in calibration, mock, baseline, optimization, or validation.
 
 ## Static and mock validation
 
@@ -268,49 +268,32 @@ deferred SDK finding, not as a failure of dataset-quality checks. Dataset heuris
 `--input-field` and `--expected-field` from the user's schema. Those choices configure only the
 local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 
-### Execution-evaluator containment
+### Execution evaluators are out of scope
 
-Treat model-written code or SQL as untrusted active content whenever an evaluator executes it.
-This requirement applies to calibration and every scored callback in baseline, optimization, and
-validation, including generated or preserved evaluators. Never execute that content inside the
-assistant, SDK, optimizer, or evaluator-orchestration process, or in an ordinary subprocess that
-shares the host's access.
+This first-run guide supports non-executing comparison evaluators. It does not ship, select, or
+validate a sandbox for candidate/model output that is executed as code or SQL. A virtual
+environment, stripped credentials, an ordinary subprocess, a timeout, or mock flags do not make
+that execution safe.
 
-Use a fresh disposable sandbox for each candidate, or reset it to an equivalent clean state, with:
-
-- Network disabled; no provider, Traigent, or project credentials; and a minimal environment.
-- No writable host home or project mount. Mount only required tests and fixtures read-only, plus a
-  bounded disposable scratch directory.
-- An unprivileged identity, no elevated capabilities or privilege escalation, and an OS-enforced
-  container, VM, or sandbox boundary appropriate to the host.
-- Hard limits on wall-clock time, CPU time, memory, process count, open files, file size and scratch
-  space, and captured output.
-- Terminate the whole descendant process tree on completion or any limit breach, then dispose of
-  the sandbox. Run SQL only against a disposable seeded database, never a production
-  connection or credential.
-
-Record the boundary, limits, mounted inputs, and permitted side effects in the run plan. Report a
-runtime error, timeout or resource-limit breach, forbidden side effect, and sandbox failure as
-distinct outcomes; never retry one outside containment. A virtual environment, stripped builtins,
-removed keys, proxy blackholing, an ordinary subprocess, or a timeout alone is not a sandbox.
-Resource limits alone do not provide isolation from the filesystem, network, or secrets. The
-calibration helper's child process separates scorer imports from the assistant, but a scorer that
-executes candidate content must still delegate that execution to the declared sandbox. If no
-available boundary enforces these properties, do not run the execution evaluator or paid
-optimization against it; use non-executing static/parser/compile checks or pause for a safe runner.
+When inspection or static preflight identifies that path, preserve the project, run only read-only
+static inspection that does not import or execute it, record a `stopped` `containment` event, and
+end this guide before calibration, environment setup, credentials, provider calls, or paid work.
+The next step is a separate manual containment design and review outside this guide; it must decide
+the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
+Do not describe that manual work as available through this guide or imply that a local subprocess
+fulfils it.
 
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
 evidence-backed semantic-coverage verdict. Before environment setup, run only a non-executing
-evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. An
-execution evaluator waits until its declared local dependencies and sandbox are available; every
-candidate execution must satisfy the containment contract above. A non-executing evaluator that
-needs a declared local dependency also waits until that dependency is installed. Run either before
-creating `.env` or requesting a provider key. A generic outside-review wait is not a gate; pause
-only when one unresolved product-grading ambiguity would materially change correctness or ranking.
-Do not execute an LLM judge or an uncertain or external evaluator without explicit approval in the
-stage where it runs, covering recipients, data, calls, runtime, and spend.
+evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. A
+non-executing evaluator that needs a declared local dependency waits until that dependency is
+installed. An execution evaluator has already ended this guide at the scope gate above. Run either
+before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
+pause only when one unresolved product-grading ambiguity would materially change correctness or
+ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval
+in the stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
@@ -538,8 +521,8 @@ Before the provider-paid baseline, show only its immediate scope:
   calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
   `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
-- Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
-  fixtures, limits, residual risk, and any external sandbox recipient.
+- Execution evaluators end this guide before an approval card; do not price, approve, or run one
+  here.
 
 ### The pre-spend approval card
 
@@ -977,13 +960,10 @@ Before claiming success, verify:
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
     named before any generalization claim, and the held-out score SKILL stage 8 discloses appears
     beside them.
-12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
-    limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
-    than retried outside containment.
-13. Every reported frontier carries measured costs, a score claim the paired counts support, and no
+12. Every reported frontier carries measured costs, a score claim the paired counts support, and no
     point below the floor. Trials that came back without reported cost carry no cost claim: report
     that, not a number.
-14. Each paid process ran against the approved figures it was launched with, and the close reports
+13. Each paid process ran against the approved figures it was launched with, and the close reports
     them: the approved total, what this run spent against it, and what is left. A phase that
     refused to start, or stopped at the remaining, is named with the work it did not do.
 

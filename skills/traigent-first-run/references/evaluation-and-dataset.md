@@ -228,8 +228,8 @@ questions.
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase shares the single `--timeout` budget. Follow the
-SKILL stage-4 gate for permitted paths; `run-safety.md` owns execution-evaluator containment.
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. The stage-4 scope
+gate ends this guide before any evaluator executes candidate code or SQL.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
 `ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that
