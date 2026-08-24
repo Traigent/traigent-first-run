@@ -15,15 +15,20 @@ could actually observe. It is not a sandbox and it does not build one: you
 supply the command that enters your boundary, and this says whether that
 command delivers the properties the contract names.
 
-Five of those properties are observable from inside, and each is reported as
+Six of those properties are observable from inside, and each is reported as
 `proven`, `refuted`, or `unverified` with the evidence it rests on:
 
-* `entered`     - the probe ran to completion AND this host's filesystem is not
-                  visible at its own absolute paths. The second half is the one
-                  that matters. A command that silently runs on the host looks
-                  identical to a contained one on every other axis - measured,
-                  the host here reported uid 1000, which is not root and passes
-                  an identity check on its own.
+* `entered`     - the probe ran to completion AND could not see the one host
+                  file this check made for it, under this host's temporary
+                  directory. That is a single path, and saying so is the point:
+                  it is not "this host's filesystem is invisible", which one
+                  path cannot establish. A boundary can pass this and still
+                  mount some other host directory at its own absolute path,
+                  which is what `filesystem` is for. What it does catch is the
+                  command that silently ran on the host, and that matters
+                  because such a command looks identical to a contained one on
+                  every other axis - measured, the host here reported uid 1000,
+                  which is not root and passes an identity check on its own.
 * `network`     - no IPv4 or IPv6 route leaves loopback. Read from the routing
                   table rather than by opening a connection, because a failed
                   connection does not mean what it appears to: measured on one
@@ -34,49 +39,84 @@ Five of those properties are observable from inside, and each is reported as
                   interfaces is wrong for the mirror-image reason - a network
                   namespace with no connectivity still carries `tunl0`, `gre0`,
                   `sit0` and their siblings, so "one interface" never holds.
-* `credentials` - no environment variable inside the boundary has the shape of
-                  a provider, Traigent, or project secret. Names only; this
-                  never reads or prints a value.
-* `filesystem`  - the two host paths this check can name - its own scratch
-                  directory and the working directory - took no write from
-                  inside. `filesystem_property` reads this host afterwards
-                  rather than trusting what the probe says about its own
-                  writes, so a boundary that lies about them still fails.
+* `credentials` - no environment variable inside the boundary carries a NAME
+                  shaped like a provider, Traigent, or project secret. Names
+                  only; this never reads or prints a value. That is a floor and
+                  not a clearance: a name-shape test cannot see a secret under a
+                  name it does not recognise, and it deliberately passes over
+                  one name that is public by construction in the common base
+                  images - the signing-key fingerprint they verify their own
+                  download with - so a real secret hidden under that exact name
+                  is not seen either. `SECRET_ALLOWED` is that one name, and
+                  says why it is there.
+* `filesystem`  - none of the three host paths this check can name - its own
+                  scratch directory, the working directory, and this host's home
+                  directory - took a write from inside. Home and working
+                  directory are there because the contract names exactly those
+                  two nouns: "no writable host home or project mount". The
+                  verdict is read from this host after the boundary exits, not
+                  from what the probe says about its own writes, so a boundary
+                  that claims it was refused while actually writing still fails.
+                  The reverse direction is not symmetric and is not claimed: a
+                  write the probe reports as succeeding, with no host file
+                  behind it, means the path was shadowed by a filesystem that is
+                  not this host's, and is reported that way rather than as a
+                  contradiction.
+* `privilege`   - the probe holds no effective capabilities, cannot see either
+                  of this check's own processes, and runs with `no_new_privs`
+                  set. The contract's third bullet asks for all three and this
+                  used to read none of them, so `--privileged --pid host`
+                  cleared every other property and was told it had passed.
 * `identity`    - the probe did not run as uid 0.
+
+Everything above except `filesystem` is read from what the probe printed. A
+declared command that fabricates that output is believed; the nonce defeats a
+recorded transcript replayed verbatim and nothing more. That is not the threat
+this exists for - the assistant running it is not trying to defeat it - but a
+file called `verify_sandbox` should say which half of its report is a
+measurement of this host and which half is testimony.
 
 What it does NOT establish, said here so a clean exit is not read as more than
 it is. The contract's resource limits - wall-clock, CPU, memory, process count,
 open files, file size, scratch space, captured output - are not exercised, nor
 is per-candidate disposability, nor descendant-process teardown, nor whether
-some OTHER host directory is mounted writable. `filesystem` names two paths
-because two are all a checker can know about; a boundary can pass here and
-still mount a third. Those remain the assistant's to declare and record.
+some OTHER host directory is mounted writable. `filesystem` names three paths
+because three are all a checker can know about; a boundary can pass here and
+still mount a fourth. Seccomp confinement is read and reported but never
+refuted on, because a boundary can be isolated by a virtual machine and carry no
+seccomp filter at all. Those remain the assistant's to declare and record.
 
 The declared command must end where a program to run is expected - after the
 image for `docker run`, after the bindings for a sandbox wrapper - because the
 probe is appended to it as arguments. No runtime is recommended here and none
 is required. One was driven while this was written; a second was installed on
-that same machine and refused to create a namespace at all, which is the whole
-reason this reports what a probe observed rather than what a runtime is
-supposed to do.
+that same machine and could not complete a single sandboxing invocation on it -
+the namespace is created, and then the kernel denies the uid-map write and the
+network capability the runtime needs, so every attempt exited non-zero. That is the whole reason this reports what a probe observed rather
+than what an installed runtime is supposed to do.
 
 Three other shapes were weighed and lost. A recipe in the guidance is the
 cheapest, and is one more instruction with nothing checking it - the defect
 this file exists to answer, reintroduced one document away. It is also less
 portable than it looks: the container recipe this repository already owns for
-its own use is refused by the daemon on an ordinary developer machine, with an
-error about file sharing that says nothing about containment, so the customer
-who copied it would be stuck holding a command and no diagnosis. A check that
+its own use is refused by one ordinary developer daemon, for a checkout outside
+the directories that daemon shares, with an error about file sharing that says
+nothing about containment - the same recipe, same machine, run from a shared
+directory or against a different daemon, works. A customer who copied it would
+be stuck holding a command and no diagnosis, and could not tell from the error
+which of those two situations they were in. A check that
 inspects the host and names what it finds has to guess what an installed
 runtime would do, and the second runtime above is why that guess is worthless -
 present, and unable to start. Building the sandbox for the customer was never
 available: it has to hold their evaluator, their fixtures and their database,
 and a runner invented here knows none of those.
 
-Exits 0 when every property is proven, 1 when any is refuted, 2 when any could
-not be verified - a missing runtime and a probe that never ran are both this -
-and 3 when this script fails, which is never a finding about the boundary. Only
-0 clears the execution evaluator to run. 1 and 2 route the same way the
+Exits 0 when every property above is proven, 1 when any is refuted, 2 when any
+could not be verified - a missing runtime and a probe that never ran are both
+this - and 3 when this script fails, which is never a finding about the
+boundary. Exit 0 means every property this check reads is proven; it does not
+mean the contract is met, because the paragraph above names what is never read.
+Only 0 clears the execution evaluator to run. 1 and 2 route the same way the
 reference does: do not run the execution evaluator or paid optimization against
 it; use non-executing static/parser/compile checks or pause for a safe runner.
 """
@@ -101,12 +141,90 @@ TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 
 PROVEN, REFUTED, UNVERIFIED = "proven", "refuted", "unverified"
 
-# An environment-variable NAME that looks like it carries a secret. Matched on
-# the name because the value is never read: a check that prints what it found
-# to prove it found it is the leak it was guarding against.
-CREDENTIAL_NAME = re.compile(
-    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|TRAIGENT)", re.IGNORECASE
+# The words that make an environment-variable NAME look like it carries a
+# secret. Matched on the name because the value is never read: a check that
+# prints what it found to prove it found it is the leak it was guarding
+# against.
+#
+# Compared by underscore-separated SEGMENT, not by substring. A substring test
+# over these words is a false-red factory - `PAT` sits inside `PATH`, which
+# every boundary on earth carries - and the first version of this file paid the
+# opposite price for the same shortcut: matching only a handful of words let
+# `GITHUB_PAT`, `AUTHORIZATION` and `SSH_AUTH_SOCK` through a boundary this
+# check then called clean.
+#
+# `SESSION` was tried and taken back out. Run against this host it reported
+# `XDG_SESSION_TYPE`, `DESKTOP_SESSION`, `GNOME_SHELL_SESSION_MODE`,
+# `SESSION_MANAGER`, `DBUS_SESSION_BUS_ADDRESS` and two more, none of them a
+# credential and all of them noise in front of the ones that were - and it
+# bought nothing, because every session variable that IS a secret says so
+# another way: `SESSION_TOKEN` under `TOKEN`, `SESSION_COOKIE` under `COOKIE`.
+# A word earns a place here by catching something no other word catches.
+SECRET_SEGMENTS = frozenset(
+    {
+        "KEY",
+        "KEYS",
+        "APIKEY",
+        "ACCESSKEY",
+        "SECRET",
+        "SECRETS",
+        "TOKEN",
+        "PASSWORD",
+        "PASSWD",
+        "PASS",
+        "PASSPHRASE",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "TRAIGENT",
+        "PAT",
+        "AUTH",
+        "AUTHORIZATION",
+        "BEARER",
+        "COOKIE",
+        "NETRC",
+        "KUBECONFIG",
+        "PRIVATE",
+    }
 )
+# A connection string carries its credential inside the value, and its name
+# usually carries none of the words above: read as segments, `DATABASE_URL` is
+# two innocuous English words, and it is the likeliest variable to appear in
+# this script's own headline use case, text-to-SQL. It is reported when a
+# store word and a locator word share one name, which is narrow on purpose -
+# `API_URL` and `BASE_URL` are not credentials and must not be refuted.
+STORE_SEGMENTS = frozenset(
+    {
+        "DATABASE",
+        "DB",
+        "POSTGRES",
+        "POSTGRESQL",
+        "PG",
+        "MYSQL",
+        "MARIADB",
+        "MONGO",
+        "MONGODB",
+        "REDIS",
+        "AMQP",
+        "RABBITMQ",
+        "SMTP",
+        "WEBHOOK",
+        "CLICKHOUSE",
+        "SNOWFLAKE",
+        "S3",
+    }
+)
+LOCATOR_SEGMENTS = frozenset({"URL", "URI", "DSN", "CONN", "CONNECTION"})
+# Exactly one name, and exact rather than a pattern, because the cost of the
+# entry is a real secret hidden under it.
+#
+# `GPG_KEY` on the Docker official language images holds the PUBLIC fingerprint
+# used to verify the interpreter tarball. Without this line the example in this
+# script's own `--help` fails its own check on the image this repository pins,
+# and - worse than a false red - the reader cannot resolve it: no run flag
+# removes a variable an image baked in, so the only available fix is to stop
+# using the check. `GPG_PRIVATE_KEY` and every other longer spelling is still
+# reported, which is why this is a name list and not a rule about `GPG`.
+SECRET_ALLOWED = frozenset({"GPG_KEY"})
 # A real environment-variable name, used to discard the debris a value
 # containing a newline leaves in `env` output. A line that survives this and
 # matches the pattern above is reported; that direction is the safe one, since
@@ -124,30 +242,88 @@ printf '@uid %s\n' "$(id -u 2>/dev/null || echo unknown)"
 if [ -e "$1" ]; then printf '@marker visible\n'; else printf '@marker absent\n'; fi
 if ( : > "$2" ) 2>/dev/null; then printf '@scratch-write ok\n'; else printf '@scratch-write refused\n'; fi
 if ( : > "$3" ) 2>/dev/null; then printf '@workdir-write ok\n'; else printf '@workdir-write refused\n'; fi
+if ( : > "$5" ) 2>/dev/null; then printf '@home-write ok\n'; else printf '@home-write refused\n'; fi
+seen=0
+if [ -e "/proc/$6" ]; then seen=$((seen+1)); fi
+if [ -e "/proc/$7" ]; then seen=$((seen+1)); fi
+printf '@host-process %s\n' "$seen"
 printf '@begin route4\n'; cat /proc/net/route 2>/dev/null; printf '@end route4\n'
 printf '@begin route6\n'; cat /proc/net/ipv6_route 2>/dev/null; printf '@end route6\n'
+printf '@begin status\n'; cat /proc/self/status 2>/dev/null; printf '@end status\n'
 printf '@begin env\n'; env 2>/dev/null; printf '@end env\n'
 printf '@done %s\n' "$4"
 """
 
 
+# The spellings that put a NAME=VALUE operand on a command line. `-e X=Y`,
+# `-eX=Y`, `--env X=Y` and `--env=X=Y` are one flag with four accepted forms,
+# and a redactor that knows only the first of them is a redactor that leaks.
+ENV_FLAGS = frozenset({"-e", "--env"})
+
+
+def blanked_operand(operand: str) -> str:
+    """A `NAME=VALUE` operand with the value gone, by POSITION not by name.
+
+    `NAME` alone is returned untouched: that spelling passes the variable
+    through from the surrounding environment and carries no value here.
+    """
+    name, separator, _ = operand.partition("=")
+    return f"{name}=<redacted>" if separator else operand
+
+
 def redacted_command(command: list[str]) -> list[str]:
-    """The declared command with any secret it carries removed.
+    """The declared command with any value it carries removed.
 
     Found by running this check rather than by reading it. The report echoes
     the command back so the reader knows which boundary was measured, and the
-    commonest way to fail the `credentials` property is `-e SOMETHING_KEY=...`
-    on that very command line - so the report was printing the secret it had
-    just refused, into a terminal and a JSON file, one line above a finding
-    that carefully said "names only; no value was read".
+    commonest way to fail the `credentials` property is to put the secret on
+    that very command line - so the report was printing the secret it had just
+    refused, one line above a finding that carefully said "names only; no value
+    was read".
+
+    Keyed on the FLAG rather than on the name, and that is the whole fix. The
+    first version asked whether the name looked secret-shaped, which meant its
+    correctness depended on enumerating every name a customer might choose:
+    measured, `-e DATABASE_URL=postgres://user:pw@host/db` printed the password
+    in full, and so did every spelling the name test could not parse -
+    `-eOPENAI_API_KEY=...` and `--env=OPENAI_API_KEY=...` are ordinary, and both
+    leaked. A `-e` operand is a value by position, whatever it is called.
+
+    The name test is kept underneath as a second net, for `NAME=VALUE` typed
+    without a flag in front of it, but nothing rests on it any more.
+
+    One shape remains readable and cannot be closed by any rule: a secret typed
+    inside a positional argument, such as a connection string quoted into a
+    `sh -c` script the boundary command runs. Nothing marks it as a value, so
+    nothing here can find it - the report echoes the command the reader typed,
+    and that part of it is theirs.
     """
     safe: list[str] = []
+    expect_operand = False
     for argument in command:
-        name, separator, _ = argument.partition("=")
-        if separator and ENVIRONMENT_NAME.match(name) and CREDENTIAL_NAME.search(name):
-            safe.append(f"{name}=<redacted>")
-        else:
+        if expect_operand:
+            safe.append(blanked_operand(argument))
+            expect_operand = False
+            continue
+        if argument in ENV_FLAGS:
             safe.append(argument)
+            expect_operand = True
+            continue
+        if argument.startswith("--env="):
+            safe.append("--env=" + blanked_operand(argument[len("--env=") :]))
+            continue
+        if (
+            argument.startswith("-e")
+            and not argument.startswith("--")
+            and len(argument) > 2
+        ):
+            safe.append("-e" + blanked_operand(argument[2:]))
+            continue
+        name, separator, _ = argument.partition("=")
+        if separator and ENVIRONMENT_NAME.match(name) and secret_shaped(name):
+            safe.append(f"{name}=<redacted>")
+            continue
+        safe.append(argument)
     return safe
 
 
@@ -212,6 +388,16 @@ def routes_off_loopback(
     return sorted(set(found))
 
 
+def secret_shaped(name: str) -> bool:
+    """Whether this variable NAME reads like it carries a credential."""
+    if name in SECRET_ALLOWED:
+        return False
+    segments = set(name.upper().split("_"))
+    if segments & SECRET_SEGMENTS:
+        return True
+    return bool(segments & STORE_SEGMENTS and segments & LOCATOR_SEGMENTS)
+
+
 def credential_names(environment: list[str] | None) -> list[str]:
     """Names in the probe's `env` output that have the shape of a secret."""
     names: list[str] = []
@@ -219,7 +405,7 @@ def credential_names(environment: list[str] | None) -> list[str]:
         name, separator, _ = line.partition("=")
         if not separator or not ENVIRONMENT_NAME.match(name):
             continue
-        if CREDENTIAL_NAME.search(name):
+        if secret_shaped(name):
             names.append(name)
     return sorted(set(names))
 
@@ -267,6 +453,27 @@ def network_property(output: str) -> Property:
         return Property(
             "network", UNVERIFIED, "the probe did not report a complete routing table"
         )
+    # A section that closed but arrived EMPTY is the same class of nothing as
+    # one that never closed, and it used to read as the passing observation.
+    # `/proc/net/route` always carries a header line - the fixtures in this
+    # package's tests carry it because the kernel does - so an empty one means
+    # the file could not be read, not that no route exists. A container on the
+    # default bridge with the whole internet reachable, where only `cat` was
+    # unavailable, was cleared by this property before the guard below existed;
+    # `tests/test_verify_sandbox.py` reproduces the parse that did it. Any
+    # boundary without `/proc` mounted lands here by accident.
+    #
+    # IPv6 is not held to the same rule: `/proc/net/ipv6_route` has no header
+    # and is legitimately absent on a host with IPv6 disabled, so an empty one
+    # really can mean no route.
+    if not route4:
+        return Property(
+            "network",
+            UNVERIFIED,
+            "the probe reported an empty IPv4 routing table, and that file "
+            "always carries a header line - so it could not be read rather "
+            "than being empty, and whether a route leaves loopback is unknown",
+        )
     off_loopback = routes_off_loopback(route4, route6)
     if off_loopback:
         return Property(
@@ -288,6 +495,17 @@ def credentials_property(output: str) -> Property:
         return Property(
             "credentials", UNVERIFIED, "the probe did not report its environment"
         )
+    # Empty, for the same reason the routing table is: `env` in a POSIX shell
+    # reports at least the variables the shell itself sets, so nothing coming
+    # back means nothing was read.
+    if not environment:
+        return Property(
+            "credentials",
+            UNVERIFIED,
+            "the probe reported no environment at all, which is not the same "
+            "as an empty one - a shell always reports the variables it sets "
+            "itself, so this reading did not happen",
+        )
     names = credential_names(environment)
     if names:
         return Property(
@@ -300,16 +518,42 @@ def credentials_property(output: str) -> Property:
     return Property(
         "credentials",
         PROVEN,
-        f"none of the {len(environment)} variables inside is shaped like a secret",
+        f"none of the {len(environment)} variable names inside is shaped like "
+        "a secret - a floor, not a clearance: this reads names and cannot see "
+        "a secret under a name it does not recognise",
     )
 
 
-def filesystem_property(output: str, landed: list[Path]) -> Property:
-    """Whether either host path this check can name took a write from inside.
+# The three host paths this check is able to name. Home and the working
+# directory are here because the contract names exactly those two nouns - "no
+# writable host home or project mount" - and naming only the working directory
+# left the commoner of the two unmeasured: measured, a boundary mounting the
+# customer's whole home read-write passed every property and exited 0, from
+# where it could read their `~/.ssh` and write into their projects.
+WRITE_PROBES = ("scratch-write", "workdir-write", "home-write")
+WRITE_PROBE_NOUNS = "this check's scratch directory, the working directory and this host's home directory"
 
-    `landed` is read from this host after the boundary exits, so the verdict
-    does not depend on the probe telling the truth about its own writes.
+
+def filesystem_property(
+    output: str, landed: list[Path], unreadable: list[str]
+) -> Property:
+    """Whether any host path this check can name took a write from inside.
+
+    `landed` is read from this host after the boundary exits, so a boundary
+    that claims a write was refused while actually performing it still fails.
+    The reverse direction is not symmetric and is not claimed here: a write the
+    probe reports as succeeding with no host file behind it means the path was
+    shadowed inside the boundary by a filesystem that is not this host's, which
+    is a compliant arrangement and is described rather than refuted.
     """
+    if unreadable:
+        return Property(
+            "filesystem",
+            UNVERIFIED,
+            "this check could not read back " + ", ".join(unreadable) + ", so "
+            "whether a write from inside reached it is unknown - and unknown "
+            "is not clean",
+        )
     if landed:
         return Property(
             "filesystem",
@@ -317,16 +561,130 @@ def filesystem_property(output: str, landed: list[Path]) -> Property:
             "a write from inside the boundary reached this host at "
             + ", ".join(str(path) for path in landed),
         )
-    if field(output, "scratch-write") is None or field(output, "workdir-write") is None:
+    reports = {name: field(output, name) for name in WRITE_PROBES}
+    missing = [name for name, value in reports.items() if value is None]
+    if missing:
         return Property(
-            "filesystem", UNVERIFIED, "the probe did not report both write attempts"
+            "filesystem",
+            UNVERIFIED,
+            "the probe did not report every write attempt (missing: "
+            + ", ".join(missing)
+            + ")",
+        )
+    shadowed = [name for name, value in reports.items() if value == "ok"]
+    if shadowed:
+        return Property(
+            "filesystem",
+            PROVEN,
+            f"no write from inside reached {WRITE_PROBE_NOUNS}. The probe did "
+            "create a file at " + ", ".join(shadowed) + ", so that path exists "
+            "inside the boundary on a filesystem that is not this host's; a "
+            "host path this check cannot name may still be mounted writable",
         )
     return Property(
         "filesystem",
         PROVEN,
-        "neither this check's scratch directory nor the working directory took "
-        "a write from inside; a host path this check cannot name may still be "
-        "mounted writable",
+        f"none of {WRITE_PROBE_NOUNS} took a write from inside; a host path "
+        "this check cannot name may still be mounted writable",
+    )
+
+
+def status_value(status: list[str], key: str) -> str | None:
+    """One `Name:\tvalue` line from the probe's `/proc/self/status`."""
+    for line in status:
+        name, separator, value = line.partition(":")
+        if separator and name.strip() == key:
+            return value.strip()
+    return None
+
+
+def privilege_property(output: str) -> Property:
+    """The contract's privilege clause, which nothing used to read.
+
+    "An unprivileged identity, no elevated capabilities or privilege
+    escalation" is one bullet with three demands, and `identity` answers only
+    the first. That gap cleared `--privileged --pid host`: with a non-root user
+    the effective capability set is empty, so every other property passed over
+    a boundary that could read this host's process list and reach its block
+    devices. `tests/test_verify_sandbox.py` pins each of the three findings.
+
+    Seccomp is read and reported but never refuted on. A boundary isolated by a
+    virtual machine legitimately carries no seccomp filter, and refusing it
+    would be a false red on exactly the strongest kind of boundary.
+    """
+    status = section(output, "status")
+    if status is None:
+        return Property(
+            "privilege", UNVERIFIED, "the probe did not report its process status"
+        )
+    if not status:
+        return Property(
+            "privilege",
+            UNVERIFIED,
+            "the probe read no process status, so its capabilities and whether "
+            "it can escalate are unknown - `/proc` may not be mounted inside",
+        )
+    capabilities = status_value(status, "CapEff")
+    no_new_privs = status_value(status, "NoNewPrivs")
+    host_process = field(output, "host-process")
+    if (
+        capabilities is None
+        or no_new_privs is None
+        or host_process not in {"0", "1", "2"}
+    ):
+        return Property(
+            "privilege",
+            UNVERIFIED,
+            "the probe's process status did not carry every reading this needs "
+            "(effective capabilities, no-new-privileges, host-process visibility)",
+        )
+    try:
+        held = int(capabilities, 16)
+    except ValueError:
+        return Property(
+            "privilege",
+            UNVERIFIED,
+            f"the probe reported an effective capability set this cannot read: "
+            f"{capabilities!r}",
+        )
+    # TWO host process ids, and both must be visible before this is a finding.
+    # A boundary with its own process namespace numbers from 1, so a single
+    # visible id can also be an ordinary collision with a low-numbered process
+    # inside - and a false refusal on the privilege axis is the one that teaches
+    # a reader to remove containment until the check stops complaining. Both ids
+    # colliding at once is not something a handful of processes can do; a shared
+    # namespace shows both every time.
+    if host_process == "1":
+        return Property(
+            "privilege",
+            UNVERIFIED,
+            "exactly one of the two process ids this check named is visible "
+            "inside the boundary, which neither shows a shared process "
+            "namespace nor rules one out",
+        )
+    findings: list[str] = []
+    if host_process == "2":
+        findings.append(
+            "it can see both of this check's own processes, so the boundary "
+            "shares this host's process namespace"
+        )
+    if held:
+        findings.append(f"it holds elevated capabilities (CapEff {capabilities})")
+    if no_new_privs != "1":
+        findings.append(
+            "no-new-privileges is not set, so a setuid program inside can still "
+            "raise its privileges"
+        )
+    if findings:
+        return Property("privilege", REFUTED, "; ".join(findings))
+    seccomp = status_value(status, "Seccomp")
+    return Property(
+        "privilege",
+        PROVEN,
+        f"no elevated capabilities (CapEff {capabilities}), no-new-privileges "
+        f"set, and neither of this check's own processes is visible inside; "
+        f"seccomp mode "
+        f"{seccomp or 'unreported'}, which is reported and never refuted on",
     )
 
 
@@ -347,7 +705,11 @@ def identity_property(output: str) -> Property:
 
 
 def evaluate(
-    output: str, token: str, marker: Path, landed: list[Path]
+    output: str,
+    token: str,
+    marker: Path,
+    landed: list[Path],
+    unreadable: list[str],
 ) -> list[Property]:
     """Every property, in the order a reader should lose confidence in them.
 
@@ -363,9 +725,35 @@ def evaluate(
         entered,
         network_property(output),
         credentials_property(output),
-        filesystem_property(output, landed),
+        filesystem_property(output, landed, unreadable),
+        privilege_property(output),
         identity_property(output),
     ]
+
+
+def dispose(scratch: Path) -> None:
+    """Remove this check's own scratch tree, whatever the boundary did to it.
+
+    `shutil.rmtree(..., ignore_errors=True)` cannot remove a directory the
+    boundary chmodded to mode 0, and quietly leaves it in the customer's `/tmp`
+    - a check that litters on the one path it created itself.
+    """
+    try:
+        scratch.chmod(0o700)
+        for path in scratch.rglob("*"):
+            try:
+                path.chmod(0o700)
+            except OSError:  # noqa: S110 - best effort before the removal below
+                pass
+    except OSError:  # noqa: S110 - the removal below reports what it cannot do
+        pass
+    shutil.rmtree(scratch, ignore_errors=True)
+    if scratch.exists():
+        print(
+            f"verify_sandbox.py: could not remove its own scratch directory "
+            f"{scratch}; remove it by hand",
+            file=sys.stderr,
+        )
 
 
 class _Parser(argparse.ArgumentParser):
@@ -423,6 +811,15 @@ def run(argv: list[str] | None = None) -> int:
     marker = scratch / f"host-marker-{token}"
     scratch_write = scratch / f"scratch-write-{token}"
     workdir_write = Path.cwd() / f".verify_sandbox_write_probe_{token}"
+    # A home this host cannot locate is not a home that took no write - it is a
+    # reading that did not happen, so the probe is pointed somewhere nothing can
+    # create a file and `filesystem` is told the noun went unmeasured.
+    unreadable: list[str] = []
+    try:
+        home_write = Path.home() / f".verify_sandbox_write_probe_{token}"
+    except RuntimeError:
+        home_write = Path(f"/nonexistent-verify-sandbox/{token}")
+        unreadable.append("this host's home directory (it could not be located)")
 
     shown = redacted_command(command)
 
@@ -461,6 +858,9 @@ def run(argv: list[str] | None = None) -> int:
             str(scratch_write),
             str(workdir_write),
             token,
+            str(home_write),
+            str(os.getpid()),
+            str(os.getppid()),
         ]
         try:
             completed = subprocess.run(  # noqa: S603 - the command is the user's
@@ -499,14 +899,32 @@ def run(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        landed = [path for path in (scratch_write, workdir_write) if path.exists()]
-        properties = evaluate(completed.stdout, token, marker, landed)
+        # `Path.exists()` propagates EACCES rather than answering False, and a
+        # boundary that chmods this check's own scratch directory to mode 0 is
+        # enough to raise it. Uncaught, that surfaced as an internal error
+        # telling the customer the defect was in the check rather than in their
+        # boundary - which is precisely backwards.
+        landed: list[Path] = []
+        for path in (scratch_write, workdir_write, home_write):
+            try:
+                if path.exists():
+                    landed.append(path)
+            except OSError as error:
+                unreadable.append(f"{path} ({error.strerror or type(error).__name__})")
+        properties = evaluate(completed.stdout, token, marker, landed, unreadable)
     finally:
         # Removed whether or not a write landed: leaving the probe's own file in
-        # the customer's project is a side effect this check has no business
-        # having, and the verdict above already read it.
-        workdir_write.unlink(missing_ok=True)
-        shutil.rmtree(scratch, ignore_errors=True)
+        # the customer's project or home is a side effect this check has no
+        # business having, and the verdict above already read it.
+        for path in (workdir_write, home_write):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as error:  # noqa: PERF203 - reported, never swallowed
+                print(
+                    f"verify_sandbox.py: could not remove {path}: {error}",
+                    file=sys.stderr,
+                )
+        dispose(scratch)
 
     verdicts = {item.verdict for item in properties}
     if REFUTED in verdicts:
@@ -516,11 +934,17 @@ def run(argv: list[str] | None = None) -> int:
     else:
         status, code, note = PROVEN, 0, PROVEN_NOTE
     if status != PROVEN and completed.returncode != 0:
-        tail = (completed.stderr or "").strip().splitlines()[-1:]
-        if tail:
-            note = (
-                f"{note}\nthe boundary command exited {completed.returncode}: {tail[0]}"
-            )
+        # The exit code, and deliberately not the message behind it. This used
+        # to append the last line of the command's stderr, which is the one
+        # piece of this report that cannot be redacted by any rule: it is the
+        # customer's runtime talking, and measured, it reproduced a database
+        # password in full from a connection error.
+        note = (
+            f"{note}\nthe boundary command itself exited "
+            f"{completed.returncode}; its error output is not reproduced here, "
+            "because it can carry the values this check refuses to print - run "
+            "the command without this check to read it"
+        )
     report(status, properties, note)
     return code
 
@@ -532,12 +956,20 @@ NOT_ESTABLISHED = [
     "and captured-output limits",
     "a fresh or reset sandbox per candidate",
     "descendant-process-tree teardown on completion or limit breach",
-    "whether a host path other than the two named above is mounted writable",
+    "whether a host path other than the three named above is mounted writable",
+    "whether a seccomp filter confines the boundary - the mode is read and "
+    "reported, and never refuted on, because a virtual machine legitimately "
+    "carries none",
+    "whether a secret sits under a variable name this does not recognise, or "
+    "under the one name it lets through on purpose",
+    "whether the declared command reported truthfully: only the host-side "
+    "read-back behind `filesystem` is measured here, and the rest is testimony",
 ]
 PROVEN_NOTE = (
-    "Every property this check can reach is proven. The limits, per-candidate "
-    "disposability and teardown it does not reach stay yours to declare and "
-    "record in the run plan."
+    "Every property this check reads is proven. That is not the contract met: "
+    "the limits, per-candidate disposability, teardown and the paths it was "
+    "never told about are listed above precisely because nothing here reaches "
+    "them, and they stay yours to declare and record in the run plan."
 )
 REFUTED_NOTE = (
     "This boundary does not enforce the containment contract. Do not run the "

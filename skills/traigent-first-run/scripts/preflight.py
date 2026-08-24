@@ -1965,9 +1965,67 @@ EXECUTION_SINKS: dict[str, str] = {
     "run": "runs a process",
 }
 # `call` and `run` are ordinary words for a method, so they count only when the
-# thing they are called on is one of these. Without it, `self.run(case)` in any
-# scorer reads as a subprocess.
+# thing they are called on is a process module. Without that, `self.run(case)`
+# in any scorer reads as a subprocess. These are the modules; what a given file
+# calls them is `process_module_bindings`.
 PROCESS_MODULES = frozenset({"subprocess", "os", "runpy", "importlib"})
+METHOD_WORD_SINKS = frozenset({"call", "run"})
+# `compile` and `eval` are the builtins and nothing else. Spelled as an
+# attribute they are somebody else's ordinary API - `re.compile(pattern)`
+# builds a regex, `frame.eval(expr)` evaluates one over a table of numbers -
+# and neither runs model-written Python. Reading the attribute form as a sink
+# reported both, which spends the reader's attention on the shape a scorer is
+# most likely to hold innocently.
+NAME_ONLY_SINKS = frozenset({"compile", "eval"})
+
+
+def process_module_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
+    """The local names this file's imports bind to a process module.
+
+    Testing a receiver against `PROCESS_MODULES` directly reads exactly one
+    spelling: the module's own name. `import subprocess as sp` and
+    `from subprocess import run` each run a process under a name that set does
+    not contain, so a scorer shelling out through either was reported as naming
+    no sink at all - the false negative a floor cannot afford.
+
+    Returns the names that stand for a module, for the receiver test, and the
+    names bound straight to a callable, mapped back to what was imported so a
+    finding is reported as the sink it is rather than as whatever this file
+    chose to rename it to.
+    """
+    # Seeded with the module names, which is what a plain `import subprocess`
+    # binds. Not redundant with the walk below: a receiver spelled `subprocess`
+    # is a process module whether or not the line binding it is in this file,
+    # and a floor does not give up a detection it already had to gain the
+    # aliases this exists to add.
+    modules: set[str] = set(PROCESS_MODULES)
+    callables: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                # `import os.path` binds `os`, not `os.path`. Only `as` binds
+                # the dotted form, and then only to the name asked for.
+                root = alias.name.split(".", 1)[0]
+                if root in PROCESS_MODULES:
+                    modules.add(alias.asname or root)
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import reaches a sibling of the evaluator, never the
+            # standard library, and reading its dots as a module name would
+            # bind `run` to whatever a local `subprocess.py` happens to hold.
+            if node.level or node.module is None:
+                continue
+            if node.module.split(".", 1)[0] not in PROCESS_MODULES:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    # A star import binds every public name, under no
+                    # import line that names any of them. `call` and `run` are
+                    # the only sinks that changes anything for - every other
+                    # one already counts as a bare name on its own.
+                    callables.update({name: name for name in METHOD_WORD_SINKS})
+                elif alias.name in EXECUTION_SINKS:
+                    callables[alias.asname or alias.name] = alias.name
+    return modules, callables
 
 
 def sinks_in_evaluator(tree: ast.AST) -> list[str]:
@@ -1981,20 +2039,28 @@ def sinks_in_evaluator(tree: ast.AST) -> list[str]:
     to refuse.
     """
     found: set[str] = set()
+    modules, callables = process_module_bindings(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Name):
             name = node.func.id
-            if name in EXECUTION_SINKS and name not in {"call", "run"}:
+            imported = callables.get(name)
+            if imported is not None:
+                # An import bound this name to a process module's own
+                # callable, which settles what a bare `run(...)` is here.
+                # Recorded under the imported name: the reader is told which
+                # sink was found, and the alias `r` names nothing to them.
+                found.add(imported)
+            elif name in EXECUTION_SINKS and name not in METHOD_WORD_SINKS:
                 found.add(name)
         elif isinstance(node.func, ast.Attribute):
             name = node.func.attr
-            if name not in EXECUTION_SINKS:
+            if name not in EXECUTION_SINKS or name in NAME_ONLY_SINKS:
                 continue
-            if name in {"call", "run"}:
+            if name in METHOD_WORD_SINKS:
                 root = node.func.value
-                if not (isinstance(root, ast.Name) and root.id in PROCESS_MODULES):
+                if not (isinstance(root, ast.Name) and root.id in modules):
                     continue
             found.add(name)
     return sorted(found)

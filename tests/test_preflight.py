@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -2854,6 +2855,165 @@ class EveryRowCountIsAccountedForTests(unittest.TestCase):
             MODULE.validate_row_count_bounds(blind)
         self.assertEqual(MODULE.row_counts({"bands": ["easy"], "rows": 3}), {"rows": 3})
         self.assertEqual(MODULE.row_counts(None), {})
+
+
+class AnExecutionSinkIsFoundByWhatItBindsToTests(unittest.TestCase):
+    """The sink check read the spelling of a call and not what it binds to.
+
+    `sinks_in_evaluator` is a floor over one file, so both halves of a wrong
+    reading cost something real. A name it fails to resolve is a scorer that
+    shells out and is reported as naming no sink - the boundary the run-safety
+    contract asks for is never mentioned to the one customer who needs it. A
+    name it over-reads is the opposite bill: an evaluator that compiles a
+    regex is told to prove a sandbox, and a check that fires on the shape most
+    scorers hold innocently is one its reader stops reading.
+
+    Neither half may be bought with the other. The absence case at the end is
+    the invariant that says so: what changes here is which calls are sinks,
+    never that an absence of them becomes a clearance.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def sinks(self, source: str) -> list[str]:
+        return MODULE.sinks_in_evaluator(ast.parse(source))
+
+    def test_a_from_import_of_run_still_names_the_process_it_runs(self) -> None:
+        """`run` is excluded as a bare name, and the import is why it is back.
+
+        The exclusion exists for `self.run(case)`, which binds nothing. An
+        import line binds this one to `subprocess.run`, and that is not a
+        guess about a method - it is the module saying which function this is.
+        """
+        self.assertEqual(
+            self.sinks("from subprocess import run\ndef s(a, b):\n    run([b])\n"),
+            ["run"],
+        )
+
+    def test_a_from_import_of_call_still_names_the_process_it_runs(self) -> None:
+        self.assertEqual(
+            self.sinks("from subprocess import call\ndef s(a, b):\n    call([b])\n"),
+            ["call"],
+        )
+
+    def test_a_module_alias_still_names_the_process_it_runs(self) -> None:
+        """`sp.run(...)` is `subprocess.run(...)` with two letters saved."""
+        self.assertEqual(
+            self.sinks("import subprocess as sp\ndef s(a, b):\n    sp.run([b])\n"),
+            ["run"],
+        )
+
+    def test_a_renamed_import_is_reported_under_the_sink_it_imported(self) -> None:
+        """The reader is told which sink, so the alias cannot be the answer.
+
+        The finding is printed beside the sentence explaining what the sink
+        does, and there is no sentence for `r`. Reporting the local name would
+        raise a `KeyError` on the way to the customer's screen.
+        """
+        self.assertEqual(
+            self.sinks("from subprocess import run as r\ndef s(a, b):\n    r([b])\n"),
+            ["run"],
+        )
+
+    def test_a_star_import_binds_the_process_functions_too(self) -> None:
+        """No import line names `run` here, and `run` is bound all the same."""
+        self.assertEqual(
+            self.sinks("from subprocess import *\ndef s(a, b):\n    run([b])\n"),
+            ["run"],
+        )
+
+    def test_a_process_module_receiver_counts_without_a_visible_import(self) -> None:
+        """Resolving aliases must not cost the plain spelling its detection.
+
+        A receiver spelled `subprocess` is a process module whether or not the
+        line that bound it is in the file this parses - and this check reads
+        one file. Requiring an import before believing the name would trade a
+        detection the floor already had for the aliases resolution adds.
+        """
+        self.assertEqual(
+            self.sinks("def s(a, b):\n    subprocess.run([b])\n"),
+            ["run"],
+        )
+
+    def test_compiling_a_regex_is_not_an_execution_sink(self) -> None:
+        """`compile` as an attribute belongs to whatever it was called on."""
+        self.assertEqual(self.sinks("import re\ndef s(a, b):\n    re.compile(b)\n"), [])
+
+    def test_evaluating_over_a_table_is_not_an_execution_sink(self) -> None:
+        """`frame.eval(expr)` evaluates an expression over columns of numbers.
+
+        It is not the builtin, it does not run model-written Python, and it is
+        ordinary in a scorer that measures anything numeric.
+        """
+        self.assertEqual(self.sinks("def s(a, b):\n    frame.eval(b)\n"), [])
+
+    def test_the_builtins_are_still_sinks_under_their_own_names(self) -> None:
+        """Restricting the two to bare names may not disarm the bare names."""
+        self.assertEqual(
+            self.sinks("def s(a, b):\n    eval(b)\n    compile(b, '<s>', 'exec')\n"),
+            ["compile", "eval"],
+        )
+
+    def test_a_method_named_run_is_not_a_subprocess_beside_an_import(self) -> None:
+        """The guard the aliases could most easily have broken.
+
+        A scorer that shells out somewhere and also owns a `self.run(case)`
+        helper is the shape where a resolved binding is most tempting to apply
+        to a receiver it says nothing about. `self` is not the imported name,
+        so the method is not the function.
+        """
+        self.assertEqual(
+            self.sinks("import subprocess\ndef s(a, b):\n    self.run(b)\n"),
+            [],
+        )
+
+    def test_a_relative_import_is_not_the_standard_library(self) -> None:
+        """A dotted import reaches a sibling of the evaluator, not `subprocess`.
+
+        Reading the dots as a module name binds `run` to whatever a local
+        `subprocess.py` holds, which is the `self.run(case)` false positive
+        wearing an import line.
+        """
+        self.assertEqual(
+            self.sinks("from .subprocess import run\ndef s(a, b):\n    run([b])\n"),
+            [],
+        )
+
+    def test_a_run_imported_from_another_module_is_not_a_process(self) -> None:
+        """The binding has to reach a process module to mean anything.
+
+        A helper module of the customer's own is where `run` is an ordinary
+        word again, and an import of one is not evidence about a subprocess.
+        """
+        self.assertEqual(
+            self.sinks("from scoring import run\ndef s(a, b):\n    run(b)\n"),
+            [],
+        )
+
+    def test_an_alias_of_another_module_is_not_a_process_module(self) -> None:
+        """An alias is only worth resolving when what it resolves to runs."""
+        self.assertEqual(
+            self.sinks("import scoring as sp\ndef s(a, b):\n    sp.run(b)\n"),
+            [],
+        )
+
+    def test_an_absence_of_sinks_is_unchecked_and_never_clean(self) -> None:
+        """Dropping a false positive may not turn an absence into a PASS.
+
+        This evaluator no longer reports a sink, which is the fix. What it
+        reports instead is SKIP - one file cannot clear a complete call path,
+        and a downstream reader counts SKIP as unchecked. PASS here would be
+        the false assurance the containment rules exist to refuse.
+        """
+        source = "import re\ndef s(a, b):\n    return float(re.compile(a).match(b))\n"
+        MODULE.check_evaluator_execution_path(Path("evaluator.py"), ast.parse(source))
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "evaluator-execution-path"
+        )
+        self.assertEqual(result.status, MODULE.SKIP)
+        self.assertNotEqual(result.status, MODULE.PASS)
+        self.assertEqual(result.metrics, {"sinks": []})
 
 
 if __name__ == "__main__":

@@ -4,6 +4,15 @@ on:
   pull_request:
   push:
 
+# The only place this workflow names a container image. Both jobs run this one:
+# `offline-contract` runs the hermetic harness inside it, and `validate` hands
+# it to the container-backed half of `tests/test_verify_sandbox.py`. The digest
+# was already written twice for the job below, and a third copy is how one
+# pinned image quietly becomes two that differ, in a file that still reads as
+# if it pinned one.
+env:
+  PINNED_PYTHON_IMAGE: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
 jobs:
   offline-contract:
     runs-on: ubuntu-latest
@@ -43,9 +52,7 @@ jobs:
           persist-credentials: false
 
       - name: Acquire pinned Python runner outside the evidence boundary
-        run: >-
-          docker pull
-          python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        run: docker pull "$PINNED_PYTHON_IMAGE"
 
       - name: Run hermetic pre-network contract scenarios
         run: |
@@ -65,7 +72,7 @@ jobs:
             --tmpfs /work:rw,exec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
             --tmpfs /tmp:rw,exec,nosuid,nodev,uid=65534,gid=65534,mode=0700 \
             -w /repo \
-            python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de \
+            "$PINNED_PYTHON_IMAGE" \
             python tests/behavioral/harness.py --all --evidence-dir /evidence
 
       - name: Upload offline contract evidence
@@ -129,6 +136,73 @@ jobs:
 
       - name: Install pinned first-run dependencies outside the evidence boundary
         run: python -m pip install -r skills/traigent-first-run/assets/requirements-first-run.txt
+
+      - name: Put the pinned image where the boundary cases look for one
+        # `tests/test_verify_sandbox.py` drives a real container for the half of
+        # the boundary verifier that only an operating system can answer, and it
+        # refuses to fetch an image itself, because a test suite must not reach
+        # the network. It uses one ALREADY on the host, found by tag. This job
+        # never put one there, so those four cases have reported `skipped` on
+        # every run of this workflow. The skip is loud and it is right on a
+        # developer machine with no runtime; here a runtime is present and the
+        # skip is a hole, and two defects that only a real boundary can see -
+        # a verdict that turns on which base image is under it, and a case that
+        # only holds on one vendor's daemon - went green through it.
+        #
+        # The tag is cut from the pinned reference rather than typed a second
+        # time, so the name the suite looks for cannot come to mean an image
+        # other than the one pinned above.
+        run: |
+          docker pull "$PINNED_PYTHON_IMAGE"
+          docker tag "$PINNED_PYTHON_IMAGE" "${PINNED_PYTHON_IMAGE%@*}"
+
+      - name: Refuse a run where the container-backed cases would skip
+        # A pull that fails takes the step above down with it: a `run:` block is
+        # `bash -e`, both commands are their own line, and neither is piped or
+        # excused. The failure this step is here for is the quiet one - the pull
+        # succeeds, what landed is not what the suite looks for, `unittest` exits
+        # 0 over four skips, and the tick says the boundary was proven.
+        #
+        # So the selector the skip decision is computed from is asked, rather
+        # than re-stated here: whatever `usable_container_image` comes to prefer,
+        # this reads its answer instead of assuming yesterday's. It then compares
+        # that answer against the pinned digest, because "an image is present"
+        # and "the pinned image is present" are two claims, and which base is
+        # underneath is exactly what two of the four verdicts turn on - one of
+        # them reads the variables the image itself defines. The selector
+        # prefers `python:3.12-slim`, which is the tag the step above cuts from
+        # the pinned reference, so the two agree here by construction. If they
+        # ever stop agreeing, these cases are running on an image this file does
+        # not pin, and the step above is where that tag is decided.
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          sys.path.insert(0, "tests")
+          import test_verify_sandbox as boundary
+
+          if boundary.IMAGE is None:
+              raise SystemExit(
+                  "a container runtime IS available on this runner, so this is a "
+                  "setup failure and not a skip. " + boundary.NO_RUNTIME
+              )
+
+          digest = os.environ["PINNED_PYTHON_IMAGE"].split("@", 1)[1]
+          inspected = subprocess.run(
+              ["docker", "image", "inspect", boundary.IMAGE],
+              capture_output=True, text=True, check=True,
+          )
+          published = json.loads(inspected.stdout)[0]["RepoDigests"]
+          if not any(reference.endswith("@" + digest) for reference in published):
+              raise SystemExit(
+                  f"the boundary cases would run on {boundary.IMAGE}, published as "
+                  f"{published}, which is not the image this workflow pins ({digest})"
+              )
+          print(f"boundary cases will run on {boundary.IMAGE}, pinned as {digest}")
+          PY
 
       - name: Run package tests
         run: python -m unittest discover -s tests -v
