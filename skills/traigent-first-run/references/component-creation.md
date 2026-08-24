@@ -339,6 +339,11 @@ below, and inside `knobs` it is refused - because a parameter establishing no ra
 nothing a search can vary, which is what recording it without one already says.
 `seed` and `max_tokens` earn nothing here, for the reasons the scorer already gives on the card.
 
+The opening read cannot prove that a listed option is wired into the running
+agent. Keep a comment-only or manual alternative out of `values`; it is a
+candidate to add deliberately in the enhanced configuration space, then verify
+on the real build path before treating it as searchable.
+
 A range counts as at least two distinct values and no more; a value list counts as its own length.
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
 what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
@@ -349,6 +354,12 @@ the config-space document the enhanced search emits.
 The `build` member in that same JSON object answers all four checks, each with
 the line you read. Do not split it into a second document: the consumer reads
 one object and requires `knobs` at its root.
+
+The opening card records these answers but leaves all four unmeasured. A line
+of source or a reader's description cannot prove that a prompt reaches the
+provider, every loop ends, every output has one shape, or a named tool is
+reachable. A later score may measure one only when it receives verification
+evidence for that fact; this opening document is not that proof.
 
 What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
 the call, and how many worked examples ride with it; two is where examples start showing a pattern

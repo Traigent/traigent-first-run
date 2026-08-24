@@ -3436,6 +3436,25 @@ class CliTests(unittest.TestCase):
                 self.assertTrue(checks[name]["withheld"])
         self.assertLess(agent["score"], 100)
 
+    def test_opening_build_declarations_are_visible_but_unmeasured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            read = Path(directory) / "agent-knobs.json"
+            read.write_text(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+            code, output = self._run(["--agent-knobs", str(read), "--json"])
+        self.assertEqual(code, 0)
+        agent = next(p for p in json.loads(output)["pillars"] if p["name"] == "agent")
+        checks = {sub["name"]: sub for sub in agent["subscores"]}
+        for name, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=name):
+                self.assertFalse(checks[name]["measured"])
+                self.assertFalse(checks[name]["withheld"])
+                self.assertEqual(checks[name]["value"], 0.0)
+                if checks[name]["applicable"]:
+                    self.assertIn(
+                        "not measured by the opening source read",
+                        checks[name]["evidence"],
+                    )
+
     def test_malformed_config_space_exits_two(self) -> None:
         """A typo in a hand-authored document is bad input, not a crash.
 
