@@ -1968,15 +1968,70 @@ EXECUTION_SINKS: dict[str, str] = {
 # thing they are called on is a process module. Without that, `self.run(case)`
 # in any scorer reads as a subprocess. These are the modules; what a given file
 # calls them is `process_module_bindings`.
-PROCESS_MODULES = frozenset({"subprocess", "os", "runpy", "importlib"})
+#
+# Held against the sinks each module actually exports, because an import binds a
+# name out of one module and says nothing about its relatives. `os.path` is not
+# `os`, and neither of them exports `run` or `call` - so matching on the ROOT of
+# a dotted module name read `from os.path import *` as binding both, and a
+# scorer's own `def run(case)` beside that line was reported as a subprocess.
+# The exports are what a star import has to be read against; `from os import *`
+# is the same false red one dot shorter, and only this map refuses it.
+PROCESS_MODULE_SINKS: dict[str, frozenset[str]] = {
+    "subprocess": frozenset({"run", "call", "check_output", "check_call", "Popen"}),
+    "os": frozenset({"system", "popen"}),
+    "runpy": frozenset({"run_path", "run_module"}),
+    "importlib": frozenset({"import_module"}),
+}
+# The receiver test reads module names and not exports: `subprocess.run(...)` is
+# a subprocess whichever of its callables this file happened to import.
+PROCESS_MODULES = frozenset(PROCESS_MODULE_SINKS)
 METHOD_WORD_SINKS = frozenset({"call", "run"})
-# `compile` and `eval` are the builtins and nothing else. Spelled as an
-# attribute they are somebody else's ordinary API - `re.compile(pattern)`
+# `compile` and `eval` are the builtins under their bare names. Spelled as an
+# attribute they are usually somebody else's ordinary API - `re.compile(p)`
 # builds a regex, `frame.eval(expr)` evaluates one over a table of numbers -
 # and neither runs model-written Python. Reading the attribute form as a sink
 # reported both, which spends the reader's attention on the shape a scorer is
 # most likely to hold innocently.
+#
+# "Usually" is the whole of it, so these two are gated on the receiver rather
+# than dropped: on the `builtins` module they ARE the builtins.
+# `import builtins; builtins.eval(x)` is the standard rewrite once a linter
+# flags a bare `eval`, and excluding the attribute form outright stopped
+# reporting it - a false negative on a shape scorers really hold, which is the
+# direction this floor cannot afford.
 NAME_ONLY_SINKS = frozenset({"compile", "eval"})
+# `exec` is deliberately NOT one of them, and the asymmetry is the point rather
+# than an oversight. The rule is not "the builtins get a receiver test", it is
+# "gate the spellings whose attribute form is dominated by a different, innocent
+# API". `.compile` and `.eval` are: a regex module and a dataframe reach for
+# both. `.exec` is not - what `sandbox.exec(completion)` or `runner.exec(code)`
+# names is a scorer's own harness running model-written Python, which is exactly
+# the sink this check exists for. Gating it would buy a false red nobody has met
+# with a false negative in the population that most needs the boundary.
+BUILTINS_MODULE = "builtins"
+
+
+def builtins_aliases(tree: ast.AST) -> set[str]:
+    """The local names this file's imports bind to the `builtins` module.
+
+    The receiver test that separates `builtins.eval(candidate)` from
+    `frame.eval(expr)` reads a name, and `import builtins as b` puts the module
+    under one its own spelling does not cover. Only `import` is walked: `from
+    builtins import eval` binds the bare name, which the `ast.Name` arm already
+    counts without help from here.
+
+    Seeded with the module's own spelling, for the same reason the process
+    modules are - a receiver called `builtins` stands for the module whether or
+    not the line that bound it is in the one file this parses.
+    """
+    names = {BUILTINS_MODULE}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            if alias.name == BUILTINS_MODULE:
+                names.add(alias.asname or BUILTINS_MODULE)
+    return names
 
 
 def process_module_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
@@ -2014,16 +2069,28 @@ def process_module_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
             # bind `run` to whatever a local `subprocess.py` happens to hold.
             if node.level or node.module is None:
                 continue
-            if node.module.split(".", 1)[0] not in PROCESS_MODULES:
+            # The exact module, never its root. `from os.path import run`
+            # imports a `run` that `os.path` does not have, and reading the
+            # root as `os` bound it anyway - which is the `self.run(case)`
+            # false positive again, wearing an import line that mentions it.
+            exported = PROCESS_MODULE_SINKS.get(node.module)
+            if exported is None:
                 continue
             for alias in node.names:
                 if alias.name == "*":
                     # A star import binds every public name, under no
-                    # import line that names any of them. `call` and `run` are
-                    # the only sinks that changes anything for - every other
-                    # one already counts as a bare name on its own.
-                    callables.update({name: name for name in METHOD_WORD_SINKS})
+                    # import line that names any of them - but only the names
+                    # THIS module exports. `call` and `run` are the only sinks
+                    # that changes anything for; every other one already counts
+                    # as a bare name on its own.
+                    callables.update(
+                        {name: name for name in exported & METHOD_WORD_SINKS}
+                    )
                 elif alias.name in EXECUTION_SINKS:
+                    # Named imports say which name they bind, so the module's
+                    # export list adds nothing here that the line does not
+                    # already state - and testing membership of the sinks the
+                    # report can describe is what keeps a binding printable.
                     callables[alias.asname or alias.name] = alias.name
     return modules, callables
 
@@ -2040,6 +2107,7 @@ def sinks_in_evaluator(tree: ast.AST) -> list[str]:
     """
     found: set[str] = set()
     modules, callables = process_module_bindings(tree)
+    builtin_names = builtins_aliases(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -2056,10 +2124,16 @@ def sinks_in_evaluator(tree: ast.AST) -> list[str]:
                 found.add(name)
         elif isinstance(node.func, ast.Attribute):
             name = node.func.attr
-            if name not in EXECUTION_SINKS or name in NAME_ONLY_SINKS:
+            if name not in EXECUTION_SINKS:
                 continue
-            if name in METHOD_WORD_SINKS:
-                root = node.func.value
+            root = node.func.value
+            if name in NAME_ONLY_SINKS:
+                # The builtin, or somebody else's API wearing its name. The
+                # receiver is the only thing that tells the two apart, and
+                # `builtins` is the one receiver that makes it the builtin.
+                if not (isinstance(root, ast.Name) and root.id in builtin_names):
+                    continue
+            elif name in METHOD_WORD_SINKS:
                 if not (isinstance(root, ast.Name) and root.id in modules):
                     continue
             found.add(name)

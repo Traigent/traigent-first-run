@@ -2998,6 +2998,132 @@ class AnExecutionSinkIsFoundByWhatItBindsToTests(unittest.TestCase):
             [],
         )
 
+    def test_the_builtins_module_still_names_the_builtin_eval_it_holds(self) -> None:
+        """The attribute form of `eval` is the builtin when `builtins` holds it.
+
+        Excluding the attribute form outright to drop `frame.eval(expr)` took
+        this with it. `import builtins; builtins.eval(x)` is what a scorer is
+        left holding once a linter flags the bare call, so the shape is common
+        and the miss is a false negative - the direction a floor cannot afford.
+        """
+        self.assertEqual(
+            self.sinks("import builtins\ndef s(a, b):\n    return builtins.eval(b)\n"),
+            ["eval"],
+        )
+
+    def test_the_builtins_module_still_names_the_builtin_compile_it_holds(
+        self,
+    ) -> None:
+        """`compile` is the other half of the same exclusion and the same miss."""
+        self.assertEqual(
+            self.sinks(
+                "import builtins\n"
+                "def s(a, b):\n"
+                "    return builtins.compile(b, '<s>', 'exec')\n"
+            ),
+            ["compile"],
+        )
+
+    def test_an_alias_of_builtins_is_still_the_builtins_module(self) -> None:
+        """A receiver test reads a name, and `as` is how the name changes."""
+        self.assertEqual(
+            self.sinks("import builtins as bi\ndef s(a, b):\n    return bi.eval(b)\n"),
+            ["eval"],
+        )
+
+    def test_a_builtins_receiver_counts_without_a_visible_import(self) -> None:
+        """The same trade the process modules already make, for the same reason.
+
+        This check reads one file. A receiver spelled `builtins` stands for the
+        module whether or not the line that bound it is in the file parsed here,
+        and requiring the import first would give up a detection to gain the
+        alias above.
+        """
+        self.assertEqual(
+            self.sinks("def s(a, b):\n    return builtins.eval(b)\n"), ["eval"]
+        )
+
+    def test_a_star_import_of_a_relative_of_a_process_module_binds_nothing(
+        self,
+    ) -> None:
+        """`os.path` shares a root with `os` and exports neither `run` nor `call`.
+
+        Matching the root of a dotted module name bound both anyway, so a
+        scorer with a `def run(case)` of its own - the ordinary name for the
+        function this whole check is handed - was reported as a subprocess for
+        importing a path helper.
+        """
+        self.assertEqual(
+            self.sinks(
+                "from os.path import *\n"
+                "def run(case):\n"
+                "    return 1.0\n"
+                "def s(a, b):\n"
+                "    return run(b)\n"
+            ),
+            [],
+        )
+
+    def test_a_named_import_from_a_relative_of_a_process_module_binds_nothing(
+        self,
+    ) -> None:
+        """The root match reached the named form too, not only the star."""
+        self.assertEqual(
+            self.sinks("from os.path import run\ndef s(a, b):\n    return run(b)\n"),
+            [],
+        )
+
+    def test_a_star_import_binds_only_what_that_module_exports(self) -> None:
+        """`os` is in the set and still exports neither `run` nor `call`.
+
+        The module being a process module is not the question a star import
+        asks; which callables it hands over is. Binding the method words for
+        every module in the set is the same false red as the dotted case, one
+        dot shorter and with no relative to blame it on.
+        """
+        self.assertEqual(
+            self.sinks(
+                "from os import *\n"
+                "def run(case):\n"
+                "    return 1.0\n"
+                "def s(a, b):\n"
+                "    return run(b)\n"
+            ),
+            [],
+        )
+
+    def test_a_receiver_gate_does_not_reach_the_sinks_that_never_needed_one(
+        self,
+    ) -> None:
+        """`os.system` and `subprocess.Popen` mean one thing under any receiver.
+
+        Neither is an ordinary word for somebody else's method, so neither is
+        gated - and a fix aimed at `compile` and `eval` may not quietly put the
+        unambiguous shells behind a test they were never subject to.
+        """
+        self.assertEqual(
+            self.sinks("import os\ndef s(a, b):\n    os.system(b)\n"), ["system"]
+        )
+        self.assertEqual(
+            self.sinks("import subprocess\ndef s(a, b):\n    subprocess.Popen([b])\n"),
+            ["Popen"],
+        )
+
+    def test_exec_is_read_as_a_sink_under_any_receiver_on_purpose(self) -> None:
+        """`exec` is not gated the way `compile` and `eval` are, and should not be.
+
+        The gate is not "the builtins get a receiver test". It is that the
+        attribute form of `compile` and `eval` is dominated by an innocent API
+        somebody else wrote - a regex module, a dataframe - and the attribute
+        form of `exec` is not. `sandbox.exec(completion)` is a scorer's own
+        harness running model-written Python, which is the sink this check
+        exists for; gating it would trade a false red nobody has met for a
+        false negative in the population that most needs the boundary.
+        """
+        self.assertEqual(
+            self.sinks("def s(a, b):\n    return frame.exec(b)\n"), ["exec"]
+        )
+
     def test_an_absence_of_sinks_is_unchecked_and_never_clean(self) -> None:
         """Dropping a false positive may not turn an absence into a PASS.
 

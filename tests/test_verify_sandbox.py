@@ -16,6 +16,7 @@ is why the writable-mount case reads the host afterwards rather than the report.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -67,7 +68,7 @@ STATUS_COMPLIANT = [
     "CapInh:\t0000000000000000",
     "CapPrm:\t0000000000000000",
     "CapEff:\t0000000000000000",
-    "CapBnd:\t0000000000000000",
+    "CapBnd:\t0000000000000000",  # read, and refuted on - see the case below
     "NoNewPrivs:\t1",
     "Seccomp:\t2",
 ]
@@ -197,14 +198,25 @@ def usable_container_image() -> str | None:
         # have said in one second that this machine cannot drive a boundary.
         #
         # So the last question is asked by doing the thing: start one, briefly.
+        # Named, so a timeout has something to clean up. A timeout kills the
+        # client and not the container, so `--rm` never fires and the container
+        # sits in `Created` - which is what a wedged daemon accumulates, so the
+        # probe for that condition was feeding it.
+        named = f"verify_sandbox_probe_{os.getpid()}"
         try:
             started = subprocess.run(
-                ["docker", "run", "--rm", image, "/bin/true"],
+                ["docker", "run", "--rm", "--name", named, image, "/bin/true"],
                 capture_output=True,
                 timeout=90,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["docker", "rm", "-f", named],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
             return None
         if started.returncode == 0:
             return image
@@ -239,8 +251,8 @@ class ReadingTheProbeTests(unittest.TestCase):
     def test_a_probe_that_never_ran_proves_nothing(self) -> None:
         """The whole defect, in one case: silence must not read as clean.
 
-        Only `entered` is reported, because the other four would each say "the
-        probe did not tell me" - four problems on the screen where there is one.
+        Only `entered` is reported, because the other five would each say "the
+        probe did not tell me" - five problems on the screen where there is one.
         """
         result = verdicts("")
         self.assertEqual(result, {"entered": "unverified"})
@@ -376,6 +388,46 @@ class ReadingTheProbeTests(unittest.TestCase):
             "refuted",
         )
 
+    def test_the_home_probe_is_read_and_not_merely_sent(self) -> None:
+        """Deleting `home-write` from the read set left the whole suite green.
+
+        The home write LANDING was pinned, through `landed`; the home write
+        being asked about at all was not, so the probe could have gone on
+        reporting it into nothing. A report missing that one line has to be
+        unverified, and the message has to name it.
+        """
+        without_home = "\n".join(
+            line
+            for line in probe_output().splitlines()
+            if not line.startswith("@home-write")
+        )
+        properties = verify_sandbox.evaluate(without_home, TOKEN, MARKER, [], [])
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "unverified")
+        self.assertIn("home-write", filesystem.evidence)
+
+    def test_disposal_survives_a_locked_scratch_directory(self) -> None:
+        """`rmtree(ignore_errors=True)` cannot remove a mode-0 directory.
+
+        It fails silently and leaves the directory in the customer's `/tmp` -
+        the one path this check created itself. Nothing referenced `dispose`
+        before this case, so the chmod that fixes it was unpinned.
+        """
+        scratch = Path(tempfile.mkdtemp(prefix="verify_sandbox_disposal_"))
+        (scratch / "inside").write_text("x")
+        scratch.chmod(0o000)
+        try:
+            verify_sandbox.dispose(scratch)
+            # Read BEFORE the cleanup below, which would otherwise remove the
+            # very thing being asserted about - the first version of this case
+            # passed against a `dispose` that did nothing at all.
+            survived = scratch.exists()
+        finally:
+            if scratch.exists():  # pragma: no cover - only on a failing run
+                scratch.chmod(0o700)
+                shutil.rmtree(scratch, ignore_errors=True)
+        self.assertFalse(survived)
+
     def test_a_host_path_this_check_could_not_read_back_is_not_a_clean_one(
         self,
     ) -> None:
@@ -391,6 +443,14 @@ class ReadingTheProbeTests(unittest.TestCase):
             unreadable=["/tmp/verify_sandbox_x/scratch (Permission denied)"],
         )
         self.assertEqual(result["filesystem"], "unverified")
+
+    def test_one_path_reached_by_two_probes_is_named_once(self) -> None:
+        """The working directory can BE the home directory."""
+        same = Path("/tmp/probe-in-both-roles")
+        evidence = verify_sandbox.filesystem_property(
+            probe_output(), [same, same], []
+        ).evidence
+        self.assertEqual(evidence.count(str(same)), 1)
 
     def test_a_shadowed_path_is_described_rather_than_refuted(self) -> None:
         """A write that succeeded inside with no host file behind it.
@@ -498,6 +558,44 @@ class ReadingTheProbeTests(unittest.TestCase):
         self.assertEqual(privilege.verdict, "unverified")
         self.assertIn("/proc", privilege.evidence)
 
+    def test_an_available_capability_refutes_even_when_none_is_held(self) -> None:
+        """The reading `--user` does not empty out.
+
+        `CapEff` is empty for any non-root process, which is what the contract
+        asks for - so keying the property on it meant the unprivileged identity
+        the contract requires was also what blinded the check. Measured:
+        `--privileged --user 65534:65534` reported an empty effective set and
+        cleared every property, over a boundary whose bounding set was
+        `000001ffffffffff`.
+        """
+        status = [
+            line if not line.startswith("CapBnd") else "CapBnd:\t000001ffffffffff"
+            for line in STATUS_COMPLIANT
+        ]
+        self.assertEqual(verdicts(probe_output(status=status))["privilege"], "refuted")
+
+    def test_an_unread_bounding_set_proves_nothing(self) -> None:
+        status = [line for line in STATUS_COMPLIANT if not line.startswith("CapBnd")]
+        self.assertEqual(
+            verdicts(probe_output(status=status))["privilege"], "unverified"
+        )
+
+    def test_not_seeing_this_checks_processes_is_never_offered_as_proof(self) -> None:
+        """A daemon on another kernel cannot show them, so absence says nothing.
+
+        Measured on one machine with two daemons: the same `--pid host` command
+        was refuted by the engine sharing this kernel and proven by the
+        virtual-machine-backed one, where this check's process ids do not exist
+        at all. The refutation is kept; the positive claim is not made.
+        """
+        properties = verify_sandbox.evaluate(probe_output(), TOKEN, MARKER, [], [])
+        privilege = next(item for item in properties if item.name == "privilege")
+        self.assertEqual(privilege.verdict, "proven")
+        self.assertIn("not seeing them proves nothing", privilege.evidence)
+        self.assertTrue(
+            any("process namespace" in item for item in verify_sandbox.NOT_ESTABLISHED)
+        )
+
     def test_a_boundary_without_a_seccomp_filter_is_reported_not_refuted(self) -> None:
         """A virtual machine legitimately carries none.
 
@@ -519,6 +617,8 @@ class ReadingTheProbeTests(unittest.TestCase):
             ["-eOPENAI_API_KEY=sk-FAKE-VALUE"],
             ["--env", "OPENAI_API_KEY=sk-FAKE-VALUE"],
             ["--env=OPENAI_API_KEY=sk-FAKE-VALUE"],
+            # Clustered, because short flags cluster and the `e` need not lead.
+            ["-ieOPENAI_API_KEY=sk-FAKE-VALUE"],
         ):
             with self.subTest(spelling=argument[0]):
                 shown = verify_sandbox.redacted_command(
@@ -526,6 +626,21 @@ class ReadingTheProbeTests(unittest.TestCase):
                 )
                 self.assertNotIn("sk-FAKE-VALUE", " ".join(shown))
                 self.assertIn("image:tag", shown)
+
+    def test_the_operand_is_blanked_by_position_not_by_what_it_is_called(self) -> None:
+        """The name test alone leaves this whole round unpinned.
+
+        Every other redaction case here uses a name the legacy name-matcher
+        already catches, so deleting the position branch outright left the
+        suite green. A name no rule would ever call secret-shaped is the only
+        thing that can tell the two mechanisms apart.
+        """
+        shown = verify_sandbox.redacted_command(
+            ["docker", "run", "-e", "RUN_PROFILE=FAKEVAL-POSITION", "img"]
+        )
+        self.assertIn("RUN_PROFILE=<redacted>", shown)
+        self.assertNotIn("FAKEVAL-POSITION", " ".join(shown))
+        self.assertFalse(verify_sandbox.secret_shaped("RUN_PROFILE"))
 
     def test_a_value_is_redacted_however_the_variable_is_named(self) -> None:
         """The reason redaction stopped asking what the name looks like.
@@ -560,6 +675,7 @@ class CredentialNameShapeTests(unittest.TestCase):
             "SSH_AUTH_SOCK",
             "DATABASE_URL",
             "REDIS_URI",
+            "SENTRY_DSN",
             "SESSION_COOKIE",
             "MY_PASSPHRASE",
             "KUBECONFIG",
@@ -662,6 +778,19 @@ class ExitStatusTests(unittest.TestCase):
 class RealBoundaryTests(unittest.TestCase):
     """Driven against an actual OS boundary, because a recipe is not evidence."""
 
+    def property_of(self, payload: dict, name: str) -> dict:
+        """One named property, or a failure that says what came back instead.
+
+        `next(item for item in ... if ...)` raises a bare `StopIteration` here,
+        and the shape that triggers it is a legitimate one: when no boundary is
+        entered, `evaluate` deliberately returns ONLY `entered`. Observed once
+        on a daemon that had stopped starting containers - the case died with a
+        traceback naming neither the property nor the report.
+        """
+        found = {item["name"]: item for item in payload["properties"]}
+        self.assertIn(name, found, f"report carried only {sorted(found)}: {payload}")
+        return found[name]
+
     def boundary(self, *extra: str) -> list[str]:
         return [
             "docker",
@@ -692,9 +821,7 @@ class RealBoundaryTests(unittest.TestCase):
         ]
         result = run_script("--json", "--", *command)
         payload = json.loads(result.stdout)
-        network = next(
-            item for item in payload["properties"] if item["name"] == "network"
-        )
+        network = self.property_of(payload, "network")
         self.assertEqual(network["verdict"], "refuted")
         self.assertEqual(result.returncode, 1)
 
@@ -705,11 +832,52 @@ class RealBoundaryTests(unittest.TestCase):
             *self.boundary("-e", "OPENAI_API_KEY=not-a-real-key"),
         )
         payload = json.loads(result.stdout)
-        credentials = next(
-            item for item in payload["properties"] if item["name"] == "credentials"
-        )
+        credentials = self.property_of(payload, "credentials")
         self.assertEqual(credentials["verdict"], "refuted")
         self.assertNotIn("not-a-real-key", result.stdout)
+
+    def test_a_mounted_host_directory_is_refuted_under_a_foreign_uid(self) -> None:
+        """The case that made `entered` a permission bit rather than a boundary.
+
+        `mkdtemp` creates mode 0700 owned by the caller, so a boundary running
+        as any other uid could not traverse it - and the marker then read as
+        absent, and the scratch write as refused, no matter what was mounted.
+        Measured before the fix: this exact command, with `--user 65534:65534`,
+        proved every property and exited 0 while the host's temporary directory
+        was mounted read-write at its own absolute path. The uid in
+        `boundary()` is the one the script's own `--help` recommends, which is
+        what made it worth a case of its own rather than a line in another.
+        """
+        scratch_root = Path(tempfile.gettempdir())
+        usable = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{scratch_root}:{scratch_root}:rw",
+                IMAGE,
+                "/bin/true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if usable.returncode != 0:
+            said = (usable.stderr or "").strip().splitlines()
+            self.skipTest(
+                "this daemon refused to mount the temporary directory: "
+                + next(iter(reversed(said)), "no error output")
+            )
+        result = run_script(
+            "--json",
+            "--",
+            *self.boundary("-v", f"{scratch_root}:{scratch_root}:rw"),
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(self.property_of(payload, "entered")["verdict"], "refuted")
+        self.assertEqual(result.returncode, 1)
 
     def test_a_writable_host_mount_is_refuted_and_leaves_nothing_behind(self) -> None:
         """Entry is genuine and the boundary still fails, which is the point.
@@ -750,9 +918,14 @@ class RealBoundaryTests(unittest.TestCase):
                 check=False,
             )
             if usable.returncode != 0:
+                # `[-1:][0]` on an empty list is an IndexError, and a daemon
+                # that refuses with a non-zero exit and no stderr is exactly
+                # what reaches here - the crash would land inside the code
+                # added to replace a skip.
+                said = (usable.stderr or "").strip().splitlines()
                 self.skipTest(
                     "this daemon refused a bind mount of the test directory: "
-                    + (usable.stderr or "").strip().splitlines()[-1:][0]
+                    + next(iter(reversed(said)), "no error output")
                 )
             command = [
                 item
@@ -761,13 +934,9 @@ class RealBoundaryTests(unittest.TestCase):
             ]
             result = run_script("--json", "--", *command, cwd=work)
             payload = json.loads(result.stdout)
-            entered = next(
-                item for item in payload["properties"] if item["name"] == "entered"
-            )
+            entered = self.property_of(payload, "entered")
             self.assertEqual(entered["verdict"], "proven")
-            filesystem = next(
-                item for item in payload["properties"] if item["name"] == "filesystem"
-            )
+            filesystem = self.property_of(payload, "filesystem")
             self.assertEqual(filesystem["verdict"], "refuted")
             self.assertEqual(result.returncode, 1)
             self.assertEqual(sorted(path.name for path in work.iterdir()), [])

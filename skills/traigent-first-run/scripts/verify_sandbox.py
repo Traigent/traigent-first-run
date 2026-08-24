@@ -92,8 +92,9 @@ probe is appended to it as arguments. No runtime is recommended here and none
 is required. One was driven while this was written; a second was installed on
 that same machine and could not complete a single sandboxing invocation on it -
 the namespace is created, and then the kernel denies the uid-map write and the
-network capability the runtime needs, so every attempt exited non-zero. That is the whole reason this reports what a probe observed rather
-than what an installed runtime is supposed to do.
+network capability the runtime needs, so every attempt exited non-zero. That is
+the whole reason this reports what a probe observed rather than what an
+installed runtime is supposed to do.
 
 Three other shapes were weighed and lost. A recipe in the guidance is the
 cheapest, and is one more instruction with nothing checking it - the defect
@@ -116,9 +117,13 @@ could not be verified - a missing runtime and a probe that never ran are both
 this - and 3 when this script fails, which is never a finding about the
 boundary. Exit 0 means every property this check reads is proven; it does not
 mean the contract is met, because the paragraph above names what is never read.
-Only 0 clears the execution evaluator to run. 1 and 2 route the same way the
-reference does: do not run the execution evaluator or paid optimization against
-it; use non-executing static/parser/compile checks or pause for a safe runner.
+Only 0 clears the execution evaluator to run. `--json` carries every exit that
+0, 1 and 2 come out of; exit 3 is the check breaking before it has a report to
+make, and it writes plain text to stderr rather than an envelope, so a machine
+consumer has to expect a non-JSON stdout on that one code. 1 and 2 route the
+same way the reference does: do not run the execution evaluator or paid
+optimization against it; use non-executing static/parser/compile checks or
+pause for a safe runner.
 """
 
 from __future__ import annotations
@@ -128,6 +133,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -162,6 +168,9 @@ PROVEN, REFUTED, UNVERIFIED = "proven", "refuted", "unverified"
 # A word earns a place here by catching something no other word catches.
 SECRET_SEGMENTS = frozenset(
     {
+        "AUTHKEY",
+        "AUTHTOKEN",
+        "JWT",
         "KEY",
         "KEYS",
         "APIKEY",
@@ -214,6 +223,10 @@ STORE_SEGMENTS = frozenset(
     }
 )
 LOCATOR_SEGMENTS = frozenset({"URL", "URI", "DSN", "CONN", "CONNECTION"})
+# A DSN is a connection string by definition, so it needs no store word beside
+# it: `SENTRY_DSN` carries its own credential, and nothing innocuous is spelled
+# this way.
+LOCATOR_ONLY_SEGMENTS = frozenset({"DSN"})
 # Exactly one name, and exact rather than a pattern, because the cost of the
 # entry is a real secret hidden under it.
 #
@@ -312,13 +325,19 @@ def redacted_command(command: list[str]) -> list[str]:
         if argument.startswith("--env="):
             safe.append("--env=" + blanked_operand(argument[len("--env=") :]))
             continue
+        # Short flags cluster, so the `e` need not come first: `-ieNAME=VALUE`
+        # is accepted by the same parser, and a branch that only matched a
+        # leading `e` printed that operand in full. Everything after the FIRST
+        # `e` in the cluster is the operand, which is what getopt does with it.
         if (
-            argument.startswith("-e")
+            argument.startswith("-")
             and not argument.startswith("--")
-            and len(argument) > 2
+            and "e" in argument[1:]
         ):
-            safe.append("-e" + blanked_operand(argument[2:]))
-            continue
+            head, _, operand = argument.partition("e")
+            if operand:
+                safe.append(f"{head}e{blanked_operand(operand)}")
+                continue
         name, separator, _ = argument.partition("=")
         if separator and ENVIRONMENT_NAME.match(name) and secret_shaped(name):
             safe.append(f"{name}=<redacted>")
@@ -393,7 +412,7 @@ def secret_shaped(name: str) -> bool:
     if name in SECRET_ALLOWED:
         return False
     segments = set(name.upper().split("_"))
-    if segments & SECRET_SEGMENTS:
+    if segments & SECRET_SEGMENTS or segments & LOCATOR_ONLY_SEGMENTS:
         return True
     return bool(segments & STORE_SEGMENTS and segments & LOCATOR_SEGMENTS)
 
@@ -555,11 +574,16 @@ def filesystem_property(
             "is not clean",
         )
     if landed:
+        # `dict.fromkeys` rather than a set: the working directory can BE the
+        # home directory, in which case two probes name one path and the
+        # refutation listed it twice. De-duplicated here, where the sentence is
+        # built, so the property does not depend on its caller having done it;
+        # order stays stable so the message reads the same way every run.
         return Property(
             "filesystem",
             REFUTED,
             "a write from inside the boundary reached this host at "
-            + ", ".join(str(path) for path in landed),
+            + ", ".join(str(path) for path in dict.fromkeys(landed)),
         )
     reports = {name: field(output, name) for name in WRITE_PROBES}
     missing = [name for name, value in reports.items() if value is None]
@@ -625,10 +649,26 @@ def privilege_property(output: str) -> Property:
             "it can escalate are unknown - `/proc` may not be mounted inside",
         )
     capabilities = status_value(status, "CapEff")
+    # The BOUNDING set, and it is the one that matters here. `CapEff` is empty
+    # for any non-root process, which is exactly what the contract's
+    # unprivileged identity asks for - so reading it alone means a
+    # `docker run --user` empties the field this property was keyed on. A
+    # `docker run --privileged --user 65534:65534` reported `CapEff
+    # 0000000000000000` and cleared every property, over a boundary whose
+    # `/dev` carried `mem`, the loop devices and `mapper`; its `CapBnd` was
+    # `000001ffffffffff`. `tests/test_verify_sandbox.py` pins both readings.
+    #
+    # This is a deliberate tightening and not only a fix: a container that
+    # simply omits `--cap-drop ALL` carries a non-empty bounding set too, and
+    # is now refuted. That is the reading of "no elevated capabilities" this
+    # file is willing to defend - the bound is what a process inside could
+    # still acquire - and it is what the example in `--help` already does.
+    bounding = status_value(status, "CapBnd")
     no_new_privs = status_value(status, "NoNewPrivs")
     host_process = field(output, "host-process")
     if (
         capabilities is None
+        or bounding is None
         or no_new_privs is None
         or host_process not in {"0", "1", "2"}
     ):
@@ -636,16 +676,18 @@ def privilege_property(output: str) -> Property:
             "privilege",
             UNVERIFIED,
             "the probe's process status did not carry every reading this needs "
-            "(effective capabilities, no-new-privileges, host-process visibility)",
+            "(effective and bounding capabilities, no-new-privileges, "
+            "host-process visibility)",
         )
     try:
         held = int(capabilities, 16)
+        bound = int(bounding, 16)
     except ValueError:
         return Property(
             "privilege",
             UNVERIFIED,
-            f"the probe reported an effective capability set this cannot read: "
-            f"{capabilities!r}",
+            f"the probe reported a capability set this cannot read: "
+            f"{capabilities!r} / {bounding!r}",
         )
     # TWO host process ids, and both must be visible before this is a finding.
     # A boundary with its own process namespace numbers from 1, so a single
@@ -670,6 +712,12 @@ def privilege_property(output: str) -> Property:
         )
     if held:
         findings.append(f"it holds elevated capabilities (CapEff {capabilities})")
+    if bound:
+        findings.append(
+            f"its capability bounding set is not empty (CapBnd {bounding}), so a "
+            "process inside can still acquire capabilities the effective set "
+            "does not show - drop them at the boundary"
+        )
     if no_new_privs != "1":
         findings.append(
             "no-new-privileges is not set, so a setuid program inside can still "
@@ -681,10 +729,13 @@ def privilege_property(output: str) -> Property:
     return Property(
         "privilege",
         PROVEN,
-        f"no elevated capabilities (CapEff {capabilities}), no-new-privileges "
-        f"set, and neither of this check's own processes is visible inside; "
-        f"seccomp mode "
-        f"{seccomp or 'unreported'}, which is reported and never refuted on",
+        f"no capabilities held or available (CapEff and CapBnd both "
+        f"{capabilities}) and no-new-privileges set; seccomp mode "
+        f"{seccomp or 'unreported'}, which is reported and never refuted on. "
+        "Whether the boundary shares a process namespace is deliberately not "
+        "part of this claim: seeing this check's own processes refutes, and not "
+        "seeing them proves nothing, because a daemon that does not share this "
+        "kernel cannot show them either",
     )
 
 
@@ -713,9 +764,9 @@ def evaluate(
 ) -> list[Property]:
     """Every property, in the order a reader should lose confidence in them.
 
-    `entered` is first and is not merely one of five: when it is unverified the
-    probe produced no readings at all, so the four below would each report
-    "the probe did not say", which reads as four independent problems instead
+    `entered` is first and is not merely one of six: when it is unverified the
+    probe produced no readings at all, so the five below would each report
+    "the probe did not say", which reads as five independent problems instead
     of one. They are collapsed into what actually happened.
     """
     entered = entered_property(output, token, marker)
@@ -808,6 +859,28 @@ def run(argv: list[str] | None = None) -> int:
 
     token = secrets.token_hex(8)
     scratch = Path(tempfile.mkdtemp(prefix="verify_sandbox_"))
+    # `mkdtemp` creates mode `0o700` owned by whoever ran this, and every reading
+    # taken inside that directory is then answered by a permission bit rather
+    # than by the boundary. A boundary running as any other uid - which is what
+    # this script's own example recommends, and what the contract's unprivileged
+    # identity implies - cannot traverse it, so the marker reads as absent and
+    # the scratch write reads as refused NO MATTER WHAT IS MOUNTED.
+    #
+    # On a daemon sharing this kernel, two commands differing only in their
+    # `docker run --user`, both mounting the host's temporary directory
+    # read-write at its own absolute path: as the unprivileged uid every
+    # property was proven and the check cleared the boundary, and as the
+    # caller's own uid the same boundary was refuted twice and failed it.
+    # `entered` is the property the rest rests on, and it was being decided by
+    # file permissions. `tests/test_verify_sandbox.py` reproduces the pair.
+    #
+    # `0o1777` rather than `0o755`: world-writable so the write probe means
+    # something under a foreign uid, and sticky so no other local user can
+    # delete the marker out from under this check and turn "absent" into a
+    # passing reading. It is what `/tmp` itself is, and the only things in here
+    # are a fixed sentence and a probe file - nothing secret is exposed by
+    # making them readable.
+    scratch.chmod(0o1777)
     marker = scratch / f"host-marker-{token}"
     scratch_write = scratch / f"scratch-write-{token}"
     workdir_write = Path.cwd() / f".verify_sandbox_write_probe_{token}"
@@ -842,7 +915,11 @@ def run(argv: list[str] | None = None) -> int:
         if args.json:
             envelope(status, properties, note)
             return
-        print(f"boundary: {' '.join(shown)}")
+        # `shlex.join`, because this line exists so the reader knows WHICH
+        # boundary was measured, and a bare space-join renders
+        # `/bin/sh -c 'sleep 20; exec "$@"'` as something that is not the
+        # command that ran.
+        print(f"boundary: {shlex.join(shown)}")
         for item in properties:
             print(item.render())
         print(note)
@@ -885,6 +962,20 @@ def run(argv: list[str] | None = None) -> int:
             )
             return 2
         except (OSError, subprocess.TimeoutExpired) as error:
+            # A timeout kills the client this script started, not whatever that
+            # client started. The boundary can still be running after the
+            # cleanup below has run, and can still create the probe paths
+            # afterwards - measured: the working directory was empty at exit and
+            # carried the probe file twenty-five seconds later. No timing
+            # assumption fixes that honestly, so it is named instead.
+            note = NO_BOUNDARY_NOTE
+            if isinstance(error, subprocess.TimeoutExpired):
+                note = (
+                    f"{note}\nThe declared command was still running after "
+                    f"{args.timeout:g}s and was given up on, not stopped. It may "
+                    f"yet create {workdir_write} or {home_write}; remove them if "
+                    "they appear."
+                )
             report(
                 UNVERIFIED,
                 [
@@ -895,7 +986,7 @@ def run(argv: list[str] | None = None) -> int:
                         f"{type(error).__name__}",
                     )
                 ],
-                NO_BOUNDARY_NOTE,
+                note,
             )
             return 2
 
@@ -964,7 +1055,18 @@ NOT_ESTABLISHED = [
     "under the one name it lets through on purpose",
     "whether the declared command reported truthfully: only the host-side "
     "read-back behind `filesystem` is measured here, and the rest is testimony",
+    "whether the boundary shares a process namespace with anything else - "
+    "seeing this check's own processes refutes it, but not seeing them is not "
+    "evidence, because a daemon backed by a virtual machine or a remote host "
+    "cannot show them either",
 ]
+# `/proc` inside the boundary is a precondition, not an assumption: `network`,
+# `credentials` and `privilege` are each read from it, and a boundary that does
+# not mount it lands on their unverified arms and exits 2. That is fail-closed
+# and it is the right direction, but it means some of the strictest sandboxes -
+# a wrapper invoked without a proc mount, a bare chroot - are refused rather
+# than cleared, and a reader who meets that should know why before loosening
+# anything.
 PROVEN_NOTE = (
     "Every property this check reads is proven. That is not the contract met: "
     "the limits, per-candidate disposability, teardown and the paths it was "

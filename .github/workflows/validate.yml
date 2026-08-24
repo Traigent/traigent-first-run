@@ -156,30 +156,59 @@ jobs:
           docker pull "$PINNED_PYTHON_IMAGE"
           docker tag "$PINNED_PYTHON_IMAGE" "${PINNED_PYTHON_IMAGE%@*}"
 
-      - name: Refuse a run where the container-backed cases would skip
+      - name: Run the container-backed cases here, and refuse a skip
         # A pull that fails takes the step above down with it: a `run:` block is
         # `bash -e`, both commands are their own line, and neither is piped or
         # excused. The failure this step is here for is the quiet one - the pull
         # succeeds, what landed is not what the suite looks for, `unittest` exits
-        # 0 over four skips, and the tick says the boundary was proven.
+        # 0 over the skips, and the tick says the boundary was proven.
         #
-        # So the selector the skip decision is computed from is asked, rather
-        # than re-stated here: whatever `usable_container_image` comes to prefer,
-        # this reads its answer instead of assuming yesterday's. It then compares
-        # that answer against the pinned digest, because "an image is present"
-        # and "the pinned image is present" are two claims, and which base is
-        # underneath is exactly what two of the four verdicts turn on - one of
-        # them reads the variables the image itself defines. The selector
+        # An earlier form of this step asked `usable_container_image` for its
+        # answer and stopped there. That establishes an image was usable in THIS
+        # process, and the cases are selected by the same call re-run minutes
+        # later in another one - a distinction that is not academic, because
+        # that selector has answered with an image in one process and `None` in
+        # the next against a daemon that could no longer start a container. So
+        # `RealBoundaryTests` is loaded and RUN here rather than cleared for
+        # takeoff, and the result is read instead of the precondition: a skip
+        # fails this step, an unsuccessful run fails it, and a run that does not
+        # reach every case the loader found fails it. A skip has to be refused
+        # rather than reported, and refused whatever its cause - `unittest` exits
+        # 0 over each of them alike, the mount-shaped cases carry a `skipTest` of
+        # their own for a daemon that refuses a bind mount, and the next one
+        # added will be for a reason this step cannot be written to anticipate.
+        #
+        # The digest comparison stays, and goes first: "an image is present" and
+        # "the pinned image is present" are two claims, and which base is
+        # underneath is exactly what two of these verdicts turn on - one of
+        # them reads the variables the image itself defines. Asking the selector
+        # for the answer rather than re-stating it means whatever
+        # `usable_container_image` comes to prefer is what gets compared. It
         # prefers `python:3.12-slim`, which is the tag the step above cuts from
         # the pinned reference, so the two agree here by construction. If they
         # ever stop agreeing, these cases are running on an image this file does
         # not pin, and the step above is where that tag is decided.
+        #
+        # How many cases there are is asked of the loader, not typed here, so a
+        # fifth case is gated by the commit that writes it rather than by the
+        # one that later notices. A floor IS typed, because a count taken from
+        # the loader agrees with itself no matter how few cases remain, and this
+        # step passing over an emptied class is the same green tick arrived at
+        # from the other side.
+        #
+        # None of this reaches a developer without a runtime: the skip stays
+        # available and stays loud where it is the honest answer. It is refused
+        # HERE, on a runner where a runtime is guaranteed present and a skip can
+        # therefore only mean the setup broke.
         run: |
           python - <<'PY'
           import json
           import os
           import subprocess
           import sys
+          import unittest
+
+          FLOOR = 4
 
           sys.path.insert(0, "tests")
           import test_verify_sandbox as boundary
@@ -202,6 +231,46 @@ jobs:
                   f"{published}, which is not the image this workflow pins ({digest})"
               )
           print(f"boundary cases will run on {boundary.IMAGE}, pinned as {digest}")
+
+          cases = getattr(boundary, "RealBoundaryTests", None)
+          if cases is None:
+              raise SystemExit(
+                  "tests/test_verify_sandbox.py no longer defines RealBoundaryTests, "
+                  "which is the class this step exists to run. Name whatever "
+                  "replaced it here, in the commit that renames it."
+              )
+          suite = unittest.defaultTestLoader.loadTestsFromTestCase(cases)
+          loaded = suite.countTestCases()
+          if loaded < FLOOR:
+              raise SystemExit(
+                  f"RealBoundaryTests offers {loaded} cases and offered {FLOOR} when "
+                  "this floor was written, so cases have been removed. If that was "
+                  "deliberate, lower FLOOR in the commit that removes them."
+              )
+
+          result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(suite)
+          if result.skipped:
+              raise SystemExit(
+                  "a container runtime IS available on this runner, so a skipped "
+                  "boundary case is the hole this step exists to close and never an "
+                  "honest skip: "
+                  + "; ".join(f"{case.id()} ({why})" for case, why in result.skipped)
+              )
+          if not result.wasSuccessful():
+              raise SystemExit(
+                  f"the boundary is not proven on this runner: {len(result.failures)} "
+                  f"of {result.testsRun} cases failed and {len(result.errors)} errored, "
+                  "reported in full above"
+              )
+          if result.testsRun != loaded:
+              raise SystemExit(
+                  f"the loader found {loaded} boundary cases and {result.testsRun} "
+                  "ran, so the run stopped short of the class it was given"
+              )
+          print(
+              f"{result.testsRun} boundary cases ran against {boundary.IMAGE}, "
+              "none skipped"
+          )
           PY
 
       - name: Run package tests

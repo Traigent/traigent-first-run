@@ -24,13 +24,15 @@ checker and lets them declare their own boundary to it.
 Everything that would otherwise be spent here sits in that checker's docstring,
 the arrangement the run-log validator already uses further down this same
 reference. That is what holds the raise to six lines: what each exit means, the
-six properties read from inside the boundary, and the seven things the check
+six properties read from inside the boundary, and the eight things the check
 cannot reach - resource limits, per-candidate disposability, descendant
 teardown, any host path it was never told about, seccomp confinement, a secret
-under a name it does not recognise, and the truthfulness of the command's own
-report - all live where they cannot drift away from the code that decides them.
+under a name it does not recognise, whether the boundary shares a process
+namespace, and the truthfulness of the command's own report - all live where
+they cannot drift away from the code that decides them.
 
-One line lands in the record template, closing a gap this same file opened. It
+One folded field lands in the record template, closing a gap this same file
+opened. It
 has asked since long before this change that the boundary, its limits, mounted
 inputs and permitted side effects be written down, against a template carrying
 no row to write them on. A mandated record with nowhere to go is a mandated

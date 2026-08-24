@@ -9766,6 +9766,46 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
 
+    def test_ci_runs_the_container_boundary_cases_and_refuses_a_skip(self) -> None:
+        """The gate that closes the hole can itself be removed silently.
+
+        `RealBoundaryTests` drives a real container for the half of the boundary
+        verifier only an operating system can answer, and it had never run in
+        CI - every run reported four skips, which is how a verdict that turns on
+        the base image, and a case that held on one vendor's daemon only, both
+        went green. The step added to fix that runs the class and refuses a
+        skip. Nothing required it to exist, so deleting it, reordering it after
+        a failing step, or hanging an `if:` on it would restore the original
+        hole in a diff that reads like tidying.
+
+        Written against the behaviours rather than the step's name, so renaming
+        it is free and hollowing it out is not.
+        """
+        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
+        self.assertIn("RealBoundaryTests", workflow)
+        for behaviour, why in (
+            # The BRANCH, not the identifier: `result.skipped` also appears in
+            # the message that lists what was skipped, so asserting the name
+            # alone stayed true with the refusal itself replaced by `if False`.
+            ("if result.skipped:", "a skip must fail the job, not be reported"),
+            (
+                "if not result.wasSuccessful():",
+                "a failing boundary case must fail the job",
+            ),
+            (
+                "countTestCases()",
+                "the number of cases must come from the loader, so a case "
+                "added later is gated by the commit that writes it",
+            ),
+            (
+                "PINNED_PYTHON_IMAGE",
+                "the cases must run on the image this file pins, because two "
+                "of the verdicts turn on which base is underneath",
+            ),
+        ):
+            self.assertIn(behaviour, workflow, why)
+        self.assertNotIn("continue-on-error", workflow)
+
     def test_every_ci_action_is_pinned_to_a_commit_sha(self) -> None:
         """A version tag is a mutable pointer, and this workflow runs on
         `pull_request`.
