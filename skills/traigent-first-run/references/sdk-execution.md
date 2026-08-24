@@ -229,7 +229,7 @@ lowers the score by itself, and each makes the score describe a search that is n
 - **Values too close together are not two values.** `temperature: [0.1, 0.115]` is one setting
   written twice, and a run that spends two trials on it learns nothing from the second. The scorer
   collapses the numeric ones it has a range for - the card then says "2 distinct configurations
-  (4 declared)" - but it has no range for an unfamiliar knob, so `chunk_size: [500, 505]` counts as
+  (4 declared)" - but it has no range for an unfamiliar knob, so `chunk_step: [500, 505]` counts as
   two and the space it reports is bigger than the space that exists.
 - **Two knobs naming one dimension are one knob.** `prompt_style` and `prompt_policy` are the same
   lever spelled twice, and the scorer only knows the spellings it has been told about. Two aliases

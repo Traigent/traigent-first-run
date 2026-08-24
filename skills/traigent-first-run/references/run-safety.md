@@ -444,7 +444,7 @@ as "effective" depends on whether the knob has a range at all:
 - A categorical or boolean knob needs two distinct values. Two is also where it scores FULL
   breadth, not half: for a categorical knob there is no knowable "how many values exist" to divide
   by - `thinking_shape` may have two shapes today and four next year - so a denominator invented
-  here would only underprice an honest two-value comparison. `model` is the one exception and keeps
+  here would only underprice an honest two-value comparison. Model knobs are the exception and keep
   a ladder, because there more choices genuinely is better: 3 or more scores 100, 2 scores 60.
 - Any knob declared with exactly ONE value scores 10, whatever its type. It adds nothing to the
   search, so it earns almost nothing; it is not zero because pinning can be the right call made on

@@ -7971,6 +7971,78 @@ class SkillPackageTests(unittest.TestCase):
                     build_prompt("task", **base, reflect=refused)
                 self.assertIn("unsupported reflect", str(caught.exception))
 
+    def test_the_knob_named_as_unrangeable_is_one_the_scorer_cannot_range(
+        self,
+    ) -> None:
+        """The example has to be measured, not merely plausible.
+
+        This bullet teaches how a customer's own score is computed, and it
+        named `chunk_size` - which `CANONICAL_RANGES` carries, so the scorer
+        collapses `[500, 505]` to ONE value and the sentence was backwards
+        about the one number it exists to explain. A reader who trusted it
+        reasoned the wrong way about their own sweep.
+
+        Asserted through the scorer rather than against a copy of the table,
+        so adding a range for whatever knob the sentence names next fails
+        here instead of turning the prose false in silence.
+        """
+        text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        match = re.search(r"no range for an unfamiliar knob, so `(\w+): \[(\d+), (\d+)\]`", text)
+        self.assertIsNotNone(
+            match, "the unfamiliar-knob bullet no longer states a worked example"
+        )
+        knob, low, high = match.group(1), int(match.group(2)), int(match.group(3))
+        self.assertNotIn(
+            knob,
+            READINESS.CANONICAL_RANGES,
+            f"sdk-execution.md offers `{knob}` as the knob the scorer has no "
+            "range for, and the scorer has one",
+        )
+        self.assertEqual(
+            READINESS.knob_variation(knob, [low, high]).effective_values,
+            2,
+            f"the bullet says `{knob}: [{low}, {high}]` counts as two; the "
+            "scorer is what decides that",
+        )
+
+    def test_the_ladder_the_prose_cites_is_the_one_the_scorer_applies(self) -> None:
+        """The exception is plural in the code and was singular in the prose.
+
+        `OPEN_CATEGORICAL_KNOBS` has laddered `embedding_model` and
+        `reranker_model` beside `model` since the constant was introduced, so
+        a customer-authored document declaring `embedding_model: ["a", "b"]`
+        on the strength of a sentence naming one knob expects full breadth
+        and is priced at 60. The disagreement reaches the printed knob table
+        rather than the pillar, which is why it survived: no score moves.
+
+        The figures are read back out of the sentence, so the prose cannot
+        keep a number the ladder stopped returning.
+        """
+        text = RUN_SAFETY.read_text()
+        figures = re.search(r"(\d+) or more scores (\d+), (\d+) scores (\d+)", text)
+        self.assertIsNotNone(
+            figures, "the ladder paragraph no longer states the figures it prices"
+        )
+        full_at, full, two_at, two = (int(group) for group in figures.groups())
+        for knob in sorted(READINESS.OPEN_CATEGORICAL_KNOBS):
+            with self.subTest(knob=knob):
+                self.assertEqual(
+                    round(READINESS.categorical_breadth(knob, full_at) * 100),
+                    full,
+                    f"run-safety.md prices {knob} at {full} for {full_at} values",
+                )
+                self.assertEqual(
+                    round(READINESS.categorical_breadth(knob, two_at) * 100),
+                    two,
+                    f"run-safety.md prices {knob} at {two} for {two_at} values",
+                )
+        if len(READINESS.OPEN_CATEGORICAL_KNOBS) > 1:
+            self.assertIsNone(
+                re.search(r"`\w+` is the one exception", text),
+                "the scorer ladders more than one knob, so the paragraph may "
+                "not name a single one as the exception",
+            )
+
     def test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials(
         self,
     ) -> None:
