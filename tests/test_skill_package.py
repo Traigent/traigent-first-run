@@ -2871,6 +2871,38 @@ class SkillPackageTests(unittest.TestCase):
 
     LICENCE_SET = ("LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md")
 
+    def test_the_readme_install_command_installs_outside_the_project(self) -> None:
+        """The installer defaults to the project, so the flag is the whole fix.
+
+        `npx skills add` auto-detects: project if it is standing in one, else
+        global. Run without `-g` from inside a git project, it writes the whole
+        bundle - SKILL.md, every reference, every script, and the licence text -
+        into that project, untracked and not ignored, where `git add -A` sweeps
+        it into the reader's own repository. Measured, not read off the flag's
+        documentation: a clean scratch project went from an empty
+        `git status --porcelain` to seventeen untracked files and a megabyte,
+        and the same command with `-g` left the porcelain empty.
+
+        That is the exact outcome the page recommending the command exists to
+        avoid, and it is also how the AGPL text ends up inside a customer's
+        tree. Nothing here can execute the installer - it needs network and an
+        `npx` fetch - so this pins the half that is ours: the command README
+        prints. A future edit dropping the flag reopens both at once.
+        """
+        readme = (ROOT / "README.md").read_text()
+        commands = re.findall(r"^npx skills add.*$", readme, re.MULTILINE)
+        self.assertEqual(
+            [command for command in commands if " -g " not in command],
+            [],
+            "README prints an `npx skills add` command that installs into the "
+            "reader's project instead of outside it",
+        )
+        self.assertTrue(commands, "README no longer prints the install command")
+        # The corpus, not just the predicate: a regex that matched nothing
+        # would satisfy the emptiness above forever, and the command moving
+        # into a different fence is exactly how it would stop being found.
+        self.assertIn("npx skills add -g Traigent/traigent-first-run", commands)
+
     def test_the_shipped_licence_is_the_repository_licence(self) -> None:
         """Two copies of a licence are two licences until something welds them.
 
@@ -2898,7 +2930,15 @@ class SkillPackageTests(unittest.TestCase):
                     "the installer copies what git tracks under the skill "
                     "directory, so an untracked copy ships nothing at all",
                 )
-        shipped = {name: (SKILL_ROOT / name).read_bytes() for name in self.LICENCE_SET}
+        # Read defensively. A file git still tracks but nobody has on disk is a
+        # real state - a bad checkout, a half-applied patch - and reading it
+        # first turned this guard's own message into a `FileNotFoundError` from
+        # `pathlib`, which names the path and not the problem. Absent is drift,
+        # and `_licence_drift` already says so in the words that help.
+        shipped = {
+            name: path.read_bytes() if path.is_file() else None
+            for name, path in ((n, SKILL_ROOT / n) for n in self.LICENCE_SET)
+        }
         self.assertEqual(
             self._licence_drift(shipped, published),
             [],
@@ -2933,7 +2973,7 @@ class SkillPackageTests(unittest.TestCase):
 
     @staticmethod
     def _licence_drift(
-        shipped: dict[str, bytes], published: dict[str, bytes]
+        shipped: dict[str, bytes | None], published: dict[str, bytes]
     ) -> list[str]:
         """Every licence document the bundle does not carry verbatim.
 
@@ -3404,16 +3444,19 @@ class SkillPackageTests(unittest.TestCase):
         )
 
     def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
-        """This repository has no LICENSE, so it may not describe its own terms.
+        """The README may not restate this repository's terms in its own words.
 
-        `gh api repos/Traigent/traigent-first-run` returns `"license": null`
-        with `"visibility": "public"`, and no LICENSE file is tracked - which
-        is all-rights-reserved by default, while this same README tells the
-        reader to `npx skills add Traigent/traigent-first-run`. A sentence
-        saying the SDK notice "does not change the license terms for this
-        guide repository" asserts terms that do not exist. Choosing a license
-        is the owner's call; saying nothing is strictly better than saying
-        something false, so the sentence is gone and stays gone.
+        Written when nothing here was licensed at all and a sentence claimed
+        the SDK notice "does not change the license terms for this guide
+        repository" - terms that did not then exist. They exist now: `LICENSE`,
+        `NOTICE` and `COMMERCIAL-LICENSE.md` are tracked, and shipped inside
+        the skill. That retires the original premise, not the check.
+
+        What it refuses is the same and is now the more useful half. Those
+        three files are the terms; a README paraphrase of them is a second
+        statement of one decision, free to drift from the files it summarises
+        and read as authoritative while doing it. The README may point at them
+        - it does - and may not restate what they grant.
         """
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (

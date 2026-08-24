@@ -15,10 +15,10 @@ data does not establish what production performance would be.
 
 ## Start with one prompt
 
-Install the self-contained skill:
+Install the self-contained skill for your user account:
 
 ```bash
-npx skills add Traigent/traigent-first-run
+npx skills add -g Traigent/traigent-first-run
 ```
 
 Then paste this into Claude Code, Cursor, Codex, Gemini CLI, or another coding assistant:
@@ -27,13 +27,18 @@ Then paste this into Claude Code, Cursor, Codex, Gemini CLI, or another coding a
 Use $traigent-first-run to run my first Traigent optimization.
 ```
 
-The install copies the complete guide, its references, scripts, and compact internal run record
-into your assistant's own skills directory - the whole workflow, and what the clone path below
-routes into. None of this repository's own source lands in the project being optimized, so there
-is no guide scaffolding sitting inside it for an assistant to read as though it were yours. The
-assistant resolves bundled files from the installed skill's absolute directory while keeping your
-project as the working directory. Node.js is needed for this one command, not for the Traigent
-Python run.
+**Keep the `-g`.** Without it the installer defaults to a project-level install and writes the whole
+bundle - guidance, scripts, and the licence text - into the directory you are standing in, untracked
+and not ignored, where `git add -A` would sweep it into your own repository. That is the outcome
+this page exists to avoid. With `-g` the skill lands under your home directory instead; `git status`
+in your project should report nothing new, which is the check to run if you are unsure.
+
+The bundle carries the complete guide, its references, scripts, and compact internal run record -
+the whole workflow, and what the clone path below routes into. The assistant resolves bundled files
+from the installed skill's absolute directory while keeping your project as the working directory.
+Node.js is needed for this one command, not for the Traigent Python run.
+
+If your assistant is already running, start a new session afterwards so it picks the skill up.
 
 The assistant performs the technical work and asks only when it needs:
 
@@ -68,20 +73,26 @@ invented task is derived from a guess, and you would be approving real spend on 
 ## Without Node.js: run it from a clone
 
 `npx skills add` needs Node.js. Without it, clone this repository **outside the project you want to
-optimize**, then name both directories:
+optimize** - any directory that is not inside it:
+
+```bash
+git clone https://github.com/Traigent/traigent-first-run.git ~/traigent-first-run
+```
+
+Then name both directories, so the assistant reads the guide from one and works in the other:
 
 ```text
 Help me run my first Traigent optimization.
-Follow GUIDE.md in <absolute path to the clone>, and keep <absolute path to my project> as the
+Follow GUIDE.md in ~/traigent-first-run, and keep <absolute path to my project> as the
 working directory.
 ```
 
 Where the clone goes is the whole of the difference. Cloning into the project puts this
 repository's tests, fixtures, and maintenance tooling inside the project being optimized, and an
 assistant inspecting that project then reads the guide's own scaffolding as though it were yours.
-`GUIDE.md`, [`AGENTS.md`](AGENTS.md), and the repository layout below all say those directories
-play no part in a run; keeping the clone outside your project is what makes that true rather than
-merely stated.
+[`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md), and the repository layout below all say those
+directories play no part in a run; keeping the clone outside your project is what makes that true
+rather than merely stated.
 
 Contributors editing the guide itself want a checkout for a different reason -
 [`CLAUDE.md`](CLAUDE.md) describes that workflow and the checks it has to pass.
@@ -289,10 +300,10 @@ One licence covers both, so a project already holding commercial terms for the S
 further to use this guide. External contributions require a signed CLA - see
 [CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md).
 
-`npx skills add` copies the skill directory and nothing above it, so these terms travel inside it:
-`LICENSE`, `NOTICE`, and `COMMERCIAL-LICENSE.md` ship beside the guidance and are held byte-identical
-to the copies here. An installed skill carries its own licence rather than pointing at a repository
-the reader never cloned.
+The terms travel inside the skill directory rather than sitting only at the repository root:
+`LICENSE`, `NOTICE`, and `COMMERCIAL-LICENSE.md` are published beside the guidance and are held
+byte-identical to the copies here. An installed skill carries its own licence rather than pointing
+at a repository the reader never cloned.
 
 ## SDK licensing
 
@@ -344,7 +355,7 @@ egress.
 
 | Path | Purpose |
 |---|---|
-| [`skills/traigent-first-run/`](skills/traigent-first-run/) | The self-contained skill `npx skills add` installs, and the only directory it copies - the default path. Carries its own `LICENSE`, `NOTICE`, and `COMMERCIAL-LICENSE.md`, byte-identical to the copies at the root |
+| [`skills/traigent-first-run/`](skills/traigent-first-run/) | The self-contained skill, and everything a guided run loads - the default path. Carries its own `LICENSE`, `NOTICE`, and `COMMERCIAL-LICENSE.md`, byte-identical to the copies at the root |
 | [`GUIDE.md`](GUIDE.md) | Entry point for the fallback clone path; an installed skill never reads it |
 | [`.env.example`](.env.example) | Reference environment settings |
 | `traigent-runs/` (created during a run) | Assistant-created walkthrough artifacts and the default local run record; ignored when the project uses Git |
