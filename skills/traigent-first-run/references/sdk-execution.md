@@ -648,7 +648,7 @@ BASELINE_CONFIG = {
     # and took that word for the thing it actually describes.
     "prompt_style": "plain",
     "thinking_shape": "direct",
-    "reflect": False,
+    "reflect": "off",
 }
 BASELINE_SPACE = {
     # The same three ladder models run in both phases, so the enhanced run
@@ -675,7 +675,7 @@ ENHANCED_SPACE = {
     # baseline space is a strict subset of this one.
     "prompt_style": BASELINE_SPACE["prompt_style"],
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
-    "reflect": [False, True],
+    "reflect": ["off", "on"],
 }
 # Readiness evidence for `scripts/readiness.py --config-space`. WIRED_KNOBS
 # names only the dimensions call_agent below actually consumes - a knob listed
@@ -764,7 +764,7 @@ def build_prompt(
     *,
     style: str,
     thinking_shape: str,
-    reflect: bool,
+    reflect: str,
 ) -> str:
     """The three supported prompt controls act at different moments.
 
@@ -793,11 +793,13 @@ def build_prompt(
         )
     elif thinking_shape != "direct":
         raise ValueError(f"unsupported thinking shape: {thinking_shape}")
-    if reflect:
+    if reflect == "on":
         prompt += (
             "\n\nAfter reaching an answer, reconsider whether it is actually correct, and "
             "revise it if it is not. Return only the final answer."
         )
+    elif reflect != "off":
+        raise ValueError(f"unsupported reflect: {reflect}")
     return prompt
 
 

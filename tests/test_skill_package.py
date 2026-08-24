@@ -7903,17 +7903,73 @@ class SkillPackageTests(unittest.TestCase):
         # is gone: it and `reflect` were both "look at your answer again",
         # differing only in what the model was told to look at.
         self.assertIn('if thinking_shape == "chain_of_thought":', text)
-        self.assertIn("if reflect:", text)
+        self.assertIn('if reflect == "on":', text)
+        self.assertIn('elif reflect != "off":', text)
         self.assertNotIn("if self_check:", text)
         self.assertNotIn('"self_check"', text)
         for pair in (
             '"thinking_shape": BASELINE_SPACE["thinking_shape"]',
-            '"reflect": [False, True]',
+            '"reflect": ["off", "on"]',
         ):
             self.assertIn(pair, text)
         # `prompt_style`'s first value was renamed from "direct" when
         # `thinking_shape` arrived and took that word for what it describes.
         self.assertNotIn('"criteria_first"', text)
+
+    def test_the_prescribed_space_carries_no_value_the_session_api_refuses(
+        self,
+    ) -> None:
+        """A boolean knob raises only after the customer has paid.
+
+        The baseline runs offline, so the client-side check never fires there
+        and its twelve trials bill normally. The managed run is where the
+        space reaches `create_session`, which refuses booleans BEFORE trial 1
+        - so the walkthrough's one paid-for search dies having spent the
+        baseline and bought nothing.
+
+        `type(v) is bool` is the installed client's own predicate rather than
+        a paraphrase of it: bool subclasses int, and the client refuses only
+        the literals, so a stricter test here would forbid encodings the
+        session actually accepts and a looser one would miss the two it does
+        not.
+        """
+        namespace = self._wiring_probe_namespace()
+        for name in ("BASELINE_CONFIG", "BASELINE_SPACE", "ENHANCED_SPACE"):
+            for knob, value in namespace[name].items():
+                values = value if isinstance(value, (list, tuple)) else [value]
+                with self.subTest(space=name, knob=knob):
+                    self.assertEqual(
+                        [item for item in values if type(item) is bool],
+                        [],
+                        f"{name}[{knob!r}] ships a Python boolean, which the "
+                        "cloud session API refuses before the first trial and "
+                        "the offline baseline cannot catch",
+                    )
+
+    def test_the_prompt_builder_reads_the_label_and_refuses_an_unknown_one(
+        self,
+    ) -> None:
+        """Neither label may be decided by truthiness, in either direction.
+
+        Both are non-empty strings, so `if reflect:` reads `off` as on and the
+        enhanced run pays for twenty-four configurations whose prompts never
+        differ in the knob being ranked. Falling through to off instead is the
+        same failure the other way: the run finishes, the number looks real,
+        and the knob it credits was never varied. Only a refusal is safe, and
+        it is asserted on the message rather than on the exception type, which
+        `int` and `str` comparisons would raise anyway.
+        """
+        build_prompt = self._wiring_probe_namespace()["build_prompt"]
+        base = {"style": "plain", "thinking_shape": "direct"}
+        self.assertEqual(build_prompt("task", **base, reflect="off"), "task")
+        self.assertIn("reconsider", build_prompt("task", **base, reflect="on"))
+        # The two literals the session API refuses, the two int encodings it
+        # would accept but this agent does not read, and a near-miss label.
+        for refused in (True, False, 1, 0, "On", "true"):
+            with self.subTest(reflect=refused):
+                with self.assertRaises(ValueError) as caught:
+                    build_prompt("task", **base, reflect=refused)
+                self.assertIn("unsupported reflect", str(caught.exception))
 
     def test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials(
         self,
@@ -8009,7 +8065,7 @@ class SkillPackageTests(unittest.TestCase):
                 )
         self.assertIn('"prompt_style": BASELINE_SPACE["prompt_style"]', enhanced_block)
         self.assertIn('"temperature": BASELINE_SPACE["temperature"]', enhanced_block)
-        self.assertIn('"reflect": [False, True]', enhanced_block)
+        self.assertIn('"reflect": ["off", "on"]', enhanced_block)
 
         code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
         module = ast.parse(code)
@@ -8145,7 +8201,7 @@ class SkillPackageTests(unittest.TestCase):
         off = {
             "style": "plain",
             "thinking_shape": "direct",
-            "reflect": False,
+            "reflect": "off",
         }
         # Every knob at its baseline value must leave the message untouched, or
         # the baseline is not the agent's current behaviour.
@@ -8159,7 +8215,7 @@ class SkillPackageTests(unittest.TestCase):
             for name, value in (
                 ("style", "structured"),
                 ("thinking_shape", "chain_of_thought"),
-                ("reflect", True),
+                ("reflect", "on"),
             )
         }
         self.assertIn("Task:\ntask", variants["style"])
@@ -8534,7 +8590,7 @@ class SkillPackageTests(unittest.TestCase):
                 "temperature": 0.3,
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
-                "reflect": False,
+                "reflect": "off",
             },
         )
         strong_call = calls[-1]
@@ -8555,7 +8611,7 @@ class SkillPackageTests(unittest.TestCase):
                 "temperature": 0.3,
                 "prompt_style": "plain",
                 "thinking_shape": "direct",
-                "reflect": False,
+                "reflect": "off",
             },
         )
         ordinary_call = calls[-1]
@@ -14065,6 +14121,36 @@ class SkillPackageTests(unittest.TestCase):
                 "config-space example; a fence was inserted above it",
             )
 
+    def test_the_documented_config_space_is_the_one_the_template_emits(self) -> None:
+        """Two files, one space - so an encoding cannot drift between them.
+
+        run-safety.md's fence is what the customer reads before approving;
+        sdk-execution.md's template is what writes that file at run time.
+        Nothing tied the two together. The scored assertions beside this one
+        read only the SHAPE - 24 configurations against a 12-trial cap - and
+        every encoding of a two-value knob scores the same there, so the pair
+        could disagree about the values themselves with the suite green. That
+        is the gap a refused encoding travelled through into both files.
+        """
+        fence = re.search(r"```json\n(.*?)\n```", RUN_SAFETY.read_text(), re.DOTALL)
+        assert fence is not None
+        documented = json.loads(fence.group(1))
+        namespace = self._wiring_probe_namespace()
+        self.assertEqual(
+            documented["knobs"],
+            {
+                name: list(values)
+                for name, values in namespace["ENHANCED_SPACE"].items()
+            },
+            "run-safety.md documents a different search space from the one "
+            "the sdk-execution.md template emits",
+        )
+        self.assertEqual(
+            documented["wired"],
+            list(namespace["WIRED_KNOBS"]),
+            "the documented `wired` list no longer matches the template's",
+        )
+
     def test_config_space_example_clears_the_cap_through_the_real_consumer(
         self,
     ) -> None:
@@ -14841,7 +14927,7 @@ class SkillPackageTests(unittest.TestCase):
             if config["model"] != namespace["BASELINE_CONFIG"]["model"]:
                 # This model ignores reflect and nothing else: same request
                 # for either value of it, every other knob still honoured.
-                config = {**config, "reflect": False}
+                config = {**config, "reflect": "off"}
             return real_build_request(message, config)
 
         namespace["build_request"] = model_dependent
@@ -14880,7 +14966,7 @@ class SkillPackageTests(unittest.TestCase):
 
         def input_dependent(message: str, config: dict) -> dict:
             request = real_build_request(message, config)
-            if message == trigger and config["reflect"]:
+            if message == trigger and config["reflect"] == "on":
                 request["messages"] = [{"role": "user", "content": "rewritten"}]
             else:
                 # Every other input ignores reflect entirely.
