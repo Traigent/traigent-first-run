@@ -216,9 +216,9 @@ the default. Say this at the moment the user creates the key, not afterwards: th
 to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
 leaves spend that already happened.
 
-Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
-at the production service, and a stray override silently sends a paid run somewhere the user cannot
-see it.
+Nothing else belongs in `.env`. Do not add a backend or API URL, and never hold the baseline over
+one already there: that phase runs backend-offline and reaches no backend at all. An override
+decides only where the connected run is recorded - confirm it at that stage's approval, not before.
 
 SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
 readiness score. The environment selected or created in stage 5 remains authoritative for the
@@ -873,9 +873,6 @@ connected `auto` with a default cap of 12 for the enhanced space, then report th
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
 silently present a two-row generated run as the intended comparison.
 
-Composite patterns multiply calls and cost. Use them only when the agent shape and observed
-failure mode justify them.
-
 ### The accuracy-cost frontier
 
 SKILL stage 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
@@ -1077,12 +1074,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
   reason; do not replace it with a guessed explanation or claim portal success.
-- Tracking degraded to local-only during a connected run: the wrapper has already refused every
-  provider call since the stamp appeared, so report the degradation with a sanitized backend reason
-  and the spend it cost, and do not restart the phase to recover the link.
-- Tracking degraded to local-only during a connected run: stop paid work at once - the door
-  refuses the next call already, so surface a sanitized backend reason and report the
-  degradation rather than re-deciding whether to continue.
+- Tracking degraded to local-only during a connected run: stop paid work at once - the wrapper has
+  already refused every provider call since the stamp appeared, so report the degradation with a
+  sanitized backend reason and the spend it cost rather than re-deciding whether to continue or
+  restarting the phase to recover the link.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
   the stop reason; do not report it as a failure or silently drop the paid trials.

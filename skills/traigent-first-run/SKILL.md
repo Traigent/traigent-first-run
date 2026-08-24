@@ -173,7 +173,7 @@ heading.
 >
 > 1. **Inspect** - preserve your agent, dataset, and evaluator.
 > 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - install the SDK, then measure today's setup with calls, cost, and time.
+> 3. **Baseline** - install the SDK, then measure a bounded slice of today's setup: calls, cost, time.
 > 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
 >    bounded managed search.
 > 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
@@ -659,13 +659,11 @@ inference provider/route may receive it. Connected synchronization waits until a
 
 ### 6. Approve and run the baseline
 
-Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
-bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
-least four from each difficulty band, drawn within each split rather than across it - and estimate
-runtime and spend from that subset, not from the full row count.
-
-Select only after scoring the full dataset and before pricing the run. Record the chosen row ids,
-report subset and full sizes, and state that the small first-run sample limits the claim.
+Scope the run before pricing it. Above 100 usable rows, take the bounded first-run subset in
+`references/evaluation-and-dataset.md` - 18 rows by default, four per band, within each split - and
+estimate runtime and spend from that subset, not from the full row count. Select it after scoring
+the full dataset, record the chosen row ids, report subset and full sizes, and state that the small
+first-run sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup, and do
 not repeat a provider choice already resolved in stage 5.
@@ -685,9 +683,10 @@ Immediately before the paid baseline, show a short run card with model ids, each
 its explicit values, one plain-language note per knob, and the total combination count. The
 enhanced card waits until after the baseline checkpoint.
 
-Put the baseline runtime estimate and the default **30-minute completion target** in the same
-approval as the money ceiling. This is an estimate and an up-front sizing target, not a hard
-wall-clock guarantee. Size the baseline to fit before it starts.
+Put the baseline runtime estimate, the provider calls it places - scored rows times configurations
+times calls per scored row, the row half counted by `scripts/preflight.py` - and the default
+**30-minute completion target** in the same approval as the money ceiling. Estimate and target are
+up-front sizing, not a hard wall-clock guarantee. Size the baseline to fit before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
 observable phase milestones. Never invent progress or quietly drop validation. A timeout with

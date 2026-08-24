@@ -5863,7 +5863,7 @@ class SkillPackageTests(unittest.TestCase):
         ("perform safe, read-only discovery", 1, "inspect"),
         ("render the initial real-world readiness board", 2, "readiness"),
         ("install the exact declared dependencies", 3, "install the sdk"),
-        ("### 6. approve and run the baseline", 3, "measure today's setup"),
+        ("### 6. approve and run the baseline", 3, "bounded slice of today's setup"),
         # The promise says ACCOUNT, so the flow phrase has to be the sentence
         # that establishes one. Pinning "ask for the traigent key" instead
         # left the promise's costliest item - create an account, mid-run,
@@ -22640,6 +22640,74 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "ignored when the project uses git, like the rest of `traigent-runs/`",
             " ".join((ROOT / "README.md").read_text().casefold().split()),
         )
+
+
+class TheBaselineIsLocalAndSizedBeforeItStartsTests(unittest.TestCase):
+    """Two facts about one stage that a real run got wrong in both directions.
+
+    It read a `.env` and a preflight card before the first paid phase and, from
+    a backend origin pointing somewhere other than the production portal,
+    concluded the baseline would "spend real money and record nowhere" - then
+    asked the customer to choose a backend, which stage 6 forbids, about a
+    phase that forces the SDK backend-offline before importing it and drops
+    the Traigent key from its own process. Separately, the opening promised to
+    measure their setup, and between that promise and the first provider call
+    nothing said how much of it would be measured.
+    """
+
+    def test_the_env_rule_does_not_put_a_backend_in_front_of_the_baseline(
+        self,
+    ) -> None:
+        """The rule forbade adding an origin and said nothing about finding one.
+
+        Its reason - that a stray override sends a paid run somewhere the user
+        cannot see it - was stated of "a paid run", and the first paid run is
+        the local baseline, which no backend origin reaches. So the sentence
+        that exists to keep a connected run visible was also the sentence a run
+        used to hold the phase it has nothing to do with.
+        """
+        safety = RUN_SAFETY.read_text()
+        self.assertIn("Do not add a backend or API URL", safety)
+        self.assertIn("runs backend-offline and reaches no backend at all", safety)
+        self.assertIn("where the connected run is recorded", safety)
+        self.assertNotIn(
+            "a stray override silently sends a paid run somewhere the user cannot",
+            safety,
+            "the reason names any paid run, and the baseline is one of those",
+        )
+
+    def test_one_recovery_bullet_covers_degraded_tracking(self) -> None:
+        """The same recovery was written twice, so neither one was the decision."""
+        safety = RUN_SAFETY.read_text()
+        self.assertEqual(
+            safety.count("Tracking degraded to local-only during a connected run"),
+            1,
+            "two bullets for one degradation is two homes for one decision",
+        )
+
+    def test_the_baseline_approval_states_the_calls_it_will_place(self) -> None:
+        """Scale is what the customer is approving, and it had no number.
+
+        The approval carried an estimate and a completion target, both of which
+        describe the run in units nobody can check against the file in front of
+        them. The calls it places is arithmetic over two counts the run already
+        has, and its row half is now read off `preflight.py` rather than
+        recalled - so "size the baseline to fit before it starts" is an
+        instruction with an operand instead of an intention.
+        """
+        skill_text = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("the provider calls it places", skill_text)
+        self.assertIn(
+            "scored rows times configurations times calls per scored row", skill_text
+        )
+        self.assertIn("size the baseline to fit before it starts", skill_text)
+        # The arithmetic has to reach the approval, not sit two stages away in
+        # a reference the flow may not have loaded when it prices the run.
+        approval = skill_text.split("### 6. approve and run the baseline", 1)[1].split(
+            "### 7. run the honest comparison", 1
+        )[0]
+        self.assertIn("the provider calls it places", approval)
+        self.assertIn("`scripts/preflight.py`", approval)
 
 
 if __name__ == "__main__":

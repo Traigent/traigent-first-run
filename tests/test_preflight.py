@@ -296,7 +296,11 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings(dict(present), {})
+                # With a key present, because that is the environment the
+                # warning is about - the test below owns the other one.
+                MODULE.check_cost_settings(
+                    {**present, "TRAIGENT_API_KEY": "uk_example"}, {}
+                )
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
                 )
@@ -311,6 +315,87 @@ class StaticPreflightTests(unittest.TestCase):
             [],
             "a clean environment must not warn, or the warning means nothing",
         )
+
+    def test_a_backend_override_is_scoped_to_the_stage_that_reaches_it(self) -> None:
+        """The baseline is local, so no backend origin is a reason to hold it.
+
+        This check ran at both pre-baseline passes and said only "verify that a
+        non-default backend is intentional", naming no stage. A run read that
+        beside a non-production origin, concluded a paid baseline "would spend
+        real money and record nowhere", and asked the customer which backend to
+        use before the first paid phase - a question stage 6 forbids, about a
+        phase that forces the SDK backend-offline before importing it and drops
+        the Traigent key from its own process, so it places no Traigent call at
+        all. The stage an origin does decide is the connected one, and the key
+        this function already reads is what says whether one is reachable yet.
+        """
+        override = {"TRAIGENT_BACKEND_URL": "https://backend.example.invalid"}
+
+        MODULE.RESULTS.clear()
+        MODULE.check_cost_settings(dict(override), {})
+        deferred = next(item for item in MODULE.RESULTS if item.check == "backend-url")
+        self.assertEqual(
+            deferred.status,
+            MODULE.SKIP,
+            "a warning carried into the pre-baseline card is read as a reason "
+            "to stop a phase no backend origin can reach",
+        )
+        self.assertIn("TRAIGENT_BACKEND_URL", deferred.detail)
+        self.assertIn("baseline", deferred.detail)
+        self.assertIn("connected stage", deferred.detail)
+
+        MODULE.RESULTS.clear()
+        MODULE.check_cost_settings({**override, "TRAIGENT_API_KEY": "uk_x"}, {})
+        warned = next(item for item in MODULE.RESULTS if item.check == "backend-url")
+        self.assertEqual(
+            warned.status,
+            MODULE.WARN,
+            "once a key can open a session the origin decides where a paid "
+            "connected run is recorded, and that is not deferrable",
+        )
+        self.assertIn("TRAIGENT_BACKEND_URL", warned.detail)
+        self.assertIn("connected run would be recorded there", warned.detail)
+
+    def test_the_rows_a_paid_first_run_pays_for_are_counted(self) -> None:
+        """How much of their file the first bill covers, as a number.
+
+        Every trial pays for every scored row, so this count times the
+        configurations is the whole scale of the paid comparison - and it was
+        stated nowhere before the approval that spends it. The bounded slice
+        exists in the dataset reference as prose; below the threshold the run
+        keeps the whole usable set, which is why the two numbers have to be
+        published together rather than one of them implying the other.
+        """
+        for rows, expected in ((40, 40), (101, 18), (400, 18)):
+            with self.subTest(rows=rows):
+                with tempfile.TemporaryDirectory() as directory:
+                    dataset = Path(directory) / "eval.jsonl"
+                    dataset.write_text(
+                        "\n".join(
+                            json.dumps(
+                                {
+                                    "id": f"row-{index}",
+                                    "input": f"a distinct question number {index}",
+                                    "output": f"answer {index}",
+                                }
+                            )
+                            for index in range(rows)
+                        )
+                        + "\n"
+                    )
+                    MODULE.RESULTS.clear()
+                    MODULE.check_dataset(dataset)
+                result = next(
+                    item
+                    for item in MODULE.RESULTS
+                    if item.check == "dataset-first-run-rows"
+                )
+                self.assertEqual(result.metrics["first_run_rows"], expected)
+                self.assertEqual(result.metrics[MODULE.FULL_ROW_COUNT], rows)
+                self.assertIn(f"{expected} of {rows} rows", result.detail)
+                # Published like every other count this run states, so the
+                # accountability check owns it rather than trusting it.
+                MODULE.validate_row_count_bounds(MODULE.RESULTS)
 
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

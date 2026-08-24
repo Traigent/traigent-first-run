@@ -295,6 +295,12 @@ DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
 WIRING_CHECK_EXAMPLES = 10
+# The bounded first-run slice, and the row count above which it is drawn. Both
+# live in the dataset reference as prose, and nothing read them - so the size of
+# a customer's first bill was whatever the assistant recalled at the approval,
+# over a dataset every trial pays for in full.
+FIRST_RUN_TUNING_ROWS = 18
+BOUNDED_SUBSET_ABOVE_ROWS = 100
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
 REFERENCE_FREE_METHODS = {
     "llm-judge-pointwise",
@@ -695,11 +701,34 @@ def check_cost_settings(
         if key_present(env.get(name))
     ]
     if overridden:
-        emit(
-            "backend-url",
-            WARN,
-            f"{' and '.join(overridden)} overridden; verify that a non-default backend is intentional",
-        )
+        names = " and ".join(overridden)
+        # Scoped to the stage the override can actually reach, because unscoped
+        # it was read as a reason to stop the BASELINE. That phase forces the
+        # SDK backend-offline before importing it and drops the Traigent key
+        # from its own process, so it places no Traigent call at all and a
+        # backend origin cannot move one of its provider calls. The stage the
+        # override does reach is the connected one, and the guide requests the
+        # Traigent key only after the baseline checkpoint - so the key already
+        # in front of this check is what says which of the two this environment
+        # is, and it is the same signal `traigent-key` above reports on.
+        # Deferred and named while nothing can connect; a warning once
+        # something can. The severity moved, the rule did not: an override is
+        # still never something to accept silently.
+        if key_present(env.get("TRAIGENT_API_KEY")):
+            emit(
+                "backend-url",
+                WARN,
+                f"{names} overridden; verify that a non-default backend is "
+                "intentional - a connected run would be recorded there",
+            )
+        else:
+            emit(
+                "backend-url",
+                SKIP,
+                f"{names} overridden with no Traigent key present; the local "
+                "baseline runs backend-offline and reaches no backend, so this "
+                "settles nothing yet - verify it at the connected stage",
+            )
 
 
 def check_models(models: list[str]) -> None:
@@ -760,6 +789,20 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
             return False, None
         value = value[part]
     return True, value
+
+
+def first_run_row_count(usable_rows: int) -> int:
+    """Rows one paid first-run trial scores, from the rows this file can score.
+
+    The bounded subset is drawn only above `BOUNDED_SUBSET_ABOVE_ROWS`, so
+    below it this is the whole usable set and the guide is right that it is:
+    a small brought split is already a first-run-sized one. Above it the run
+    takes the fixed slice, and the difference between the two numbers is what
+    the approval has to show rather than imply.
+    """
+    if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS:
+        return FIRST_RUN_TUNING_ROWS
+    return usable_rows
 
 
 def normalize_dataset_row(
@@ -2070,6 +2113,22 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
+    # The other end of the same question, and the one nothing answered: how
+    # much of this file a paid first run will actually pay for. Published as a
+    # count beside its population, so `validate_row_count_bounds` polices it
+    # like every other count this run states, and so the figure on the approval
+    # is read off a check rather than remembered.
+    emit(
+        "dataset-first-run-rows",
+        PASS,
+        f"a first run scores {first_run_row_count(len(rows))} of {candidate_count} "
+        "rows on every configuration it pays for; state that count times the "
+        "configurations on the baseline approval",
+        {
+            "first_run_rows": first_run_row_count(len(rows)),
+            FULL_ROW_COUNT: candidate_count,
+        },
+    )
 
     input_types = {type(row["input"]).__name__ for row in rows}
     if len(input_types) > 1:
