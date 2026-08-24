@@ -2731,7 +2731,11 @@ class CredentialsDoNotReachTheResultsFileTests(unittest.TestCase):
         the helper - a redactor nothing calls is the shape of this defect.
         """
         module = self._module()
-        secret = "S3cr3tP4ss"
+        # Every literal here is a placeholder carrying the word EXAMPLE, so a
+        # credential scanner reading this public repo sees a placeholder and
+        # not something shaped like a live key. They still carry the real
+        # prefixes, which is what the redaction patterns key on.
+        secret = "EXAMPLE-not-a-real-password"
         detail = (
             "Evaluator execution failed: RuntimeError: db connect failed: "
             f"postgres://appuser:{secret}@db.internal:5432/prod"
@@ -2742,14 +2746,22 @@ class CredentialsDoNotReachTheResultsFileTests(unittest.TestCase):
         self.assertIn("postgres://appuser:***@db.internal", rendered)
         # Still diagnosable: redaction removes the credential, not the cause.
         self.assertIn("db connect failed", rendered)
-        for token in (
-            "sk-ant-api03-AbCdEfGh12345678xyz",
-            "ghp_1234567890abcdefABCDEF",
-            "AKIAIOSFODNN7EXAMPLE",
+        # Composed from prefix and body rather than written whole. The
+        # redaction patterns key on the vendor prefix, so the token these
+        # build is exactly as real to the code under test - and no literal
+        # shaped like a live key is committed to a public repository, where
+        # it would draw scanner and bot attention for as long as it exists.
+        for prefix, body in (
+            ("sk-ant-", "api03EXAMPLE0000"),
+            ("ghp_", "EXAMPLE00000000000000"),
+            ("AKIA", "EXAMPLE0000000000"),
         ):
-            with self.subTest(token=token):
-                leaked = module.unavailable_supplemental_attempt("worker-failed", token)
-                self.assertNotIn(token, json.dumps(leaked))
+            shaped = prefix + body
+            with self.subTest(shaped=shaped):
+                leaked = module.unavailable_supplemental_attempt(
+                    "worker-failed", shaped
+                )
+                self.assertNotIn(shaped, json.dumps(leaked))
         # Ordinary diagnostics must survive, or the artifact stops being useful.
         plain = "scored 3/5 cases; see http://example.com/docs for the contract"
         self.assertEqual(
