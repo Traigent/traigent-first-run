@@ -48,10 +48,10 @@ The assistant performs the technical work and asks only when it needs:
 - Approval before paid model calls or private-data egress.
 - Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
   and before destructive or production-affecting actions.
-- Confirmation before installing into a virtual environment other work of yours depends on, rather
-  than one created for this run. It always names the full path first, either way, so you know which
-  directory is about to change - and a repeat run does not re-ask about the environment the last
-  one made.
+
+It never installs into a virtual environment that other work of yours depends on. It builds one
+for this run instead, and names the full path before installing anything there, so you always know
+which directory is about to change.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
 agents are present, the assistant asks which one to optimize; if there is exactly one, it names it
