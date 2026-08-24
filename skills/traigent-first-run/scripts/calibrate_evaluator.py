@@ -601,9 +601,19 @@ def evaluator_source_digest(path: Path) -> str | None:
     "it ran this one", which nothing here established. The scorer is imported
     by a child process from the bytes on disk, so a file this cannot decode is
     not by itself a reason to refuse to calibrate.
+
+    The encoding is named on both sides rather than left to the platform. The
+    two digests are computed by two SEPARATE interpreter invocations - the
+    guide runs the opening gate under the host `python3` and this tool under
+    whichever interpreter the run has - so `read_text()`'s locale-preferred
+    default is not one decision but two, and two hosts that disagree about it
+    (UTF-8 mode on against off) would give one non-ASCII evaluator two
+    digests and refuse a calibration that is genuinely current. Universal
+    newline translation is untouched by naming an encoding, so the CRLF
+    property above still holds.
     """
     try:
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
     return hashlib.sha256(source.encode()).hexdigest()
@@ -1132,7 +1142,10 @@ def run() -> int:
     if not separator or not scorer_name:
         print("--scorer must use FILE.py:FUNCTION.", file=sys.stderr)
         return 2
-    absolute_scorer = f"{Path(scorer_file).resolve()}:{scorer_name}"
+    # WHERE this calibration looked, resolved once and read twice: the worker's
+    # own `--scorer` echo below, and the identity stamped on the result.
+    evaluator_path = str(Path(scorer_file).resolve())
+    absolute_scorer = f"{evaluator_path}:{scorer_name}"
     # Which evaluator this calibration ran against, recorded in the result.
     #
     # The result used to carry nothing that identified it: no digest, no path,
@@ -1144,10 +1157,31 @@ def run() -> int:
     # opening gate reports for the evaluator it read, and declines to credit a
     # calibration that names a different one (traigent-first-run#260).
     #
+    # The path is stamped BESIDE the digest because a digest alone cannot tell
+    # "this file changed under us" from "these are two different files". The
+    # guide asks for both on purpose: preflight reads the customer's own
+    # evaluator, and this tool runs the thin adapter generated for it under
+    # `traigent-runs/`, so two digests that differ is the NORMAL state of a
+    # customer who brought their own. Only a difference at ONE path is a stale
+    # calibration; a difference across two paths is a comparison that was never
+    # available, and refusing it would be a false accusation on the documented
+    # path (traigent-first-run#260).
+    #
     # Read here, before the worker starts, because this is the state of the
     # file the worker is about to import - not the state it may be left in by
     # the time the run finishes.
     evaluator_sha256 = evaluator_source_digest(Path(scorer_file))
+    # One identity, said or not said, never half said. The path is withheld
+    # when the digest is, because the two fields answer one question together:
+    # a path with no digest names a file whose bytes this run could not read,
+    # and no comparison downstream can be made from it. Built once and merged
+    # into both result shapes below, so a timeout and a completed run cannot
+    # come to disagree about what a stamped result carries.
+    evaluator_identity = (
+        {"evaluator_sha256": evaluator_sha256, "evaluator_path": evaluator_path}
+        if evaluator_sha256 is not None
+        else {}
+    )
     # Attached once, here, rather than inside each of the two case-building
     # paths: one expected answer must not be able to acquire two permutations.
     #
@@ -1249,8 +1283,7 @@ def run() -> int:
             # about one particular evaluator too. Its `evaluator-timeout` cap
             # must not be raised against whatever evaluator a later run happens
             # to be scoring.
-            if evaluator_sha256 is not None:
-                timeout_result["evaluator_sha256"] = evaluator_sha256
+            timeout_result.update(evaluator_identity)
             print(json.dumps(timeout_result, indent=2))
         return 1
     if process.returncode != 0:
@@ -1411,8 +1444,7 @@ def run() -> int:
 
     # One line, both shapes, so a matrix result and a single-case result cannot
     # disagree about which evaluator produced them.
-    if evaluator_sha256 is not None:
-        result["evaluator_sha256"] = evaluator_sha256
+    result.update(evaluator_identity)
 
     # One list, both shapes, so neither can answer this differently.
     #

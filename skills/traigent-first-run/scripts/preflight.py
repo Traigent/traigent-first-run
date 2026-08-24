@@ -1892,7 +1892,17 @@ def check_evaluator(path: Path) -> None:
         emit("evaluator-shape", FAIL, f"{path} does not exist", {"exists": False})
         return
     try:
-        source = path.read_text()
+        # The encoding is named rather than left to the platform, and
+        # `calibrate_evaluator.py` names the same one. The two digests are
+        # computed by two SEPARATE interpreter invocations - the guide runs
+        # this gate under the host `python3` and calibration under whichever
+        # interpreter the run has - so `read_text()`'s locale-preferred default
+        # is not one decision but two, and two hosts that disagree about it
+        # (UTF-8 mode on against off) would give one non-ASCII evaluator two
+        # digests and refuse a calibration that is genuinely current. Naming an
+        # encoding does not touch universal newline translation, so the CRLF
+        # property below is unaffected.
+        source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         emit(
             "evaluator-shape",
@@ -1926,7 +1936,23 @@ def check_evaluator(path: Path) -> None:
     # above, where no bytes were obtained at all - an absent digest means
     # "this check did not read the file", never "read it and found nothing
     # worth saying".
-    digest = hashlib.sha256(source.encode()).hexdigest()
+    #
+    # WHERE the file was is reported beside WHAT was in it, and the pair is one
+    # answer: `readiness.py` needs both to tell "this file changed under us"
+    # from "these are two different files". The guide makes the second one
+    # ordinary - it sends the customer's own evaluator here and has
+    # `calibrate_evaluator.py` run the thin adapter generated for it under
+    # `traigent-runs/` - so two digests that disagree is the EXPECTED state of
+    # a customer who brought their own evaluator, and only a disagreement at
+    # one and the same path is a stale calibration (traigent-first-run#260).
+    #
+    # Resolved, because the two sides are two processes that need not share a
+    # working directory, and `traigent-runs/evaluator.py` read from two
+    # different directories is two different files.
+    identity = {
+        "sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "path": str(path.resolve()),
+    }
     try:
         ast.parse(source, filename=str(path))
     except SyntaxError as error:
@@ -1934,7 +1960,7 @@ def check_evaluator(path: Path) -> None:
             "evaluator-shape",
             FAIL,
             f"{path} is not valid Python: {error}",
-            {"exists": True, "parses": False, "sha256": digest},
+            {"exists": True, "parses": False, **identity},
         )
         return
     except (MemoryError, RecursionError, ValueError) as error:
@@ -1956,7 +1982,7 @@ def check_evaluator(path: Path) -> None:
             "evaluator-shape",
             FAIL,
             f"{path} could not be parsed: {type(error).__name__}: {error}",
-            {"exists": True, "parses": False, "sha256": digest},
+            {"exists": True, "parses": False, **identity},
         )
         return
     emit(
@@ -1964,7 +1990,7 @@ def check_evaluator(path: Path) -> None:
         PASS,
         f"{path} parses as valid Python; this proves nothing about its "
         "scoring behavior, which is not executed here",
-        {"exists": True, "parses": True, "sha256": digest},
+        {"exists": True, "parses": True, **identity},
     )
 
 

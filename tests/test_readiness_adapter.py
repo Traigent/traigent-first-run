@@ -3402,10 +3402,6 @@ class DuplicatedRowsBuyNoResolutionTests(unittest.TestCase):
         self.assertIn("carries no distinct_rows count", process.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheStaleCalibrationIsVisibleEndToEndTests(unittest.TestCase):
     """traigent-first-run#260, driven through all three real scripts.
 
@@ -3450,16 +3446,44 @@ class TheStaleCalibrationIsVisibleEndToEndTests(unittest.TestCase):
         },
     ]
 
-    def _preflight(self, evaluator: Path) -> Path:
+    def _dataset(self, directory: Path) -> Path:
+        """Enough rows that the dataset is not itself what blocks the run.
+
+        Without one, `dataset-absent` blocks every card here and the two runs
+        being compared would agree for a reason that has nothing to do with
+        the calibration - which is exactly the kind of assertion that passes
+        while the defect is present.
+        """
+        labels = ("billing", "cancellation", "technical", "delivery")
+        path = directory / "dataset.jsonl"
+        path.write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "id": f"row-{index:03d}",
+                        "input": f"customer message {index} about {labels[index % 4]}",
+                        "output": labels[index % 4],
+                    }
+                )
+                + "\n"
+                for index in range(60)
+            )
+        )
+        return path
+
+    def _preflight(self, evaluator: Path, dataset: Path | None = None) -> Path:
+        command = [
+            sys.executable,
+            str(PREFLIGHT),
+            "--evaluator",
+            str(evaluator),
+            "--defer-missing-sdk",
+            "--json",
+        ]
+        if dataset is not None:
+            command += ["--dataset", str(dataset), "--outcome-field", "output"]
         process = subprocess.run(
-            [
-                sys.executable,
-                str(PREFLIGHT),
-                "--evaluator",
-                str(evaluator),
-                "--defer-missing-sdk",
-                "--json",
-            ],
+            command,
             capture_output=True,
             text=True,
         )
@@ -3497,26 +3521,26 @@ class TheStaleCalibrationIsVisibleEndToEndTests(unittest.TestCase):
         path.write_text(process.stdout)
         return path
 
+    def _card(
+        self, preflight: Path, calibration: Path | None, *extra: str
+    ) -> tuple[dict, int]:
+        """One readiness run through the real CLI, card and exit code both.
+
+        The exit code is returned rather than asserted here because
+        `--strict` is one of the things this defect moved: a stale file turned
+        a red gate green, and a helper that insisted on 0 could not see it.
+        """
+        command = [sys.executable, str(READINESS), "--preflight", str(preflight)]
+        if calibration is not None:
+            command += ["--calibration", str(calibration)]
+        command += ["--task-kind", "structured", "--json", *extra]
+        process = subprocess.run(command, capture_output=True, text=True)
+        self.assertIn(process.returncode, (0, 1), process.stderr[-2000:])
+        return json.loads(process.stdout), process.returncode
+
     def _calibration_subscore(self, preflight: Path, calibration: Path) -> dict:
-        process = subprocess.run(
-            [
-                sys.executable,
-                str(READINESS),
-                "--preflight",
-                str(preflight),
-                "--calibration",
-                str(calibration),
-                "--evaluator-method",
-                "exact",
-                "--task-kind",
-                "structured",
-                "--json",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(process.returncode, 0, process.stderr[-2000:])
-        card = json.loads(process.stdout)
+        card, code = self._card(preflight, calibration, "--evaluator-method", "exact")
+        self.assertEqual(code, 0)
         pillar = next(p for p in card["pillars"] if p["name"] == "evaluation")
         return next(s for s in pillar["subscores"] if s["name"] == "calibration")
 
@@ -3553,3 +3577,139 @@ class TheStaleCalibrationIsVisibleEndToEndTests(unittest.TestCase):
         short = MODULE.DIGEST_DISPLAY_CHARACTERS
         self.assertIn(stamp[:short], sub["evidence"])
         self.assertIn(read[:short], sub["evidence"])
+
+    BROKEN = (
+        "def score(output, expected, input_data=None, metadata=None)\n    return 1.0\n"
+    )
+
+    ADAPTER = (
+        "import sys\n"
+        "from pathlib import Path\n\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parent))\n\n"
+        "from evaluator import score as _customer_score\n\n\n"
+        "def score(output, expected, input_data=None, metadata=None):\n"
+        "    return _customer_score(output, expected, input_data, metadata)\n"
+    )
+
+    def _caps(self, card: dict) -> list[str]:
+        return [cap["condition"] for cap in card["caps"]]
+
+    def test_a_stale_result_never_scores_better_than_supplying_none(self) -> None:
+        """traigent-first-run#260: the refusal that still unblocked the run.
+
+        `SKILL.md` requires `--evaluator-method` to be omitted where no method
+        can be honestly declared, which is exactly the state a replaced
+        evaluator that no longer parses is in. The quarantine kept
+        `calibration_supplied` true and the scorer read that as "calibration
+        was engaged", so last run's file cleared the `evaluator-unresolved`
+        cap that the same run reaches WITHOUT it.
+
+        Compared against that run rather than asserted alone: "a cap fires" is
+        an outcome several branches produce, and only the comparison shows the
+        stale file bought nothing.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            calibration = self._calibrate(evaluator)
+            evaluator.write_text(self.BROKEN)
+            preflight = self._preflight(evaluator, self._dataset(Path(directory)))
+            stale, _ = self._card(preflight, calibration)
+            honest, _ = self._card(preflight, None)
+            _, stale_code = self._card(preflight, calibration, "--strict")
+            _, honest_code = self._card(preflight, None, "--strict")
+        self.assertEqual(self._caps(stale), self._caps(honest))
+        self.assertIn("evaluator-unresolved", self._caps(stale))
+        self.assertEqual(stale["status"], honest["status"])
+        self.assertEqual(stale["status"], "BLOCKED")
+        self.assertEqual(stale["recommended_action"], honest["recommended_action"])
+        self.assertEqual(stale["recommended_action"], "repair-evaluator")
+        # The gate a run actually stops on: the stale file used to turn this
+        # green while supplying nothing kept it red.
+        self.assertEqual(stale_code, honest_code)
+        self.assertEqual(stale_code, 1)
+
+    def test_that_card_still_says_the_evaluator_does_not_parse(self) -> None:
+        """The sentence the suppression took away with the cap."""
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            calibration = self._calibrate(evaluator)
+            stamp = json.loads(calibration.read_text())["evaluator_sha256"]
+            evaluator.write_text(self.BROKEN)
+            preflight = self._preflight(evaluator, self._dataset(Path(directory)))
+            card, _ = self._card(preflight, calibration)
+        pillar = next(p for p in card["pillars"] if p["name"] == "evaluation")
+        sub = next(s for s in pillar["subscores"] if s["name"] == "calibration")
+        self.assertIn("does not parse as Python", sub["evidence"])
+        # And why the payload they did supply bought nothing.
+        self.assertIn(stamp[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub["evidence"])
+
+    def test_the_customers_evaluator_and_its_adapter_are_not_a_mismatch(self) -> None:
+        """traigent-first-run#260: the false red on the documented path.
+
+        `references/evaluation-and-dataset.md` says preserve the customer's
+        evaluator unchanged and expose its logic through a thin generated
+        calibration adapter under `traigent-runs/`; `SKILL.md` sends the
+        evaluator's OWN path to preflight. So the two digests legitimately
+        differ on every honest run of `--evaluator-origin brought`, and the
+        remedy a refusal prints - recalibrate what is here now - can never
+        resolve, because recalibrating the adapter reproduces the adapter's
+        digest forever.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            adapter = Path(directory) / "calibration-adapter.py"
+            adapter.write_text(self.ADAPTER)
+            calibration = self._calibrate(adapter)
+            preflight = self._preflight(evaluator)
+            stamped = json.loads(calibration.read_text())
+            read = next(
+                record
+                for record in json.loads(preflight.read_text())
+                if record["check"] == "evaluator-shape"
+            )["metrics"]
+            sub = self._calibration_subscore(preflight, calibration)
+        # The premise: two real files, two real digests, and they differ.
+        self.assertNotEqual(stamped["evaluator_path"], read["path"])
+        self.assertNotEqual(stamped["evaluator_sha256"], read["sha256"])
+        # Credited at full value, exactly as it was before either side carried
+        # an identity at all.
+        self.assertTrue(sub["measured"])
+        self.assertEqual(sub["value"], sub["maximum"])
+        self.assertIn("2 calibration case(s)", sub["evidence"])
+        # And disclosed: credited is not the same as silent.
+        self.assertIn("measured a different file", sub["evidence"])
+        self.assertNotIn("calibrate the evaluator that is here now", sub["evidence"])
+
+    def test_that_run_keeps_the_pillar_it_had_before_any_of_this(self) -> None:
+        """The regression the false red actually caused, measured as a score.
+
+        The evaluation pillar dropped from 100 to 75 and its confidence from
+        1.00 to 0.45 on a correct, current calibration. Asserted against the
+        same run with no adapter in the picture, so the number is a
+        comparison rather than a literal nobody can re-derive.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            adapter = Path(directory) / "calibration-adapter.py"
+            adapter.write_text(self.ADAPTER)
+            preflight = self._preflight(evaluator)
+            direct, _ = self._card(
+                preflight, self._calibrate(evaluator), "--evaluator-method", "exact"
+            )
+            brought, _ = self._card(
+                preflight, self._calibrate(adapter), "--evaluator-method", "exact"
+            )
+        direct_pillar = next(p for p in direct["pillars"] if p["name"] == "evaluation")
+        brought_pillar = next(
+            p for p in brought["pillars"] if p["name"] == "evaluation"
+        )
+        self.assertEqual(brought_pillar["score"], direct_pillar["score"])
+        self.assertEqual(brought_pillar["confidence"], direct_pillar["confidence"])
+
+
+if __name__ == "__main__":
+    unittest.main()

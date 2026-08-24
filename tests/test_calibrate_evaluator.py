@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -2596,6 +2597,13 @@ class TheResultNamesTheEvaluatorItCalibratedTests(unittest.TestCase):
     and a calibration produced for evaluator A read as current evidence about
     evaluator B. `evaluator_sha256` is the fact that makes the two
     distinguishable; `readiness.py` is what compares them.
+
+    `evaluator_path` is the other half, and without it the comparison accuses
+    the wrong people. The guide has this tool run a thin adapter under
+    `traigent-runs/` while the opening gate reads the customer's own evaluator
+    where it lives, so two digests that differ is the ordinary state of the
+    documented "brought their own" path. Only two digests that differ at ONE
+    path is a stale result.
     """
 
     CASES = [
@@ -2773,6 +2781,7 @@ class TheResultNamesTheEvaluatorItCalibratedTests(unittest.TestCase):
             payload = json.loads(process.stdout)
             self.assertTrue(payload["timed_out"])
             self.assertEqual(payload["evaluator_sha256"], self._digest_of(slow))
+            self.assertEqual(payload["evaluator_path"], str(scorer.resolve()))
 
     def test_an_evaluator_whose_bytes_cannot_be_decoded_is_not_named(self) -> None:
         """No text was read, so the helper says so instead of inventing a name.
@@ -2789,6 +2798,63 @@ class TheResultNamesTheEvaluatorItCalibratedTests(unittest.TestCase):
             self.assertIsNone(
                 module.evaluator_source_digest(Path(directory) / "absent.py")
             )
+
+    def test_the_result_names_the_file_it_ran_and_not_only_its_bytes(
+        self,
+    ) -> None:
+        """The half that keeps the comparison from firing on the wrong runs.
+
+        A digest alone cannot tell "this file changed under us" from "these
+        are two different files", and the guide makes the second one the
+        documented path: the customer's evaluator is preserved where it is and
+        a thin adapter over it is what gets calibrated here.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self._calibrate(
+                Path(directory), self.SCORER_SOURCE, self.CASES
+            )
+            self.assertEqual(process.returncode, 0, process.stderr[-2000:])
+            self.assertEqual(
+                payload["evaluator_path"],
+                str((Path(directory) / "scorer.py").resolve()),
+            )
+
+    def test_a_relative_scorer_is_stamped_where_it_actually_is(self) -> None:
+        """Resolved, because two processes need not share a directory.
+
+        `traigent-runs/evaluator.py` read from two different working
+        directories is two different files, and a stamp that recorded the
+        typed string would call them one - which is the direction that
+        produces a false accusation rather than a missed one.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "traigent-runs").mkdir()
+            scorer = root / "traigent-runs" / "evaluator.py"
+            scorer.write_text(self.SCORER_SOURCE)
+            case_file = root / "cases.json"
+            case_file.write_text(json.dumps(self.CASES))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    "traigent-runs/evaluator.py:score",
+                    "--cases",
+                    "@cases.json",
+                    "--allow-execution",
+                    "--timeout",
+                    "20",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=root,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr[-2000:])
+            payload = json.loads(process.stdout)
+            self.assertNotEqual(payload["evaluator_path"], "traigent-runs/evaluator.py")
+            self.assertEqual(payload["evaluator_path"], str(scorer.resolve()))
 
     def test_the_stamp_agrees_with_what_the_opening_gate_reports(self) -> None:
         """The contract that makes the comparison mean anything at all.
@@ -2847,6 +2913,133 @@ class TheResultNamesTheEvaluatorItCalibratedTests(unittest.TestCase):
         # which is what makes one evaluator checked out twice, with two line
         # ending conventions, still one evaluator.
         self.assertEqual(stamped, self._digest_of(self.SCORER_SOURCE))
+
+    NON_ASCII_SCORER = (
+        "def score(output, expected, input_data=None, metadata=None):\n"
+        '    """Naïve set overlap - the accent is the point of this file."""\n'
+        "    required = set(expected)\n"
+        "    return len(required & set(output)) / len(required)\n"
+    )
+
+    @staticmethod
+    def _preferred_encoding(environment: dict) -> str:
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import locale; print(locale.getpreferredencoding(False))",
+            ],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        return probe.stdout.strip()
+
+    def test_the_two_scripts_agree_across_two_host_text_defaults(self) -> None:
+        """One evaluator, two interpreters, one name.
+
+        The guide runs the opening gate under the host `python3` and this tool
+        under whichever interpreter the run has, so `read_text()`'s
+        locale-preferred default was not one decision but two. Two hosts that
+        disagree about it - UTF-8 mode on against off - would give one
+        non-ASCII evaluator two different answers, and `readiness.py` would
+        report a calibration that is genuinely current as produced for a
+        different evaluator.
+
+        Run as the defect arrives: the two sides in OPPOSITE regimes. Both
+        environments are checked to be genuinely different first, so a host
+        that cannot produce two defaults fails here rather than passing this
+        while measuring one regime twice.
+        """
+        ascii_environment = {
+            **os.environ,
+            "LC_ALL": "C",
+            "PYTHONCOERCECLOCALE": "0",
+            "PYTHONUTF8": "0",
+        }
+        utf8_environment = {**os.environ, "PYTHONUTF8": "1"}
+        ascii_preferred = self._preferred_encoding(ascii_environment)
+        utf8_preferred = self._preferred_encoding(utf8_environment)
+        self.assertNotEqual(
+            ascii_preferred.casefold(),
+            utf8_preferred.casefold(),
+            "this host reports one text default under both regimes, so this "
+            "test cannot tell a named encoding from an inherited one",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(self.NON_ASCII_SCORER, encoding="utf-8")
+            case_file = Path(directory) / "cases.json"
+            case_file.write_text(json.dumps(self.CASES))
+            calibration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{case_file}",
+                    "--allow-execution",
+                    "--timeout",
+                    "20",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                env=ascii_environment,
+            )
+            self.assertIn(calibration.returncode, (0, 1), calibration.stderr[-2000:])
+            preflight = subprocess.run(
+                [
+                    sys.executable,
+                    str(PREFLIGHT),
+                    "--evaluator",
+                    str(scorer),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                env=utf8_environment,
+            )
+            self.assertIn(preflight.returncode, (0, 1), preflight.stderr[-2000:])
+        shape = next(
+            record
+            for record in json.loads(preflight.stdout)
+            if record["check"] == "evaluator-shape"
+        )
+        stamped = json.loads(calibration.stdout)["evaluator_sha256"]
+        # Each side named the file at all - under the locale-preferred default
+        # the ASCII-regime side could not read it, so the comparison it was
+        # supposed to make silently did not happen.
+        self.assertEqual(shape["metrics"]["sha256"], stamped)
+        self.assertEqual(stamped, self._digest_of(self.NON_ASCII_SCORER))
+        # And the CRLF property is not paid for by naming an encoding: text
+        # mode still translates line endings, so one evaluator checked out
+        # twice is still one evaluator.
+        with tempfile.TemporaryDirectory() as directory:
+            crlf = Path(directory) / "scorer.py"
+            crlf.write_bytes(self.NON_ASCII_SCORER.replace("\n", "\r\n").encode())
+            crlf_preflight = subprocess.run(
+                [
+                    sys.executable,
+                    str(PREFLIGHT),
+                    "--evaluator",
+                    str(crlf),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                env=ascii_environment,
+            )
+            self.assertIn(crlf_preflight.returncode, (0, 1), crlf_preflight.stderr)
+        crlf_shape = next(
+            record
+            for record in json.loads(crlf_preflight.stdout)
+            if record["check"] == "evaluator-shape"
+        )
+        self.assertEqual(crlf_shape["metrics"]["sha256"], stamped)
 
 
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):

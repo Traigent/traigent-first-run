@@ -2661,6 +2661,12 @@ class TheShapeCheckNamesTheEvaluatorItReadTests(unittest.TestCase):
     another: there was no name on either side to compare. `sha256` is that
     name, and `readiness.py` compares it against the one
     `calibrate_evaluator.py` now stamps on its own result.
+
+    `path` is the other half of the name. Two digests alone cannot tell "the
+    file at this path changed under us" from "these are two different files",
+    and the guide makes the second one ordinary: the customer's own evaluator
+    comes here while a thin adapter over it is what gets calibrated. So both
+    are reported, and only a difference at ONE path is a stale calibration.
     """
 
     def setUp(self) -> None:
@@ -2760,6 +2766,83 @@ class TheShapeCheckNamesTheEvaluatorItReadTests(unittest.TestCase):
             self.assertFalse(shape["parses"])
             self.assertEqual(shape["sha256"], self._digest_of(source))
 
+    def test_the_check_names_the_file_it_read_and_not_only_its_bytes(self) -> None:
+        """Where, beside what. Without it the comparison fires on the wrong runs.
+
+        The guide sends the customer's own evaluator here and calibrates a
+        thin adapter over it, so two digests that differ is the ordinary state
+        of that path - and refusing it printed a remedy that can never
+        resolve, because recalibrating the adapter reproduces the adapter's
+        digest forever.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("def score(output, expected):\n    return 1.0\n")
+            MODULE.check_evaluator(path)
+            shape = self._shape()
+            self.assertEqual(shape["status"], MODULE.PASS)
+            self.assertEqual(shape["path"], str(path.resolve()))
+
+    def test_the_path_is_resolved_rather_than_echoed(self) -> None:
+        """Two processes need not share a working directory.
+
+        `traigent-runs/evaluator.py` read from two different directories is
+        two different files, and echoing the typed string would call them one
+        - the direction that produces a false accusation rather than a missed
+        one. The reverse, an unresolved `..`, would call one file two.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "traigent-runs").mkdir()
+            path = root / "traigent-runs" / "evaluator.py"
+            path.write_text("def score(output, expected):\n    return 1.0\n")
+            indirect = root / "traigent-runs" / ".." / "traigent-runs" / "evaluator.py"
+            MODULE.check_evaluator(indirect)
+            shape = self._shape()
+            self.assertNotIn("..", shape["path"])
+            self.assertEqual(shape["path"], str(path.resolve()))
+
+    def test_a_file_that_does_not_parse_is_located_too(self) -> None:
+        """Both parse-failure arms, which are two separate `except` blocks.
+
+        "The evaluator was replaced with something that no longer parses" is
+        precisely the state a stale calibration is lying around in, so an arm
+        that named the bytes and not the file would leave the comparison
+        half-made exactly where it is needed.
+        """
+        sources = (
+            "def score(output, expected:\n    return 1.0\n",
+            "-" * 50_000 + "1\n",
+        )
+        for source in sources:
+            with self.subTest(source=source[:20]):
+                MODULE.RESULTS.clear()
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "evaluator.py"
+                    path.write_text(source)
+                    MODULE.check_evaluator(path)
+                    shape = self._shape()
+                    self.assertEqual(shape["status"], MODULE.FAIL)
+                    self.assertFalse(shape["parses"])
+                    self.assertEqual(shape["path"], str(path.resolve()))
+
+    def test_an_evaluator_no_bytes_were_read_from_is_not_located(self) -> None:
+        """One identity, said or not said, never half said.
+
+        These two arms obtained no source text, so they have no digest to
+        report - and a location beside no digest would be a check claiming to
+        know where an evaluator it could not read is, which nothing downstream
+        can use and which readiness would have to ignore anyway.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            MODULE.check_evaluator(Path(directory) / "evaluator.py")
+            self.assertNotIn("path", self._shape())
+            MODULE.RESULTS.clear()
+            undecodable = Path(directory) / "undecodable.py"
+            undecodable.write_bytes(b"\xff\xfe\x00def score():\n")
+            MODULE.check_evaluator(undecodable)
+            self.assertNotIn("path", self._shape())
+
     def test_an_absent_evaluator_is_not_named(self) -> None:
         """No bytes were read, so there is nothing to name.
 
@@ -2811,6 +2894,7 @@ class TheShapeCheckNamesTheEvaluatorItReadTests(unittest.TestCase):
             records = json.loads(process.stdout)
         shape = next(r for r in records if r["check"] == "evaluator-shape")
         self.assertEqual(shape["metrics"]["sha256"], self._digest_of(source))
+        self.assertEqual(shape["metrics"]["path"], str(path.resolve()))
 
 
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):

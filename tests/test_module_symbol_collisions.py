@@ -289,5 +289,113 @@ class ModuleSymbolCollisionTests(unittest.TestCase):
         )
 
 
+class EveryTestInATestFileActuallyRunsTests(unittest.TestCase):
+    """A test module must run all of its tests when it is run directly.
+
+    `if __name__ == "__main__": unittest.main()` collects what is DEFINED at
+    the moment it executes. A `TestCase` written below it is defined after
+    that call returns - which it never does, because `unittest.main()` exits
+    the interpreter - so the class is never even created, let alone collected.
+    Both CI gates here import the module instead of executing it, so they see
+    every class and stay green; only running one module directly is short,
+    and it is short SILENTLY, reporting a smaller number with no error.
+
+    That is how it got in: `tests/test_readiness_adapter.py` grew a class
+    below its guard (83 tests instead of 85) and
+    `tests/test_readiness_scoring.py` had twenty of them. Neither turned any
+    gate red. So the property is pinned structurally, for every test module at
+    once, rather than left to be noticed the next time someone runs one file.
+    """
+
+    @staticmethod
+    def _test_modules() -> list[pathlib.Path]:
+        return sorted((REPO_ROOT / "tests").glob("test_*.py"))
+
+    @staticmethod
+    def _guard_positions(source: str) -> list[int]:
+        """Where each `if __name__ == "__main__":` sits among the top level."""
+        body = ast.parse(source).body
+        return [
+            index
+            for index, node in enumerate(body)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "__name__ == '__main__'"
+        ]
+
+    def test_nothing_is_defined_below_the_entry_point_guard(self) -> None:
+        stranded = {}
+        for path in self._test_modules():
+            source = path.read_text()
+            body = ast.parse(source).body
+            for index in self._guard_positions(source):
+                below = [
+                    getattr(node, "name", type(node).__name__)
+                    for node in body[index + 1 :]
+                ]
+                if below:
+                    stranded[str(path.relative_to(REPO_ROOT))] = below
+        self.assertEqual(
+            stranded,
+            {},
+            "These top-level definitions sit below `unittest.main()`, so "
+            "`python <file>` never defines them and silently runs fewer tests "
+            "than the CI gates do. Move the guard to the end of the file; do "
+            "not move the tests.",
+        )
+
+    def test_every_test_module_has_exactly_one_entry_point(self) -> None:
+        # The cheapest way past the check above is to delete the guard, which
+        # would leave `python <file>` running nothing at all and reporting
+        # success. Counted rather than merely required, because two guards put
+        # the file back in the state the first check refuses.
+        counts = {
+            str(path.relative_to(REPO_ROOT)): len(
+                self._guard_positions(path.read_text())
+            )
+            for path in self._test_modules()
+        }
+        self.assertEqual(
+            {name: count for name, count in counts.items() if count != 1},
+            {},
+            "Every test module runs its own tests under `python <file>`.",
+        )
+
+    def test_the_check_sees_a_class_stranded_below_the_guard(self) -> None:
+        # The guard is what makes the module's own suite complete, so a check
+        # that could not tell a stranded class from a finished file would go
+        # quietly green the day someone appends one.
+        stranded_source = (
+            'if __name__ == "__main__":\n'
+            "    unittest.main()\n"
+            "\n"
+            "\n"
+            "class Late:\n"
+            "    pass\n"
+        )
+        positions = self._guard_positions(stranded_source)
+        self.assertEqual(positions, [0])
+        self.assertEqual(len(ast.parse(stranded_source).body), 2)
+        # And the finished shape it must not flag.
+        finished_source = (
+            "class Early:\n"
+            "    pass\n"
+            "\n"
+            "\n"
+            'if __name__ == "__main__":\n'
+            "    unittest.main()\n"
+        )
+        self.assertEqual(self._guard_positions(finished_source), [1])
+        self.assertEqual(len(ast.parse(finished_source).body), 2)
+
+    def test_the_repository_actually_has_test_modules_to_check(self) -> None:
+        # The same emptiness trap the collision check guards against: a glob
+        # that stops matching turns both checks above into assertions about
+        # nothing.
+        names = {path.name for path in self._test_modules()}
+        self.assertGreater(len(names), 10, sorted(names))
+        self.assertIn("test_readiness_adapter.py", names)
+        self.assertIn("test_readiness_scoring.py", names)
+
+
 if __name__ == "__main__":
     unittest.main()
