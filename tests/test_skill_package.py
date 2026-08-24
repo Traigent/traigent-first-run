@@ -14,6 +14,7 @@ import math
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -628,6 +629,406 @@ def ci_workflow_jobs(workflow: Path) -> dict[str, int | None]:
         ]
         jobs[job] = int(declared[0].split(":", 1)[1]) if len(declared) == 1 else None
     return jobs
+
+
+VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
+BOUNDARY_CLASS = "RealBoundaryTests"
+
+
+def _yaml_indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _yaml_next(lines: list[str], index: int) -> int:
+    """The next line that carries structure - blanks and comments carry none."""
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped and not stripped.startswith("#"):
+            return index
+        index += 1
+    return index
+
+
+def _yaml_scalar(text: str) -> object:
+    text = text.strip()
+    if len(text) > 1 and text[0] in "'\"" and text[-1] == text[0]:
+        return text[1:-1]
+    comment = re.search(r"(?:^|\s)#", text)
+    if comment is not None:
+        text = text[: comment.start()].strip()
+    if text in ("true", "false"):
+        return text == "true"
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    return text
+
+
+def _yaml_block_scalar(lines: list[str], index: int, indent: int) -> tuple[str, int]:
+    """A `|` literal block: every deeper line, comments and blanks included."""
+    body: list[str] = []
+    while index < len(lines):
+        if lines[index].strip() and _yaml_indent(lines[index]) <= indent:
+            break
+        body.append(lines[index])
+        index += 1
+    while body and not body[-1].strip():
+        body.pop()
+    if not body:
+        return "", index
+    margin = min(_yaml_indent(line) for line in body if line.strip())
+    kept = (line[margin:] if line.strip() else "" for line in body)
+    return "\n".join(kept) + "\n", index
+
+
+def _yaml_mapping(lines: list[str], index: int, indent: int) -> tuple[dict, int]:
+    mapping: dict[str, Any] = {}
+    while True:
+        index = _yaml_next(lines, index)
+        if index >= len(lines) or _yaml_indent(lines[index]) != indent:
+            return mapping, index
+        key, separator, rest = lines[index].strip().partition(":")
+        if not separator:
+            raise AssertionError(f"line {index + 1} is not a mapping: {lines[index]!r}")
+        if key in mapping:
+            raise AssertionError(
+                f"line {index + 1} states {key!r} a second time in one block; a "
+                "repeated key states no single decision and one of the two would "
+                "be silently dropped here"
+            )
+        if rest.strip() in ("|", "|-", "|+", ">", ">-"):
+            mapping[key], index = _yaml_block_scalar(lines, index + 1, indent)
+        elif rest.strip():
+            mapping[key], index = _yaml_scalar(rest), index + 1
+        else:
+            nested = _yaml_next(lines, index + 1)
+            if nested < len(lines) and _yaml_indent(lines[nested]) > indent:
+                mapping[key], index = _yaml_node(lines, nested)
+            else:
+                mapping[key], index = None, index + 1
+
+
+def _yaml_sequence(lines: list[str], index: int, indent: int) -> tuple[list, int]:
+    items: list[Any] = []
+    while True:
+        index = _yaml_next(lines, index)
+        if index >= len(lines) or _yaml_indent(lines[index]) != indent:
+            return items, index
+        if not lines[index].lstrip().startswith("- "):
+            return items, index
+        # `- ` is two columns of indentation once the item's first key is read
+        # as a key, which is what makes an item an ordinary mapping below it.
+        lines[index] = " " * (indent + 2) + lines[index].lstrip()[2:]
+        item, index = _yaml_mapping(lines, index, indent + 2)
+        items.append(item)
+
+
+def _yaml_node(lines: list[str], index: int) -> tuple[Any, int]:
+    indent = _yaml_indent(lines[index])
+    if lines[index].lstrip().startswith("- "):
+        return _yaml_sequence(lines, index, indent)
+    return _yaml_mapping(lines, index, indent)
+
+
+def ci_workflow_structure(workflow: Path) -> dict[str, Any]:
+    """One workflow file as the mapping GitHub reads, not as text.
+
+    A substring is satisfied by a coincidence somewhere else in the file, and
+    this workflow has already paid for that: `PINNED_PYTHON_IMAGE` appears in
+    the `env:` block and in the other job, so a guard asking whether the string
+    was present stayed green with the comparison that uses it deleted. A parse
+    answers where a value IS, so a step can be asked what it declares rather
+    than whether the file mentions it somewhere.
+
+    The subset parsed is the one GitHub workflows are written in: block
+    mappings, block sequences of mappings, plain and quoted scalars, `|`
+    literal blocks, and comments outside them. A repeated key raises rather
+    than resolving to one of the two.
+
+    Not PyYAML, for the reason `ci_workflow_jobs` gives above: the job that
+    runs this test installs `ruff`, `black` and the three pinned first-run
+    dependencies, none of which declares PyYAML, so importing it here would
+    rest on a transitive dependency staying transitive - and this file cannot
+    declare one, because the tests do not own the requirements they run under.
+
+    Two things keep the hand parse honest rather than assumed. The `run:` block
+    it extracts is EXECUTED by the tests below, so a mis-parse cannot go quiet:
+    it fails the control world instead of passing every refusal at once. And
+    this parse was compared against PyYAML key for key over this workflow when
+    it was written, which is a check to re-run by hand - here or in a shell -
+    if the subset above ever has to grow.
+
+    `ci_workflow_jobs` stays as it is rather than being folded in here: it
+    answers a question a mapping cannot hold, since a job declaring
+    `timeout-minutes` twice states no single decision and a mapping would keep
+    one of them.
+    """
+    lines = workflow.read_text().splitlines()
+    document, index = _yaml_mapping(lines, _yaml_next(lines, 0), 0)
+    index = _yaml_next(lines, index)
+    if index < len(lines):
+        raise AssertionError(f"line {index + 1} was not parsed: {lines[index]!r}")
+    return document
+
+
+def heredoc_program(script: str) -> str | None:
+    """The body of the first heredoc in a shell script, or `None`.
+
+    The word ends where the shell ends it, not at the end of the line, so
+    `python - <<'PY' || true` still yields the program - and leaves the `||
+    true` in the shell around it, where the test that reads the shell can see
+    it. Requiring the line to end at the tag would hide that mutation as "no
+    such step" instead of naming it.
+    """
+    lines = script.splitlines()
+    opener = re.compile(
+        r"<<-?\s*(?P<quote>['\"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"
+    )
+    for index, line in enumerate(lines):
+        match = opener.search(line)
+        if match is None:
+            continue
+        body: list[str] = []
+        for rest in lines[index + 1 :]:
+            if rest.strip() == match.group("tag"):
+                return "\n".join(body)
+            body.append(rest)
+    return None
+
+
+def _named_in(tree: ast.AST) -> set[str]:
+    """Every identifier and string a program mentions, however it mentions it."""
+    named: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            named.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            named.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            named.add(node.value)
+    return named
+
+
+def boundary_gate_step(structure: dict[str, Any] | None = None) -> tuple[str, dict]:
+    """The job and the step that load and run the container-backed class.
+
+    Found by what the step DOES - it embeds a program that names the class -
+    rather than by its name, its position, or a phrase in its shell. Renaming
+    the step, its local variables and its messages is therefore free, while a
+    step whose program no longer reaches that class is not this step at all and
+    is not found here.
+    """
+    if structure is None:
+        structure = ci_workflow_structure(VALIDATE_WORKFLOW)
+    found: list[tuple[str, dict]] = []
+    for job, body in (structure.get("jobs") or {}).items():
+        for step in (body or {}).get("steps") or []:
+            script = step.get("run")
+            if not isinstance(script, str):
+                continue
+            program = heredoc_program(script)
+            if program is None:
+                continue
+            try:
+                tree = ast.parse(program)
+            except SyntaxError:
+                continue
+            if BOUNDARY_CLASS in _named_in(tree):
+                found.append((job, step))
+    if len(found) != 1:
+        raise AssertionError(
+            f"{VALIDATE_WORKFLOW.name} must contain exactly one step whose "
+            f"program runs {BOUNDARY_CLASS}, and it holds {len(found)}: "
+            + (
+                "; ".join(f"{job}: {step.get('name')}" for job, step in found)
+                or "none, so the container-backed cases are not run by CI at all "
+                "and every one of them reports a skip that nothing refuses"
+            )
+        )
+    return found[0]
+
+
+def boundary_gate_runtime_attribute(program: str) -> str:
+    """The boundary-module attribute the gate refuses to start without.
+
+    Read out of the gate's own program - the one thing it compares against
+    `None` before raising - so the class-identity check below asks about the
+    same runtime the step does, and stops asking anything if the step ever
+    stops asking.
+    """
+    for node in ast.walk(ast.parse(program)):
+        if not isinstance(node, ast.If):
+            continue
+        if not any(isinstance(child, ast.Raise) for child in ast.walk(node)):
+            continue
+        test = node.test
+        if (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Is)
+            and isinstance(test.left, ast.Attribute)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+        ):
+            return test.left.attr
+    raise AssertionError(
+        "the boundary gate no longer refuses to start when the boundary module "
+        "reports no usable container runtime, which is the check that tells a "
+        "broken setup apart from an honest skip"
+    )
+
+
+def boundary_case_bodies() -> dict[str, ast.FunctionDef]:
+    """Every `test_` method the container-backed class defines, by name."""
+    source = (ROOT / "tests" / "test_verify_sandbox.py").read_text()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ClassDef) and node.name == BOUNDARY_CLASS:
+            return {
+                item.name: item
+                for item in node.body
+                if isinstance(item, ast.FunctionDef) and item.name.startswith("test_")
+            }
+    raise AssertionError(
+        f"{BOUNDARY_CLASS} is not defined in tests/test_verify_sandbox.py"
+    )
+
+
+def boundary_cases() -> unittest.TestSuite:
+    """The container-backed cases, loaded the way the CI step loads them.
+
+    Loaded rather than counted off the source, because the loader is what
+    decides what runs: a case reached through a base class is a case, and a
+    `test_` method the loader does not pick up is not one.
+    """
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_verify_sandbox
+
+    return unittest.defaultTestLoader.loadTestsFromTestCase(
+        getattr(test_verify_sandbox, BOUNDARY_CLASS)
+    )
+
+
+_BOUNDARY_CASE = """
+    def test_boundary_property_{index}(self) -> None:
+        pass
+"""
+_BOUNDARY_FLAWS = {
+    "a case skips": """
+    def test_boundary_property_0(self) -> None:
+        self.skipTest("this daemon refused a bind mount")
+""",
+    "a case fails": """
+    def test_boundary_property_0(self) -> None:
+        self.fail("the boundary was proven where it should have been refuted")
+""",
+    "a case errors": """
+    def test_boundary_property_0(self) -> None:
+        raise RuntimeError("the probe never came back")
+""",
+    "a case is an expected failure": """
+    @unittest.expectedFailure
+    def test_boundary_property_0(self) -> None:
+        self.fail("the boundary was proven where it should have been refuted")
+""",
+    "a case is an unexpected success": """
+    @unittest.expectedFailure
+    def test_boundary_property_0(self) -> None:
+        pass
+""",
+}
+
+
+def _boundary_stand_in(
+    *, cases: int, image: str | None, flaw: str | None, shape: str
+) -> str:
+    """A `tests/test_verify_sandbox.py` whose one flaw is the one under test."""
+    body = [
+        (
+            _BOUNDARY_FLAWS[flaw]
+            if flaw is not None and index == 0
+            else _BOUNDARY_CASE.format(index=index)
+        )
+        for index in range(cases)
+    ]
+    defined = BOUNDARY_CLASS if shape == "class" else "SomeOtherCasesEntirely"
+    source = [
+        "import unittest",
+        "",
+        f"IMAGE = {image!r}",
+        'NO_RUNTIME = "no container runtime is available here"',
+        "",
+        "",
+        f"class {defined}(unittest.TestCase):",
+        *([] if body else ["    pass"]),
+        *body,
+    ]
+    if shape == "alias":
+        source += ["", f"{BOUNDARY_CLASS} = {defined}"]
+    return "\n".join(source) + "\n"
+
+
+def run_boundary_gate(
+    script: str,
+    *,
+    cases: int,
+    image: str | None = "python:3.12-slim",
+    flaw: str | None = None,
+    shape: str = "class",
+    published: str | None = None,
+    inspect_exits: int = 0,
+) -> subprocess.CompletedProcess:
+    """Run the step's own `run:` block against a world built to one shape.
+
+    `bash -e <file>`, which is what a `run:` block with no `shell:` of its own
+    is, in a directory holding a `tests/test_verify_sandbox.py` written here
+    and with `docker` and `python` resolving to shims ahead of anything real.
+    Nothing is stubbed inside the program: the exit status of the step as CI
+    would see it is the whole observation, so what the step spells its
+    variables, its checks or its messages does not enter into it.
+
+    No container runtime is touched, deliberately - the question is what the
+    step does with an answer, and a real daemon can only give one answer per
+    machine.
+    """
+    reference = ci_workflow_structure(VALIDATE_WORKFLOW)["env"]["PINNED_PYTHON_IMAGE"]
+    with tempfile.TemporaryDirectory() as directory:
+        world = Path(directory)
+        (world / "tests").mkdir()
+        (world / "tests" / "test_verify_sandbox.py").write_text(
+            _boundary_stand_in(cases=cases, image=image, flaw=flaw, shape=shape)
+        )
+        binaries = world / "bin"
+        binaries.mkdir()
+        docker = binaries / "docker"
+        docker.write_text(
+            "#!/bin/sh\n"
+            f"if [ {inspect_exits} -ne 0 ]; then\n"
+            '  echo "no such image on this host" >&2\n'
+            f"  exit {inspect_exits}\n"
+            "fi\n"
+            "printf '%s\\n' "
+            f"""'[{{"RepoDigests": ["python@{published or reference.split("@", 1)[1]}"]}}]'\n"""
+        )
+        docker.chmod(0o755)
+        # The runner's `python` is whatever `setup-python` installed; here it is
+        # the interpreter already running this suite, which is the same 3.12.
+        python = binaries / "python"
+        python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+        python.chmod(0o755)
+        step = world / "step.sh"
+        step.write_text(script)
+        return subprocess.run(
+            ["bash", "-e", str(step)],
+            cwd=world,
+            env={
+                "PATH": f"{binaries}{os.pathsep}{os.environ.get('PATH', '')}",
+                "PINNED_PYTHON_IMAGE": reference,
+                "HOME": str(world),
+            },
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
 
 
 def behavioral_harness():
@@ -9766,45 +10167,303 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
 
-    def test_ci_runs_the_container_boundary_cases_and_refuses_a_skip(self) -> None:
+    def test_the_boundary_gate_is_an_unconditional_step_of_the_validate_job(
+        self,
+    ) -> None:
         """The gate that closes the hole can itself be removed silently.
 
         `RealBoundaryTests` drives a real container for the half of the boundary
         verifier only an operating system can answer, and it had never run in
-        CI - every run reported four skips, which is how a verdict that turns on
+        CI - every run reported five skips, which is how a verdict that turns on
         the base image, and a case that held on one vendor's daemon only, both
         went green. The step added to fix that runs the class and refuses a
-        skip. Nothing required it to exist, so deleting it, reordering it after
-        a failing step, or hanging an `if:` on it would restore the original
-        hole in a diff that reads like tidying.
+        skip. Nothing requires it to exist, so deleting it, moving it to a job
+        nothing depends on, hanging an `if:` on it or excusing its exit status
+        would restore the original hole in a diff that reads like tidying.
 
-        Written against the behaviours rather than the step's name, so renaming
-        it is free and hollowing it out is not.
+        Asked of the parsed workflow rather than of its text, because the text
+        answers the wrong question: `PINNED_PYTHON_IMAGE` is mentioned by the
+        `env:` block and by the other job, so `assertIn` was satisfied with the
+        comparison that uses it deleted. Here the step is located by what its
+        program reaches, and every claim is about that step's own keys - so
+        renaming it, or renaming anything inside it, costs nothing.
         """
-        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
-        self.assertIn("RealBoundaryTests", workflow)
-        for behaviour, why in (
-            # The BRANCH, not the identifier: `result.skipped` also appears in
-            # the message that lists what was skipped, so asserting the name
-            # alone stayed true with the refusal itself replaced by `if False`.
-            ("if result.skipped:", "a skip must fail the job, not be reported"),
-            (
-                "if not result.wasSuccessful():",
-                "a failing boundary case must fail the job",
-            ),
-            (
-                "countTestCases()",
-                "the number of cases must come from the loader, so a case "
-                "added later is gated by the commit that writes it",
-            ),
-            (
-                "PINNED_PYTHON_IMAGE",
-                "the cases must run on the image this file pins, because two "
-                "of the verdicts turn on which base is underneath",
-            ),
+        text = VALIDATE_WORKFLOW.read_text()
+        structure = ci_workflow_structure(VALIDATE_WORKFLOW)
+        job, step = boundary_gate_step(structure)
+        self.assertEqual(
+            job,
+            "validate",
+            "the boundary gate must run in the job the pull request waits on, "
+            f"and it is declared in {job!r}",
+        )
+        self.assertGreaterEqual(
+            set(structure["on"] or {}),
+            {"pull_request", "push"},
+            "a gate that runs on neither event guards nothing",
+        )
+        self.assertIsNone(
+            step.get("if"),
+            f"the boundary gate declares `if: {step.get('if')}`, so it is "
+            "skipped on the events this workflow actually runs on and the "
+            "container cases go back to never running",
+        )
+        self.assertIsNone(
+            structure["jobs"][job].get("if"),
+            "a condition on the job is a condition on the gate inside it",
+        )
+        for owner, where in (
+            (step, "the boundary gate"),
+            (structure["jobs"][job], job),
         ):
-            self.assertIn(behaviour, workflow, why)
-        self.assertNotIn("continue-on-error", workflow)
+            self.assertNotIn(
+                "continue-on-error",
+                owner,
+                f"{where} may not report a failure as a pass",
+            )
+        self.assertNotIn(
+            "continue-on-error",
+            text,
+            "no step in this workflow may report a failure as a pass",
+        )
+        self.assertIn(
+            step.get("shell"),
+            (None, "bash"),
+            "the default shell for a `run:` block is `bash -e`, and `bash` "
+            f"adds `-o pipefail`; {step.get('shell')!r} is neither, so a "
+            "failing command inside this step need not fail it",
+        )
+        for line in step["run"].splitlines():
+            if line.strip():
+                self.assertIn(
+                    line,
+                    text,
+                    "the parsed `run:` block is not the one in the file, so "
+                    "every behaviour asserted from it is asserted from a "
+                    "misreading",
+                )
+
+    def test_the_boundary_gate_shell_cannot_excuse_the_program_it_runs(self) -> None:
+        """`bash -e` propagates the program's exit status, and only that.
+
+        `python - <<'PY' ... PY || true` is a one-word diff that turns every
+        refusal below into a printed message, and it leaves the whole program -
+        every check, every message - textually intact for a reviewer to read
+        and agree with. The tests below execute the block, so they catch it;
+        this says the same thing about the shell in a way that names it.
+        """
+        _, step = boundary_gate_step()
+        program = heredoc_program(step["run"])
+        self.assertIsNotNone(program, "the gate step embeds no program at all")
+        shell = step["run"].replace(program, "")
+        excuses = re.findall(r"\||&&|set \+e|\btrue\b|\bexit\s+0\b", shell)
+        self.assertEqual(
+            excuses,
+            [],
+            "the shell around the boundary program may not pipe it, ignore its "
+            f"exit status, or supply one of its own; this one has {excuses}",
+        )
+
+    def test_the_boundary_gate_passes_when_every_case_proves_the_boundary(self) -> None:
+        """The control the refusals below are read against.
+
+        Without it, a step that failed unconditionally - or one this test
+        mis-extracted from the workflow - would satisfy every refusal at once
+        and read as the strongest gate in the file.
+        """
+        _, step = boundary_gate_step()
+        done = run_boundary_gate(step["run"], cases=boundary_cases().countTestCases())
+        self.assertEqual(
+            done.returncode,
+            0,
+            "the boundary gate refuses a run in which every case proved the "
+            f"boundary on the pinned image:\n{done.stdout}\n{done.stderr}",
+        )
+
+    def test_the_boundary_gate_refuses_every_answer_short_of_a_proven_boundary(
+        self,
+    ) -> None:
+        """Executed, not read.
+
+        Each world below is the passing one with a single property changed, and
+        the step's own `run:` block is run against it as `bash -e`, so what is
+        asserted is the exit status CI reads and nothing about how the step is
+        written. The expected-failure worlds are the ones a reading misses:
+        measured on 3.12.3, `@unittest.expectedFailure` on a case yields
+        `skipped=[]`, `failures=[]`, `errors=[]`, `wasSuccessful()` True and
+        `testsRun == loaded`, so a decorator one line long turns a refuted
+        boundary into a green tick that every other check here agrees with.
+        """
+        _, step = boundary_gate_step()
+        cases = boundary_cases().countTestCases()
+        worlds = {
+            "a case skipped": {"flaw": "a case skips"},
+            "a case failed": {"flaw": "a case fails"},
+            "a case errored": {"flaw": "a case errors"},
+            "a case is a known failure": {"flaw": "a case is an expected failure"},
+            "a known failure passed": {"flaw": "a case is an unexpected success"},
+            "no runtime found an image": {"image": None},
+            "the image is not the pinned one": {"published": "sha256:" + "0" * 64},
+            "the image cannot be inspected": {"inspect_exits": 1},
+            "the class is gone": {"shape": "gone"},
+            "the class is an alias for another one": {"shape": "alias"},
+        }
+        for world, difference in worlds.items():
+            with self.subTest(world=world):
+                done = run_boundary_gate(step["run"], cases=cases, **difference)
+                self.assertNotEqual(
+                    done.returncode,
+                    0,
+                    f"the boundary gate passed a run where {world}, which is a "
+                    "green tick over an unproven boundary:\n"
+                    f"{done.stdout}\n{done.stderr}",
+                )
+
+    def test_the_boundary_gate_floor_is_the_number_of_cases_that_exist_today(
+        self,
+    ) -> None:
+        """A floor below the class it guards is decoration.
+
+        It was written one below: five cases, `FLOOR = 4`, both in the same
+        commit - so the case pinning that commit's own headline fix could be
+        deleted and the gate would still pass, while its message said the class
+        had offered four when the floor was written. The floor is therefore
+        derived here rather than read back out of the workflow, by running the
+        step against a class one case short: if that passes, the floor has
+        fallen behind the class and a case can be removed silently.
+        """
+        _, step = boundary_gate_step()
+        cases = boundary_cases().countTestCases()
+        done = run_boundary_gate(step["run"], cases=cases - 1)
+        self.assertNotEqual(
+            done.returncode,
+            0,
+            f"{BOUNDARY_CLASS} holds {cases} cases and the gate passed a class "
+            f"holding {cases - 1}, so a case can be deleted without CI "
+            f"noticing. Set the floor in {VALIDATE_WORKFLOW.name} to {cases}, "
+            "in the commit that changes how many cases there are:\n"
+            f"{done.stdout}\n{done.stderr}",
+        )
+
+    def test_the_boundary_gate_runs_the_class_the_container_cases_live_in(self) -> None:
+        """A class reached by name can be pointed at anything.
+
+        `getattr(boundary, "RealBoundaryTests")` is satisfied by
+        `RealBoundaryTests = ReadingTheProbeTests`: a one-line diff that hands
+        the gate 39 cases which touch no container and all pass. The gate
+        itself now refuses a class whose qualified name is not its own, and
+        this asks the question where the class is defined - it must be a class
+        statement in that module, nothing may rebind the name afterwards, the
+        cases the loader runs must be its own, and it must be the class gated
+        on the runtime the step refuses to start without. That last one is also
+        what keeps a developer with no runtime on a loud skip instead of a
+        false pass.
+        """
+        _, step = boundary_gate_step()
+        runtime = boundary_gate_runtime_attribute(heredoc_program(step["run"]))
+        module = ROOT / "tests" / "test_verify_sandbox.py"
+        tree = ast.parse(module.read_text())
+        defined = [
+            statement
+            for statement in tree.body
+            if isinstance(statement, ast.ClassDef) and statement.name == BOUNDARY_CLASS
+        ]
+        self.assertEqual(
+            len(defined),
+            1,
+            f"{module.name} must define {BOUNDARY_CLASS} exactly once as a "
+            f"class, and it defines it {len(defined)} times",
+        )
+        rebound = [
+            ast.unparse(statement)
+            for statement in tree.body
+            if isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == BOUNDARY_CLASS
+                for target in statement.targets
+            )
+        ]
+        self.assertEqual(
+            rebound,
+            [],
+            f"{BOUNDARY_CLASS} is rebound at module level ({rebound}), so the "
+            "gate runs whatever the last statement pointed it at",
+        )
+        decorators = [ast.unparse(node) for node in defined[0].decorator_list]
+        self.assertTrue(
+            any("skipIf" in node and runtime in node for node in decorators),
+            f"{BOUNDARY_CLASS} must be the class gated on `{runtime}`, which is "
+            "what the gate refuses to start without and what leaves a "
+            f"developer with no runtime a loud skip; it declares {decorators}",
+        )
+        own = {
+            statement.name
+            for statement in defined[0].body
+            if isinstance(statement, ast.FunctionDef)
+            and statement.name.startswith("test")
+        }
+        loaded = {case.id().rsplit(".", 1)[-1] for case in boundary_cases()}
+        self.assertEqual(
+            loaded,
+            own,
+            "every case the gate runs must be one this class defines; the "
+            f"loader runs {sorted(loaded)} and the class defines {sorted(own)}",
+        )
+
+    def test_the_pinned_image_digest_is_owned_by_the_workflow_env_alone(self) -> None:
+        """A digest written twice is two pins that can differ.
+
+        The gate compares the image its cases will run on against the digest
+        this workflow pins, and reads that digest from the environment rather
+        than restating it - so the comparison cannot come to be against a
+        second pin nobody updated. One `sha256:` in the file, in the `env:`
+        block, is the whole rule.
+        """
+        structure = ci_workflow_structure(VALIDATE_WORKFLOW)
+        _, step = boundary_gate_step(structure)
+        reference = structure["env"]["PINNED_PYTHON_IMAGE"]
+        self.assertRegex(reference, r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+        self.assertEqual(
+            VALIDATE_WORKFLOW.read_text().count("sha256:"),
+            1,
+            "this workflow must name exactly one image digest, in `env:`; a "
+            "second copy is how one pinned image quietly becomes two",
+        )
+        self.assertNotIn(
+            "sha256:",
+            step["run"],
+            "the gate must read the pinned digest from the environment, not "
+            "restate it",
+        )
+
+    def test_every_container_boundary_case_drives_the_runtime(self) -> None:
+        """The last way to a green tick with the boundary never entered.
+
+        CI now counts the cases, refuses a skip, refuses an expected failure and
+        checks the class is the real one - and every one of those holds for a
+        case whose body is `pass`. Five cases, no skip, no failure, floor
+        satisfied, tick green, no container started.
+
+        So each case has to reach the runtime: name the image, or go through the
+        helper that builds the command around it. Written as a reachability rule
+        rather than a list of today's five, because the next case is added by
+        someone who has not read this.
+        """
+        hollow: list[str] = []
+        for name, body in sorted(boundary_case_bodies().items()):
+            names = {node.id for node in ast.walk(body) if isinstance(node, ast.Name)}
+            attributes = {
+                node.attr for node in ast.walk(body) if isinstance(node, ast.Attribute)
+            }
+            if "IMAGE" not in names and "boundary" not in attributes:
+                hollow.append(name)
+        self.assertEqual(
+            hollow,
+            [],
+            "a container-backed case that names neither the image nor the "
+            "helper that builds a command around it cannot be starting a "
+            "container, and every other check in CI passes over it",
+        )
 
     def test_every_ci_action_is_pinned_to_a_commit_sha(self) -> None:
         """A version tag is a mutable pointer, and this workflow runs on
