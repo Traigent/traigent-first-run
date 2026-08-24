@@ -747,6 +747,47 @@ class EvaluatorCalibrationTests(unittest.TestCase):
                 )
             self.assertEqual(process.returncode, 2)
 
+    def test_rejects_jointly_infeasible_thresholds_for_graded_cases(self) -> None:
+        """A partial score must have room above bad and below good."""
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    *self.command(self.make_scorer(directory)),
+                    "--good-minimum",
+                    "0.6",
+                    "--bad-maximum",
+                    "0.5",
+                    "--separation-margin",
+                    "0.5",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("at least twice --separation-margin", process.stderr)
+
+    def test_all_binary_cases_may_use_inert_jointly_infeasible_thresholds(self) -> None:
+        """The separation margin is irrelevant when every partial must fail."""
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    *self.command(self.make_scorer(directory)),
+                    "--score-mode",
+                    "binary",
+                    "--good-minimum",
+                    "0.6",
+                    "--bad-maximum",
+                    "0.5",
+                    "--separation-margin",
+                    "0.5",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
     def test_timeout_must_be_strictly_positive(self) -> None:
         for value in ("0", "-1"):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
