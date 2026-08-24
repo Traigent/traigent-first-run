@@ -21174,6 +21174,49 @@ class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
         self.assertIn("a claim of no writes is refuted by one `ls`", skill)
         self.assertNotIn("traigent-runs/row-review.json", skill)
 
+    def test_the_placement_rule_says_which_form_the_path_is_named_in(self) -> None:
+        """Where the files go was settled; how they are SPOKEN was not.
+
+        The ledger entry `0047-the-opening-gate-says-where-its-own-files-go`
+        bought bytes to name the destination, and five blinded runs before it
+        had put the files five places. The destination has been right since. What no sentence said was which
+        form to name it in, and a run read the loud two-file **Absolute paths**
+        rule on the pre-spend card in `run-safety.md` as the house style and
+        expanded this one - so a correct, project-local directory reached the
+        customer as `/home/<user>/<deep path>/<project>/traigent-runs/...` and
+        read like the run had wandered off into their filesystem.
+
+        The form belongs beside the destination, in the one sentence that owns
+        the placement, which is why the row-review sentence above still says
+        only "naming where": repeating an address owned somewhere else is the
+        contradiction that test exists to refuse, and repeating a FORM owned
+        somewhere else would be the same defect in the same pair of sentences.
+
+        This is not a second attempt at that entry. The location it settled is
+        untouched and is still written exactly as it wrote it.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("traigent-runs/readiness/<yyyymmddthhmmssz>/", skill)
+        self.assertIn(
+            "name that directory to the user beside the card in that "
+            "project-relative form, never expanded to an absolute path",
+            skill,
+        )
+        # One home, enforced rather than described. A second statement of the
+        # form is a second place it can be changed, which is the whole reason
+        # the row-review sentence above still says only "naming where" - so
+        # that sentence is pinned as ENDING there, not merely as containing it.
+        self.assertEqual(skill.count("project-relative form"), 1)
+        self.assertIn(
+            "wrote its own row review, naming where. a claim of no writes",
+            skill,
+        )
+        # The rule it is most likely to be confused with, still standing and
+        # still about the two files it was written for.
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn("**absolute paths** - one for each file this run", safety)
+        self.assertIn("two paths at most, not an inventory", safety)
+
     def test_the_file_it_leaves_is_superseded_rather_than_stranded(self) -> None:
         dataset = self._dataset()
         self.assertIn("every opening gate rewrites it whole", dataset)

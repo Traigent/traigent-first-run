@@ -260,7 +260,8 @@ Then read the agent itself and pass what that read found as `--agent-knobs`, so 
 grades this project instead of reporting nothing. Every file a scoring writes to reach it - that
 document, the preflight JSON, any note - goes in `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a
 fresh directory per scoring so a later one never reads an earlier one's. Never delete them, and name that
-directory to the user beside the card: they may want to keep, share, or remove it. Two halves, one pass, and
+directory to the user beside the card in that project-relative form, never expanded to an absolute
+path: they may want to keep, share, or remove it. Two halves, one pass, and
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
 the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
