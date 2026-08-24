@@ -395,6 +395,84 @@ class BandAndAggregationTests(unittest.TestCase):
             "a cap that never bit made the card restate its own headline",
         )
 
+    def test_the_pre_cap_line_names_a_limit_the_reader_can_find(self) -> None:
+        """ "The strictest limit below" can name the one cap that prints no number.
+
+        The blocking-only card above is the easy case: nothing else is printed,
+        so "below" is unambiguous. Mix the two and it stops being. Constructed
+        and run against a blocking cap at 25 and an advisory at 89 over pillars
+        of 76/64/83, the card printed
+
+            Pillars weighted to 74/100; the strictest limit below is what makes
+            this score 25.
+            FIX BEFORE PAID RUN The evaluator is broken.
+            WOULD LIMIT TO 89 small set
+
+        and the only number below that sentence is 89 - the ceiling that is
+        real and is NOT operative, which the subjunctive on its own line is
+        already at pains to say. A reader sent looking for what makes this 25
+        finds the one figure that does not.
+
+        So the sentence names the label instead of the position, and it names
+        it from the same constant the cap line prints, because a card citing a
+        mark it does not print is this defect with an extra step.
+        """
+        pillars = [
+            MODULE.Pillar(name="dataset", score=76, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="evaluation", score=64, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="agent", score=83, confidence=1.0, subscores=()),
+        ]
+        mixed = MODULE.aggregate(
+            pillars,
+            [
+                MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken."),
+                MODULE.Cap(
+                    "dataset-below-measurable-size", 89, "small set", blocks=False
+                ),
+            ],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual((mixed.weighted_average, mixed.overall), (74, 25))
+        card = MODULE.render_card(mixed, unicode_ok=False, palette=MODULE.PLAIN)
+        summary = next(
+            line for line in card.splitlines() if "Pillars weighted to" in line
+        )
+        self.assertIn(f"the limit marked {MODULE.BLOCKING_CAP_LABEL} below", summary)
+        self.assertNotIn("strictest limit below", summary)
+        # The mark it cites is one the card actually prints, on its own line.
+        self.assertTrue(
+            any(
+                line.strip().startswith(MODULE.BLOCKING_CAP_LABEL)
+                for line in card.splitlines()
+            ),
+            "the summary cites a mark the cap block never prints",
+        )
+        # And the operative cap still prints no number, which is why the
+        # positional wording could not work here.
+        self.assertNotIn("LIMITED TO 25", card)
+
+        # Where a cap that prints a ceiling IS the operative one, the position
+        # is unambiguous and the settled wording stays.
+        advisory = MODULE.aggregate(
+            pillars,
+            [
+                MODULE.Cap("dataset-coarse-resolution", 65, "small set", blocks=False),
+                MODULE.Cap(
+                    "dataset-below-measurable-size", 89, "small set", blocks=False
+                ),
+            ],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        advisory_card = MODULE.render_card(
+            advisory, unicode_ok=False, palette=MODULE.PLAIN
+        )
+        self.assertIn(
+            "the strictest limit below is what makes this score 65", advisory_card
+        )
+        self.assertIn("LIMITED TO 65", advisory_card)
+
 
 class DatasetScoringTests(unittest.TestCase):
     def test_absent_dataset_is_capped_and_blocked(self) -> None:
@@ -1221,28 +1299,48 @@ class DatasetScoringTests(unittest.TestCase):
         looking at their own folds reads that sentence as simply false, and
         nothing on the card told them what had actually been looked at.
 
-        Both branches are checked, because they make the same claim about the
-        same search and the way this returns is one of them being corrected
-        alone. The tuning-only branch is the easy one to forget: it already
-        names a number, so it reads as though it had looked.
+        Both branches are checked, because they describe the same search and
+        the way this returns is one of them being corrected alone. The
+        tuning-only branch is the easy one to forget: it already names a
+        number, so it reads as though it had looked.
+
+        What they may not share is the conclusion, and the first version of
+        this fix had them share it. `tuning_rows` is preflight's count of rows
+        carrying a label it read as the tuning side, so a project reaching that
+        branch HAS labelled rows - and it was told a split reaches this score
+        only as a label on the rows of the file it was given, which is exactly
+        what it had done. Each branch is now pinned to the side that is
+        actually missing, and both are pinned to the search they share.
         """
-        for facts in (
-            MODULE.DatasetFacts(
-                exists=True, dataset_supplied=True, rows=140, labelled_rows=140
-            ),
-            MODULE.DatasetFacts(
-                exists=True,
-                dataset_supplied=True,
-                rows=18,
-                labelled_rows=18,
-                tuning_rows=18,
-                tuning_labelled_rows=18,
-            ),
-        ):
+        no_split = MODULE.DatasetFacts(
+            exists=True, dataset_supplied=True, rows=140, labelled_rows=140
+        )
+        tuning_only = MODULE.DatasetFacts(
+            exists=True,
+            dataset_supplied=True,
+            rows=18,
+            labelled_rows=18,
+            tuning_rows=18,
+            tuning_labelled_rows=18,
+        )
+        for facts in (no_split, tuning_only):
             with self.subTest(tuning_rows=facts.tuning_rows):
-                evidence = self._power_evidence(facts)
-                self.assertIn("a split is visible to this score only as", evidence)
-                self.assertIn("kept in separate files was not seen", evidence)
+                # The shared half: one file was read, and a fold outside it was
+                # not. Both branches owe the reader this much.
+                self.assertIn(
+                    "one dataset file", self._power_evidence(facts).casefold()
+                )
+                self.assertIn("separate file", self._power_evidence(facts))
+
+        self.assertIn(
+            "a split is visible to this score only as",
+            self._power_evidence(no_split),
+        )
+        # And the half that may not be shared. A project whose rows carry a
+        # tuning label is missing the other side, not the labels.
+        tuning_evidence = self._power_evidence(tuning_only)
+        self.assertIn("none read as the held-out side", tuning_evidence)
+        self.assertNotIn("a split is visible to this score only as", tuning_evidence)
 
     def test_a_score_that_read_no_dataset_describes_no_search(self) -> None:
         """The silence, which is the half that keeps the sentence honest.

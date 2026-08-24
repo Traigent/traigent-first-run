@@ -725,12 +725,85 @@ class NoRemedyAsksForTheLineToBeRewrittenTests(unittest.TestCase):
                     f"{problem!r} still answers with {remedy!r}",
                 )
 
+    def test_the_printed_label_does_not_frame_the_remedy_as_a_rewrite(self) -> None:
+        """The last instance of the class, and the one word the reader sees.
+
+        Five remedies were rewritten to say "report the line as it stands", and
+        every one of them printed under `fix:` - one word, in front of every
+        remedy, on every line, at every stop-and-wait for the rest of the run.
+        The sentences said do not touch this line and the label above them said
+        touch it, so the reader was answered twice and had to pick.
+
+        Asserted on the rendered line, because the rendered line is what a
+        reader has: `as_dict` keys the same string `remedy` for the `--json`
+        envelope, and nobody reading the terminal ever sees that key.
+        """
+        rendered = validate_run_log.Finding(
+            4, "line is not JSON", "report the line as it stands"
+        ).render()
+        self.assertEqual(
+            rendered,
+            "  line 4: line is not JSON\n"
+            "    what to do: report the line as it stands",
+        )
+        self.assertNotIn("fix:", rendered)
+
+    # One `detail` per carrier `LEAKS` names, each in the shape a run really
+    # writes it. The session id is assembled rather than typed: this
+    # repository's guard refuses a bare UUID in a tracked file, and it is right
+    # to. Checked against `LEAKS` itself below, so a carrier added later
+    # arrives here red rather than silently uncovered.
+    CARRYING_DETAILS = (
+        "the .env at /home/jsmith/proj/.env is tracked",
+        "the portal refused key uk_9fA2bQ7xLmZ0rTdEuv",
+        "the account anna.k@example.com has no plan",
+        "tracking dropped for "
+        + "-".join(("7f3a91c2", "11de", "4d0b", "9a77", "2b6e4c5d8e01")),
+        "the probe failed against https://portal.example.com/api",
+        "could not reach 203.0.113.42 at all",
+        'the judge returned "the capital of France is Paris, and also"',
+    )
+
+    # Every problem this script can report, as the substring that identifies
+    # it. Listed rather than counted, because a count is satisfied by reaching
+    # one branch twice - which is how the earlier version of this sweep passed
+    # while missing nine of them.
+    EVERY_BRANCH = (
+        "line is not JSON",
+        "line is not a JSON object",
+        "missing field",
+        "unknown field",
+        "is not YYYYMMDDTHHMMSSZ",
+        "is not one this log carries",
+        "is not a run-record stage",
+        "is neither open nor cleared",
+        "is outside its closed set",
+        "detail is empty",
+        "characters, past the",
+        "detail carries",
+        "cleared without an open line before it",
+    )
+
     def test_no_remedy_the_script_can_print_asks_for_a_rewrite(self) -> None:
         """The class, not the five instances.
 
-        Asserted over every remedy the script produces on one log that reaches
-        every branch, so a sixth remedy added later with the same reflex fails
-        here rather than shipping.
+        Asserted over every remedy the script produces on a log built to reach
+        every branch that prints one, so a sixth remedy added later with the
+        same reflex fails here rather than shipping.
+
+        "Every branch" was prose, and the prose was wrong. Measured on the
+        version this replaces: 10 findings, reaching 1 of the 7 leak carriers,
+        never reaching an empty `detail` or one past the length bound, and with
+        its own orphan-`cleared` line masked - the bad-timestamp line above it
+        registers the same `(blocked, 6, key)` identity as open, so by the time
+        the `cleared` arrives it is not an orphan. Nine remedies the script can
+        print sat outside a sweep whose docstring said it covered all of them,
+        which is this repository's recurring defect written into the check for
+        it.
+
+        So the coverage is computed, not claimed: the carrier set is read off
+        `LEAKS`, the branch list is enumerated rather than counted, and the
+        orphan line carries an identity nothing above it opened.
         """
         text = "\n".join(raw for _problem, raw in self.MALFORMED)
         text += "\n" + "\n".join(
@@ -742,11 +815,34 @@ class NoRemedyAsksForTheLineToBeRewrittenTests(unittest.TestCase):
                 line(state="paused"),
                 line(detail="the run stopped at /home/someone/project/agent.py"),
                 {**line(), "extra": 1},
+                line(detail="   "),
+                line(detail="the provider said " + "x" * validate_run_log.DETAIL_LIMIT),
+                *(line(detail=detail) for detail in self.CARRYING_DETAILS),
+                # Stage 7, so the identity is one nothing above this line has
+                # opened. The `cleared` in MALFORMED shares its identity with
+                # the bad-timestamp line, which is well formed enough to
+                # register as open - correct behaviour, and the reason that
+                # line proves nothing about this branch.
+                line(stage=7, state="cleared"),
             )
         )
         produced = remedies_for(text)
-        self.assertGreaterEqual(
-            len(produced), 10, "the sweep stopped reaching branches"
+        reached = {problem for problem, _remedy in produced}
+        for branch in self.EVERY_BRANCH:
+            with self.subTest(branch=branch):
+                self.assertTrue(
+                    any(branch in problem for problem in reached),
+                    f"the sweep no longer reaches {branch!r}, so every remedy "
+                    "behind it is unchecked here",
+                )
+        self.assertEqual(
+            {
+                problem.removeprefix("detail carries ")
+                for problem in reached
+                if problem.startswith("detail carries ")
+            },
+            {label for label, _pattern in validate_run_log.LEAKS},
+            "the sweep no longer reaches every carrier `LEAKS` names",
         )
         for problem, remedy in produced:
             with self.subTest(problem=problem):
@@ -800,10 +896,14 @@ class NoRemedyAsksForTheLineToBeRewrittenTests(unittest.TestCase):
         happened - and the remedy is where they are reconciled.
 
         The reference half is asserted too: if that sentence ever leaves the
-        guidance, this remedy is answering a question nobody is being asked.
+        guidance, this remedy is answering a question nobody is being asked -
+        and the CONDITION on it is asserted with it, because the remedy quotes
+        a scoped permission and a quote that drops the scope is the defect
+        below.
         """
         reference = " ".join(BASE_REFERENCE.read_text().split())
         self.assertIn("is not a credential and is safe to hand over", reference)
+        self.assertIn("but only to someone who already holds a code", reference)
         for detail, label in (
             (
                 "no portal key was entered; get one at portal.traigent.ai",
@@ -824,7 +924,67 @@ class NoRemedyAsksForTheLineToBeRewrittenTests(unittest.TestCase):
                 }
                 remedy = found[f"detail carries {label}"]
                 self.assertEqual(remedy, validate_run_log.ADDRESS_REMEDY)
-                self.assertIn("safe to say to the user", remedy)
+                self.assertIn("registration address", remedy)
+                self.assertIn("already holds a code", remedy)
+
+    # One clause, in either script's wording: `name what failed` and `name the
+    # class of thing that failed`. Bounded at the sentence, so a remedy that
+    # says one thing and then contradicts it cannot satisfy this by containing
+    # the words somewhere.
+    NAMES_THE_FAILURE = re.compile(r"\bname\b[^.;]*\bfailed\b")
+
+    # Every `detail` below carries an address that is NOT the registration
+    # address, and each is a sentence a run really does produce.
+    UNREVIEWED_ADDRESSES = (
+        "the backend at 10.0.3.14 refused the session",
+        "auth failed; retry at https://10.0.3.14:8443/session?tok=abcd1234",
+        "see the internal runbook at https://wiki.example.com/oncall",
+    )
+
+    def test_the_address_remedy_does_not_call_an_unreviewed_address_safe(
+        self,
+    ) -> None:
+        """It generalised a scoped permission over two very broad carriers.
+
+        `references/run-safety.md` grants one address to one audience: the
+        registration address, to a user who already holds a code. The carriers
+        this remedy is keyed to grant nothing - `a URL` is any `https?://`, and
+        `a host or address` is any IPv4 plus any `*.com|net|org|io|ai|dev`. The
+        general wording answered all of them with "an address is safe to say to
+        the user".
+
+        Measured on trunk, the second line below drew that sentence, and
+        `tok=abcd1234` carries none of the prefixes the credential pattern
+        knows - so the remedy was the only thing standing between that token
+        and the reader, and it said the string was safe. The same line drew
+        `never the instance` from the absolute-path pattern in the same breath,
+        so a reader was handed two instructions that disagreed.
+
+        The instruction has to hold for every carrier, so this asserts the
+        property rather than the sentence: no remedy printed over an address
+        the reference never reviewed may call that address safe.
+        """
+        for detail in self.UNREVIEWED_ADDRESSES:
+            with self.subTest(detail=detail):
+                produced = remedies_for(json.dumps(line(detail=detail)) + "\n")
+                carriers = [p for p, _ in produced if p.startswith("detail carries")]
+                self.assertTrue(carriers, f"{detail!r} was not refused at all")
+                for problem, remedy in produced:
+                    with self.subTest(problem=problem):
+                        # The permission may only appear with its subject and
+                        # its condition attached.
+                        if "safe to hand" in remedy or "safe to say" in remedy:
+                            self.assertIn("registration address", remedy)
+                            self.assertIn("already holds a code", remedy)
+                        # And every remedy on the line asks for the same thing,
+                        # so the two carriers a URL trips cannot disagree.
+                        self.assertIsNotNone(
+                            self.NAMES_THE_FAILURE.search(remedy),
+                            f"{problem!r} answers with {remedy!r}, which does "
+                            "not ask for the failure to be named - a line "
+                            "tripping two carriers then draws two different "
+                            "instructions",
+                        )
 
     def test_every_addressed_remedy_is_keyed_to_a_carrier_that_exists(self) -> None:
         """A typo in the map is silent: `.get` hands back the general sentence.

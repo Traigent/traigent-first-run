@@ -421,6 +421,64 @@ class StaticPreflightTests(unittest.TestCase):
             self.assertIn("carries a split label", split.detail)
             self.assertIn("kept in separate files", split.detail)
 
+    def test_a_fully_labelled_file_is_not_told_it_carries_no_label(self) -> None:
+        """The scope sentence above was true of one of the four shapes it met.
+
+        This branch is the `else` of a chain on the TUNING side, so it fires
+        whenever no label was read as tuning - not only when no row carries a
+        label. Measured on trunk over 24 rows all carrying one label:
+
+            split=holdout -> "no row of ... carries a split label"  (false)
+            split=dev     -> the same sentence                      (false)
+            split=test    -> the same sentence                      (false, and
+                             `test` is a name this check reads, so it had
+                             counted those rows)
+            no split key  -> the same sentence                      (true)
+
+        and the remedy appended to all four - combine the folds into one
+        labelled file - is what a reader in the first three had already done.
+
+        The sentences are asserted against the PREDICATE, never against the
+        label vocabulary that decides it. A parallel change is widening which
+        labels are read as each side; every assertion here has to survive it,
+        so none of them names a token.
+        """
+        shapes = {
+            "holdout": ("read as the held-out side", "read as the tuning side"),
+            "test": ("read as the held-out side", "read as the tuning side"),
+            "dev": ("neither side of the pair", "relabel the two folds"),
+        }
+        for label, expected in shapes.items():
+            with self.subTest(split=label):
+                MODULE.RESULTS.clear()
+                rows = [{**row, "split": label} for row in synthetic_rows()]
+                with tempfile.TemporaryDirectory() as directory:
+                    dataset = Path(directory) / "opt_fold.jsonl"
+                    dataset.write_text(
+                        "\n".join(json.dumps(row) for row in rows) + "\n"
+                    )
+                    MODULE.check_dataset(dataset)
+                    split = next(
+                        result
+                        for result in MODULE.RESULTS
+                        if result.check == "dataset-split"
+                    )
+                    self.assertEqual(split.status, MODULE.WARN)
+                    # The settled phrase still opens it, and the file is still
+                    # named: this widens the scope sentence, it does not
+                    # replace what was already pinned.
+                    self.assertIn(
+                        "no explicit tuning/held-out split was found", split.detail
+                    )
+                    self.assertIn(str(dataset), split.detail)
+                    # The false sentence, and the remedy that came with it.
+                    self.assertNotIn("carries a split label,", split.detail)
+                    self.assertNotIn("kept in separate files", split.detail)
+                    # What was actually read, which is the finding's own point.
+                    self.assertIn(f"({label})", split.detail)
+                    for phrase in expected:
+                        self.assertIn(phrase, split.detail)
+
     def test_tuning_only_dataset_is_not_reported_as_an_undeclared_split(self) -> None:
         rows = synthetic_rows()[:18]
         with tempfile.TemporaryDirectory() as directory:

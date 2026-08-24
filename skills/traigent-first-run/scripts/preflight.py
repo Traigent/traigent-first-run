@@ -2565,13 +2565,49 @@ def check_dataset(
         # substituted for it: the wording that names the two splits is pinned
         # across this script and the scorer, and this finding is one of the
         # four places a user reads it.
+        #
+        # Three shapes reach here and the appended scope described only one of
+        # them. This is the `else` of a chain on `tune_inputs`, so it fires
+        # whenever nothing was read as the tuning side - not only when no row
+        # carries a label. Measured over 24 fully labelled rows: `split:
+        # holdout`, `split: test` and `split: dev` each produced "no row of
+        # ... carries a split label" about a file where every row carried one,
+        # and then offered a reader who had already combined their folds the
+        # advice to combine them. Source: tests/test_preflight.py, in
+        # `test_a_fully_labelled_file_is_not_told_it_carries_no_label`.
+        #
+        # So each shape says what was actually read, and says it against the
+        # PREDICATE this branch tests rather than against the label vocabulary
+        # that decides it: what is missing is a PAIR - one side read as tuning
+        # and one read as held-out. Widening which labels count leaves all
+        # three sentences true, which enumerating them here would not.
+        labelled = sorted(split_counts)
+        if holdout_inputs:
+            scope = (
+                f"the rows of {path} carry split labels ({', '.join(labelled)}) "
+                "and one of them was read as the held-out side, with nothing "
+                "there read as the tuning side, so there is no pair to compare "
+                "- the rows this run tunes on have to sit in that same file "
+                "under a label this check reads as the tuning side"
+            )
+        elif labelled:
+            scope = (
+                f"the rows of {path} carry split labels ({', '.join(labelled)}) "
+                "and neither side of the pair was read from them, and that one "
+                "file is everything this check reads - relabel the two folds so "
+                "one side reads as tuning and the other as held-out"
+            )
+        else:
+            scope = (
+                f"no row of {path} carries a split label, and that one file is "
+                "everything this check reads - a split kept in separate files "
+                "stays invisible here until they are combined into one file "
+                "whose rows carry the label"
+            )
         emit(
             "dataset-split",
             WARN,
-            f"no explicit tuning/held-out split was found: no row of {path} "
-            "carries a split label, and that one file is everything this check "
-            "reads - a split kept in separate files stays invisible here until "
-            "they are combined into one file whose rows carry the label",
+            f"no explicit tuning/held-out split was found: {scope}",
         )
 
     difficulty_values = [

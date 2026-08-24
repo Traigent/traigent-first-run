@@ -110,14 +110,33 @@ DETAIL_LIMIT = 400
 # still not part of what happened - and the refusal read as a contradiction of
 # that reference while one remedy had to cover both.
 #
+# The reference's claim is SCOPED and the remedy may not widen it. That
+# sentence is about the registration address, and only towards a user who
+# already holds a code; the two carriers this remedy answers are not scoped at
+# all - `a URL` is any `https?://`, and `a host or address` is any IPv4 and any
+# `*.com|net|org|io|ai|dev`. Measured on the general wording: `retry at
+# https://10.0.3.14:8443/session?tok=abcd1234` was answered "an address is safe
+# to say to the user", and `tok=abcd1234` carries none of the prefixes the
+# credential pattern knows, so that remedy was the only thing between the token
+# and the reader. It also contradicted the absolute-path remedy the same line
+# drew, because a URL satisfies that pattern too. Source:
+# tests/test_validate_run_log.py, in
+# `test_the_address_remedy_does_not_call_an_unreviewed_address_safe`.
+#
+# So the sentence states the instruction first - it is true of every address -
+# and quotes the reference's permission WITH the subject and the condition it
+# was granted under, rather than as a fact about addresses.
+#
 # A dict keyed by label rather than a third element on `LEAKS`: the label is
 # already the only thing the finding says about which pattern fired, so keying
 # the remedy to it cannot drift from what the reader was told, and a carrier
 # with nothing special to say keeps the general sentence by omission.
 LEAK_REMEDY = "name the class of thing that failed, never the instance"
 ADDRESS_REMEDY = (
-    "an address is safe to say to the user and is still not part of what "
-    "happened; name what failed, not where to go next"
+    "an address is where to go next, not what happened; name what failed. "
+    "`references/run-safety.md` calls the registration address safe to hand "
+    "over, and only to a user who already holds a code; it says that of no "
+    "other address"
 )
 LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Requires a boundary before the slash, so `3/5`, `and/or` and `input/output`
@@ -201,6 +220,13 @@ class Finding:
     `restamp it` asked for the one action the contract forbids, on a file this
     script opens read-only.
 
+    Which is why the rendered label is not `fix:`. Five remedies were rewritten
+    to say "report the line as it stands" under a word that frames all of them
+    as an instruction to touch it, and the label is the part the reader
+    actually sees - it sits in front of every remedy, on every line, at every
+    stop-and-wait for the rest of the run. `what to do:` is the same promise
+    the sentences make.
+
     The orphan-`cleared` remedy was worse than contradictory, it was
     unsatisfiable: an `open` line appended now lands AFTER the `cleared`, and
     no legal action puts one before it. Verified by appending one and
@@ -229,7 +255,10 @@ class Finding:
         }
 
     def render(self) -> str:
-        return f"  line {self.line_number}: {self.problem}\n    fix: {self.remedy}"
+        return (
+            f"  line {self.line_number}: {self.problem}\n"
+            f"    what to do: {self.remedy}"
+        )
 
 
 def _check_class(event: str, value: Any, number: int, out: list[Finding]) -> None:

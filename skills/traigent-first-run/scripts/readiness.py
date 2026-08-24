@@ -3893,9 +3893,15 @@ def split_search_scope(facts: DatasetFacts) -> str:
     this reason; these two sentences are that rule reaching the rest of the
     pillar.
 
-    Written once and called from both branches because the tuning-only branch
-    and the no-split-at-all branch make the same claim about the same search,
-    and the way this defect returns is one of them being corrected alone.
+    Written once and called from both branches because they describe the same
+    search, and the way this defect returns is one of them being corrected
+    alone. What they may not share is the CONCLUSION. The one sentence said no
+    split label was seen, and the tuning-only branch reaches here precisely
+    because one was: `tuning_rows` is preflight's count of rows carrying a
+    label it read as the tuning side, so a customer who had labelled their
+    tuning rows was told a split reaches this score only as a label on the
+    rows - which is what they had done. What is missing there is the other
+    side, so that is what it now says.
 
     Empty unless a dataset actually reached this score. On the planner account
     no file was read, so there is no search to describe and describing one
@@ -3905,6 +3911,12 @@ def split_search_scope(facts: DatasetFacts) -> str:
     """
     if not facts.dataset_supplied:
         return ""
+    if facts.tuning_rows is not None:
+        return (
+            "; the one dataset file this score was given carries a label read "
+            "as the tuning side and none read as the held-out side, so a "
+            "held-out set kept in a separate file was not seen"
+        )
     return (
         "; a split is visible to this score only as a split label on the rows "
         "of the one dataset file it was given, so a split kept in separate "
@@ -5810,6 +5822,11 @@ def marker(sub: SubScore, unicode_ok: bool) -> str:
 
 
 BLOCKER_KEYWORD = "BLOCKER"
+# The label a blocking cap prints, and the name two other lines use to send the
+# reader to it: the BLOCKER paragraph says what is marked, and the pre-cap
+# arithmetic line says which mark carries the number. Three literals of one
+# label is three chances for the card to cite a mark it does not print.
+BLOCKING_CAP_LABEL = "FIX BEFORE PAID RUN"
 # The BODY column, not the whole line: the keyword and its gutter are added
 # on top, so a rendered line is this plus eleven characters.
 BLOCKER_BODY_WIDTH = 76
@@ -5849,8 +5866,9 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
     body = (
         f"{score.overall}/100 {score.band} is what your evidence supports, and "
         f"that stands. Whether the paid run may start is a separate question: "
-        f"{count} to be cleared first, {marked} FIX BEFORE PAID RUN below. Fix "
-        f"{pronoun}, run this score again, and the paid comparison can start."
+        f"{count} to be cleared first, {marked} {BLOCKING_CAP_LABEL} below. "
+        f"Fix {pronoun}, run this score again, and the paid comparison can "
+        f"start."
     )
     wrapped = textwrap.wrap(body, width=BLOCKER_BODY_WIDTH)
     indent = " " * (2 + len(BLOCKER_KEYWORD) + 2)
@@ -5969,9 +5987,30 @@ def render_card(
             # `min(weighted_average, min(ceilings))` with a default ceiling of
             # 100, so with no cap `overall` IS `weighted_average` and the
             # comparison can never be true.
+            #
+            # WHICH limit, not "the strictest one below", because a blocking
+            # cap prints `BLOCKING_CAP_LABEL` and no ceiling at all. On a card
+            # carrying both kinds, the only number below this sentence is the
+            # advisory one that is NOT operative: constructed and run with a
+            # blocking cap at 25 and an advisory at 89 over pillars of 76/64/83,
+            # "the strictest limit below is what makes this score 25" printed
+            # above a lone `WOULD LIMIT TO 89`, sending a reader looking for 25
+            # to the one figure that does not produce it. So the sentence names
+            # the label the reader can actually find. Source:
+            # tests/test_readiness_scoring.py, in
+            # `test_the_pre_cap_line_names_a_limit_the_reader_can_find`.
+            #
+            # `binding` cannot be empty here: `overall < weighted_average` only
+            # when `overall` IS the lowest ceiling, so some cap carries it.
+            binding = [cap for cap in score.caps if binds(cap, score.overall)]
+            limit = (
+                f"the limit marked {BLOCKING_CAP_LABEL} below"
+                if binding and all(cap.blocks for cap in binding)
+                else "the strictest limit below"
+            )
             lines.append(
                 f"  {palette.dim}Pillars weighted to "
-                f"{score.weighted_average}/100; the strictest limit below is "
+                f"{score.weighted_average}/100; {limit} is "
                 f"what makes this score {score.overall}.{palette.reset}"
             )
         for cap in score.caps:
@@ -5992,7 +6031,7 @@ def render_card(
             # card saying the lowest ceiling wins. The subjunctive is the whole
             # fix - it says the ceiling is real without claiming it applies now.
             if cap.blocks:
-                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
+                label = f"{palette.bad}{BLOCKING_CAP_LABEL}{palette.reset}"
             elif binds(cap, score.overall):
                 label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
             else:
