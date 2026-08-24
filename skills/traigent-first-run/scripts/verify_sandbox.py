@@ -61,9 +61,14 @@ Six of those properties are observable from inside, and each is reported as
                   fixtures read-only plus a scratch directory, and a home is
                   neither. The working directory is where a project keeps the
                   tests a scorer needs, so there reach alone is not the finding
-                  and a refused write finally means refused. A directory mounted
-                  at a path this check was never told about is not looked for -
-                  see what it does NOT establish, below.
+                  and a refused write finally means refused. The boundary's own
+                  mount table is read as well, and it is exact only where the
+                  boundary shares this kernel; where it does not, a row whose
+                  source could still be one of the two - the same path with its
+                  leading components cut off - is reported unverified rather
+                  than proven. A directory mounted at a path this check was
+                  never told about is not looked for - see what it does NOT
+                  establish, below.
 * `privilege`   - the probe holds no effective capabilities, none available to
                   acquire, and runs with `no_new_privs` set; and it cannot see
                   BOTH of this check's own processes, one being an ordinary
@@ -476,6 +481,106 @@ def redacted_command(command: list[str]) -> list[str]:
     return safe
 
 
+REDACTED = "<redacted>"
+# A value short enough to be an ordinary word of a sentence is blanked out of
+# the runtime's message only at the cost of making the message unreadable, and
+# a reader who cannot read the reason is back where this fix started. Eight
+# characters is what the shortest credential worth hiding runs to, and no
+# English word in a docker error reaches it by accident often enough to matter.
+VALUE_FLOOR = 8
+# What a runtime prints to point at its own help rather than to say what
+# happened. Taking the LAST line of stderr reproduced one of these while the
+# reason - the path is not shared from the host - sat two lines above it.
+POINTER = ("Run '", "See '", "Usage:", "usage:", "For more information")
+# The two shapes a runtime's error was measured to echo a secret in: a
+# `NAME=VALUE` pair, and the user-information half of a URL. Both arrive from
+# the command the customer typed, which is why this file refuses to print a
+# value in the first place - the leak measured was a database password
+# reproduced in full from a connection error, one line under a finding that
+# carefully said no value was read.
+TEXT_VALUE = re.compile(
+    r"(?P<pair>[A-Za-z_][A-Za-z0-9_.-]*=)(?P<value>[^\s,]+)"
+    r"|(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^\s/@]+)@"
+)
+# One line, and a bounded one. The rest of a runtime's output is not a reason,
+# and a report that pastes an unbounded string from another program into the
+# customer's terminal is a different problem from the one this solves.
+REASON_LIMIT = 400
+
+
+def blanked_values(command: list[str]) -> list[str]:
+    """Every value `redacted_command` took out of the command line.
+
+    Read by comparing the command with its own redaction, position by position,
+    so it cannot drift from the rule that decides what is a value: whatever that
+    function blanked is what this removes, and a spelling it learns is one this
+    learns with it.
+
+    Longest first, so a value that contains a shorter one is removed before the
+    shorter one turns the longer into something no reader can recognise.
+    """
+    values: list[str] = []
+    for original, shown in zip(command, redacted_command(command)):
+        if original == shown:
+            continue
+        value = original.partition("=")[2]
+        values.extend(
+            candidate
+            for candidate in (value, value.partition(" ")[0])
+            if len(candidate) >= VALUE_FLOOR
+        )
+    return sorted(set(values), key=len, reverse=True)
+
+
+def stated_reason(error: str) -> str:
+    """What a runtime's error says happened, minus where to read about it.
+
+    Every non-pointer line, not the first one: the message this exists to
+    surface puts its headline on one line and its reason on the next, so
+    `mounts denied:` alone is the half that says nothing. Taking the LAST line
+    is no better in the other direction - it reproduced `Run 'docker run
+    --help'` while the reason sat two lines above - so the pointers are dropped
+    and what is left is joined.
+    """
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    useful = [line for line in lines if not line.startswith(POINTER)]
+    return " ".join(useful or lines)
+
+
+def redacted_error(error: str, command: list[str]) -> str:
+    """What the runtime said, with the values it can echo taken back out.
+
+    The line used to be suppressed whole, for a sound reason: it is the one part
+    of this report no rule about the COMMAND can redact, because the runtime
+    wrote it. Suppressing it cost more than it saved. A boundary the daemon
+    refused to start reported `unverified` with no way for the reader to find
+    out why, and the property above then named a cause it had not established.
+    A message the reader cannot get to is how a check teaches people to distrust
+    it.
+
+    So the same values are removed from the message instead of the message being
+    dropped: whatever the command's own redaction blanked, plus the two shapes
+    an error was measured to echo one in. What survives is a sentence like
+    `mounts denied: the path ... is not shared from the host`, which names the
+    fix. What cannot be promised is that no other shape carries a secret - so
+    only the line that states a reason is reproduced, bounded, and the report
+    says where to read the rest.
+    """
+    line = stated_reason(error)
+    if not line:
+        return ""
+    for value in blanked_values(command):
+        line = line.replace(value, REDACTED)
+    line = TEXT_VALUE.sub(
+        lambda found: (found.group("pair") or "")
+        + (found.group("scheme") or "")
+        + REDACTED
+        + ("@" if found.group("userinfo") else ""),
+        line,
+    )
+    return line[:REASON_LIMIT]
+
+
 @dataclass(frozen=True)
 class Property:
     """One contract property, its verdict, and what the verdict rests on."""
@@ -561,16 +666,33 @@ def credential_names(environment: list[str] | None) -> list[str]:
     return sorted(set(names))
 
 
-def entered_property(output: str, token: str, marker: Path) -> Property:
+def entered_property(
+    output: str, token: str, marker: Path, exit_code: int = 0
+) -> Property:
     """Whether a boundary was entered at all - the property the rest rests on.
 
-    Two failures are told apart because they route differently for the reader.
-    A probe that never reported means the declared command did not run it, so
-    nothing was measured. A probe that reported and could see `marker` at its
-    own absolute path means the command ran somewhere this host's filesystem
-    reaches, which is a boundary that is not one.
+    Three failures are told apart because they route differently for the reader.
+    A probe that never reported AFTER a command that succeeded means the command
+    ran and swallowed the probe, which is the appended-arguments mistake. A probe
+    that never reported after a command that FAILED means the command never got
+    far enough to run it, and saying otherwise sends the reader to inspect a
+    command that is already correct - measured on a desktop daemon, a project
+    outside the runtime's shared paths was refused at `docker run`, and this
+    told the customer to check where their command ends. A probe that reported
+    and could see `marker` at its own absolute path means the command ran
+    somewhere this host's filesystem reaches, which is a boundary that is not
+    one.
     """
     if field(output, "token") != token or field(output, "done") != token:
+        if exit_code != 0:
+            return Property(
+                "entered",
+                UNVERIFIED,
+                f"the declared command exited {exit_code} and the probe never "
+                "reported, so nothing was measured. That is the command "
+                "failing rather than a boundary hiding anything, and what the "
+                "runtime said about it is at the end of this report",
+            )
         return Property(
             "entered",
             UNVERIFIED,
@@ -689,7 +811,7 @@ def filesystem_property(
     output: str,
     landed: list[Path],
     unreadable: list[str],
-    anchors: dict[str, tuple[str, str] | None] | None = None,
+    anchors: dict[str, Anchor | None] | None = None,
 ) -> Property:
     """Whether any host path this check can name took a write from inside.
 
@@ -851,6 +973,57 @@ def filesystem_property(
             + ", ".join(missing)
             + ")",
         )
+    # Everything above either refuted the boundary or read a directory this
+    # check could place. What is left is the reading that used to be missing
+    # entirely: a row the boundary publishes that this check can neither claim
+    # nor rule out.
+    #
+    # Measured, same host, same flags, two daemons, `-v "$HOME:/hosthome:rw"`:
+    # the one sharing this kernel published the home's own device and its own
+    # path, and was refuted. The one backed by a virtual machine published that
+    # kernel's device and the home's path with its head cut off, so both halves
+    # of the identification missed - and the marker search missed too, because
+    # the mount point is neither the boundary's working directory nor its home.
+    # `filesystem` proved, the check exited 0, and the boundary it cleared could
+    # read and write the customer's home. `references/run-safety.md` forbids
+    # exactly that mount, and exit 0 is what clears the execution evaluator to
+    # run, so this arm is the one the whole script exists for.
+    #
+    # Unverified rather than refuted, because unmapped is what it is: the row
+    # could be the customer's home, and it could be an unrelated directory of
+    # the same name on that daemon's own disk. Both route the same way.
+    answered = frozenset(
+        found.device for found in (anchors or {}).values() if found is not None
+    )
+    published = {
+        name: unmapped(table, (anchors or {}).get(name), answered)
+        for name in ("workdir", "home")
+    }
+    unmappable = {name: rows for name, rows in published.items() if rows}
+    if unmappable:
+        where = ", ".join(
+            sorted({row.point for rows in unmappable.values() for row in rows})
+        )
+        nouns = " or ".join(
+            noun
+            for name, noun in (
+                ("workdir", "the working directory"),
+                ("home", "this host's home directory"),
+            )
+            if name in unmappable
+        )
+        return Property(
+            "filesystem",
+            UNVERIFIED,
+            f"the boundary publishes a mount at {where} that this check cannot "
+            f"map: the source it names could be {nouns} with the leading "
+            "components of its path cut off, which is what a daemon backed by "
+            "a virtual machine or a remote host publishes, and it could be an "
+            "unrelated directory on that daemon's own disk. The device that "
+            "tells those apart belongs to a kernel this host does not share, "
+            "so neither is established - and unknown is not clean. Mount "
+            "nothing, or verify the boundary on a runtime sharing this kernel",
+        )
     if reached["workdir"]:
         return Property(
             "filesystem",
@@ -899,6 +1072,27 @@ class Mount:
     writable: bool
 
 
+@dataclass(frozen=True)
+class Anchor:
+    """One of this check's two directories, as this host's kernel names it.
+
+    `device` and the filesystem-relative `root` are what a bind mount carries
+    across a boundary that shares this kernel, unchanged, so together they
+    identify the directory however it was renamed inside.
+
+    `path` is the ordinary absolute path, and it is here because a daemon that
+    does NOT share this kernel publishes neither of the other two: it mounts the
+    shared directory inside its own filesystem, and the row's root is then this
+    path with some leading components cut off. `path` is the only field left
+    that such a row can be compared against, and comparing names is a guess -
+    which is why what it feeds reports unverified rather than a verdict.
+    """
+
+    device: str
+    root: str
+    path: str
+
+
 def mount_rows(lines: list[str]) -> list[Mount]:
     """`/proc/self/mountinfo`, parsed.
 
@@ -924,15 +1118,17 @@ def mount_rows(lines: list[str]) -> list[Mount]:
     return rows
 
 
-def host_anchor(path: Path) -> tuple[str, str] | None:
-    """Where `path` lives as this host's kernel names it: device, and the path
-    within its filesystem.
+def host_anchor(path: Path) -> Anchor | None:
+    """Where `path` lives as this host's kernel names it.
 
-    A bind mount carries these across the boundary unchanged - the container's
-    own mount table names the SAME device and the SAME filesystem-relative root,
-    whatever path it was mounted at inside. That is what makes this exact where
-    a name search is a guess: `-v "$HOME:/hosthome"` renames the mount point and
-    cannot rename either of these.
+    A bind mount carries the device and the filesystem-relative root across the
+    boundary unchanged - the container's own mount table names the SAME device
+    and the SAME root, whatever path it was mounted at inside. That is what
+    makes this exact where a name search is a guess: `-v "$HOME:/hosthome"`
+    renames the mount point and cannot rename either of them.
+
+    It is exact only where the boundary shares this kernel. `Anchor.path` says
+    what is left to compare against where it does not.
     """
     try:
         rows = mount_rows(Path("/proc/self/mountinfo").read_text().splitlines())
@@ -948,31 +1144,167 @@ def host_anchor(path: Path) -> tuple[str, str] | None:
         return None
     remainder = target[len(best.point) :].lstrip("/")
     root = best.root.rstrip("/") or "/"
-    return best.device, f"{root}/{remainder}".replace("//", "/").rstrip("/") or "/"
+    return Anchor(
+        best.device,
+        f"{root}/{remainder}".replace("//", "/").rstrip("/") or "/",
+        target,
+    )
 
 
-def mounted_inside(rows: list[Mount], anchor: tuple[str, str] | None) -> list[Mount]:
+def covers(ancestor: str, path: str) -> bool:
+    """Whether `ancestor` IS `path` or contains it, as filesystem-relative roots.
+
+    `/` is written out rather than left to the string test, and that is the
+    whole reason this is a function. A row that publishes a filesystem IN FULL
+    has root `/`, and `"/home/someone".startswith("/" + "/")` is False - so the
+    ordinary spelling missed the widest mount there is. Measured on a daemon
+    sharing this kernel, `-v /:/host` was proven and exited 0 over a read-write
+    mount of the entire host filesystem, the customer's home included. Taken
+    again from `tests/test_verify_sandbox.py`, which carries the row that did it.
+    """
+    ancestor = ancestor.rstrip("/") or "/"
+    path = path.rstrip("/") or "/"
+    return ancestor == "/" or ancestor == path or path.startswith(ancestor + "/")
+
+
+def mounted_inside(rows: list[Mount], anchor: Anchor | None) -> list[Mount]:
     """Every row of the boundary's table that carries the anchored directory.
 
     Equal, a parent of it, or a child of it: a mount of `/home` exposes the home
     inside it, and a mount of one directory beneath the project exposes that
-    directory. All three are the same question asked at different depths.
+    directory. All three are the same question asked at different depths, and
+    the widest parent of all - the whole filesystem - is one of them.
     """
     if anchor is None:
         return []
-    device, root = anchor
-    found: list[Mount] = []
-    for row in rows:
-        if row.device != device:
-            continue
-        here, there = row.root.rstrip("/") or "/", root
-        if (
-            here == there
-            or there.startswith(here + "/")
-            or here.startswith(there + "/")
-        ):
-            found.append(row)
-    return found
+    return [
+        row
+        for row in rows
+        if row.device == anchor.device
+        and (covers(row.root, anchor.root) or covers(anchor.root, row.root))
+    ]
+
+
+def path_parts(path: str) -> list[str]:
+    """The named components of a path, with the separators gone."""
+    return [part for part in path.split("/") if part]
+
+
+def whole_filesystems(rows: list[Mount]) -> set[str]:
+    """The devices this table mounts in FULL, rather than a directory inside.
+
+    A row publishing part of one of them is USUALLY the boundary re-binding a
+    filesystem it mounted itself: every container carries a handful - `/proc/bus`
+    cut out of its own `/proc`, `/proc/kcore` out of its own `/dev` - and they
+    are indistinguishable, row for row, from a directory handed in from outside.
+    Told apart here, because a rule that cannot tell them apart refuses every
+    compliant boundary, which is worse than the hole it closes.
+
+    Usually, and not always: a daemon that hands over a whole shared filesystem
+    AND a directory inside it puts that filesystem's device here too. Said in
+    `unmapped`, where the consequence is, rather than claimed away as an
+    identity it is not.
+    """
+    return {row.device for row in rows if (row.root.rstrip("/") or "/") == "/"}
+
+
+def could_be_rerooted(anchor_path: str, root: str) -> bool:
+    """Whether a mount published at `root` could still be `anchor_path`.
+
+    A daemon backed by a virtual machine or a remote host does not publish a
+    source this host would recognise. It mounts the shared directory inside its
+    own filesystem first, so the row's filesystem-relative root is the host's
+    path MOVED: measured on such a daemon, a home two components deep arrived as
+    its second component alone, under a third name again at the mount point.
+
+    So the question the device can no longer answer is put to the names: cut any
+    number of leading components off the anchor, cut any number off the row, and
+    ask whether what is left of each runs head-to-head. True of the anchor
+    itself, of anything under it - the row keeps going where the anchor stops -
+    and of anything above it - the anchor keeps going where the row stops.
+
+    BOTH sides are cut, and only one of them needed to be for the daemon
+    measured here. The other direction is the same move written the other way
+    round: a daemon can just as well mount the share UNDER a path of its own and
+    publish the host's path with a prefix ADDED. Covering only the direction
+    that happened to be in front of this check would be a rule whose
+    correctness was an accident of which daemon was installed.
+
+    Two empty readings answer no, and both would otherwise answer yes to
+    everything, because every path runs head-to-head with nothing - so neither
+    loop reaches the cut that leaves nothing behind. A row that publishes `/` is
+    one of them: a whole filesystem rather than a directory inside it, which is
+    what the boundary's own root, `/proc`, `/sys` and every tmpfs publish. On a
+    kernel this check shares, `mounted_inside` reads that shape exactly; on one
+    it does not, nothing in a name can separate the boundary's own root from a
+    whole host filesystem handed over, and the disclosure says so.
+
+    What this cannot do is tell a re-rooted anchor from an unrelated directory
+    whose name runs into the anchor's - `/var/lib/...` next to a working
+    directory called `var`. That reading is reported unverified, which is the
+    fail-closed direction, and the evidence says both readings out loud rather
+    than picking one.
+    """
+    anchor = path_parts(anchor_path)
+    row = path_parts(root)
+    for start in range(len(anchor)):
+        tail = anchor[start:]
+        for offset in range(len(row)):
+            rest = row[offset:]
+            shared = min(len(tail), len(rest))
+            if tail[:shared] == rest[:shared]:
+                return True
+    return False
+
+
+def unmapped(
+    rows: list[Mount], anchor: Anchor | None, answered: frozenset[str] = frozenset()
+) -> list[Mount]:
+    """Rows this check can neither call the anchored directory nor rule out.
+
+    Two tests here keep a compliant boundary out of the list, and both are
+    load-bearing:
+
+    * a row on a device one of this host's OWN anchors sits on is already
+      answered exactly: same kernel, same numbering, so `mounted_inside` either
+      finds that directory in the row or a different filesystem provably is not
+      it. `answered` carries every anchor's device and not just this one's,
+      because the two are routinely on different filesystems - a checkout on
+      its own partition, a home on another - and reading such a row against the
+      OTHER anchor's name took the read-only project mount the contract admits
+      to unverified. Without this test at all, that mount goes unverified on
+      every ordinary daemon.
+    * a row on a device this table mounts in full elsewhere is that filesystem
+      re-bound by the boundary itself - `/proc/bus` out of its own `/proc`,
+      `/proc/kcore` out of its own `/dev`. Without this, a directory whose last
+      component happens to match one of those names takes every boundary to
+      unverified for a reading the kernel already explained. It reaches the
+      re-binds and no further: `/etc/hosts` and its two neighbours are cut out
+      of a filesystem no container mounts in full, so only the name test stands
+      between them and a finding, and a working directory named for their first
+      component would be reported. That reading is unverified rather than
+      proven, which is the fail-closed direction. It is also a device-wide
+      exclusion, so a boundary that publishes a whole shared filesystem AND a
+      directory inside it suppresses the finding for the second - which changes
+      nothing, since the first already hands over everything the second does and
+      is itself in what this cannot establish.
+
+    What survives is a partial mount of some filesystem this check cannot place,
+    whose remaining name could still be the anchor moved. On a runtime whose
+    device numbering this host shares, there are none for the two anchors, since
+    their own devices answer first.
+    """
+    if anchor is None:
+        return []
+    rebound = whole_filesystems(rows)
+    known = set(answered) | {anchor.device}
+    return [
+        row
+        for row in rows
+        if row.device not in known
+        and row.device not in rebound
+        and could_be_rerooted(anchor.path, row.root)
+    ]
 
 
 def status_value(status: list[str], key: str) -> str | None:
@@ -1140,7 +1472,8 @@ def evaluate(
     marker: Path,
     landed: list[Path],
     unreadable: list[str],
-    anchors: dict[str, tuple[str, str] | None] | None = None,
+    anchors: dict[str, Anchor | None] | None = None,
+    exit_code: int = 0,
 ) -> list[Property]:
     """Every property, in the order a reader should lose confidence in them.
 
@@ -1148,8 +1481,11 @@ def evaluate(
     probe produced no readings at all, so the five below would each report
     "the probe did not say", which reads as five independent problems instead
     of one. They are collapsed into what actually happened.
+
+    `exit_code` is the declared command's own, and it reaches `entered` because
+    a probe that never reported means two different things either side of it.
     """
-    entered = entered_property(output, token, marker)
+    entered = entered_property(output, token, marker, exit_code)
     if entered.verdict == UNVERIFIED:
         return [entered]
     return [
@@ -1457,6 +1793,7 @@ def run(argv: list[str] | None = None) -> int:
             landed,
             unreadable,
             {"workdir": host_anchor(Path.cwd()), "home": host_anchor(home_directory)},
+            completed.returncode,
         )
     finally:
         # Removed whether or not a write landed: leaving the probe's own file in
@@ -1480,16 +1817,25 @@ def run(argv: list[str] | None = None) -> int:
     else:
         status, code, note = PROVEN, 0, PROVEN_NOTE
     if status != PROVEN and completed.returncode != 0:
-        # The exit code, and deliberately not the message behind it. This used
-        # to append the last line of the command's stderr, which is the one
-        # piece of this report that cannot be redacted by any rule: it is the
-        # customer's runtime talking, and measured, it reproduced a database
-        # password in full from a connection error.
+        # The exit code AND the line behind it, redacted. Suppressing the
+        # message whole was the earlier answer, for a sound reason - it is the
+        # one part of this report no rule about the COMMAND can clean, since the
+        # runtime wrote it, and measured, it reproduced a database password in
+        # full from a connection error. But the cost landed on the customer this
+        # check exists for: measured on a desktop daemon, a project outside the
+        # runtime's shared paths was refused at `docker run`, and the report said
+        # `unverified` with the reason - the path is not shared from the host,
+        # and where to change that - held back. So the values are removed from
+        # the message rather than the message from the report, by the same rule
+        # that decides what a value is on the command line.
+        said = redacted_error(completed.stderr, command)
         note = (
             f"{note}\nthe boundary command itself exited "
-            f"{completed.returncode}; its error output is not reproduced here, "
-            "because it can carry the values this check refuses to print - run "
-            "the command without this check to read it"
+            f"{completed.returncode}. What the runtime said, with any value it "
+            "echoed removed and only the line stating a reason kept: "
+            + (said or "nothing on standard error")
+            + ". Run the command without this check to read the rest, which is "
+            "not reproduced because no rule here can promise what it carries"
         )
     report(status, properties, note)
     return code
@@ -1502,14 +1848,25 @@ NOT_ESTABLISHED = [
     "and captured-output limits",
     "a fresh or reset sandbox per candidate",
     "descendant-process-tree teardown on completion or limit breach",
-    "whether a host directory is mounted, WHEN the boundary does not publish a "
-    "mount table naming its source. Where it does - a container sharing this "
-    "kernel - the two directories the contract names are identified by device "
-    "and filesystem root, so renaming the mount point cannot hide them, and "
-    "the table states read-write or read-only outright. Where it does not - a "
-    "virtual-machine backend showing `/`, or a boundary with no `/proc` - this "
-    "falls back to searching for a marker by name in two places, and a "
-    "directory mounted somewhere else is not found",
+    "WHICH host directory a boundary that does not share this kernel's device "
+    "numbering has mounted. Where it does share it - a container on a daemon "
+    "running here - the two directories the contract names are identified by "
+    "device and filesystem root, at any depth including a mount of the whole "
+    "filesystem, so renaming the mount point cannot hide them, and the table "
+    "states read-write or read-only outright. A daemon backed by a virtual "
+    "machine or a remote host publishes neither: the device is that kernel's, "
+    "and the source arrives as the host's path MOVED - measured, a home two "
+    "components deep was published as its second component alone, under a third "
+    "name again at the mount point. All that is left there is the name, so a "
+    "row whose remaining name could still be one of the two is reported "
+    "unverified rather than proven. That is a refusal to guess in both "
+    "directions: it does not identify the directory, and it also reports a "
+    "directory of its own on that daemon's disk whose name runs into one of the "
+    "two. Three shapes stay invisible there even so: a row publishing a whole "
+    "filesystem, which cannot be told from the boundary's own root by name; any "
+    "row on a device number that collides with one of this host's own, which is "
+    "read as this kernel's and answered exactly; and a boundary with no "
+    "`/proc`, which publishes no table at all",
     "whether a seccomp filter confines the boundary - the mode is read and "
     "reported, and never refuted on, because a virtual machine legitimately "
     "carries none",
