@@ -100,6 +100,10 @@ def probe_output(**overrides: object) -> str:
         "home-reach": "no-such-directory",
         "workdir-elsewhere": "absent",
         "home-elsewhere": "absent",
+        # A compliant boundary's mount table names none of this host's
+        # directories. The rows a container always has - its own root, /proc,
+        # /sys - carry a different device.
+        "mounts": ["31 22 0:29 / / rw,relatime - overlay overlay rw"],
         "host-process": "0",
         "route4": [ROUTE4_HEADER],
         "route6": ROUTE6_LOOPBACK,
@@ -129,7 +133,7 @@ def probe_output(**overrides: object) -> str:
         f"@home-elsewhere {parts['home-elsewhere']}",
         f"@host-process {parts['host-process']}",
     ]
-    for name in ("route4", "route6", "status", "env"):
+    for name in ("mounts", "route4", "route6", "status", "env"):
         section = parts[name]
         if section is None:
             continue
@@ -941,6 +945,27 @@ class ReadingTheProbeTests(unittest.TestCase):
                 shown = verify_sandbox.redacted_command([flag, operand])
                 self.assertNotIn("FAKE-", " ".join(shown).replace("<redacted>", ""))
 
+    def test_a_value_containing_spaces_is_blanked_whole(self) -> None:
+        """A variable's value may contain spaces, and then it is still ONE value.
+
+        Keeping everything after the first space - added to stop `sh -c` losing
+        the script it runs - printed a password in full, one line above a
+        finding that said no value was read. That is this function's own defect,
+        reintroduced by the fix for a different one.
+        """
+        for argument in (
+            ["-e", "PGOPTIONS=x -c password=FAKE-SPACED"],
+            ["--env", "PGOPTIONS=x -c password=FAKE-SPACED"],
+            ["--env=PGOPTIONS=x -c password=FAKE-SPACED"],
+            ["-ePGOPTIONS=x -c password=FAKE-SPACED"],
+            ["-ie", "PGOPTIONS=x -c password=FAKE-SPACED"],
+        ):
+            with self.subTest(spelling=argument[0]):
+                shown = verify_sandbox.redacted_command(
+                    ["docker", "run", *argument, "img"]
+                )
+                self.assertNotIn("FAKE-SPACED", " ".join(shown))
+
     def test_blanking_a_value_does_not_delete_the_command_after_it(self) -> None:
         """A report that erases what it was measuring is not the safer report.
 
@@ -951,6 +976,119 @@ class ReadingTheProbeTests(unittest.TestCase):
             ["sh", "-c", "PYTHONPATH=/app exec ./run.sh"]
         )
         self.assertIn("PYTHONPATH=<redacted> exec ./run.sh", shown)
+
+
+class WhatTheReportSaysItCannotDoTests(unittest.TestCase):
+    """The disclosure has to reach the reader who ran the documented command."""
+
+    def test_the_limits_are_printed_without_asking_for_json(self) -> None:
+        """The note said they were "listed above" and nothing was listed.
+
+        `references/run-safety.md` tells the reader to run this script, and its
+        example carries no `--json`, so the whole disclosure the property
+        verdicts lean on reached only whoever passed a flag nobody mentioned.
+        """
+        result = run_script("--", "true")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not established by this check:", result.stdout)
+        for limit in verify_sandbox.NOT_ESTABLISHED:
+            self.assertIn(limit.split(" - ")[0][:40], result.stdout)
+
+
+class TheMountTableTests(unittest.TestCase):
+    """What the kernel publishes about what was mounted, and from where.
+
+    Four rounds were spent looking for a planted marker in more places. A bind
+    mount carries the source device and the filesystem-relative root across the
+    boundary unchanged, so renaming the mount point cannot hide it - and the
+    table states read-write or read-only outright, which is the reading a write
+    probe entered as an unprivileged identity could never take.
+    """
+
+    HOST = ("259:5", "/home/someone/project")
+
+    def rows(self, root: str, point: str, options: str = "rw,relatime") -> list[str]:
+        return [f"11 10 259:5 {root} {point} {options} - ext4 /dev/nvme0n1p5 rw"]
+
+    def test_the_same_directory_renamed_is_still_the_same_directory(self) -> None:
+        found = verify_sandbox.mounted_inside(
+            verify_sandbox.mount_rows(self.rows(self.HOST[1], "/work")), self.HOST
+        )
+        self.assertEqual([row.point for row in found], ["/work"])
+
+    def test_a_parent_of_it_carries_it_too(self) -> None:
+        found = verify_sandbox.mounted_inside(
+            verify_sandbox.mount_rows(self.rows("/home/someone", "/h")), self.HOST
+        )
+        self.assertEqual([row.point for row in found], ["/h"])
+
+    def test_another_filesystem_at_the_same_path_is_not_it(self) -> None:
+        rows = ["11 10 8:1 /home/someone/project /work rw - ext4 /dev/sda1 rw"]
+        self.assertEqual(
+            verify_sandbox.mounted_inside(verify_sandbox.mount_rows(rows), self.HOST),
+            [],
+        )
+
+    def test_read_only_is_read_from_the_table_not_from_a_write_probe(self) -> None:
+        """The reading `--user` cannot empty."""
+        writable = verify_sandbox.mounted_inside(
+            verify_sandbox.mount_rows(self.rows(self.HOST[1], "/work")), self.HOST
+        )
+        readonly = verify_sandbox.mounted_inside(
+            verify_sandbox.mount_rows(self.rows(self.HOST[1], "/work", "ro,relatime")),
+            self.HOST,
+        )
+        self.assertTrue(writable[0].writable)
+        self.assertFalse(readonly[0].writable)
+
+    def test_a_row_that_is_not_a_mount_row_is_skipped(self) -> None:
+        """`/proc/self/mountinfo` is read from a boundary this check does not
+        control, so a short or separator-less line is debris, not a mount."""
+        self.assertEqual(verify_sandbox.mount_rows(["", "garbage", "1 2 3 4 5 6"]), [])
+
+    def test_optional_fields_do_not_shift_the_parse(self) -> None:
+        """The fields after the options are variable in number, which is why the
+        parse stops at the separator instead of counting from the left."""
+        rows = [
+            "11 10 259:5 /home/someone/project /work rw shared:1 master:2 "
+            "- ext4 /dev/nvme0n1p5 rw"
+        ]
+        parsed = verify_sandbox.mount_rows(rows)
+        self.assertEqual(parsed[0].point, "/work")
+        self.assertTrue(parsed[0].writable)
+
+    def test_a_renamed_writable_project_mount_is_refuted(self) -> None:
+        """`-v "$PWD:/work"` - docker's default is read-write.
+
+        Measured before this reading existed: proven, exit 0, with the sentence
+        "that is the read-only shape the contract admits", while the identical
+        flags let that same uid overwrite the customer's source file.
+        """
+        report = probe_output(mounts=self.rows(self.HOST[1], "/work"))
+        properties = verify_sandbox.evaluate(
+            report, TOKEN, MARKER, [], [], {"workdir": self.HOST, "home": None}
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "refuted")
+        self.assertIn("READ-WRITE", filesystem.evidence)
+
+    def test_a_renamed_home_mount_is_refuted_read_only_or_not(self) -> None:
+        report = probe_output(
+            mounts=self.rows(self.HOST[1], "/hosthome", "ro,relatime")
+        )
+        properties = verify_sandbox.evaluate(
+            report, TOKEN, MARKER, [], [], {"workdir": None, "home": self.HOST}
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "refuted")
+
+    def test_a_read_only_project_mount_is_what_the_contract_admits(self) -> None:
+        report = probe_output(mounts=self.rows(self.HOST[1], "/work", "ro,relatime"))
+        properties = verify_sandbox.evaluate(
+            report, TOKEN, MARKER, [], [], {"workdir": self.HOST, "home": None}
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "proven")
 
 
 class CredentialNameShapeTests(unittest.TestCase):

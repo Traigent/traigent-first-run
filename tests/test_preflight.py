@@ -3141,6 +3141,48 @@ class AnExecutionSinkIsFoundByWhatItBindsToTests(unittest.TestCase):
         self.assertNotEqual(result.status, MODULE.PASS)
         self.assertEqual(result.metrics, {"sinks": []})
 
+    def test_naming_the_operating_system_is_not_running_a_process(self) -> None:
+        """`platform.system()` returns a string and runs nothing.
+
+        `run` and `call` were receiver-gated because they are ordinary words for
+        a method; `system` was not, and it is at least as ordinary - measured, a
+        provenance helper that did nothing but record the platform was reported
+        as an execution sink. A WARN a reader learns to ignore is worse than no
+        WARN at all, because the one it routes to is the boundary check.
+        """
+        source = (
+            "import platform\n"
+            "def score(a, b):\n"
+            "    _ = platform.system()\n"
+            "    return a == b\n"
+        )
+        self.assertEqual(self.sinks(source), [])
+
+    def test_the_shell_is_still_a_shell_under_its_own_module(self) -> None:
+        source = "import os\ndef score(a, b):\n    os.system(b)\n"
+        self.assertEqual(self.sinks(source), ["system"])
+
+    def test_a_helper_the_scorer_defined_itself_is_not_a_database(self) -> None:
+        """A scorer that writes `def execute(row, candidate)` names its own
+        helper. Measured: such a scorer, comparing two strings, was reported."""
+        source = (
+            "def execute(row, candidate):\n"
+            "    return row == candidate\n"
+            "def score(a, b):\n"
+            "    return execute(a, b)\n"
+        )
+        self.assertEqual(self.sinks(source), [])
+
+    def test_a_cursor_is_still_a_cursor(self) -> None:
+        source = "def score(cur, sql):\n    cur.execute(sql)\n"
+        self.assertEqual(self.sinks(source), ["execute"])
+
+    def test_the_checked_subprocess_spellings_count_on_their_module(self) -> None:
+        source = (
+            "import subprocess\ndef score(a, b):\n    subprocess.check_output([b])\n"
+        )
+        self.assertEqual(self.sinks(source), ["check_output"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1985,7 +1985,16 @@ PROCESS_MODULE_SINKS: dict[str, frozenset[str]] = {
 # The receiver test reads module names and not exports: `subprocess.run(...)` is
 # a subprocess whichever of its callables this file happened to import.
 PROCESS_MODULES = frozenset(PROCESS_MODULE_SINKS)
-METHOD_WORD_SINKS = frozenset({"call", "run"})
+# Sink names whose ATTRIBUTE form only counts on a process module, because the
+# same word is somebody else's ordinary API otherwise. `call` and `run` were
+# gated for that reason from the start; `system`, `popen` and the two `check_`
+# spellings were not, and the omission was measured: `platform.system()` in a
+# provenance helper - which returns the name of the operating system and runs
+# nothing - was reported as an execution sink, and a WARN a reader learns to
+# ignore is worse than no WARN at all.
+METHOD_WORD_SINKS = frozenset(
+    {"call", "run", "system", "popen", "check_output", "check_call"}
+)
 # `compile` and `eval` are the builtins under their bare names. Spelled as an
 # attribute they are usually somebody else's ordinary API - `re.compile(p)`
 # builds a regex, `frame.eval(expr)` evaluates one over a table of numbers -
@@ -2095,6 +2104,21 @@ def process_module_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
     return modules, callables
 
 
+def locally_defined(tree: ast.AST) -> set[str]:
+    """Names this file defines itself, at any depth.
+
+    A scorer that writes `def execute(row, candidate)` and calls it is naming
+    its own helper, not a database cursor - and the bare-name arm below cannot
+    tell the two apart without asking. Measured: such a scorer, doing nothing
+    but compare two strings, was reported as an execution sink.
+    """
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+
+
 def sinks_in_evaluator(tree: ast.AST) -> list[str]:
     """Every execution sink the evaluator's own syntax tree names.
 
@@ -2107,6 +2131,7 @@ def sinks_in_evaluator(tree: ast.AST) -> list[str]:
     """
     found: set[str] = set()
     modules, callables = process_module_bindings(tree)
+    defined = locally_defined(tree)
     builtin_names = builtins_aliases(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -2120,7 +2145,11 @@ def sinks_in_evaluator(tree: ast.AST) -> list[str]:
                 # Recorded under the imported name: the reader is told which
                 # sink was found, and the alias `r` names nothing to them.
                 found.add(imported)
-            elif name in EXECUTION_SINKS and name not in METHOD_WORD_SINKS:
+            elif (
+                name in EXECUTION_SINKS
+                and name not in METHOD_WORD_SINKS
+                and name not in defined
+            ):
                 found.add(name)
         elif isinstance(node.func, ast.Attribute):
             name = node.func.attr

@@ -317,6 +317,7 @@ seen=0
 if [ -e "/proc/$6" ]; then seen=$((seen+1)); fi
 if [ -e "/proc/$7" ]; then seen=$((seen+1)); fi
 printf '@host-process %s\n' "$seen"
+printf '@begin mounts\n'; cat /proc/self/mountinfo 2>/dev/null; printf '@end mounts\n'
 printf '@begin route4\n'; cat /proc/net/route 2>/dev/null; printf '@end route4\n'
 printf '@begin route6\n'; cat /proc/net/ipv6_route 2>/dev/null; printf '@end route6\n'
 printf '@begin status\n'; cat /proc/self/status 2>/dev/null; printf '@end status\n'
@@ -358,24 +359,42 @@ READABLE = frozenset(
 )
 
 
-def blanked_operand(operand: str) -> str:  # noqa: D401 - reads as a noun phrase
+# The one sub-option of a readable flag that is a documented credential
+# carrier. A mount describes containment better than anything else on the
+# command line, so blanking the whole operand to reach this would cost the
+# report the thing it is most for.
+VOLUME_SECRET = re.compile(r"(volume-opt=[^=,]*password|volume-opt=[^=,]*token)=[^,]*")
+
+
+def readable_operand(operand: str) -> str:
+    """A readable flag's operand, with the one carrier inside it blanked."""
+    return VOLUME_SECRET.sub(lambda found: f"{found.group(1)}=<redacted>", operand)
+
+
+def blanked_operand(operand: str, *, keep_tail: bool = False) -> str:
     """A `NAME=VALUE` operand with the value gone, by POSITION not by name.
 
     `NAME` alone is returned untouched: that spelling passes the variable
     through from the surrounding environment and carries no value here.
 
-    Only the first token loses its value. `sh -c 'PYTHONPATH=/app exec ./run.sh'`
-    used to render as `PYTHONPATH=<redacted>` with the script it runs deleted,
-    and `systemd-run -p MemoryMax=1G` swallowed a limit the contract asks the
-    reader to record - a report that erases what it was measuring is not the
-    safer report.
+    `keep_tail` belongs to the POSITIONAL `NAME=VALUE cmd args` shape only -
+    `sh -c 'PYTHONPATH=/app exec ./run.sh'`, where blanking the whole argument
+    deleted the script it runs, and a report that erases what it was measuring
+    is not the safer report.
+
+    It must NOT be used for an operand reached through an environment flag, and
+    that distinction is the whole of this parameter. A variable's value may
+    contain spaces: `-e 'PGOPTIONS=... -c password=...'` is ONE value, and
+    keeping everything after its first space printed the password one line above
+    a finding that said no value was read. That was this function's own defect,
+    reintroduced by the change that fixed the `sh -c` shape.
     """
     head, _, tail = operand.partition(" ")
     name, separator, _ = head.partition("=")
     if not separator:
         return operand
     blanked = f"{name}=<redacted>"
-    return f"{blanked} {tail}" if tail else blanked
+    return f"{blanked} {tail}" if keep_tail and tail else blanked
 
 
 def redacted_command(command: list[str]) -> list[str]:
@@ -433,6 +452,12 @@ def redacted_command(command: list[str]) -> list[str]:
             if operand:
                 safe.append(f"{head}e{blanked_operand(operand)}")
                 continue
+            # The cluster ended at the `e`, so getopt takes the NEXT argument as
+            # the value - and that argument is a value by position, whatever it
+            # looks like, so it must not be treated as a positional command.
+            safe.append(argument)
+            expect_operand = True
+            continue
         # Any `key=value` whose flag is not on the readable list, and the key
         # is NOT held to a variable's shape: `--log-opt splunk-token=...` is a
         # documented flag whose operand is a token, and a hyphen in the name was
@@ -443,9 +468,10 @@ def redacted_command(command: list[str]) -> list[str]:
             and not argument.startswith("-")
             and previous not in READABLE
         ):
-            safe.append(blanked_operand(argument))
+            # Positional: the tail is a command, not more of a value.
+            safe.append(blanked_operand(argument, keep_tail=True))
             continue
-        safe.append(argument)
+        safe.append(readable_operand(argument) if previous in READABLE else argument)
         previous = argument
     return safe
 
@@ -660,7 +686,10 @@ WRITE_PROBE_NOUNS = "this check's scratch directory, the working directory and t
 
 
 def filesystem_property(
-    output: str, landed: list[Path], unreadable: list[str]
+    output: str,
+    landed: list[Path],
+    unreadable: list[str],
+    anchors: dict[str, tuple[str, str] | None] | None = None,
 ) -> Property:
     """Whether any host path this check can name took a write from inside.
 
@@ -727,6 +756,40 @@ def filesystem_property(
         "home": readings["home-reach"] == "visible"
         or readings["home-elsewhere"] != "absent",
     }
+    # The boundary's own mount table, which answers the question the two
+    # readings above only approximate. A bind mount carries the source device
+    # and the filesystem-relative root across unchanged, so `-v "$HOME:/hosthome"`
+    # renames the mount point and cannot rename either - and the table states
+    # `rw` or `ro` outright, so a writable project mount stops depending on
+    # whether the probe's identity happened to be able to write.
+    #
+    # Four rounds were spent looking for the marker in more places. The kernel
+    # was publishing the answer the whole time.
+    table = mount_rows(section(output, "mounts") or [])
+    carried = {
+        name: mounted_inside(table, (anchors or {}).get(name))
+        for name in ("workdir", "home")
+    }
+    if carried["home"]:
+        where = ", ".join(sorted({row.point for row in carried["home"]}))
+        return Property(
+            "filesystem",
+            REFUTED,
+            f"this host's home directory is mounted inside the boundary at "
+            f"{where}, named by the boundary's own mount table. The contract "
+            "admits required tests and fixtures read-only plus a scratch "
+            "directory, and a home directory is neither",
+        )
+    writable = [row for row in carried["workdir"] if row.writable]
+    if writable:
+        where = ", ".join(sorted({row.point for row in writable}))
+        return Property(
+            "filesystem",
+            REFUTED,
+            f"the working directory is mounted READ-WRITE inside the boundary "
+            f"at {where}, named by the boundary's own mount table - the "
+            "contract admits it read-only and no wider",
+        )
     # A directory this identity cannot enter is not a hazard to it, whatever is
     # mounted there. Refusing it made the shipped example exit 2 for anyone
     # invoking as root - `/root` is 0700 inside the image - and for any home
@@ -744,13 +807,13 @@ def filesystem_property(
     # permits "required tests and fixtures read-only, plus a bounded disposable
     # scratch directory", and a home directory is neither - model-written code
     # that can read it can read the customer's keys whether or not it can write.
-    if reached["home"]:
+    if reached["home"]:  # the marker search, where a mount table was not given
         return Property(
             "filesystem",
             REFUTED,
-            "this host's home directory is mounted inside the boundary at its "
-            "own absolute path - the probe found a file there that only this "
-            "run knows the name of. Read-only does not settle it: the contract "
+            "this host's home directory is reachable inside the boundary - the "
+            "probe found a file there that only this run knows the name of. "
+            "Read-only does not settle it: the contract "
             "admits required tests and fixtures plus a scratch directory, and a "
             "home directory is neither",
         )
@@ -763,8 +826,8 @@ def filesystem_property(
         return Property(
             "filesystem",
             REFUTED,
-            "the working directory is mounted inside the boundary at its own "
-            "absolute path AND took a write from inside",
+            "the working directory is reachable inside the boundary AND took a "
+            "write from inside",
         )
     reports = {name: field(output, name) for name in WRITE_PROBES}
     missing = [name for name, value in reports.items() if value is None]
@@ -780,8 +843,8 @@ def filesystem_property(
         return Property(
             "filesystem",
             PROVEN,
-            "the working directory is reachable inside the boundary at its own "
-            "absolute path and took no write from the identity the probe ran "
+            "the working directory is reachable inside the boundary and took no "
+            "write from the identity the probe ran "
             "as. That is the read-only shape the contract admits for the tests "
             "and fixtures a scorer needs; the mount may still be writable to "
             "some other identity, so mount only what the scorer needs, "
@@ -812,6 +875,92 @@ def filesystem_property(
         + ". A host path this check was never told about is not looked for at "
         "all",
     )
+
+
+@dataclass(frozen=True)
+class Mount:
+    """One row of a mount table: what was mounted, where, and how."""
+
+    device: str
+    root: str
+    point: str
+    writable: bool
+
+
+def mount_rows(lines: list[str]) -> list[Mount]:
+    """`/proc/self/mountinfo`, parsed.
+
+    Fields up to the `-` separator are fixed: id, parent, major:minor, the root
+    of the mount WITHIN its filesystem, the mount point, then options. Optional
+    fields sit between the options and the separator, which is why the parse
+    stops at `-` rather than counting from the left.
+    """
+    rows: list[Mount] = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 7 or "-" not in fields:
+            continue
+        options = fields[5].split(",")
+        rows.append(
+            Mount(
+                device=fields[2],
+                root=fields[3],
+                point=fields[4],
+                writable="ro" not in options,
+            )
+        )
+    return rows
+
+
+def host_anchor(path: Path) -> tuple[str, str] | None:
+    """Where `path` lives as this host's kernel names it: device, and the path
+    within its filesystem.
+
+    A bind mount carries these across the boundary unchanged - the container's
+    own mount table names the SAME device and the SAME filesystem-relative root,
+    whatever path it was mounted at inside. That is what makes this exact where
+    a name search is a guess: `-v "$HOME:/hosthome"` renames the mount point and
+    cannot rename either of these.
+    """
+    try:
+        rows = mount_rows(Path("/proc/self/mountinfo").read_text().splitlines())
+    except OSError:
+        return None
+    target = str(path)
+    best: Mount | None = None
+    for row in rows:
+        if target == row.point or target.startswith(row.point.rstrip("/") + "/"):
+            if best is None or len(row.point) > len(best.point):
+                best = row
+    if best is None:
+        return None
+    remainder = target[len(best.point) :].lstrip("/")
+    root = best.root.rstrip("/") or "/"
+    return best.device, f"{root}/{remainder}".replace("//", "/").rstrip("/") or "/"
+
+
+def mounted_inside(rows: list[Mount], anchor: tuple[str, str] | None) -> list[Mount]:
+    """Every row of the boundary's table that carries the anchored directory.
+
+    Equal, a parent of it, or a child of it: a mount of `/home` exposes the home
+    inside it, and a mount of one directory beneath the project exposes that
+    directory. All three are the same question asked at different depths.
+    """
+    if anchor is None:
+        return []
+    device, root = anchor
+    found: list[Mount] = []
+    for row in rows:
+        if row.device != device:
+            continue
+        here, there = row.root.rstrip("/") or "/", root
+        if (
+            here == there
+            or there.startswith(here + "/")
+            or here.startswith(there + "/")
+        ):
+            found.append(row)
+    return found
 
 
 def status_value(status: list[str], key: str) -> str | None:
@@ -979,6 +1128,7 @@ def evaluate(
     marker: Path,
     landed: list[Path],
     unreadable: list[str],
+    anchors: dict[str, tuple[str, str] | None] | None = None,
 ) -> list[Property]:
     """Every property, in the order a reader should lose confidence in them.
 
@@ -994,7 +1144,7 @@ def evaluate(
         entered,
         network_property(output),
         credentials_property(output),
-        filesystem_property(output, landed, unreadable),
+        filesystem_property(output, landed, unreadable, anchors),
         privilege_property(output),
         identity_property(output),
     ]
@@ -1186,6 +1336,15 @@ def run(argv: list[str] | None = None) -> int:
         print(f"boundary: {shlex.join(shown)}")
         for item in properties:
             print(item.render())
+        # Printed here, not only under `--json`. The note below said these were
+        # "listed above" while the text report - the one the reference tells the
+        # reader to run, with no `--json` in the example - listed nothing, so the
+        # disclosure the whole check rests on reached only whoever passed a flag
+        # they were never told to pass.
+        print("\nnot established by this check:")
+        for limit in NOT_ESTABLISHED:
+            print(f"  - {limit}")
+        print()
         print(note)
 
     try:
@@ -1279,7 +1438,14 @@ def run(argv: list[str] | None = None) -> int:
                     landed.append(path)
             except OSError as error:
                 unreadable.append(f"{path} ({error.strerror or type(error).__name__})")
-        properties = evaluate(completed.stdout, token, marker, landed, unreadable)
+        properties = evaluate(
+            completed.stdout,
+            token,
+            marker,
+            landed,
+            unreadable,
+            {"workdir": host_anchor(Path.cwd()), "home": host_anchor(home_directory)},
+        )
     finally:
         # Removed whether or not a write landed: leaving the probe's own file in
         # the customer's project or home is a side effect this check has no
@@ -1324,12 +1490,14 @@ NOT_ESTABLISHED = [
     "and captured-output limits",
     "a fresh or reset sandbox per candidate",
     "descendant-process-tree teardown on completion or limit breach",
-    "whether a host directory is mounted at a path this check was never told "
-    "about. The two it names are looked for at their own absolute path, in the "
-    'boundary\'s working directory and in its home - `-v "$HOME:/hosthome"` '
-    "hands over the same directory under a name nothing bounded can search for, "
-    "and is not detected. This property narrows the question; it does not "
-    "close it",
+    "whether a host directory is mounted, WHEN the boundary does not publish a "
+    "mount table naming its source. Where it does - a container sharing this "
+    "kernel - the two directories the contract names are identified by device "
+    "and filesystem root, so renaming the mount point cannot hide them, and "
+    "the table states read-write or read-only outright. Where it does not - a "
+    "virtual-machine backend showing `/`, or a boundary with no `/proc` - this "
+    "falls back to searching for a marker by name in two places, and a "
+    "directory mounted somewhere else is not found",
     "whether a seccomp filter confines the boundary - the mode is read and "
     "reported, and never refuted on, because a virtual machine legitimately "
     "carries none",
