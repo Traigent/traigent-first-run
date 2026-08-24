@@ -1479,6 +1479,30 @@ def classify_provenance(token: Any) -> tuple[str, bool]:
     return PROVENANCE_UNDECLARED, False
 
 
+def normalized_metadata_label(value: Any) -> str:
+    """Fold a row's label to the spelling the token sets below are written in.
+
+    The two comparisons this feeds disagreed about folding and both lost to
+    the guidance's own words. `difficulty` folded `_` to `-` and so read
+    `very_hard`, but the reference prose writes "very hard" and a space
+    reached `EXPECTED_DIFFICULTIES` unrecognised, reporting a band missing
+    from a dataset that carries it. `split` folded nothing at all, and the
+    guidance's word for that side is "held-out" throughout - glossary.md's
+    own default is "18 tuning / 10 held-out" - while the accepted set says
+    `holdout`. Neither reference ships a row example to correct the reader
+    from, so the words in the prose are what a dataset gets written with.
+
+    The split case is the expensive one, and it does not announce itself. An
+    unrecognised label joins neither side, so both come back empty, the
+    tuning/held-out overlap and family-partition checks never run, and
+    preflight reports that no split was declared - about a dataset that
+    declared one on every row. The safeguard is off and the line the reader
+    gets denies the split exists rather than naming the label it did not
+    recognise.
+    """
+    return re.sub(r"[\s_]+", "-", str(value).casefold().strip())
+
+
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
     if key in row:
         return row[key]
@@ -2397,14 +2421,14 @@ def check_dataset(
     for row in present_rows:
         split = row_metadata_value(row, "split")
         if split:
-            split_name = str(split).casefold()
+            split_name = normalized_metadata_label(split)
             split_counts[split_name] += 1
             if dataset_row_is_labelled(row, expected_field):
                 labelled_split_counts[split_name] += 1
             _, input_value = dataset_field_value(row, input_field)
             splits.setdefault(split_name, set()).add(normalized_identity(input_value))
-    tune_names = {"tune", "tuning", "train", "search"}
-    holdout_names = {"holdout", "test", "validation", "validate"}
+    tune_names = {"tune", "tuning", "train", "training", "search"}
+    holdout_names = {"holdout", "held-out", "heldout", "test", "validation", "validate"}
     tune_inputs = set().union(
         *(values for name, values in splits.items() if name in tune_names)
     )
@@ -2543,7 +2567,7 @@ def check_dataset(
         emit("dataset-split", WARN, "no explicit tuning/held-out split was found")
 
     difficulty_values = [
-        str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")
+        normalized_metadata_label(row_metadata_value(row, "difficulty"))
         for row in rows
         if row_metadata_value(row, "difficulty")
     ]

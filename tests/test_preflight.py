@@ -379,6 +379,90 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_the_words_the_references_use_name_the_same_split_and_bands(
+        self,
+    ) -> None:
+        """A dataset spelled the way the guidance reads must score the same.
+
+        Neither reference ships a row example, so the tokens a dataset is
+        written with are the ones its prose uses: glossary.md's default split
+        is "18 tuning / 10 held-out" and evaluation-and-dataset.md reserves
+        "2 easy, 3 medium, 3 hard, 2 very hard". Both spellings missed the
+        sets that read them - `split` folded nothing and `difficulty` folded
+        only `_`.
+
+        The split miss is the expensive one and it does not announce itself.
+        An unrecognised label joins neither side, so both come back empty and
+        the tuning/held-out overlap and family-partition checks never run:
+        the safeguard is off, and the one line the reader gets says no split
+        was declared about a dataset that declared one on every row.
+        """
+
+        def verdicts(rows: list[dict]) -> dict:
+            MODULE.RESULTS.clear()
+            with tempfile.TemporaryDirectory() as directory:
+                dataset = Path(directory) / "eval.jsonl"
+                dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                MODULE.check_dataset(dataset)
+            return {
+                result.check: (result.status, result.detail)
+                for result in MODULE.RESULTS
+            }
+
+        canonical = verdicts(synthetic_rows())
+        # Anchor the comparison: without these the equality below is satisfied
+        # by two datasets that are both scored through the no-split branch.
+        self.assertEqual(
+            canonical["dataset-split"],
+            (MODULE.PASS, "tuning and held-out inputs are disjoint"),
+        )
+        self.assertIn("dataset-holdout-resolution", canonical)
+        self.assertEqual(
+            canonical["dataset-difficulty"],
+            (MODULE.PASS, "all four difficulty bands are represented"),
+        )
+
+        as_written = []
+        for row in synthetic_rows():
+            row = dict(row)
+            if row["split"] == "holdout":
+                row["split"] = "held-out"
+            if row["difficulty"] == "very-hard":
+                row["difficulty"] = "very hard"
+            as_written.append(row)
+        self.assertEqual(
+            verdicts(as_written),
+            canonical,
+            "a dataset labelled in the guidance's own words must reach the "
+            "same verdicts as one labelled in the token sets' words",
+        )
+
+        # Every separator a reader plausibly puts between those two words, and
+        # the compaction that has none for the normalizer to fold.
+        for tune_label, holdout_label in (
+            ("tune", "held-out"),
+            ("tune", "held out"),
+            ("tune", "held_out"),
+            ("tune", "Held-Out"),
+            ("tune", "heldout"),
+            ("training", "held-out"),
+        ):
+            with self.subTest(tune=tune_label, holdout=holdout_label):
+                relabelled = []
+                for row in synthetic_rows():
+                    row = dict(row)
+                    row["split"] = (
+                        tune_label if row["split"] == "tune" else holdout_label
+                    )
+                    relabelled.append(row)
+                self.assertEqual(
+                    verdicts(relabelled)["dataset-split"],
+                    canonical["dataset-split"],
+                    "an unrecognised split label empties both sides, so the "
+                    "overlap check never runs and the run is told the split "
+                    "it declared does not exist",
+                )
+
     def test_split_metrics_count_labelled_rows_separately(self) -> None:
         """A holdout whose rows carry no expected output resolves nothing.
 
