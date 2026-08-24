@@ -1,6 +1,8 @@
 # 0044 - the words carry it, not the glyph
 
 follows: 0043
+follows-resident-measured: 79_350
+follows-total-measured: 368_018
 resident-ceiling: 80_034
 resident-measured: 79_634
 total-ceiling: 368_965

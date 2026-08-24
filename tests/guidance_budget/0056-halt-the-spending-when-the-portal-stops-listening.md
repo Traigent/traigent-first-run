@@ -1,6 +1,7 @@
 # 0056 - halt the spending when the portal stops listening
 
 follows: 0055
+follows-total-measured: 425_624
 total-ceiling: 429_096
 total-measured: 429_037
 

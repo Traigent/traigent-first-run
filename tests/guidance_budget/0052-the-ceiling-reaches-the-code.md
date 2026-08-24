@@ -1,6 +1,8 @@
 # 0052 - the ceiling reaches the code
 
 follows: 0051
+follows-resident-measured: 84_474
+follows-total-measured: 369_593
 resident-ceiling: 84_760
 resident-measured: 84_714
 total-ceiling: 411_391

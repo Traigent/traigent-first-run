@@ -1,6 +1,8 @@
 # 0010 - the optional round that looks for a cheaper point on the frontier
 
 follows: 0009
+follows-resident-measured: 63_525
+follows-total-measured: 244_618
 resident-ceiling: 64_250
 resident-measured: 63_999
 total-ceiling: 256_250

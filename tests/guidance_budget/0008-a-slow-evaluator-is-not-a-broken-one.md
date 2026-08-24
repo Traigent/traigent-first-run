@@ -1,6 +1,8 @@
 # 0008 - waiting for a slow evaluator instead of calling it failed
 
 follows: 0007
+follows-resident-measured: 62_939
+follows-total-measured: 236_903
 resident-ceiling: 63_750
 resident-measured: 63_525
 total-ceiling: 244_500

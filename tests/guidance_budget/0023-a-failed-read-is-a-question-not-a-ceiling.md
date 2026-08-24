@@ -1,6 +1,8 @@
 # 0023 - a failed read is a question, not a ceiling
 
 follows: 0022
+follows-resident-measured: 74_154
+follows-total-measured: 325_095
 resident-ceiling: 74_400
 resident-measured: 74_154
 total-ceiling: 325_400

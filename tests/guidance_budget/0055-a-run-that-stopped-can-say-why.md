@@ -1,6 +1,8 @@
 # 0055 - a run that stopped can say why
 
 follows: 0054
+follows-resident-measured: 84_714
+follows-total-measured: 420_544
 resident-ceiling: 85_129
 resident-measured: 85_074
 total-ceiling: 425_679

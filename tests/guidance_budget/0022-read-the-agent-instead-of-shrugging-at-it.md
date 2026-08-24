@@ -1,6 +1,8 @@
 # 0022 - read the agent instead of shrugging at it
 
 follows: 0021
+follows-resident-measured: 72_173
+follows-total-measured: 320_054
 resident-ceiling: 74_300
 resident-measured: 74_154
 total-ceiling: 325_300

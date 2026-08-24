@@ -1,6 +1,7 @@
 # 0014 - the size of the search space is the agent pillar
 
 follows: 0013
+follows-total-measured: 273_360
 total-ceiling: 274_900
 total-measured: 274_587
 

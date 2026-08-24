@@ -1,6 +1,7 @@
 # 0032 - the knob half says how to record a doubt
 
 follows: 0031
+follows-total-measured: 351_095
 total-ceiling: 351_600
 total-measured: 351_485
 

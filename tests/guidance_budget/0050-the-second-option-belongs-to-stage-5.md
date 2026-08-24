@@ -1,6 +1,8 @@
 # 0050 - the second option belongs to stage 5, not to the read
 
 follows: 0049
+follows-resident-measured: 84_225
+follows-total-measured: 369_061
 resident-ceiling: 84_560
 resident-measured: 84_474
 total-ceiling: 369_400

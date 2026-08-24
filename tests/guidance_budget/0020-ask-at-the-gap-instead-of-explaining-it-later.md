@@ -1,6 +1,8 @@
 # 0020 - ask at the gap, instead of explaining it away afterwards
 
 follows: 0019
+follows-resident-measured: 68_964
+follows-total-measured: 312_830
 resident-ceiling: 72_300
 resident-measured: 72_173
 total-ceiling: 320_200

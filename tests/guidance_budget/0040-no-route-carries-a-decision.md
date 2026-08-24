@@ -1,6 +1,7 @@
 # 0040 - no route carries a decision of its own
 
 follows: 0039
+follows-total-measured: 362_909
 total-ceiling: 364_342
 total-measured: 364_205
 

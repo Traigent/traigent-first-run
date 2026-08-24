@@ -1,6 +1,8 @@
 # 0005 - an unreadable file gets read before it is called broken
 
 follows: 0004
+follows-resident-measured: 62_327
+follows-total-measured: 231_967
 resident-ceiling: 62_750
 resident-measured: 62_650
 total-ceiling: 234_500

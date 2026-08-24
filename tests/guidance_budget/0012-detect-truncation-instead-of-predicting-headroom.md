@@ -1,6 +1,7 @@
 # 0012 - detect truncation instead of predicting headroom
 
 follows: 0011
+follows-total-measured: 255_847
 total-ceiling: 259_400
 total-measured: 258_953
 

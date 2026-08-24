@@ -1,6 +1,7 @@
 # 0051 - a value appears in the line cited for it
 
 follows: 0050
+follows-total-measured: 369_337
 total-ceiling: 369_650
 total-measured: 369_593
 

@@ -1,6 +1,8 @@
 # 0004 - the answer-key ceiling stops being a cliff
 
 follows: 0003
+follows-resident-measured: 62_152
+follows-total-measured: 231_053
 resident-ceiling: 62_500
 resident-measured: 62_327
 total-ceiling: 232_500

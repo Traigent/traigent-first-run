@@ -1,6 +1,8 @@
 # 0038 - the score names the one file it writes
 
 follows: 0037
+follows-resident-measured: 78_566
+follows-total-measured: 357_575
 resident-ceiling: 79_000
 resident-measured: 78_919
 total-ceiling: 359_200

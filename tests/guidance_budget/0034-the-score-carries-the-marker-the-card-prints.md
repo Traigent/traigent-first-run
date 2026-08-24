@@ -1,6 +1,8 @@
 # 0034 - the score carries the marker the card prints
 
 follows: 0033
+follows-resident-measured: 77_267
+follows-total-measured: 352_437
 resident-ceiling: 78_900
 resident-measured: 78_566
 total-ceiling: 354_100

@@ -1,6 +1,8 @@
 # 0041 - the standing exit is never counted, and the shape is resident
 
 follows: 0040
+follows-resident-measured: 79_093
+follows-total-measured: 364_205
 resident-ceiling: 79_600
 resident-measured: 79_350
 total-ceiling: 365_313

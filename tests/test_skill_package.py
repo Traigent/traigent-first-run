@@ -81,6 +81,9 @@ BUDGET_FIGURE = re.compile(
     r"^(resident|total)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
 )
 BUDGET_FOLLOWS = re.compile(r"^follows: (\d{4})$", re.MULTILINE)
+BUDGET_FOLLOWS_MEASURED = re.compile(
+    r"^follows-(resident|total)-measured: (\d[\d_]*)$", re.MULTILINE
+)
 # A raise is a decision, so an entry that states a number and not a reason is
 # the thing this ledger exists to refuse. The floor is not a guess: the
 # shortest reason anyone has written across the nine raises in
@@ -171,7 +174,14 @@ def guidance_budget_entries(
             stated[(kind, which)] = stated.get((kind, which), 0) + 1
             figures[kind][which] = int(value.replace("_", ""))
         follows = BUDGET_FOLLOWS.findall(text)
-        reason = BUDGET_FOLLOWS.sub("", BUDGET_FIGURE.sub("", text))
+        follows_measured: dict[str, int] = {}
+        follows_stated: dict[str, int] = {}
+        for which, value in BUDGET_FOLLOWS_MEASURED.findall(text):
+            follows_stated[which] = follows_stated.get(which, 0) + 1
+            follows_measured[which] = int(value.replace("_", ""))
+        reason = BUDGET_FOLLOWS.sub(
+            "", BUDGET_FOLLOWS_MEASURED.sub("", BUDGET_FIGURE.sub("", text))
+        )
         # The heading is the entry's name, not its argument.
         reason = re.sub(r"^#.*$", "", reason, flags=re.MULTILINE)
         entries.append(
@@ -182,6 +192,10 @@ def guidance_budget_entries(
                 measured=figures["measured"],
                 follows=int(follows[0]) if len(follows) == 1 else None,
                 follows_count=len(follows),
+                follows_measured=follows_measured,
+                follows_restated=sorted(
+                    which for which, count in follows_stated.items() if count > 1
+                ),
                 restated=sorted(
                     f"{which}-{kind}" for (kind, which), n in stated.items() if n > 1
                 ),
@@ -228,6 +242,51 @@ def guidance_budget_reason_defect(reason: str) -> str | None:
             f"{repeated[0][:60]!r} - an entry appended to itself"
         )
     return None
+
+
+def guidance_budget_predecessor_binding_defects(
+    entry: SimpleNamespace, by_index: dict[int, SimpleNamespace]
+) -> list[str]:
+    """Reject an ambiguous or unbound state beneath a `follows:` pointer."""
+    defects: list[str] = []
+    for which in entry.follows_restated:
+        defects.append(
+            f"{entry.path.name} states follows-{which}-measured more than "
+            "once; a predecessor has one measured state, not whichever "
+            "line happened to be read last"
+        )
+    if entry.follows is None:
+        if entry.follows_measured:
+            defects.append(
+                f"{entry.path.name} binds a predecessor measurement but declares "
+                "no follows:; the root has no predecessor to bind"
+            )
+        return defects
+
+    for which in sorted(entry.measured):
+        if which not in entry.follows_measured:
+            defects.append(
+                f"{entry.path.name} follows {entry.follows:04d} but does "
+                f"not state follows-{which}-measured; a predecessor index "
+                "alone does not say which measured state this figure used"
+            )
+    for which in sorted(set(entry.follows_measured) - set(entry.measured)):
+        defects.append(
+            f"{entry.path.name} states follows-{which}-measured but does "
+            f"not measure {which}; bind only the figures this entry uses"
+        )
+    if entry.follows not in by_index:
+        defects.append(
+            f"{entry.path.name} follows {entry.follows:04d}, which is not "
+            "in this tree. An entry can only follow a state it actually "
+            "has: measure on top of an entry that exists here, and say so."
+        )
+    elif entry.follows >= entry.index:
+        defects.append(
+            f"{entry.path.name} follows {entry.follows:04d}, which is not "
+            "lower than its own number; the chain runs one way"
+        )
+    return defects
 
 
 def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
@@ -320,17 +379,7 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 f"{entry.path.name} declares follows: more than once; an entry "
                 "is measured on top of exactly one ledger state"
             )
-        elif entry.follows is not None and entry.follows not in by_index:
-            content.append(
-                f"{entry.path.name} follows {entry.follows:04d}, which is not "
-                "in this tree. An entry can only follow a state it actually "
-                "has: measure on top of an entry that exists here, and say so."
-            )
-        elif entry.follows is not None and entry.follows >= entry.index:
-            content.append(
-                f"{entry.path.name} follows {entry.follows:04d}, which is not "
-                "lower than its own number; the chain runs one way"
-            )
+        content.extend(guidance_budget_predecessor_binding_defects(entry, by_index))
     if content:
         return content
 
@@ -375,6 +424,18 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
             if previous is None:
                 continue
             previous_entry, previous_measurement = previous
+            if (
+                which in later.follows_measured
+                and later.follows_measured[which] != previous_measurement
+            ):
+                monotone.append(
+                    f"{later.path.name} says it measured {which} on "
+                    f"{later.follows:04d}'s state at "
+                    f"{later.follows_measured[which]}, but that predecessor state "
+                    f"is {previous_entry.path.name}'s {previous_measurement}. "
+                    "Its predecessor moved after this entry was measured: re-measure "
+                    "the merged package and re-state this entry's figure and ceiling."
+                )
             previous_ceiling = _ceiling_in_force(chain, which, later)
             if (
                 which in later.ceilings
@@ -20254,12 +20315,17 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
         title: str,
         *,
         follows: int | None = None,
+        follows_measured: dict[str, int] | None = None,
         reason: str | None = None,
         **figures: int,
     ) -> str:
         lines = [f"# {title}", ""]
         if follows is not None:
             lines.append(f"follows: {follows:04d}")
+        lines += [
+            f"follows-{which.replace('_', '-')}-measured: {value}"
+            for which, value in (follows_measured or {}).items()
+        ]
         lines += [
             f"{name.replace('_', '-')}: {value}" for name, value in figures.items()
         ]
@@ -20310,12 +20376,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=2,
+                    follows_measured={"total": 231_402},
                     total_ceiling=240_000,
                     total_measured=239_118,
                 ),
@@ -20330,6 +20398,109 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             guidance_budget_ceilings(entries),
             {"resident": 61_500, "total": 240_000},
         )
+
+    def test_a_new_entry_binds_the_predecessor_measurement_it_used(self) -> None:
+        """A predecessor index without its measured state goes stale silently.
+
+        This is the #305 shape: an entry can still name 0052 after that entry's
+        total has changed. The value binding makes the later branch red before
+        the merge, and the control proves the same chain passes after a genuine
+        re-measurement. The migration binds the historic chain too, rather than
+        leaving its older predecessor relations unprotected.
+        """
+        root = self.root()
+        predecessor = self.entry(
+            "0057 - predecessor",
+            follows=1,
+            follows_measured={"total": 228_407},
+            total_ceiling=232_000,
+            total_measured=231_402,
+        )
+        stale = self.entry(
+            "0058 - stale successor",
+            follows=57,
+            follows_measured={"total": 228_407},
+            total_ceiling=240_000,
+            total_measured=239_118,
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": stale,
+            }
+        )
+        self.assertDefect(entries, "predecessor moved after this entry was measured")
+
+        current = stale.replace(
+            "follows-total-measured: 228407", "follows-total-measured: 231402"
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": current,
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+
+        missing = current.replace("follows-total-measured: 231402\n", "")
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": missing,
+            }
+        )
+        self.assertDefect(entries, "does not state follows-total-measured")
+
+        duplicate = current.replace(
+            "follows-total-measured: 231402",
+            "follows-total-measured: 231402\nfollows-total-measured: 231402",
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": duplicate,
+            }
+        )
+        self.assertDefect(entries, "states follows-total-measured more than once")
+
+        superfluous = current.replace(
+            "follows-total-measured: 231402",
+            "follows-resident-measured: 61_129\nfollows-total-measured: 231402",
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": superfluous,
+            }
+        )
+        self.assertDefect(entries, "does not measure resident")
+
+        orphan = root.replace(
+            "resident-ceiling: 61500",
+            "follows-total-measured: 228407\nresident-ceiling: 61500",
+        )
+        entries = self.ledger(**{"0001-inherited-ledger.md": orphan})
+        self.assertDefect(entries, "the root has no predecessor to bind")
+
+    def test_the_currency_migration_freezes_the_historical_chain(self) -> None:
+        """The 0053 -> 0052 relation from #305 is not grandfathered."""
+        entries = guidance_budget_entries()
+        self.assertTrue(
+            all(
+                entry.follows is None
+                or set(entry.follows_measured) == set(entry.measured)
+                for entry in entries
+            ),
+            "the migration left a historical predecessor relation unbound",
+        )
+        entry_0053 = next(entry for entry in entries if entry.index == 53)
+        self.assertEqual(entry_0053.follows, 52)
+        self.assertEqual(entry_0053.follows_measured, {"total": 411_332})
 
     def test_two_entries_measured_on_the_same_state_are_refused(self) -> None:
         """The mistake the ledger records five times, caught at the merge.
@@ -20346,12 +20517,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=240_000,
                     total_measured=239_118,
                 ),
@@ -20403,6 +20576,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
@@ -20473,12 +20647,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=2,
+                    follows_measured={"total": 231_402},
                     total_ceiling=232_500,
                     total_measured=229_800,
                 ),
@@ -20504,6 +20680,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - the #104 migration",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=220_000,
                     total_measured=209_400,
                 ),
@@ -20531,6 +20708,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=232_400,
                 ),
@@ -20547,6 +20725,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     resident_ceiling=62_000,
                     resident_measured=61_400,
                     total_measured=231_402,
@@ -20579,6 +20758,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
@@ -20670,6 +20850,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),

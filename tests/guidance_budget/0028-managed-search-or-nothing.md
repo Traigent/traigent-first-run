@@ -1,6 +1,7 @@
 # 0028 - managed search or nothing
 
 follows: 0027
+follows-total-measured: 338_481
 total-ceiling: 347_300
 total-measured: 347_299
 

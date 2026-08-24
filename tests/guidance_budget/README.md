@@ -7,7 +7,9 @@ not in the test. They are in this directory, one file per raise.
 
 ## Raising a ceiling
 
-Add a file. Do not edit an existing one.
+Add a file. Do not edit an existing one, except for a schema migration that
+adds load-bearing metadata to every affected historical entry in one reviewed
+change. A partial migration would leave old predecessor relations unprotected.
 
 ```
 tests/guidance_budget/<NNNN>-say-what-the-wait-is-for.md
@@ -17,6 +19,7 @@ tests/guidance_budget/<NNNN>-say-what-the-wait-is-for.md
 # <NNNN> - say what the wait is for
 
 follows: 0006
+follows-total-measured: 235_511
 total-ceiling: 234_750
 total-measured: 234_318
 
@@ -32,6 +35,12 @@ Rules the suite enforces:
   That entry must exist here and carry a lower number, so `follows:` records
   the ledger state you actually had in front of you. Exactly one entry - the
   root, `0001` - declares none.
+* Every non-root entry declares the exact
+  `follows-<budget>-measured:` value that was current in its predecessor
+  state. The suite refuses a missing or stale binding before the merge. The
+  one-time migration adds these metadata-only bindings to the historical
+  entries too, so a relation such as `0053 -> 0052` is frozen rather than
+  grandfathered.
 * **No two entries may follow the same entry.** See below.
 * An entry declares `resident-ceiling:`, `total-ceiling:`, or both, and beside
   each one the `-measured:` figure it was set against. The measurement must be
