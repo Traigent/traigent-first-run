@@ -51,7 +51,8 @@ next stage is always the first neither marked done nor skipped. A session findin
 when the agent line is `none discovered` - begins resume validation rather than automatically
 restarting: read it top to bottom and treat its status and results as resume hints. Independently
 verify the target and agent, rerun the cheap read-only/free gates required by the next action,
-including evaluator containment and call-path checks, and verify a paid artifact before quoting it.
+including execution-evaluator scope and call-path checks, and verify a paid artifact before quoting
+it.
 After that verification, continue through free work at the first stage neither marked done nor
 skipped. The record may avoid repeating paid work, never waive a safety precondition.
 Recorded scores, spend, completed paid results, and the opening score stand; recorded approvals do
@@ -500,9 +501,9 @@ Follow this order:
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
-   inspected call path or static preflight identifies code/SQL execution, record the `containment`
-   stop and end this guide before calibration, environment setup, credentials, provider calls, or
-   paid work. Otherwise, run deterministic calibration only after a `sufficient`
+   resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
+   end this guide before calibration, environment setup, credentials, provider calls, or paid work.
+   Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its non-executing path must be fully inspected, local-only, and
    side-effect-free, and runs in the credential-stripped calibration subprocess.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
