@@ -442,6 +442,12 @@ class StaticPreflightTests(unittest.TestCase):
         label vocabulary that decides it. A parallel change is widening which
         labels are read as each side; every assertion here has to survive it,
         so none of them names a token.
+
+        Nor does either new sentence claim which FILES were searched. Another
+        parallel change makes this pass read the JSONL files beside the dataset,
+        so the single-file clause the fourth shape carries is a limitation about
+        to be removed - and these two must not acquire a copy of it on the way
+        past. That absence is asserted, not just avoided.
         """
         shapes = {
             "holdout": ("read as the held-out side", "read as the tuning side"),
@@ -474,6 +480,10 @@ class StaticPreflightTests(unittest.TestCase):
                     # The false sentence, and the remedy that came with it.
                     self.assertNotIn("carries a split label,", split.detail)
                     self.assertNotIn("kept in separate files", split.detail)
+                    # No claim about the extent of the search, in either of the
+                    # two forms this file has used for one.
+                    self.assertNotIn("everything this check reads", split.detail)
+                    self.assertNotIn("that same file", split.detail)
                     # What was actually read, which is the finding's own point.
                     self.assertIn(f"({label})", split.detail)
                     for phrase in expected:

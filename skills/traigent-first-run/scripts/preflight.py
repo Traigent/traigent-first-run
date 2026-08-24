@@ -2581,21 +2581,28 @@ def check_dataset(
         # that decides it: what is missing is a PAIR - one side read as tuning
         # and one read as held-out. Widening which labels count leaves all
         # three sentences true, which enumerating them here would not.
+        #
+        # The two shapes added here say nothing about WHICH FILES were read,
+        # and that omission is deliberate. A parallel change makes this pass
+        # read the other JSONL files beside the dataset, so any sentence
+        # asserting that one file is the whole search is a limitation about to
+        # be removed - and a message describing a limitation that no longer
+        # holds is worse than no message. What these two report is what the
+        # rows in hand were labelled, which stays true either way.
         labelled = sorted(split_counts)
         if holdout_inputs:
             scope = (
                 f"the rows of {path} carry split labels ({', '.join(labelled)}) "
                 "and one of them was read as the held-out side, with nothing "
                 "there read as the tuning side, so there is no pair to compare "
-                "- the rows this run tunes on have to sit in that same file "
-                "under a label this check reads as the tuning side"
+                "- the rows this run tunes on need a label this check reads as "
+                "the tuning side"
             )
         elif labelled:
             scope = (
                 f"the rows of {path} carry split labels ({', '.join(labelled)}) "
-                "and neither side of the pair was read from them, and that one "
-                "file is everything this check reads - relabel the two folds so "
-                "one side reads as tuning and the other as held-out"
+                "and neither side of the pair was read from them - relabel the "
+                "two folds so one side reads as tuning and the other as held-out"
             )
         else:
             scope = (

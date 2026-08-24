@@ -3881,49 +3881,6 @@ def diversity_subscore(
     )
 
 
-def split_search_scope(facts: DatasetFacts) -> str:
-    """What the no-split finding looked at, appended to it, or nothing.
-
-    Both no-split branches of the power sub-score reported a conclusion and
-    never the search behind it, so "no tuning set and held-out set" read as a
-    statement about the customer's project. A real walkthrough scored a project
-    that keeps its two folds in their own files: the split was there, the score
-    said it was not, and the customer was right to disbelieve the card. The
-    `dataset-absent` cap has always said "provided to this score" for exactly
-    this reason; these two sentences are that rule reaching the rest of the
-    pillar.
-
-    Written once and called from both branches because they describe the same
-    search, and the way this defect returns is one of them being corrected
-    alone. What they may not share is the CONCLUSION. The one sentence said no
-    split label was seen, and the tuning-only branch reaches here precisely
-    because one was: `tuning_rows` is preflight's count of rows carrying a
-    label it read as the tuning side, so a customer who had labelled their
-    tuning rows was told a split reaches this score only as a label on the
-    rows - which is what they had done. What is missing there is the other
-    side, so that is what it now says.
-
-    Empty unless a dataset actually reached this score. On the planner account
-    no file was read, so there is no search to describe and describing one
-    would be the invention this exists to remove - which is also why the
-    sentence is additive rather than a rewrite: a score built from facts
-    directly, with no dataset supplied, states exactly what it stated before.
-    """
-    if not facts.dataset_supplied:
-        return ""
-    if facts.tuning_rows is not None:
-        return (
-            "; the one dataset file this score was given carries a label read "
-            "as the tuning side and none read as the held-out side, so a "
-            "held-out set kept in a separate file was not seen"
-        )
-    return (
-        "; a split is visible to this score only as a split label on the rows "
-        "of the one dataset file it was given, so a split kept in separate "
-        "files was not seen"
-    )
-
-
 def score_dataset(
     facts: DatasetFacts,
     evaluator_method: str | None = None,
@@ -4178,7 +4135,6 @@ def score_dataset(
         evidence = (
             f"{facts.tuning_rows} tuning rows and no held-out set, so the "
             f"result would be measured on the same rows the search used; {evidence}"
-            f"{split_search_scope(facts)}"
         )
     else:
         effective = scoreable(rows, labelled)
@@ -4193,7 +4149,6 @@ def score_dataset(
         evidence = (
             "no tuning set and held-out set, so the result would be "
             f"measured on the same rows the search used; {evidence}"
-            f"{split_search_scope(facts)}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # The whole dataset, on the same scoreable footing the branches above use

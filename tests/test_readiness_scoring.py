@@ -1287,76 +1287,6 @@ class DatasetScoringTests(unittest.TestCase):
             "comparison set",
         )
 
-    def test_both_no_split_branches_name_the_search_behind_the_finding(
-        self,
-    ) -> None:
-        """The finding was a claim about the project, and could not be one.
-
-        A real walkthrough scored a project holding its two folds in their own
-        files and reported "no tuning set and held-out set". The split existed;
-        this score never saw it, because a split reaches it only as a `split`
-        label on the rows of the one dataset file it was handed. A customer
-        looking at their own folds reads that sentence as simply false, and
-        nothing on the card told them what had actually been looked at.
-
-        Both branches are checked, because they describe the same search and
-        the way this returns is one of them being corrected alone. The
-        tuning-only branch is the easy one to forget: it already names a
-        number, so it reads as though it had looked.
-
-        What they may not share is the conclusion, and the first version of
-        this fix had them share it. `tuning_rows` is preflight's count of rows
-        carrying a label it read as the tuning side, so a project reaching that
-        branch HAS labelled rows - and it was told a split reaches this score
-        only as a label on the rows of the file it was given, which is exactly
-        what it had done. Each branch is now pinned to the side that is
-        actually missing, and both are pinned to the search they share.
-        """
-        no_split = MODULE.DatasetFacts(
-            exists=True, dataset_supplied=True, rows=140, labelled_rows=140
-        )
-        tuning_only = MODULE.DatasetFacts(
-            exists=True,
-            dataset_supplied=True,
-            rows=18,
-            labelled_rows=18,
-            tuning_rows=18,
-            tuning_labelled_rows=18,
-        )
-        for facts in (no_split, tuning_only):
-            with self.subTest(tuning_rows=facts.tuning_rows):
-                # The shared half: one file was read, and a fold outside it was
-                # not. Both branches owe the reader this much.
-                self.assertIn(
-                    "one dataset file", self._power_evidence(facts).casefold()
-                )
-                self.assertIn("separate file", self._power_evidence(facts))
-
-        self.assertIn(
-            "a split is visible to this score only as",
-            self._power_evidence(no_split),
-        )
-        # And the half that may not be shared. A project whose rows carry a
-        # tuning label is missing the other side, not the labels.
-        tuning_evidence = self._power_evidence(tuning_only)
-        self.assertIn("none read as the held-out side", tuning_evidence)
-        self.assertNotIn("a split is visible to this score only as", tuning_evidence)
-
-    def test_a_score_that_read_no_dataset_describes_no_search(self) -> None:
-        """The silence, which is the half that keeps the sentence honest.
-
-        On the planner account no file is read, so there is no search to
-        describe and describing one would be the invention the clause exists to
-        remove. `dataset_supplied` is the same fact `dataset-absent` already
-        turns on, so the two cannot drift into disagreeing about whether
-        anything was read.
-        """
-        evidence = self._power_evidence(
-            MODULE.DatasetFacts(exists=True, rows=140, labelled_rows=140)
-        )
-        self.assertIn("no tuning set and held-out set", evidence)
-        self.assertNotIn("a split is visible to this score", evidence)
-
     def test_tuning_only_dataset_names_its_missing_held_out_set(self) -> None:
         pillar, _ = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -1376,10 +1306,6 @@ class DatasetScoringTests(unittest.TestCase):
     def _power(self, facts: object) -> float:
         pillar, _ = MODULE.score_dataset(facts)
         return next(s.value for s in pillar.subscores if s.name == "power")
-
-    def _power_evidence(self, facts: object) -> str:
-        pillar, _ = MODULE.score_dataset(facts)
-        return next(s.evidence for s in pillar.subscores if s.name == "power")
 
 
 class EvaluationScoringTests(unittest.TestCase):
